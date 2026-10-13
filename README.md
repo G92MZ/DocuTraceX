@@ -14,6 +14,14 @@ Aplicación web para el **análisis forense estático** de documentos Microsoft 
 - Herramientas y runtimes en `tools\` con rutas relativas, sin instalaciones globales.
 - No ampliar el alcance de formatos sin decisión expresa.
 
+## Interfaz y estilo
+
+La interfaz estará **íntegramente en inglés**, será **visual** y se basará en **paneles/secciones desplegables**. Toma [**WinHound**](https://github.com/G92MZ/winhound) como **referencia directa de estilo**: mismos colores, mismos tipos de menú, misma organización de la navegación y los mismos componentes visuales, para mantener una familia coherente entre las herramientas propias.
+
+- Navegación principal: Overview, Marks, Components/analysis, Reports y Tasks.
+- Overview: resumen conciso y expandible, alineado con el informe.
+- Uso local, sin login ni gestión de usuarios.
+
 ## Backlog de tareas
 
 Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área; cada formato lleva sus subtareas juntas. El orden refleja dependencias, no fechas. Marca las casillas conforme avances.
@@ -32,7 +40,7 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 - [ ] Incorporar decisiones funcionales (ejecución automática, UI inglés en paneles tipo WinHound, Overview, Marks, panel de casos, informe único, local sin auth, un análisis por instancia)
 - [ ] **Decisión abierta — presupuestos de recursos** configurables por caso con alerta/pausa (no abortar), para no colgar la instancia ni perder la muestra
 - [ ] **Decisión abierta — reemplazo del Python *embeddable*** (evaluar python-build-standalone u otra distribución portable con pip)
-- [ ] **Decisión abierta — plan B de identificación** cuando TrID clasifique mal un contenedor (sin reintroducir DIE)
+- [x] **Decidido — identificador primario: libmagic** (motor del comando `file`, licencia BSD, firmas ampliables) en vez de TrID. TrID es *freeware no comercial* y pieza única; libmagic es permisivo y redistribuible para una distribución gratuita. DIE descartado porque identificaba DOCX/XLSX/PPTX como **ZIP** (son contenedores comprimidos); Apache Tika descartado por el peso del runtime Java salvo que se incorpore por Apache POI
 
 *Aceptación: cada formato con alcance mínimo + pruebas; exclusiones documentadas; plantilla de ficha lista; «sin detecciones» ≠ seguro.*
 
@@ -82,14 +90,16 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 ### Núcleo común (hashes, identificación, modelos)
 
 - [ ] Hashes MD5, SHA-1 y SHA-256 (original y componentes)
-- [ ] TrID como único identificador general primario (registrar versión, salida, errores); retirar DIE de arquitectura y pruebas
+- [ ] libmagic (motor del comando `file`, BSD) como identificador general primario — registrar versión, salida y errores; empaquetar la DLL nativa + `magic.mgc` en `tools\` (verificar que el paquete de binarios Windows esté mantenido; `python-magic-bin` está abandonado)
+- [ ] Firmas ampliables vía formato `magic(5)` para añadir tipos nuevos; la extensibilidad ambiciosa (reglas complejas) se reserva a la fase YARA
+- [ ] DIE y Apache Tika quedan descartados como identificador general (DIE marcaba todo OOXML como ZIP; Tika arrastra Java)
 - [ ] Adaptador de herramientas: versión, argumentos, código de salida, stdout/stderr, duración, resultado normalizado, prueba funcional
 - [ ] Modelos de componente, relación, hallazgo y evidencia (IDs estables, no índices efímeros)
 - [ ] Modelo persistente de Marks por hallazgo: TP/FP/Suspicious/Informational/Unreviewed, comentarios, fecha de revisión; sin tocar la evidencia automática
 - [ ] Pivotado desde cada Mark a su origen (fichero/componente, parser, sección, offset)
 - [ ] Diseñar modelo y motor común de IOC (sin ejecutarlo dentro de cada parser; ejecución en fase posterior)
-- [ ] Comparación extensión / TrID / validador estructural / parser semántico, con registro de discrepancias
-- [ ] Evaluar Sysinternals Strings solo si aporta valor sobre los parsers
+- [ ] Comparación extensión / libmagic / validador estructural / parser semántico, con registro de discrepancias
+- [ ] Extracción de cadenas (ASCII/UTF-16) con implementación propia en Python — Sysinternals Strings descartado (su licencia prohíbe redistribuir)
 - [ ] FLOSS descartado
 
 *Aceptación: hashes calculados diferenciados de cadenas con aspecto de hash; discrepancias explícitas; motor IOC diseñado pero no ejecutado aún.*
@@ -106,7 +116,7 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 - [ ] Forzar invocación explícita del intérprete/entorno asignado (nunca Python global ni PATH)
 - [ ] Pruebas automatizadas de importación, ejecución y compatibilidad por entorno
 - [ ] Diagnóstico visible de versiones/entornos; probar traslado a otra ruta/máquina
-- [ ] Java + Apache POI: decidir por pruebas si se incorpora (compatibilidad, licencia, utilidad real); JARs + Java portable en `tools\` con rutas relativas; nunca Java global
+- [ ] Java + Apache POI: decidir por pruebas si se incorpora (compatibilidad, licencia, utilidad real); JARs + **OpenJDK** portable (Temurin/Zulu/Liberica, GPLv2+CPE — **nunca Oracle JDK**) en `tools\` con rutas relativas; nunca Java global
 
 *Aceptación: toda herramienta Python con ficha revisada y pruebas en su entorno; sin invocación accidental del Python global; incompatibilidades resueltas o herramienta excluida.*
 
@@ -142,7 +152,7 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 - [ ] Parser XML seguro (sin entidades externas ni red); evaluar `defusedxml`
 - [ ] Detectar relaciones externas, destinos rotos, partes huérfanas, duplicados ZIP, tipos incoherentes, XML malformado y rutas peligrosas
 - [ ] IDs estables por ruta interna normalizada
-- [ ] Extraer medios/objetos a espacio aislado, calcular hashes e identificar con TrID; registrar metadatos para la fase IOC
+- [ ] Extraer medios/objetos a espacio aislado, calcular hashes e identificar con libmagic; registrar metadatos para la fase IOC
 - [ ] Manejar firmas, cifrado, partes desconocidas, `AlternateContent` y límites
 - [ ] Detener el análisis profundo automático (apertura como análisis independiente)
 
@@ -186,7 +196,7 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 
 ### XLSB (.xlsb)
 
-- [ ] Elegir parser(es): comparar `pyxlsb` y `python-calamine` (mantenimiento, licencia, dependencias, cobertura) y conservar discrepancias
+- [ ] Elegir parser(es): comparar `pyxlsb` (LGPL-3.0) y `python-calamine` (MIT) y conservar discrepancias — preferir `python-calamine` si se quiere evitar el copyleft de `pyxlsb`
 - [ ] Validar estructura e inventariar componentes y relaciones
 - [ ] Reconstruir hojas y celdas; fórmulas y valores en caché distinguidos (nunca recalcular)
 - [ ] Hojas ocultas/veryHidden, nombres definidos y enlaces externos
@@ -204,12 +214,12 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 - [ ] Enlaces y anotaciones; comparar texto visible con destino (sin conectar)
 - [ ] Acciones/JS estático: `/JavaScript`, `/JS`, `/OpenAction`, `/AA`, `/Launch`, `/URI`, `/GoToR`, `/SubmitForm`, `/ImportData` (nunca ejecutar)
 - [ ] Formularios AcroForm/XFA (campos, valores, acciones)
-- [ ] Adjuntos `/EmbeddedFiles`/`/AF`: extraer aislados, hash, TrID, procedencia; detener análisis profundo automático
+- [ ] Adjuntos `/EmbeddedFiles`/`/AF`: extraer aislados, hash, libmagic, procedencia; detener análisis profundo automático
 - [ ] Cifrado y permisos (análisis parcial); firmas: presencia vs integridad vs cobertura vs cadena/timestamp
 - [ ] Revisiones incrementales
-- [ ] OCR automático (Tesseract + idiomas) cuando no haya texto nativo suficiente; evaluar rasterizador portable (PyMuPDF o Poppler/`pdftoppm`); marcar texto OCR como tal; progreso por página en la web
+- [ ] OCR automático (Tesseract + idiomas) cuando no haya texto nativo suficiente; rasterizador portable **`pypdfium2`** (Apache/BSD) preferido, o Poppler/`pdftoppm` (GPL, como subproceso); evitar PyMuPDF (AGPL) y Ghostscript (AGPL); marcar texto OCR como tal; progreso por página en la web
 - [ ] Visor hexadecimal; informes y regresión
-- [ ] Herramientas candidatas: `pypdf`, `qpdf`, `pdfid.py`, `pdf-parser.py`, `pyHanko`, Pillow, Tesseract
+- [ ] Herramientas candidatas: `pypdf`, `qpdf`, `pdfid.py`, `pdf-parser.py`, `pyHanko`, Pillow, `pypdfium2`, Tesseract
 
 *Aceptación: no ejecutar acciones/JS ni contactar URLs; procedencia de objetos/recursos; cifrado/errores/límites como parcial; firma/JS/adjunto ≠ malware por sí solos.*
 
@@ -230,7 +240,7 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 - [ ] Investigar/validar estructura con muestras reales; extraer cabeceras, cuerpo y adjuntos; truncamiento como parcial
 
 **Adjuntos y pruebas**
-- [ ] Extraer a espacio aislado con nombre seguro, hash, tamaño, TrID y procedencia; detener análisis profundo automático
+- [ ] Extraer a espacio aislado con nombre seguro, hash, tamaño, libmagic y procedencia; detener análisis profundo automático
 - [ ] Nunca ejecutar adjuntos, abrir enlaces, renderizar HTML activo ni DNS/HTTP
 - [ ] Pruebas: benignos/malformados, texto/HTML/multipart, codificaciones, hasta 100 adjuntos, nombres peligrosos, Received/autenticación falsos, duplicados, truncamiento; verificar ausencia de red
 
@@ -244,7 +254,7 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 - [ ] Reglas específicas de documentos (ID, versión, explicación, pruebas)
 - [ ] Correlación interna entre componentes/hallazgos del mismo caso (coincidencias, ubicación, procedencia, contexto)
 - [ ] No comparar contra listas externas/importadas en esta fase
-- [ ] Discrepancias nombre/TrID/estructura/parser; metadatos anómalos, ofuscación, contenido oculto
+- [ ] Discrepancias nombre/libmagic/estructura/parser; metadatos anómalos, ofuscación, contenido oculto
 - [ ] Priorización explicable; versionado y regresión de reglas
 
 *Aceptación: cada regla con ID/versión/explicación/pruebas; la correlación enlaza coincidencias sin afirmar malicia; procedencia conservada; indicadores ≠ certezas.*
@@ -300,7 +310,15 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 - [ ] Una ficha revisada **antes** de integrar cada herramienta/biblioteca/parser/runtime
 - [ ] Matriz general de herramientas, versiones, licencias y dependencias (mantenida)
 - [ ] Verificaciones de integridad (hash/firma) por fuente oficial
-- [ ] Candidatos a evaluar: TrID, defusedxml, python-docx, openpyxl, python-pptx, oletools, oledump.py, zipdump.py, olefile, pyxlsb, python-calamine, pypdf, qpdf, pdfid.py, pdf-parser.py, pyHanko, Pillow, Tesseract (+idiomas), PyMuPDF/Poppler, extract-msg, módulo `email`; Apache POI + Java (condicional)
+- [ ] Candidatos a evaluar (con licencia; todo pensado para redistribución gratuita):
+    - Identificación: **libmagic / `file`** (BSD) — primario; `puremagic` (MIT) como respaldo en Python puro
+    - XML/OOXML: `defusedxml` (PSF), `python-docx` · `openpyxl` · `python-pptx` (MIT), `zipdump.py` (dominio público)
+    - OLE/VBA: `oletools` · `olefile` (BSD), `oledump.py` (dominio público)
+    - XLSB: `python-calamine` (MIT, preferido) o `pyxlsb` (LGPL-3.0)
+    - PDF: `pypdf` (BSD), `qpdf` (Apache-2.0), `pdfid.py` · `pdf-parser.py` (dominio público), `pyHanko` (MIT), `Pillow` (HPND), **`pypdfium2`** (Apache/BSD, rasterizado) o Poppler/`pdftoppm` (GPL), `Tesseract` + idiomas (Apache-2.0)
+    - Correo: `extract-msg` (BSD), módulo `email`/`hashlib` (PSF)
+    - Condicional: Apache POI (Apache-2.0) + OpenJDK (GPLv2+CPE)
+    - Descartados por licencia/encaje: **TrID** (freeware no comercial), **Sysinternals Strings** (prohíbe redistribuir), **DIE** (marca OOXML como ZIP), **PyMuPDF/Ghostscript** (AGPL), **FLOSS**, Oracle JDK
 
 *Aceptación: ninguna dependencia integrada sin ficha completada y revisada; matriz mantenida; el estudio de runtime/Python va en su fase propia.*
 
