@@ -38,9 +38,28 @@ def test_unknown_extension() -> None:
     assert d["status"] == "unknown"
 
 
-def test_emlx_text_is_inconclusive() -> None:
+def test_emlx_text_without_structure_is_inconclusive() -> None:
+    # No structural evidence: EMLX seen as text is inconclusive, not a mismatch.
     d = classify_discrepancy(".emlx", "text/plain", "ASCII text")
     assert d["status"] == "inconclusive"
+
+
+def test_emlx_confirmed_by_structure_is_match() -> None:
+    d = classify_discrepancy(".emlx", "text/plain", "ASCII text", structural_family="email")
+    assert d["status"] == "match"
+    assert "structural" in d["detail"].lower()
+
+
+def test_structural_recognizer_emlx() -> None:
+    from docutracex import structure
+
+    head = b"297\nFrom: a@b.com\nTo: c@d.com\nContent-Type: text/plain\n\nbody"
+    tail = b"<dict></dict></plist>\n"
+    matched, _ = structure.looks_like_emlx(head, tail)
+    assert matched
+
+    # A plain .eml (no leading count, no plist) must not match.
+    assert not structure.looks_like_emlx(b"From: a@b.com\nTo: c@d.com\n\nhi", b"hi")[0]
 
 
 # --- integration with libmagic over the generated samples --------------------
@@ -52,15 +71,23 @@ pytestmark_samples = pytest.mark.skipif(
 
 
 @pytestmark_samples
-def test_samples_have_no_false_mismatch() -> None:
+def test_all_samples_match() -> None:
+    # Every in-scope sample should now identify as its declared type.
     bad = []
     for f in SAMPLES.glob("sample.*"):
         if f.suffix == ".md":
             continue
         status = (identify(f, f.suffix.lower()).get("discrepancy") or {}).get("status")
-        if status == "mismatch":
-            bad.append(f.name)
-    assert not bad, f"unexpected mismatches: {bad}"
+        if status != "match":
+            bad.append((f.name, status))
+    assert not bad, f"samples not matching: {bad}"
+
+
+@pytestmark_samples
+def test_emlx_sample_confirmed_by_structure() -> None:
+    r = identify(SAMPLES / "sample.emlx", ".emlx")
+    assert r["structural"] and r["structural"]["format"] == "emlx"
+    assert r["discrepancy"]["status"] == "match"
 
 
 @pytestmark_samples

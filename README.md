@@ -256,7 +256,8 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 - [ ] Cabeceras de transporte solo si están presentes
 
 **EMLX (Apple Mail)**
-- [ ] Investigar/validar estructura con muestras reales; extraer cabeceras, cuerpo y adjuntos; truncamiento como parcial
+- [x] Reconocedor estructural de EMLX (byte-count inicial + cabeceras RFC 822 + `</plist>` final, firma compuesta PRONOM fmt/2055); confirma el tipo aunque libmagic solo vea texto
+- [ ] Extraer cabeceras, cuerpo y adjuntos; truncamiento como parcial
 
 **Adjuntos y pruebas**
 - [ ] Extraer a espacio aislado con nombre seguro, hash, tamaño, libmagic y procedencia; detener análisis profundo automático

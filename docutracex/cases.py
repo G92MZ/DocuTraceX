@@ -123,6 +123,7 @@ def create_case(
                 "available": ident.get("available"),
                 "error": ident.get("error"),
             },
+            "structural": ident.get("structural"),
             "discrepancy": ident.get("discrepancy"),
         },
         "tool_versions": tool_versions,
