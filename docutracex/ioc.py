@@ -173,4 +173,9 @@ def sources_from_modules(modules: dict[str, dict[str, Any]]) -> list[dict[str, A
             add("oletools", "vba_code", ole["code_text"])
         for link in ole.get("dde_links", []) or []:
             add("oletools", "dde_link", link)
+
+    # XLMMacroDeobfuscator: deobfuscated Excel 4.0 (XLM) formulas.
+    xlm = modules.get("xlmdeobf")
+    if xlm and xlm.get("code_text"):
+        add("xlmdeobf", "xlm_formula", xlm["code_text"])
     return sources

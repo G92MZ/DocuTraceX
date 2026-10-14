@@ -24,6 +24,8 @@ dependencies = [
     "oletools>=0.60",
     # Encrypted Office detection + default-password decryption (evasion check).
     "msoffcrypto-tool>=5.1",
+    # Excel 4.0 (XLM) macro deobfuscation (hidden macro sheets, evasion).
+    "XLMMacroDeobfuscator>=0.2.7",
 ]
 
 [project.optional-dependencies]

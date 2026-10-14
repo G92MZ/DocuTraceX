@@ -40,6 +40,22 @@ def looks_like_emlx(head: bytes, tail: bytes) -> tuple[bool, str]:
     return True, "Leading byte-count, RFC 822 headers and trailing </plist>."
 
 
+def looks_like_opc(path: Path) -> tuple[bool, str]:
+    """An OPC/OOXML package is a ZIP that contains ``[Content_Types].xml``."""
+    import zipfile
+
+    if not zipfile.is_zipfile(path):
+        return False, "Not a ZIP package."
+    try:
+        with zipfile.ZipFile(path) as zf:
+            names = set(zf.namelist())
+    except Exception:  # noqa: BLE001
+        return False, "ZIP could not be read."
+    if "[Content_Types].xml" in names:
+        return True, "ZIP package with [Content_Types].xml (OPC/OOXML)."
+    return False, "ZIP without [Content_Types].xml."
+
+
 def recognize(path: Path, declared_ext: str = "") -> dict[str, Any] | None:
     """Return a structural identification, or None if nothing matched.
 
@@ -60,4 +76,10 @@ def recognize(path: Path, declared_ext: str = "") -> dict[str, Any] | None:
     matched, detail = looks_like_emlx(head, tail)
     if matched:
         return {"format": "emlx", "family": "email", "detail": detail, "method": "structure"}
+
+    # OPC/OOXML package (confirms the family when libmagic only sees a zip/data).
+    if head[:4] == b"PK\x03\x04":
+        ok, detail = looks_like_opc(path)
+        if ok:
+            return {"format": "ooxml", "family": "ooxml", "detail": detail, "method": "structure"}
     return None

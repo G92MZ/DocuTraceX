@@ -96,6 +96,12 @@ TOOL_DEPS: list[Dependency] = [
         required=False,
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
     ),
+    Dependency(
+        "XLMMacroDeobfuscator", "XLMMacroDeobfuscator",
+        "Excel 4.0 (XLM) macro deobfuscation",
+        required=False,
+        install_hint="run scripts/setup_portable_python.py (installed into the portable)",
+    ),
 ]
 
 # Combined (kept for backward compatibility / generic checks).
