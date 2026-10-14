@@ -71,6 +71,16 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                 state = "partial"
             elif sem.get("findings") and state == "completed":
                 state = "partial"
+
+        # External tool: VBA macro analysis with oletools (on the portable).
+        from .parsers import vba
+
+        vba_res = vba.analyze(original)
+        write_subresult(paths, "vba", vba_res)
+        ran.append("vba")
+        findings_total += vba_res.get("counts", {}).get("findings", 0)
+        if vba_res.get("findings") and state == "completed":
+            state = "partial"
     else:
         # No parser for this family yet.
         state = "completed"

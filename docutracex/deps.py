@@ -86,6 +86,11 @@ TOOL_DEPS: list[Dependency] = [
         required=False,
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
     ),
+    Dependency(
+        "oletools", "oletools", "VBA macro analysis (olevba)",
+        required=False,
+        install_hint="run scripts/setup_portable_python.py (installed into the portable)",
+    ),
 ]
 
 # Combined (kept for backward compatibility / generic checks).

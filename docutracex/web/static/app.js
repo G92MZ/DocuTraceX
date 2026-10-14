@@ -243,6 +243,7 @@ async function openComponents(analysisId) {
     summary.className = "status " + ((c.anomalies || 0) + nf ? "bad-text" : "ok-text");
     bodyEl.innerHTML =
       (sem ? renderSemantic(sem) : "") +
+      renderVba(mods.vba) +
       renderIocs(iocs) +
       (ooxml ? renderAnomalies(ooxml.anomalies) : "") +
       (ooxml ? renderRelationships(ooxml.relationships) : "") +
@@ -320,6 +321,37 @@ function renderSemantic(sem) {
   if (sem.text_sample) {
     html += `<h3 class="formats-title">Text (sample)</h3>
       <pre class="text-sample">${escapeHtml(sem.text_sample.slice(0, 4000))}</pre>`;
+  }
+  return html;
+}
+
+function renderVba(vba) {
+  if (!vba) return "";
+  const tool = `oletools ${escapeHtml(vba.tool_version || "")}`;
+  if (!vba.available) {
+    return `<h3 class="formats-title">VBA (oletools)</h3>
+      <p class="hint-line">Tool unavailable: ${escapeHtml(vba.error || "")}</p>`;
+  }
+  let html = `<h3 class="formats-title">VBA macros (${tool})</h3>`;
+  if (!vba.macros) {
+    html += `<p class="hint-line">No VBA macros extracted${vba.error ? " — " + escapeHtml(vba.error) : ""}.</p>`;
+    return html;
+  }
+  const mods = (vba.vba_modules || []).map((m) =>
+    `${escapeHtml(m.stream || "")} (${m.code_length} chars)`).join(", ");
+  html += `<p class="hint-line">Modules: ${escapeHtml(mods)}</p>`;
+  const findings = vba.findings || [];
+  if (findings.length) {
+    const rows = findings.map((f) => `<tr>
+      <td><span class="badge badge-${SEV_CLASS[f.severity] || "warn"}">${escapeHtml(f.severity)}</span></td>
+      <td class="mono">${escapeHtml(f.rule)}</td>
+      <td>${escapeHtml(f.detail || "")}</td>
+    </tr>`).join("");
+    html += `<table class="cases"><thead><tr><th>Severity</th><th>Rule</th><th>Detail</th></tr></thead>
+      <tbody>${rows}</tbody></table>`;
+  }
+  if (vba.code_text) {
+    html += `<pre class="text-sample">${escapeHtml(vba.code_text.slice(0, 4000))}</pre>`;
   }
   return html;
 }

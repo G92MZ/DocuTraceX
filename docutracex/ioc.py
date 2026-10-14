@@ -165,4 +165,9 @@ def sources_from_modules(modules: dict[str, dict[str, Any]]) -> list[dict[str, A
         for k, v in meta.items():
             if isinstance(v, str):
                 add(mod_name, f"metadata/{k}", v)
+
+    # VBA macro source (from oletools).
+    vba = modules.get("vba")
+    if vba and vba.get("code_text"):
+        add("vba", "macro_code", vba["code_text"])
     return sources
