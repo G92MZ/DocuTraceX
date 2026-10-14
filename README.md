@@ -26,11 +26,11 @@ La interfaz estará **íntegramente en inglés**, será **visual** y se basará 
 
 ```bash
 pip install -e ".[dev]"   # instala docutracex + dependencias de desarrollo
-python run.py              # asegura el portable (lo crea si falta) y levanta el servidor
+python -m docutracex       # (o python run.py) asegura el portable y levanta el servidor
 pytest -q                  # ejecuta los tests
 ```
 
-`python -m docutracex` levanta solo la app (sin asegurar el portable), útil en desarrollo.
+Tanto `python -m docutracex` como `python run.py` **aseguran el portable al arrancar**: lo crean si falta y, si se añadió una dependencia de herramienta nueva, la instalan en el portable existente. Para saltar ese paso: `DOCUTRACEX_SKIP_SETUP=1`.
 
 Configurable por entorno: `DOCUTRACEX_HOST`, `DOCUTRACEX_PORT`, `DOCUTRACEX_LOG_LEVEL`.
 

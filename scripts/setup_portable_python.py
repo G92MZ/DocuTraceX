@@ -200,25 +200,67 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
     verify()
 
 
-def ensure(version: str = DEFAULT_VERSION) -> bool:
-    """Provision the portable only if it is not there yet. Best-effort.
-
-    Returns True if the portable is present afterwards. Never raises: on failure
-    it logs and returns False so the app can still start (tools degraded).
-    """
-    if _portable_present():
-        print(f"[=] Portable Python already present at {PY_DIR}")
-        return True
-    print("[>] Portable Python not found — provisioning it now...")
+def _tool_import_names() -> list[str]:
+    """Import names of the tool dependencies to verify in the portable."""
     try:
+        from docutracex.deps import TOOL_DEPS  # type: ignore
+        return [d.import_name for d in TOOL_DEPS]
+    except Exception:  # noqa: BLE001
+        return ["magic", "defusedxml"]
+
+
+def _libmagic_env() -> dict:
+    import os
+    env = dict(os.environ)
+    mgc = LIBMAGIC_DIR / "magic.mgc"
+    if mgc.is_file():
+        env.setdefault("MAGIC", str(mgc))
+        if sys.platform.startswith("win"):
+            env["PATH"] = str(LIBMAGIC_DIR) + os.pathsep + env.get("PATH", "")
+    return env
+
+
+def _tool_deps_ok(py: Path) -> bool:
+    """True if every tool dependency imports in the portable interpreter."""
+    names = _tool_import_names()
+    code = "import importlib\n" + "\n".join(f"importlib.import_module({n!r})" for n in names)
+    try:
+        r = subprocess.run([str(py), "-I", "-c", code], capture_output=True,
+                           text=True, errors="replace", timeout=60, env=_libmagic_env())
+        return r.returncode == 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def ensure(version: str = DEFAULT_VERSION) -> bool:
+    """Make sure the portable exists AND has its tool dependencies. Best-effort.
+
+    - No portable yet -> full provision (download + install + libmagic).
+    - Portable present but tool deps missing (e.g. a new dependency was added)
+      -> reinstall deps into it (and refresh libmagic on Windows).
+    Never raises: on failure it logs and returns False so the app still starts.
+    """
+    try:
+        if _portable_present():
+            py = _portable_python()
+            if _tool_deps_ok(py):
+                print(f"[=] Portable Python present with tool deps OK at {PY_DIR}")
+                return True
+            print("[>] Portable present but tool dependencies missing — updating...")
+            install_deps()
+            if sys.platform.startswith("win"):
+                install_libmagic_windows()
+            return _tool_deps_ok(py)
+
+        print("[>] Portable Python not found — provisioning it now...")
         provision(version, force=False)
         return _portable_present()
     except SystemExit as exc:
         print(f"[!] Provisioning stopped: {exc}")
     except Exception as exc:  # noqa: BLE001
         print(f"[!] Provisioning failed: {exc}")
-    print("[!] The app will still start, but analysis tools (e.g. libmagic) "
-          "will be unavailable until the portable is provisioned.")
+    print("[!] The app will still start, but analysis tools may be unavailable "
+          "until the portable is provisioned.")
     return False
 
 
