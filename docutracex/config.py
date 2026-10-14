@@ -15,7 +15,7 @@ from pathlib import Path
 APP_ROOT = Path(__file__).resolve().parent.parent
 
 
-@dataclass(frozen=True)
+@dataclass
 class Settings:
     """Runtime settings. Paths are relative to APP_ROOT unless overridden by env."""
 

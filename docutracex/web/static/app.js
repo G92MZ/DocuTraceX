@@ -1,0 +1,64 @@
+"use strict";
+
+function fmtSize(bytes) {
+  if (bytes == null) return "";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let n = bytes, i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return (i === 0 ? n : n.toFixed(1)) + " " + units[i];
+}
+
+function shortHash(h) {
+  return h ? h.slice(0, 12) + "…" : "";
+}
+
+async function loadCases() {
+  const body = document.getElementById("cases-body");
+  try {
+    const resp = await fetch("/api/cases");
+    const cases = await resp.json();
+    if (!cases.length) {
+      body.innerHTML = '<tr><td colspan="6" class="empty">No cases yet.</td></tr>';
+      return;
+    }
+    body.innerHTML = cases.map((c) => `
+      <tr>
+        <td>${c.created_utc || ""}</td>
+        <td class="file">${escapeHtml(c.filename || "")}</td>
+        <td>${escapeHtml(c.declared_extension || "")}</td>
+        <td>${fmtSize(c.size_bytes)}</td>
+        <td class="mono" title="${c.sha256 || ""}">${shortHash(c.sha256)}</td>
+        <td><span class="badge">${escapeHtml(c.state || "")}</span></td>
+      </tr>`).join("");
+  } catch (err) {
+    body.innerHTML = '<tr><td colspan="6" class="empty">Could not load cases.</td></tr>';
+  }
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+  ));
+}
+
+document.getElementById("upload-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = document.getElementById("file-input");
+  const status = document.getElementById("upload-status");
+  if (!input.files.length) return;
+  const data = new FormData();
+  data.append("file", input.files[0]);
+  status.textContent = "Uploading…";
+  try {
+    const resp = await fetch("/api/cases", { method: "POST", body: data });
+    if (!resp.ok) throw new Error("upload failed");
+    const manifest = await resp.json();
+    status.textContent = "Case created: " + manifest.analysis_id;
+    input.value = "";
+    loadCases();
+  } catch (err) {
+    status.textContent = "Upload failed.";
+  }
+});
+
+loadCases();
