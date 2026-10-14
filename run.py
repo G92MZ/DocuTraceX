@@ -10,18 +10,27 @@ then starts the app. The analysis tools run on the portable; the app does not.
 
 from __future__ import annotations
 
-import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+# Make scripts/ importable so we can call the provisioner in-process.
+sys.path.insert(0, str(ROOT / "scripts"))
 
 
 def main() -> None:
-    setup = ROOT / "scripts" / "setup_portable_python.py"
-    print("Ensuring portable Python and tools (tools/) ...")
-    # Best-effort: provisions only if missing; never blocks app startup.
-    subprocess.run([sys.executable, str(setup), "--ensure"], check=False)
+    print("=" * 60)
+    print("DocuTraceX — ensuring portable Python and tools (tools/)")
+    print("=" * 60)
+    try:
+        from setup_portable_python import ensure  # type: ignore
+        ok = ensure()  # provisions on first run; returns fast if already present
+    except Exception as exc:  # noqa: BLE001  (never block app startup)
+        print(f"[!] Could not run the portable setup: {exc}")
+        print("[!] Starting the app anyway; analysis tools may be unavailable.")
+        ok = False
+    print(f"[i] Portable tools ready: {ok}")
+    print("-" * 60)
 
     # Start the web app on THIS interpreter.
     from docutracex.__main__ import main as run_app
