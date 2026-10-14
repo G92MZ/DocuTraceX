@@ -22,15 +22,24 @@ body {
 
 .topbar {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  padding: 14px 20px;
+  padding: 12px 20px;
   background: var(--panel);
   border-bottom: 1px solid var(--panel-border);
 }
 
-.brand-mark { font-weight: 700; font-size: 18px; letter-spacing: 0.3px; }
-.brand-sub { margin-left: 10px; color: var(--text-dim); font-size: 13px; }
+.brand { display: flex; align-items: center; }
+.brand-logo { display: block; margin-right: 11px; }
+.brand-mark { font-weight: 700; font-size: 19px; letter-spacing: 0.3px; }
+.brand-x { color: var(--accent); }
+.brand-sub {
+  margin-left: 11px;
+  padding-left: 11px;
+  border-left: 1px solid var(--panel-border);
+  color: var(--text-dim);
+  font-size: 13px;
+}
 .version { color: var(--text-dim); font-size: 12px; }
 
 .tabs {
