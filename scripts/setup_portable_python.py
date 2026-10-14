@@ -96,6 +96,13 @@ def _portable_python() -> Path:
     raise SystemExit(f"Could not find the portable interpreter under {PY_DIR}")
 
 
+def _portable_present() -> bool:
+    for c in (PY_DIR / "python.exe", PY_DIR / "bin" / "python3", PY_DIR / "bin" / "python"):
+        if c.is_file():
+            return True
+    return False
+
+
 def install_python(version: str, force: bool) -> None:
     if PY_DIR.exists():
         if not force:
@@ -185,24 +192,53 @@ def verify() -> None:
     subprocess.run([str(py), "-c", code], check=False, env=env)
 
 
+def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
+    install_python(version, force)
+    install_deps()
+    if sys.platform.startswith("win"):
+        install_libmagic_windows()
+    verify()
+
+
+def ensure(version: str = DEFAULT_VERSION) -> bool:
+    """Provision the portable only if it is not there yet. Best-effort.
+
+    Returns True if the portable is present afterwards. Never raises: on failure
+    it logs and returns False so the app can still start (tools degraded).
+    """
+    if _portable_present():
+        print(f"[=] Portable Python already present at {PY_DIR}")
+        return True
+    print("[>] Portable Python not found — provisioning it now...")
+    try:
+        provision(version, force=False)
+        return _portable_present()
+    except SystemExit as exc:
+        print(f"[!] Provisioning stopped: {exc}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] Provisioning failed: {exc}")
+    print("[!] The app will still start, but analysis tools (e.g. libmagic) "
+          "will be unavailable until the portable is provisioned.")
+    return False
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Provision the portable Python runtime")
     ap.add_argument("--version", default=DEFAULT_VERSION, help="CPython X.Y (default 3.13)")
     ap.add_argument("--force", action="store_true", help="Reinstall even if present")
+    ap.add_argument("--ensure", action="store_true", help="Provision only if missing (used by run.py)")
     ap.add_argument("--libmagic-only", action="store_true", help="Only provision Windows libmagic")
     args = ap.parse_args()
 
     if args.libmagic_only:
         install_libmagic_windows()
         return
+    if args.ensure:
+        ensure(args.version)
+        return
 
-    install_python(args.version, args.force)
-    install_deps()
-    if sys.platform.startswith("win"):
-        install_libmagic_windows()
-    verify()
-    print("\n[+] Done. Restart the app so it picks up the portable interpreter:")
-    print("    python -m docutracex")
+    provision(args.version, args.force)
+    print("\n[+] Done. Start the app with:  python run.py   (or: python -m docutracex)")
 
 
 if __name__ == "__main__":

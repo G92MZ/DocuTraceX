@@ -26,23 +26,29 @@ La interfaz estará **íntegramente en inglés**, será **visual** y se basará 
 
 ```bash
 pip install -e ".[dev]"   # instala docutracex + dependencias de desarrollo
-python -m docutracex       # levanta el servidor en http://127.0.0.1:8000
+python run.py              # asegura el portable (lo crea si falta) y levanta el servidor
 pytest -q                  # ejecuta los tests
 ```
 
+`python -m docutracex` levanta solo la app (sin asegurar el portable), útil en desarrollo.
+
 Configurable por entorno: `DOCUTRACEX_HOST`, `DOCUTRACEX_PORT`, `DOCUTRACEX_LOG_LEVEL`.
 
-### Python portable (tools/)
+### Arquitectura de ejecución: app vs herramientas
 
-Para distribución, DocuTraceX corre sobre un **Python portable** en `tools\python\` (CPython **3.13**, la versión con mejor cobertura de ruedas hoy; preparado para añadir una 2ª versión si algún parser la necesita). Se provisiona con un comando:
+- **La app web corre sobre tu Python** (el que lanza `run.py`). Solo necesita las dependencias web (fastapi, uvicorn, jinja2, python-multipart).
+- **Las herramientas de análisis corren sobre un Python portable** en `tools\python\` (CPython **3.13**, la versión con mejor cobertura de ruedas hoy; preparado para una 2ª versión si algún parser la necesita). Ahí van libmagic (identificación) y los futuros parsers.
+
+`run.py` **asegura el portable al arrancar**: si no existe, ejecuta el provisionador; si existe, sigue. El provisionador también puede ejecutarse a mano:
 
 ```bash
-python scripts/setup_portable_python.py
+python scripts/setup_portable_python.py            # provisiona (descarga + instala)
+python scripts/setup_portable_python.py --ensure    # solo si falta (lo usa run.py)
 ```
 
-Descarga el build de **python-build-standalone** (Astral) para tu plataforma, lo extrae a `tools\python\`, instala la app y sus dependencias **dentro** de ese intérprete y, en Windows, provisiona además la **libmagic nativa** (`libmagic.dll` + `magic.mgc`) en `tools\libmagic\` extrayéndola del wheel `python-magic-bin` (sin depender de que ese paquete se instale en 3.13/3.14). La app localiza esa DLL (vía `add_dll_directory` + `MAGIC`) antes de importar `magic`.
+Descarga el build de **python-build-standalone** (Astral) para tu plataforma, lo extrae a `tools\python\`, instala las dependencias de herramientas **dentro** de ese intérprete y, en Windows, provisiona además la **libmagic nativa** (`libmagic.dll` + `magic.mgc`) en `tools\libmagic\` extrayéndola del wheel `python-magic-bin` (sin depender de que ese paquete se instale en 3.13/3.14). La identificación invoca libmagic **en el portable** por subproceso; la DLL se localiza con `add_dll_directory` + `MAGIC`.
 
-Al arrancar, la app comprueba sus dependencias **en el intérprete que realmente ejecutará las herramientas**: si hay Python portable en `tools\` (o `DOCUTRACEX_PYTHON`), el check se ejecuta *dentro* de ese intérprete por subproceso, no en el que lanzó la app. El resultado va al log, a `GET /api/diagnostics` y a la pestaña **Diagnostics** (indica qué intérprete se usa: portable vs sistema).
+La pestaña **Diagnostics** (y `GET /api/diagnostics`, y el log al arrancar) muestran por separado el **App interpreter** (tu Python) y el **Tools interpreter** (el portable), con el estado de las dependencias de cada uno.
 
 Ficheros de prueba (uno por tipo del alcance) en `samples/` — ver `samples/README.md`; se regeneran con `python scripts/make_samples.py`.
 

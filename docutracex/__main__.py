@@ -1,6 +1,8 @@
 """Entry point: ``python -m docutracex`` (or the ``docutracex`` script).
 
-Launches the local web server with uvicorn.
+The web app runs on the interpreter that launches it (your Python). The bundled
+analysis tools run on the portable Python under ``tools/`` — see run.py, which
+ensures the portable exists before starting the app.
 """
 
 from __future__ import annotations
