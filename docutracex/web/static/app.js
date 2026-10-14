@@ -214,6 +214,78 @@ const IOC_TYPE_LABEL = {
   url: "URL", domain: "Domain", ipv4: "IPv4", ipv6: "IPv6", hash_like: "Hash-like",
 };
 
+// Manual classification (Marks). Order shown in selectors.
+const MARK_STATES = [
+  { id: "unreviewed", label: "Unreviewed", cls: "muted" },
+  { id: "true_positive", label: "True positive", cls: "bad" },
+  { id: "suspicious", label: "Suspicious", cls: "warn" },
+  { id: "false_positive", label: "False positive", cls: "ok" },
+  { id: "informational", label: "Informational", cls: "muted" },
+];
+const MARK_LABEL = Object.fromEntries(MARK_STATES.map((s) => [s.id, s.label]));
+const MARK_CLS = Object.fromEntries(MARK_STATES.map((s) => [s.id, s.cls]));
+
+// The currently open case (shared by Components and Marks views).
+let _openCaseId = null;
+
+function markBadge(state) {
+  const cls = MARK_CLS[state] || "muted";
+  return `<span class="badge badge-${cls} mark-badge">${escapeHtml(MARK_LABEL[state] || state)}</span>`;
+}
+
+function markControlsHtml(f) {
+  const m = f.mark || { state: "unreviewed", comment: "", reviewed_utc: null };
+  if (!f.id) return markBadge(m.state);
+  const opts = MARK_STATES.map((s) =>
+    `<option value="${s.id}"${s.id === m.state ? " selected" : ""}>${escapeHtml(s.label)}</option>`).join("");
+  const date = m.reviewed_utc
+    ? `<span class="hint-line mark-date">reviewed ${escapeHtml(m.reviewed_utc)}</span>` : "";
+  return `<div class="mark-cell" data-fid="${escapeHtml(f.id)}">
+    ${markBadge(m.state)}
+    <select class="mark-select">${opts}</select>
+    <input class="mark-comment" type="text" placeholder="comment…" value="${escapeHtml(m.comment || "")}" />
+    ${date}
+  </div>`;
+}
+
+async function saveMark(cell, analysisId, onSaved) {
+  const fid = cell.getAttribute("data-fid");
+  const sel = cell.querySelector(".mark-select");
+  const comment = cell.querySelector(".mark-comment");
+  const state = sel ? sel.value : "unreviewed";
+  try {
+    const resp = await fetch(
+      `/api/cases/${encodeURIComponent(analysisId)}/marks/${encodeURIComponent(fid)}`,
+      { method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ state, comment: comment ? comment.value : "" }) });
+    if (!resp.ok) throw new Error("save failed");
+    const data = await resp.json();
+    const badge = cell.querySelector(".mark-badge");
+    if (badge) badge.outerHTML = markBadge(data.mark.state);
+    let date = cell.querySelector(".mark-date");
+    const txt = data.mark.reviewed_utc ? `reviewed ${data.mark.reviewed_utc}` : "";
+    if (date) date.textContent = txt;
+    else if (txt) cell.insertAdjacentHTML("beforeend", `<span class="hint-line mark-date">${escapeHtml(txt)}</span>`);
+    if (onSaved) onSaved(fid, data.mark);
+  } catch (err) {
+    const badge = cell.querySelector(".mark-badge");
+    if (badge) badge.insertAdjacentHTML("afterend", ' <span class="bad-text">save failed</span>');
+  }
+}
+
+function wireMarks(root, analysisId, onSaved) {
+  if (!analysisId) return;
+  root.querySelectorAll(".mark-cell").forEach((cell) => {
+    const sel = cell.querySelector(".mark-select");
+    const comment = cell.querySelector(".mark-comment");
+    if (sel) sel.addEventListener("change", () => saveMark(cell, analysisId, onSaved));
+    if (comment) {
+      comment.addEventListener("keydown", (e) => { if (e.key === "Enter") saveMark(cell, analysisId, onSaved); });
+      comment.addEventListener("blur", () => saveMark(cell, analysisId, onSaved));
+    }
+  });
+}
+
 function showTab(view) {
   document.querySelectorAll(".tab").forEach((t) =>
     t.classList.toggle("is-active", t.getAttribute("data-view") === view));
@@ -277,8 +349,9 @@ function paneFindings(findings) {
     <td class="mono">${escapeHtml(f.rule)}</td>
     <td>${escapeHtml(f.detail)}</td>
     <td class="mono">${escapeHtml(f.location)}</td>
+    <td>${markControlsHtml(f)}</td>
   </tr>`).join("");
-  return table(["Severity", "Source", "Rule", "Detail", "Location"], rows);
+  return table(["Severity", "Source", "Rule", "Detail", "Location", "Mark"], rows);
 }
 
 function paneIocs(iocs) {
@@ -477,10 +550,13 @@ function renderSubtabs() {
       renderSubtabs();
     });
   });
+  // Wire the mark controls present in the active pane (Findings).
+  wireMarks(bodyEl, _openCaseId);
 }
 
 async function openComponents(analysisId) {
   showTab("components");
+  _openCaseId = analysisId;
   const caseLine = document.getElementById("comp-case");
   const summary = document.getElementById("comp-summary");
   const bodyEl = document.getElementById("comp-body");
@@ -503,7 +579,9 @@ async function openComponents(analysisId) {
       bodyEl.innerHTML = `<p class="hint-line">No component analysis for this case yet.</p>`;
       return;
     }
-    const findings = collectFindings(mods, ooxml);
+    // Prefer the server's consolidated findings (stable ids + marks);
+    // fall back to the client-side collector for older cases.
+    const findings = (d.findings && d.findings.length) ? d.findings : collectFindings(mods, ooxml);
     const ni = (iocs && iocs.counts && iocs.counts.total) || 0;
     summary.textContent =
       `${(ooxml && ooxml.counts && ooxml.counts.components) || 0} parts · ${findings.length} findings · ${ni} IOCs`;
@@ -536,6 +614,69 @@ async function openComponents(analysisId) {
   }
 }
 
+// --- Marks view --------------------------------------------------------------
+let _marksFilter = "all";
+
+function marksTable(findings) {
+  if (!findings.length) return `<p class="hint-line">No findings match this filter.</p>`;
+  const rows = findings.map((f) => `<tr>
+    <td><span class="badge badge-${SEV_CLASS[f.severity] || "warn"}">${escapeHtml(f.severity)}</span></td>
+    <td>${escapeHtml(f.source)}</td>
+    <td class="mono">${escapeHtml(f.rule)}</td>
+    <td>${escapeHtml(f.detail)}</td>
+    <td class="mono">${escapeHtml(f.location)}</td>
+    <td>${markControlsHtml(f)}</td>
+  </tr>`).join("");
+  return table(["Severity", "Source", "Rule", "Detail", "Origin", "Mark"], rows);
+}
+
+async function loadMarks(analysisId) {
+  const summary = document.getElementById("marks-summary");
+  const caseLine = document.getElementById("marks-case");
+  const filters = document.getElementById("marks-filters");
+  const body = document.getElementById("marks-body");
+  if (!analysisId) {
+    caseLine.textContent = "";
+    filters.innerHTML = "";
+    summary.textContent = "";
+    body.innerHTML = `<p class="hint-line">Select a case in Overview to triage its findings.</p>`;
+    return;
+  }
+  caseLine.textContent = "Loading…";
+  try {
+    const d = await fetch(`/api/cases/${encodeURIComponent(analysisId)}/marks`).then((r) => r.json());
+    caseLine.innerHTML = `Case <span class="mono">${escapeHtml(d.analysis_id)}</span> · ${escapeHtml(d.filename || "")}`;
+    const c = d.counts || {};
+    const reviewed = c.reviewed || 0;
+    summary.textContent = `${reviewed}/${c.total || 0} reviewed`;
+    summary.className = "status " + (reviewed === (c.total || 0) ? "ok-text" : "");
+
+    // Filter chips: All + each state (with count) + orphans.
+    const chips = [{ id: "all", label: `All (${c.total || 0})` }].concat(
+      MARK_STATES.map((s) => ({ id: s.id, label: `${s.label} (${c[s.id] || 0})` })));
+    if ((d.orphans || []).length) chips.push({ id: "orphans", label: `Needs review (${d.orphans.length})` });
+    filters.innerHTML = chips.map((ch) =>
+      `<button class="subtab${ch.id === _marksFilter ? " is-active" : ""}" data-filter="${ch.id}">${escapeHtml(ch.label)}</button>`).join("");
+    filters.querySelectorAll(".subtab").forEach((btn) => {
+      btn.addEventListener("click", () => { _marksFilter = btn.getAttribute("data-filter"); loadMarks(analysisId); });
+    });
+
+    let shown = d.findings || [];
+    if (_marksFilter === "orphans") {
+      // Orphans are marks with no matching finding after re-analysis; surface
+      // the note (the findings themselves are gone, so list the ids).
+      body.innerHTML = `<p class="hint-line">${d.orphans.length} mark(s) no longer match a current finding (re-review): `
+        + `<span class="mono">${d.orphans.map(escapeHtml).join(", ")}</span></p>`;
+      return;
+    }
+    if (_marksFilter !== "all") shown = shown.filter((f) => (f.mark && f.mark.state) === _marksFilter);
+    body.innerHTML = marksTable(shown);
+    wireMarks(body, analysisId, () => loadMarks(analysisId));
+  } catch (err) {
+    body.innerHTML = `<p class="hint-line">Could not load marks.</p>`;
+  }
+}
+
 // --- Tab navigation ----------------------------------------------------------
 function setupTabs() {
   const tabs = document.querySelectorAll(".tab");
@@ -546,6 +687,7 @@ function setupTabs() {
       tabs.forEach((t) => t.classList.toggle("is-active", t === tab));
       views.forEach((v) => { v.hidden = v.getAttribute("data-view") !== target; });
       if (target === "diagnostics") loadDiagnostics();
+      if (target === "marks") loadMarks(_openCaseId);
     });
   });
 }

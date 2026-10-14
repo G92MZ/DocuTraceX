@@ -137,6 +137,15 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         write_subresult(paths, "iocs", ioc_result)
         overall_counts["iocs"] = ioc_result.get("counts", {}).get("total", 0)
 
+        # Consolidated findings with stable ids (source of truth for marks).
+        # Written separately; never touches marks.json.
+        from . import findings as findings_mod
+
+        consolidated = findings_mod.consolidate(modules)
+        write_subresult(paths, "findings", {"findings": consolidated,
+                                            "counts": {"total": len(consolidated)}})
+        overall_counts["findings"] = len(consolidated)
+
     # Update summary.json (fast-read view) and the manifest.
     summary = read_json(paths.summary) or {}
     summary["counts"] = overall_counts

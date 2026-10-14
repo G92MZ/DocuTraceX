@@ -76,9 +76,19 @@
       </section>
     </div>
 
-    <!-- Placeholder views -->
+    <!-- Marks -->
     <div class="view" data-view="marks" hidden>
-      <section class="panel"><h2>Marks</h2><p>Not implemented yet.</p></section>
+      <section class="panel">
+        <div class="diag-head">
+          <h2>Marks</h2>
+          <span id="marks-summary" class="status"></span>
+        </div>
+        <div id="marks-case" class="hint-line"></div>
+        <div id="marks-filters" class="subtabs"></div>
+        <div id="marks-body">
+          <p class="hint-line">Select a case in Overview to triage its findings.</p>
+        </div>
+      </section>
     </div>
     <div class="view" data-view="components" hidden>
       <section class="panel">
