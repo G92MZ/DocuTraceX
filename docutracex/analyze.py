@@ -61,7 +61,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 
         # Semantic parser for the specific Office app (Word/Excel/PowerPoint).
         declared_ext = manifest["original"].get("declared_extension", "")
-        sem = office.analyze(original, declared_ext)
+        sem = office.analyze(original, declared_ext, paths.extracted_dir)
         if sem is not None:
             module = sem["module"]
             write_subresult(paths, module, sem)
@@ -70,6 +70,17 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             if sem.get("status") == "error" and state != "error":
                 state = "partial"
             elif sem.get("findings") and state == "completed":
+                state = "partial"
+
+        # External tool: Excel 4.0 (XLM) macro deobfuscation — Excel only.
+        if sem is not None and sem.get("module") == "excel":
+            from .parsers import xlm
+
+            xlm_res = xlm.analyze(original)
+            write_subresult(paths, "xlmdeobf", xlm_res)
+            ran.append("xlmdeobf")
+            findings_total += xlm_res.get("counts", {}).get("findings", 0)
+            if xlm_res.get("findings") and state == "completed":
                 state = "partial"
 
         # External tools: the oletools suite (olevba, oleid, mraptor, msodde,

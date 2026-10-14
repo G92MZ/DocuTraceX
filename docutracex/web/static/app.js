@@ -255,6 +255,11 @@ function collectFindings(mods, ooxml) {
     severity: f.severity, source: "msoffcrypto", rule: f.rule,
     detail: f.detail || "", location: f.location || "document",
   }));
+  const xlm = mods.xlmdeobf;
+  if (xlm) (xlm.findings || []).forEach((f) => out.push({
+    severity: f.severity, source: "xlmdeobf", rule: f.rule,
+    detail: f.detail || "", location: f.location || "xlm",
+  }));
   out.sort((a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9));
   return out;
 }
@@ -313,7 +318,7 @@ function paneMetadata(sem, ole) {
   return html || `<p class="hint-line">No metadata.</p>`;
 }
 
-function paneContent(sem, ole) {
+function paneContent(sem, ole, xlm) {
   let html = "";
   if (sem && sem.text_sample) {
     html += `<p class="hint-line">Reconstructed text (sample)</p>
@@ -331,10 +336,15 @@ function paneContent(sem, ole) {
         <pre class="text-sample">${escapeHtml(code)}</pre>`;
     });
   }
+  if (xlm && xlm.xlm_macros) {
+    const formulas = xlm.formulas || [];
+    html += `<p class="hint-line">Excel 4.0 (XLM) macros — ${formulas.length} deobfuscated formula(s)</p>
+      <pre class="text-sample">${escapeHtml(formulas.join("\n").slice(0, 8000))}</pre>`;
+  }
   return html || `<p class="hint-line">No reconstructed content.</p>`;
 }
 
-function paneTools(ole, crypto) {
+function paneTools(ole, crypto, xlm) {
   const rows = [];
   const add = (name, status, detail) => rows.push(`<tr>
     <td class="file">${escapeHtml(name)}</td>
@@ -364,6 +374,15 @@ function paneTools(ole, crypto) {
       ? (crypto.decrypted ? `decrypted with '${crypto.decrypted_password}'` : "encrypted; no default password worked")
       : (crypto.error ? "not applicable" : "");
     add("msoffcrypto", st, detail);
+  }
+  if (xlm && xlm.available) {
+    const st = xlm.xlm_macros
+      ? '<span class="badge badge-bad">XLM macros</span>'
+      : '<span class="badge badge-ok">no XLM</span>';
+    const detail = xlm.error
+      ? xlm.error
+      : (xlm.xlm_macros ? `${(xlm.formulas || []).length} deobfuscated formula(s)` : "no Excel 4.0 macros");
+    add("XLMMacroDeobfuscator", st, detail);
   }
   if (!rows.length) return `<p class="hint-line">No external tools run.</p>`;
   return table(["Tool", "Status", "Detail"], rows.join(""));
@@ -457,6 +476,7 @@ async function openComponents(analysisId) {
     const sem = mods.word || mods.excel || mods.powerpoint;
     const ole = mods.oletools;
     const crypto = mods.msoffcrypto;
+    const xlm = mods.xlmdeobf;
     const didier = mods.didier;
     const iocs = d.iocs;
     if (!ooxml && !sem && !ole) {
@@ -473,11 +493,13 @@ async function openComponents(analysisId) {
     const sections = [];
     sections.push({ id: "findings", label: `Findings (${findings.length})`, html: paneFindings(findings) });
     sections.push({ id: "iocs", label: `IOCs (${ni})`, html: paneIocs(iocs) });
-    if (ole || crypto) sections.push({ id: "tools", label: "Tools", html: paneTools(ole, crypto) });
+    if (ole || crypto || (xlm && xlm.available)) {
+      sections.push({ id: "tools", label: "Tools", html: paneTools(ole, crypto, xlm) });
+    }
     if (didier && didier.available) sections.push({ id: "didier", label: "Didier", html: paneDidier(didier) });
-    if (sem || (ole && ole.available)) {
+    if (sem || (ole && ole.available) || (xlm && xlm.xlm_macros)) {
       sections.push({ id: "metadata", label: "Metadata", html: paneMetadata(sem, ole) });
-      sections.push({ id: "content", label: "Content", html: paneContent(sem, ole) });
+      sections.push({ id: "content", label: "Content", html: paneContent(sem, ole, xlm) });
     }
     if (ooxml) {
       sections.push({ id: "relationships", label: `Relationships (${(ooxml.relationships || []).length})`, html: paneRelationships(ooxml.relationships) });

@@ -75,6 +75,43 @@ def test_excel_webservice_and_hidden_sheet(tmp_path: Path) -> None:
     assert "hidden_sheet" in rules
 
 
+def test_excel_unhide_produces_visible_copy(tmp_path: Path) -> None:
+    wb = (
+        '<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<sheets><sheet name="Visible" sheetId="1"/>'
+        '<sheet name="Secret" sheetId="2" state="veryHidden"/>'
+        '<sheet name="Shy" sheetId="3" state="hidden"/></sheets></workbook>'
+    )
+    pkg = tmp_path / "m.xlsm"
+    _zip(pkg, {"[Content_Types].xml": CT_BASE, "xl/workbook.xml": wb})
+    extracted = tmp_path / "extracted"
+    res = office.analyze(pkg, ".xlsm", extracted)
+    rules = {f["rule"] for f in res["findings"]}
+    assert "hidden_sheets_unhidden" in rules
+    rel = res["unhidden_copy"]
+    assert rel
+    copy = extracted.parent / rel
+    assert copy.is_file()
+    import re as _re
+    wb_out = zipfile.ZipFile(copy).read("xl/workbook.xml").decode("utf-8")
+    assert not _re.search(r'state="(hidden|veryHidden)"', wb_out)
+    # The de-hidden package is still a valid OOXML zip.
+    assert zipfile.is_zipfile(copy)
+
+
+def test_excel_no_unhide_without_hidden_sheets(tmp_path: Path) -> None:
+    wb = (
+        '<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<sheets><sheet name="Visible" sheetId="1"/></sheets></workbook>'
+    )
+    pkg = tmp_path / "m.xlsx"
+    _zip(pkg, {"[Content_Types].xml": CT_BASE, "xl/workbook.xml": wb})
+    res = office.analyze(pkg, ".xlsx", tmp_path / "extracted")
+    assert "unhidden_copy" not in res
+    rules = {f["rule"] for f in res["findings"]}
+    assert "hidden_sheets_unhidden" not in rules
+
+
 def test_powerpoint_text_and_slides(tmp_path: Path) -> None:
     slide = (
         '<?xml version="1.0"?><p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"'

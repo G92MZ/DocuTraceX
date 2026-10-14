@@ -165,6 +165,30 @@ _EXCEL_FUNC_KEYWORDS = {
     "HYPERLINK": ("hyperlink_fn", "low"),
 }
 
+# Matches a sheet's state="hidden"/"veryHidden" attribute in xl/workbook.xml.
+_SHEET_STATE_ATTR = re.compile(rb'\s+state="(?:hidden|veryHidden)"')
+
+
+def _unhide_xlsx(src: Path, dest: Path) -> int:
+    """Write a copy of *src* to *dest* with every hidden/very-hidden sheet made
+    visible (the ``state`` attribute is stripped, so sheets default to visible).
+    Returns the number of sheet-state attributes removed. Rebuilds the package
+    byte-for-byte except for xl/workbook.xml. Reference: Bontchev's unhide gist.
+    """
+    with zipfile.ZipFile(src) as zin:
+        wb = zin.read("xl/workbook.xml")
+        items = zin.infolist()
+        contents = {it.filename: zin.read(it.filename) for it in items}
+
+    new_wb, removed = _SHEET_STATE_ATTR.subn(b"", wb)
+    contents["xl/workbook.xml"] = new_wb
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as zout:
+        for it in items:
+            zout.writestr(it, contents[it.filename])
+    return removed
+
 
 def _analyze_excel(zf: zipfile.ZipFile) -> dict[str, Any]:
     findings: list[dict] = []
@@ -264,7 +288,29 @@ def _analyze_powerpoint(zf: zipfile.ZipFile) -> dict[str, Any]:
 _ANALYZERS = {"word": _analyze_word, "excel": _analyze_excel, "powerpoint": _analyze_powerpoint}
 
 
-def analyze(original_path: Path, declared_ext: str) -> dict[str, Any] | None:
+def _maybe_unhide(original_path: Path, result: dict[str, Any],
+                  extracted_dir: Path | None) -> None:
+    """If the workbook has hidden sheets and we have somewhere to write, produce
+    an unhidden copy and record it as a finding (the de-hidden artifact)."""
+    hidden = result.get("hidden_sheets") or []
+    if not hidden or extracted_dir is None:
+        return
+    try:
+        dest = extracted_dir / "unhidden" / (original_path.stem + ".unhidden.xlsx")
+        removed = _unhide_xlsx(original_path, dest)
+        rel = dest.relative_to(extracted_dir.parent).as_posix()
+        result["unhidden_copy"] = rel
+        result.setdefault("findings", []).append(
+            _finding("hidden_sheets_unhidden", "medium",
+                     f"Produced an unhidden copy with {removed} sheet(s) revealed: {rel}",
+                     "xl/workbook.xml"))
+    except Exception as exc:  # noqa: BLE001
+        result.setdefault("findings", []).append(
+            _finding("unhide_failed", "low", f"Could not unhide sheets: {exc}", "xl/workbook.xml"))
+
+
+def analyze(original_path: Path, declared_ext: str,
+            extracted_dir: Path | None = None) -> dict[str, Any] | None:
     """Run the semantic parser matching the extension. Returns the sub-result
     (module name is the office app), or None if the extension has no semantic
     parser yet (e.g. .xlsb)."""
@@ -280,6 +326,9 @@ def analyze(original_path: Path, declared_ext: str) -> dict[str, Any] | None:
         result["metadata"] = _parse_metadata(zf)
         result["vba"] = _detect_vba(zf)
         result.update(_ANALYZERS[app](zf))
+
+    if app == "excel":
+        _maybe_unhide(original_path, result, extracted_dir)
 
     if result["vba"]["present"]:
         result.setdefault("findings", []).append(

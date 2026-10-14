@@ -67,7 +67,10 @@ Los **hallazgos** los produce código propio (`docutracex/parsers/`, `docutracex
 | **oletools** · `msodde` | Enlaces DDE peligrosos | Office |
 | **oletools** · `oleobj` | Extrae objetos OLE incrustados | Office |
 | **msoffcrypto-tool** | Detecta Office cifrado y descifra con password por defecto (`VelvetSweatshop` → evasión) | Office cifrado |
+| **XLMMacroDeobfuscator** | Detecta y desofusca macros Excel 4.0 (XLM) en hojas ocultas; las fórmulas alimentan el extractor de IOC | Excel |
 | **Didier Stevens** · `oledump` / `zipdump` | Volcado de streams OLE / entradas ZIP (salida cruda) | Office/OLE |
+
+Además, el parser de Excel **desoculta las hojas** `hidden`/`veryHidden`: genera una copia con las hojas visibles en `extracted/unhidden/` y lo registra como *finding* (sin tocar el original).
 
 Las de Didier Stevens (`tools/didier/`) se descargan al provisionar el portable (en tu equipo, con salida a GitHub). Si faltan, se omiten sin romper nada (se ve en Diagnostics → *External scripts*).
 
