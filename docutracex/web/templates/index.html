@@ -26,6 +26,19 @@
   </nav>
 
   <main class="content">
+    <section class="panel" id="diag-panel">
+      <div class="diag-head">
+        <h2>Environment</h2>
+        <span id="diag-summary" class="status"></span>
+      </div>
+      <table class="cases" id="diag-table">
+        <thead>
+          <tr><th>Dependency</th><th>Purpose</th><th>Version</th><th>Status</th></tr>
+        </thead>
+        <tbody id="diag-body"></tbody>
+      </table>
+    </section>
+
     <section class="panel">
       <h1>New analysis</h1>
       <p>Upload a file to open a case. The original is stored unmodified and hashed; no content is executed.</p>
