@@ -16,6 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from . import structure
 from .logging_config import get_logger
 
 log = get_logger(__name__)
@@ -101,11 +102,29 @@ def detected_family(mime: str, description: str) -> str | None:
     return None
 
 
-def classify_discrepancy(declared_ext: str, mime: str, description: str) -> dict[str, Any]:
-    """Compare declared extension vs detected type at the family level."""
+def classify_discrepancy(
+    declared_ext: str,
+    mime: str,
+    description: str,
+    structural_family: str | None = None,
+) -> dict[str, Any]:
+    """Compare declared extension vs detected type at the family level.
+
+    ``structural_family`` is strong evidence from a structural recognizer (e.g.
+    EMLX) and, when it matches the declared extension's family, confirms the
+    type even if libmagic only saw generic text.
+    """
     ext = (declared_ext or "").lower()
     exp = _EXT_FAMILY.get(ext)
     det = detected_family(mime, description)
+
+    if exp is not None and structural_family is not None and structural_family == exp:
+        return {
+            "status": _MATCH,
+            "detail": "Confirmed by structural signature.",
+            "declared_family": exp,
+            "detected_family": structural_family,
+        }
 
     if exp is None:
         status, detail = _UNKNOWN, "Extension not in the analysis scope."
@@ -146,12 +165,22 @@ def identify(path: Path, declared_ext: str = "") -> dict[str, Any]:
         "name": None,
         "error": None,
         "discrepancy": None,
+        "structural": None,
     }
+
+    # Structural recognizer (bounded read) for formats without a leading magic
+    # number, e.g. EMLX. Runs regardless of libmagic availability.
+    structural = structure.recognize(path, declared_ext)
+    result["structural"] = structural
+    structural_family = structural["family"] if structural else None
+
     try:
         import magic  # type: ignore
     except Exception as exc:  # noqa: BLE001
         result["error"] = f"libmagic unavailable: {exc}"
         log.warning("libmagic not available: %s", exc)
+        # Still classify from structure alone if we have it.
+        result["discrepancy"] = classify_discrepancy(declared_ext, "", "", structural_family)
         return result
 
     try:
@@ -167,6 +196,6 @@ def identify(path: Path, declared_ext: str = "") -> dict[str, Any]:
         tool_version=_libmagic_version(),
         mime=mime,
         name=name,
-        discrepancy=classify_discrepancy(declared_ext, mime, name),
+        discrepancy=classify_discrepancy(declared_ext, mime, name, structural_family),
     )
     return result
