@@ -185,3 +185,15 @@ table.cases td.mono { word-break: break-all; }
 .ok-text { color: #5fd38b; }
 .bad-text { color: #e8795a; }
 .hint-line { color: var(--text-dim); font-size: 12px; margin-top: 3px; }
+.text-sample {
+  background: #0b0e12;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 12px;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  color: var(--text);
+}

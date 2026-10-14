@@ -49,10 +49,15 @@ async def get_components(analysis_id: str) -> dict:
     except CaseError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     paths = CasePaths(analysis_id)
-    ooxml = read_json(paths.subresult("ooxml"))
+    ran = (manifest.get("analysis") or {}).get("modules_run", [])
+    modules: dict = {}
+    for module in ran:
+        data = read_json(paths.subresult(module))
+        if data is not None:
+            modules[module] = data
     return {
         "analysis_id": analysis_id,
         "filename": manifest["original"]["filename"],
         "state": manifest.get("state"),
-        "modules": {"ooxml": ooxml} if ooxml else {},
+        "modules": modules,
     }
