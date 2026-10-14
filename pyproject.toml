@@ -26,6 +26,9 @@ dependencies = [
     "msoffcrypto-tool>=5.1",
     # Excel 4.0 (XLM) macro deobfuscation (hidden macro sheets, evasion).
     "XLMMacroDeobfuscator>=0.2.7",
+    # PDF static analysis: structure/embedded files (pypdf) and text (pdfminer).
+    "pypdf>=5.0",
+    "pdfminer.six>=20231228",
 ]
 
 [project.optional-dependencies]

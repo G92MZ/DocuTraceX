@@ -85,7 +85,7 @@ def consolidate(modules: dict[str, Any]) -> list[dict[str, Any]]:
 
     for mod_name, source in (("msoffcrypto", "msoffcrypto"), ("xlmdeobf", "xlmdeobf"),
                              ("officemalscanner", "officemalscanner"),
-                             ("attachments", "attachments")):
+                             ("pdf", "pdf"), ("nested", "nested")):
         mod = modules.get(mod_name)
         if not mod:
             continue

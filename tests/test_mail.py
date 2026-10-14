@@ -143,9 +143,9 @@ def test_sample_emails_have_findings(tmp_path: Path, name: str, ext: str) -> Non
 
 @has_samples
 @pytest.mark.parametrize("name", ["sample.eml", "sample.msg"])
-def test_third_party_tools_scan_email_attachments(tmp_path: Path, name: str) -> None:
-    """oletools (msodde) runs over the extracted .docm attachment and the DDE
-    finding reaches the consolidated view; the case state is 'completed'."""
+def test_recursive_attachment_scan(tmp_path: Path, name: str) -> None:
+    """The .docm attachment is scanned recursively; msodde's DDE finding reaches
+    the consolidated view and the case state is 'completed'."""
     from docutracex import analyze, cases
     from docutracex.storage import CasePaths, read_json
 
@@ -154,13 +154,14 @@ def test_third_party_tools_scan_email_attachments(tmp_path: Path, name: str) -> 
     cid = manifest["analysis_id"]
     summary = analyze.analyze_case(tmp_path / cid)
     assert summary["state"] == "completed"  # no more "partial"
-    assert "attachments" in summary["modules_run"]
+    assert "nested" in summary["modules_run"]
 
     paths = CasePaths(cid, cases_dir=tmp_path)
-    att = read_json(paths.subresult("attachments"))
-    assert any("report.docm" in s["filename"] for s in att["scanned"])
-    assert any(f["tool"] == "msodde" and f["rule"] == "dde_link" for f in att["findings"])
+    nested = read_json(paths.subresult("nested"))
+    docm = next(n for n in nested["tree"] if "report.docm" in n["filename"])
+    assert docm["kind"] == "ooxml"
+    assert any(f["tool"] == "msodde" and f["rule"] == "dde_link" for f in docm["findings"])
 
-    # The third-party finding is in the consolidated findings (source msodde).
+    # The nested third-party finding is in the consolidated findings.
     consolidated = read_json(paths.subresult("findings"))["findings"]
     assert any(f["source"] == "msodde" for f in consolidated)

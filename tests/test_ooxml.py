@@ -67,7 +67,9 @@ def test_external_relationship_flagged(tmp_path: Path) -> None:
 
 @samples_needed
 def test_not_a_zip_is_error(tmp_path: Path) -> None:
-    res = ooxml.analyze(SAMPLES / "sample.pdf", tmp_path / "extracted")
+    not_zip = tmp_path / "plain.bin"
+    not_zip.write_bytes(b"this is definitely not a zip package")
+    res = ooxml.analyze(not_zip, tmp_path / "extracted")
     assert res["status"] == "error"
     assert any(a["kind"] == "not_a_zip" for a in res["anomalies"])
 

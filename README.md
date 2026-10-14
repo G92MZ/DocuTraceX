@@ -72,7 +72,9 @@ Los **hallazgos** los produce código propio (`docutracex/parsers/`, `docutracex
 | **OfficeMalScanner** (opcional, Windows) | Shellcode / objetos embebidos (`scan brute`) + estructura VBA/OLE (`info`); en OOXML hace `inflate` y analiza los `vbaProject.bin` | Office OLE y OOXML |
 | **Parser de correo propio** | `.eml`/`.emlx` (stdlib `email`) y `.msg` (MAPI sobre `olefile`, sin GPL); cadena `Received` con Δt, auth SPF/DKIM/DMARC (leído, sin DNS), spoofing (From/Return-Path/Reply-To/display-name), adjuntos (hash + libmagic + extensión peligrosa/doble) | Correo |
 | **Didier Stevens** · `emldump` / `oledump` | Volcado MIME del `.eml` / streams OLE del `.msg` (salida cruda) | Correo |
-| **oletools sobre adjuntos** | Cada adjunto Office/OLE del correo se escanea con olevba/oleid/msodde/mraptor/oleobj; sus hallazgos (p. ej. DDE del `.docm` adjunto) entran en la vista unificada con su herramienta de origen | Correo |
+| **Parser PDF propio** | Escaneo raw robusto de tokens peligrosos (/OpenAction, /JavaScript, /JS, /Launch, /EmbeddedFile, /XFA, /URI, /AA, /AcroForm, /RichMedia, /ObjStm, /JBIG2Decode, /Encrypt), nombres hex-ofuscados, updates incrementales; extracción de URIs, ficheros embebidos (pypdf) y texto (pdfminer) | PDF |
+| **Didier Stevens** · `pdfid` / `pdf-parser` | Recuento de keywords y volcado profundo de objetos (salida cruda) | PDF |
+| **Análisis recursivo (nested)** | Lo que se extrae (adjuntos de correo, objetos OLE embebidos, ficheros embebidos en PDF) se analiza en cadena con las herramientas de su familia, hasta cierta profundidad; los hallazgos del hijo (p. ej. DDE de un `.docm` dentro de un PDF) suben a la vista unificada con su ruta | Todas |
 
 Las cosas extraídas (adjuntos, objetos OLE, medios, copias desocultadas) tienen botones **📁 Folder** (abre la carpeta contenedora en el explorador del sistema — herramienta local) y **↓** (descarga), con validación de ruta dentro del caso.
 

@@ -32,60 +32,6 @@ def _family(manifest: dict[str, Any]) -> str | None:
     return disc.get("declared_family")
 
 
-# Attachment types worth deep-scanning with the Office third-party tools.
-_SCANNABLE_EXT = {
-    ".doc", ".dot", ".docx", ".docm", ".dotx", ".dotm",
-    ".xls", ".xlt", ".xla", ".xlsx", ".xlsm", ".xltx", ".xltm", ".xlam", ".xlsb",
-    ".ppt", ".pot", ".pptx", ".pptm", ".potx", ".potm", ".ppsx", ".ppsm", ".ppam",
-    ".rtf", ".vbs", ".zip",
-}
-_SCANNABLE_MIME = ("officedocument", "msword", "ms-excel", "ms-powerpoint",
-                   "vnd.ms-", "application/zip", "cdfv2", "composite")
-
-
-def _scan_attachments(mail_res: dict[str, Any] | None, paths: CasePaths) -> dict[str, Any]:
-    """Run the oletools suite over each extracted Office/OLE attachment.
-
-    This is where third-party tools 'pull things out' of an email: macros
-    (olevba), DDE (msodde), suspicious indicators (oleid), macro verdict
-    (mraptor) and embedded objects (oleobj) — each finding tagged with the
-    attachment it came from.
-    """
-    result: dict[str, Any] = {"module": "attachments", "scanned": [], "findings": [],
-                              "status": "ok"}
-    if not mail_res:
-        result["counts"] = {"findings": 0}
-        return result
-    from .parsers import oletools_suite
-
-    for att in mail_res.get("attachments", []) or []:
-        rel = att.get("stored_path")
-        name = att.get("filename", "")
-        if not rel:
-            continue
-        ext = ("." + name.lower().rsplit(".", 1)[1]) if "." in name else ""
-        mime = (att.get("detected_mime") or "").lower()
-        if ext not in _SCANNABLE_EXT and not any(m in mime for m in _SCANNABLE_MIME):
-            continue
-        att_path = paths.root / rel
-        if not att_path.is_file():
-            continue
-        sub = oletools_suite.analyze(att_path, paths.extracted_dir / "attachments")
-        entry = {"filename": name, "available": sub.get("available"),
-                 "findings": len(sub.get("findings", []))}
-        result["scanned"].append(entry)
-        for f in sub.get("findings", []) or []:
-            result["findings"].append({
-                "tool": f.get("tool", "oletools"),
-                "rule": f.get("rule", ""),
-                "severity": f.get("severity", "info"),
-                "detail": f"[{name}] {f.get('detail', '')}",
-                "location": f"attachment:{name}",
-            })
-    result["counts"] = {"findings": len(result["findings"])}
-    if result["findings"]:
-        result["status"] = "ok_with_findings"
-    return result
 
 
 def analyze_case(case_root: Path) -> dict[str, Any]:
@@ -174,6 +120,47 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             findings_total += oms_res.get("counts", {}).get("findings", 0)
             if oms_res.get("findings") and state == "completed":
                 state = "completed"
+
+        # Recursion: analyze embedded OLE objects (oleobj) with their own tools.
+        from . import nested
+
+        items = [{"path": str(paths.root / o["stored_path"]),
+                  "filename": Path(o["stored_path"]).name}
+                 for o in ole_res.get("tools", {}).get("oleobj", {}).get("objects", []) or []
+                 if o.get("stored_path")]
+        if items:
+            nested_res = nested.scan_children(items, paths)
+            if nested_res.get("tree"):
+                write_subresult(paths, "nested", nested_res)
+                ran.append("nested")
+                findings_total += nested_res.get("counts", {}).get("findings", 0)
+    elif family == "pdf":
+        # PDF family: our raw-scan parser + Didier pdfid/pdf-parser + recursion.
+        from . import nested
+        from .parsers import didier
+        from .parsers import pdf as pdf_parser
+
+        pdf_res = pdf_parser.analyze(original, paths.extracted_dir)
+        write_subresult(paths, "pdf", pdf_res)
+        ran.append("pdf")
+        overall_counts["components"] = len(pdf_res.get("embedded", []))
+        findings_total += pdf_res.get("counts", {}).get("findings", 0)
+        if pdf_res.get("status") == "error":
+            state = "error"
+
+        didier_res = didier.analyze(original, "pdf")
+        if didier_res.get("available"):
+            write_subresult(paths, "didier", didier_res)
+            ran.append("didier")
+
+        items = [{"path": str(paths.root / e["stored_path"]), "filename": e.get("filename")}
+                 for e in pdf_res.get("embedded", []) or [] if e.get("stored_path")]
+        if items:
+            nested_res = nested.scan_children(items, paths)
+            if nested_res.get("tree"):
+                write_subresult(paths, "nested", nested_res)
+                ran.append("nested")
+                findings_total += nested_res.get("counts", {}).get("findings", 0)
     elif family == "email" or manifest["original"].get("declared_extension", "").lower() == ".msg":
         # Email family: .eml/.emlx (RFC 822) and .msg (Outlook MAPI/OLE).
         from .parsers import didier, mail
@@ -203,12 +190,18 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             if ole_res.get("findings") and state == "completed":
                 state = "completed"
 
-        # Deep scan of each extracted attachment with the third-party tools.
-        att_res = _scan_attachments(mail_res, paths)
-        if att_res.get("findings") or att_res.get("scanned"):
-            write_subresult(paths, "attachments", att_res)
-            ran.append("attachments")
-            findings_total += att_res.get("counts", {}).get("findings", 0)
+        # Recursive deep scan of each attachment (and their children) with the
+        # family-appropriate third-party tools.
+        from . import nested
+
+        items = [{"path": str(paths.root / a["stored_path"]), "filename": a.get("filename")}
+                 for a in (mail_res.get("attachments", []) if mail_res else [])
+                 if a.get("stored_path")]
+        nested_res = nested.scan_children(items, paths)
+        if nested_res.get("tree"):
+            write_subresult(paths, "nested", nested_res)
+            ran.append("nested")
+            findings_total += nested_res.get("counts", {}).get("findings", 0)
 
         # External scripts: emldump (MIME) for .eml, oledump (OLE streams) for .msg.
         didier_family = "ole" if declared_ext.lower() == ".msg" else "email"
@@ -264,9 +257,9 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 
 # Modules that can be re-run in isolation over an existing case.
 _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto",
-               "xlmdeobf", "officemalscanner", "didier", "email")
+               "xlmdeobf", "officemalscanner", "didier", "email", "pdf")
 # Modules whose findings feed the consolidated view (includes derived ones).
-_COLLECTABLE = _RERUNNABLE + ("attachments",)
+_COLLECTABLE = _RERUNNABLE + ("nested",)
 
 
 def _collect_modules(paths: CasePaths) -> dict[str, Any]:
@@ -338,6 +331,9 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
     elif module == "email":
         from .parsers import mail
         res = mail.analyze(original, declared_ext, ed)
+    elif module == "pdf":
+        from .parsers import pdf as pdf_parser
+        res = pdf_parser.analyze(original, ed)
     else:  # pragma: no cover
         raise ValueError(module)
 

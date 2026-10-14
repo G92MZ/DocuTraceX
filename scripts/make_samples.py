@@ -279,21 +279,44 @@ def make_cfb(path: Path) -> None:
 
 
 def make_pdf(path: Path) -> None:
-    objs = [
-        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    """A deliberately suspicious (benign) PDF: auto-run JavaScript, a Launch
+    action, a /URI, and a real embedded file (the macro .docm) so the recursive
+    scan has something to pull out."""
+    embedded = _docm_bytes()
+    objs: list[bytes] = [
+        # 1: Catalog — auto-runs JS on open, holds the embedded-files name tree.
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R /OpenAction 5 0 R "
+        b"/AA << /WC 6 0 R >> /Names << /EmbeddedFiles 7 0 R >> >>\nendobj\n",
         b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
-        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n",
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/AA << /O 6 0 R >> >>\nendobj\n",
+        # 4: a URI action pointing at an external host.
+        b"4 0 obj\n<< /Type /Action /S /URI /URI (http://evil.example/pdf) >>\nendobj\n",
+        # 5: JavaScript action (OpenAction target).
+        b"5 0 obj\n<< /Type /Action /S /JavaScript /JS "
+        b"(app.alert\\('owned'\\); this.exportDataObject\\({cName:'report.docm'}\\);) >>\nendobj\n",
+        # 6: Launch action (spawn a program).
+        b"6 0 obj\n<< /Type /Action /S /Launch /Win << /F (cmd.exe) /P (/c calc.exe) >> "
+        b"/Next 4 0 R >>\nendobj\n",
+        # 7: EmbeddedFiles name tree -> 8 (filespec).
+        b"7 0 obj\n<< /Names [ (report.docm) 8 0 R ] >>\nendobj\n",
+        # 8: Filespec -> 9 (embedded file stream).
+        b"8 0 obj\n<< /Type /Filespec /F (report.docm) /EF << /F 9 0 R >> >>\nendobj\n",
+        # 9: the embedded file stream.
+        b"9 0 obj\n<< /Type /EmbeddedFile /Length " + str(len(embedded)).encode()
+        + b" >>\nstream\n" + embedded + b"\nendstream\nendobj\n",
     ]
-    out = bytearray(b"%PDF-1.7\n")
+    out = bytearray(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")
     offsets = [0]
     for obj in objs:
         offsets.append(len(out))
         out += obj
     xref_pos = len(out)
-    out += b"xref\n0 4\n0000000000 65535 f \n"
+    n = len(objs) + 1
+    out += f"xref\n0 {n}\n".encode() + b"0000000000 65535 f \n"
     for off in offsets[1:]:
         out += f"{off:010d} 00000 n \n".encode()
-    out += b"trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n"
+    out += f"trailer\n<< /Size {n} /Root 1 0 R >>\nstartxref\n".encode()
     out += f"{xref_pos}\n".encode() + b"%%EOF\n"
     path.write_bytes(out)
 
