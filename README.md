@@ -198,24 +198,24 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 ### Office moderno — Word, Excel y PowerPoint
 
 **Word (.docx/.docm/.dotx/.dotm)**
-- [ ] Reconstruir párrafos, tablas, encabezados/pies, enlaces, comentarios, notas, cuadros de texto/formas
-- [ ] Campos, texto oculto y revisiones recuperables; metadatos core/app/personalizados
-- [ ] Plantillas adjuntas y relaciones externas
-- [ ] Detección de HYPERLINK, INCLUDETEXT, INCLUDEPICTURE, DDE/DDEAUTO
-- [ ] Inventario de `vbaProject.bin`/VBA; extracción de objetos y medios
+- [ ] Reconstruir párrafos, tablas, encabezados/pies, enlaces, comentarios, notas, cuadros de texto/formas — *parcial: texto de document + headers/footers; falta estructura (tablas, comentarios, notas)*
+- [ ] Campos, texto oculto y revisiones recuperables; metadatos core/app/personalizados — *parcial: metadatos core/app y campos; falta texto oculto/revisiones*
+- [ ] Plantillas adjuntas y relaciones externas *(relaciones externas vía motor OOXML)*
+- [x] Detección de HYPERLINK, INCLUDETEXT, INCLUDEPICTURE, DDE/DDEAUTO (en field codes)
+- [ ] Inventario de `vbaProject.bin`/VBA; extracción de objetos y medios — *parcial: presencia de VBA detectada; medios vía motor OOXML; falta extraer/inspeccionar el VBA*
 
 **Excel (.xlsx/.xlsm/.xltx/.xltm/.xlam)**
-- [ ] Inventario de libro, hojas, relaciones y visibilidad; shared strings y estilos
-- [ ] Celdas con coordenadas: fórmula y valor en caché separados (nunca ejecutar/recalcular)
+- [ ] Inventario de libro, hojas, relaciones y visibilidad; shared strings y estilos — *parcial: hojas + visibilidad hidden/veryHidden; falta shared strings/estilos/relaciones completas*
+- [ ] Celdas con coordenadas: fórmula y valor en caché separados (nunca ejecutar/recalcular) — *pendiente (reconstrucción de celdas)*
 - [ ] Fórmulas compartidas/matriciales, nombres definidos, tablas, filtros, áreas de impresión, comentarios
-- [ ] Gráficos, conexiones, consultas, enlaces externos, cachés de dinámicas, `calcChain`
-- [ ] Patrones estáticos sospechosos (HYPERLINK, WEBSERVICE, FILTERXML, indirección, ofuscación); VBA y objetos; hojas hidden/veryHidden
+- [ ] Gráficos, conexiones, consultas, enlaces externos, cachés de dinámicas, `calcChain` — *parcial: detecta partes de enlaces externos*
+- [x] Patrones estáticos sospechosos (WEBSERVICE, FILTERXML, HYPERLINK), hojas hidden/veryHidden y VBA *(indirección/ofuscación pendientes)*
 
 **PowerPoint (.pptx/.pptm/.potx/.potm/.ppsx/.ppsm/.ppam/.sldx/.sldm)**
-- [ ] Inventario de diapositivas, layouts, masters y relaciones
-- [ ] Reconstrucción de texto/formas y orden aproximado; notas y comentarios
+- [ ] Inventario de diapositivas, layouts, masters y relaciones — *parcial: recuento de diapositivas y notas; falta layouts/masters*
+- [ ] Reconstrucción de texto/formas y orden aproximado; notas y comentarios — *parcial: texto de diapositivas; falta orden/formas/comentarios*
 - [ ] Acciones, hipervínculos, medios, gráficos y diagramas; elementos ocultos
-- [ ] Relaciones externas, OLE, ActiveX y VBA; extracción segura con procedencia
+- [ ] Relaciones externas, OLE, ActiveX y VBA; extracción segura con procedencia — *parcial: VBA y relaciones externas vía motor OOXML*
 
 *Aceptación: vistas marcadas como reconstrucción, no clon; texto ligado al XML de origen; sin ejecutar macros/fórmulas, abrir enlaces, activar controles ni reproducir medios; fórmula y valor en caché diferenciados.*
 

@@ -46,8 +46,9 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     overall_counts: dict[str, int] = {"components": 0, "findings": 0, "iocs": 0}
     state = "completed"
 
+    findings_total = 0
     if family == "ooxml":
-        from .parsers import ooxml
+        from .parsers import ooxml, office
 
         res = ooxml.analyze(original, paths.extracted_dir)
         write_subresult(paths, "ooxml", res)
@@ -56,10 +57,25 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         if res.get("status") == "error":
             state = "error"
         elif res.get("anomalies"):
-            state = "partial"  # findings present / worth review
+            state = "partial"
+
+        # Semantic parser for the specific Office app (Word/Excel/PowerPoint).
+        declared_ext = manifest["original"].get("declared_extension", "")
+        sem = office.analyze(original, declared_ext)
+        if sem is not None:
+            module = sem["module"]
+            write_subresult(paths, module, sem)
+            ran.append(module)
+            findings_total += sem.get("counts", {}).get("findings", 0)
+            if sem.get("status") == "error" and state != "error":
+                state = "partial"
+            elif sem.get("findings") and state == "completed":
+                state = "partial"
     else:
         # No parser for this family yet.
         state = "completed"
+
+    overall_counts["findings"] = findings_total
 
     # Update summary.json (fast-read view) and the manifest.
     summary = read_json(paths.summary) or {}

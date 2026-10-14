@@ -227,22 +227,73 @@ async function openComponents(analysisId) {
   try {
     const d = await fetch(`/api/cases/${encodeURIComponent(analysisId)}/components`).then((r) => r.json());
     caseLine.innerHTML = `Case <span class="mono">${escapeHtml(d.analysis_id)}</span> · ${escapeHtml(d.filename || "")} · state: ${escapeHtml(d.state || "")}`;
-    const ooxml = d.modules && d.modules.ooxml;
-    if (!ooxml) {
-      bodyEl.innerHTML = `<p class="hint-line">No component analysis for this case (only OOXML is parsed so far).</p>`;
+    const mods = d.modules || {};
+    const ooxml = mods.ooxml;
+    const sem = mods.word || mods.excel || mods.powerpoint;
+    if (!ooxml && !sem) {
+      bodyEl.innerHTML = `<p class="hint-line">No component analysis for this case yet.</p>`;
       return;
     }
-    const c = ooxml.counts || {};
-    summary.textContent = `${c.components || 0} parts · ${c.relationships || 0} rels · ${c.external_relationships || 0} external · ${c.anomalies || 0} anomalies`;
-    summary.className = "status " + (ooxml.status === "error" || (c.anomalies || 0) ? "bad-text" : "ok-text");
+    const c = (ooxml && ooxml.counts) || {};
+    const nf = (sem && sem.counts && sem.counts.findings) || 0;
+    summary.textContent =
+      `${c.components || 0} parts · ${c.external_relationships || 0} external · ${(c.anomalies || 0) + nf} findings`;
+    summary.className = "status " + ((c.anomalies || 0) + nf ? "bad-text" : "ok-text");
     bodyEl.innerHTML =
-      renderAnomalies(ooxml.anomalies) +
-      renderRelationships(ooxml.relationships) +
-      renderExtracted(ooxml.extracted) +
-      renderParts(ooxml.components);
+      (sem ? renderSemantic(sem) : "") +
+      (ooxml ? renderAnomalies(ooxml.anomalies) : "") +
+      (ooxml ? renderRelationships(ooxml.relationships) : "") +
+      (ooxml ? renderExtracted(ooxml.extracted) : "") +
+      (ooxml ? renderParts(ooxml.components) : "");
   } catch (err) {
     bodyEl.innerHTML = `<p class="hint-line">Could not load components.</p>`;
   }
+}
+
+const SEV_CLASS = { high: "bad", medium: "warn", low: "warn", info: "ok" };
+
+function renderSemantic(sem) {
+  let html = "";
+  // Findings
+  const findings = sem.findings || [];
+  if (findings.length) {
+    const rows = findings.map((f) => `<tr>
+      <td><span class="badge badge-${SEV_CLASS[f.severity] || "warn"}">${escapeHtml(f.severity)}</span></td>
+      <td class="mono">${escapeHtml(f.rule)}</td>
+      <td>${escapeHtml(f.detail || "")}</td>
+      <td class="mono">${escapeHtml(f.location || "")}</td>
+    </tr>`).join("");
+    html += `<h3 class="formats-title">Findings (${sem.format})</h3>
+      <table class="cases"><thead><tr><th>Severity</th><th>Rule</th><th>Detail</th><th>Location</th></tr></thead>
+      <tbody>${rows}</tbody></table>`;
+  }
+  // Metadata
+  const meta = sem.metadata || {};
+  const metaKeys = Object.keys(meta);
+  if (metaKeys.length) {
+    const rows = metaKeys.map((k) =>
+      `<tr><td class="file">${escapeHtml(k)}</td><td>${escapeHtml(String(meta[k]))}</td></tr>`).join("");
+    html += `<h3 class="formats-title">Metadata</h3>
+      <table class="cases"><tbody>${rows}</tbody></table>`;
+  }
+  // Format-specific summary line
+  const bits = [];
+  if (sem.vba) bits.push(`VBA: ${sem.vba.present ? "yes" : "no"}`);
+  if (sem.format === "excel") {
+    bits.push(`${sem.sheet_count} sheets`);
+    if (sem.hidden_sheets && sem.hidden_sheets.length) bits.push(`hidden: ${sem.hidden_sheets.join(", ")}`);
+    bits.push(`${sem.formula_count} formulas`);
+    if (sem.external_links) bits.push(`${sem.external_links} external link parts`);
+  }
+  if (sem.format === "powerpoint") bits.push(`${sem.slide_count} slides · ${sem.notes_count} notes`);
+  if (typeof sem.text_length === "number") bits.push(`${sem.text_length} chars of text`);
+  if (bits.length) html += `<p class="hint-line">${escapeHtml(bits.join(" · "))}</p>`;
+  // Text sample
+  if (sem.text_sample) {
+    html += `<h3 class="formats-title">Text (sample)</h3>
+      <pre class="text-sample">${escapeHtml(sem.text_sample.slice(0, 4000))}</pre>`;
+  }
+  return html;
 }
 
 function renderAnomalies(items) {
