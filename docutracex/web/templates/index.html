@@ -30,8 +30,10 @@
       <h1>New analysis</h1>
       <p>Upload a file to open a case. The original is stored unmodified and hashed; no content is executed.</p>
       <form id="upload-form" class="upload">
-        <input type="file" id="file-input" required />
-        <button type="submit">Analyze</button>
+        <input type="file" id="file-input" class="file-native" required />
+        <label for="file-input" class="btn btn-ghost">Choose file</label>
+        <span id="file-name" class="file-name">No file selected</span>
+        <button type="submit" class="btn btn-primary">Analyze</button>
         <span id="upload-status" class="status"></span>
       </form>
     </section>
