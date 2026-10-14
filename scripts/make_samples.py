@@ -279,17 +279,60 @@ def make_pdf(path: Path) -> None:
 
 def _build_eml() -> bytes:
     msg = EmailMessage()
-    msg["From"] = "Alice <alice@example.com>"
-    msg["To"] = "Bob <bob@example.org>"
-    msg["Subject"] = "DocuTraceX benign sample"
+    # Spoofy headers: display-name domain and Return-Path differ from From;
+    # a two-hop Received chain with a suspicious origin; failing auth.
+    msg["Received"] = ("from mx.corp.example (mx.corp.example [198.51.100.2]) "
+                       "by inbox.corp.example with ESMTP id def; "
+                       "Wed, 14 Oct 2026 20:00:05 +0000")
+    msg["Received"] = ("from evil.example (unknown [203.0.113.9]) "
+                       "by mx.corp.example with ESMTP id abc; "
+                       "Wed, 14 Oct 2026 20:00:00 +0000")
+    msg["From"] = '"IT Support <support@corp.example>" <attacker@evil.example>'
+    msg["To"] = "Bob <bob@corp.example>"
+    msg["Reply-To"] = "billing@evil.example"
+    msg["Return-Path"] = "<bounce@evil.example>"
+    msg["Subject"] = "DocuTraceX sample — please review invoice"
     msg["Date"] = formatdate(localtime=False)
-    msg["Message-ID"] = "<sample-0001@example.com>"
-    msg.set_content(f"Benign body. Reference: {URL_A} and {IP_A}.\n")
+    msg["Message-ID"] = "<sample-0001@evil.example>"
+    msg["Authentication-Results"] = "mx.corp.example; spf=fail; dkim=none; dmarc=fail"
+    msg["X-Mailer"] = "SuspiciousMailer 1.0"
+    msg.set_content(f"Benign-looking body. Reference: {URL_A} and {IP_A}.\n")
+    msg.add_alternative(
+        f'<html><body><p>Click <a href="http://evil.example/pay">'
+        f'https://corp.example/invoice</a> to review.</p></body></html>',
+        subtype="html")
+    msg.add_attachment(b"MZ fake payload (benign sample)",
+                       maintype="application", subtype="octet-stream",
+                       filename="invoice.pdf.exe")
     return msg.as_bytes()
 
 
 def make_eml(path: Path) -> None:
     path.write_bytes(_build_eml())
+
+
+def make_msg(path: Path) -> None:
+    """Enriched Outlook .msg fixture (MAPI over OLE), mirroring the .eml."""
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from mkmsg import write_msg
+
+    headers = (
+        "Received: from mx.corp.example (mx.corp.example [198.51.100.2]) "
+        "by inbox.corp.example with ESMTP id def; Wed, 14 Oct 2026 20:00:05 +0000\n"
+        "Received: from evil.example (unknown [203.0.113.9]) "
+        "by mx.corp.example with ESMTP id abc; Wed, 14 Oct 2026 20:00:00 +0000\n"
+        'From: "IT Support <support@corp.example>" <attacker@evil.example>\n'
+        "To: Bob <bob@corp.example>\n"
+        "Reply-To: billing@evil.example\n"
+        "Return-Path: <bounce@evil.example>\n"
+        "Subject: DocuTraceX sample — please review invoice\n"
+        "Authentication-Results: mx.corp.example; spf=fail; dkim=none; dmarc=fail\n"
+        "X-Mailer: SuspiciousMailer 1.0\n"
+    )
+    write_msg(path, headers, "DocuTraceX sample — please review invoice",
+              f"Benign-looking body. Reference: {URL_A} and {IP_A}.",
+              "attacker@evil.example", [("invoice.pdf.exe", b"MZ fake payload (benign sample)")])
 
 
 def make_emlx(path: Path) -> None:
@@ -311,12 +354,15 @@ def main() -> None:
         make_ooxml(p, ext)
         made.append(p.name)
     for ext in OLE_EXTS:
+        if ext == ".msg":
+            continue  # real MAPI fixture, not a bare CFB
         p = SAMPLES / f"sample{ext}"
         make_cfb(p)
         made.append(p.name)
     make_pdf(SAMPLES / "sample.pdf"); made.append("sample.pdf")
     make_eml(SAMPLES / "sample.eml"); made.append("sample.eml")
     make_emlx(SAMPLES / "sample.emlx"); made.append("sample.emlx")
+    make_msg(SAMPLES / "sample.msg"); made.append("sample.msg")
 
     print(f"Generated {len(made)} samples in {SAMPLES}:")
     for name in sorted(made):

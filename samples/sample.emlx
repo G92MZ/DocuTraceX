@@ -1,15 +1,50 @@
-356
-From: Alice <alice@example.com>
-To: Bob <bob@example.org>
-Subject: DocuTraceX benign sample
-Date: Wed, 14 Oct 2026 20:03:38 -0000
-Message-ID: <sample-0001@example.com>
+1694
+Received: from mx.corp.example (mx.corp.example [198.51.100.2]) by
+ inbox.corp.example with ESMTP id def; Wed, 14 Oct 2026 20:00:05 +0000
+Received: from evil.example (unknown [203.0.113.9]) by mx.corp.example with
+ ESMTP id abc; Wed, 14 Oct 2026 20:00:00 +0000
+From: "IT Support <support@corp.example>" <attacker@evil.example>
+To: Bob <bob@corp.example>
+Reply-To: billing@evil.example
+Return-Path: <bounce@evil.example>
+Subject: DocuTraceX sample =?utf-8?b?4oCU?= please review invoice
+Date: Wed, 14 Oct 2026 20:46:02 -0000
+Message-ID: <sample-0001@evil.example>
+Authentication-Results: mx.corp.example; spf=fail; dkim=none; dmarc=fail
+X-Mailer: SuspiciousMailer 1.0
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============7477587502959346822=="
+
+--===============7477587502959346822==
+Content-Type: multipart/alternative;
+ boundary="===============1739312132493663716=="
+
+--===============1739312132493663716==
 Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Benign-looking body. Reference: http://malware.example.com/payload.bin and 20=
+3.0.113.10.
+
+--===============1739312132493663716==
+Content-Type: text/html; charset="utf-8"
 Content-Transfer-Encoding: quoted-printable
 MIME-Version: 1.0
 
-Benign body. Reference: http://malware.example.com/payload.bin and 203.0.113.=
-10.
+<html><body><p>Click <a href=3D"http://evil.example/pay">https://corp.example=
+/invoice</a> to review.</p></body></html>
+
+--===============1739312132493663716==--
+
+--===============7477587502959346822==
+Content-Type: application/octet-stream
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="invoice.pdf.exe"
+MIME-Version: 1.0
+
+TVogZmFrZSBwYXlsb2FkIChiZW5pZ24gc2FtcGxlKQ==
+
+--===============7477587502959346822==--
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict><key>flags</key><integer>0</integer></dict></plist>

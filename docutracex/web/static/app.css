@@ -197,6 +197,16 @@ table.cases td.mono { word-break: break-all; }
 .mark-cell .mark-comment { min-width: 120px; flex: 1; }
 .mark-cell .mark-date { flex-basis: 100%; margin-top: 0; }
 
+/* Email: prominent Received-chain header above the sub-tabs */
+.comp-header {
+  margin: 4px 0 8px;
+  padding: 12px 14px;
+  background: #0b0e12;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+}
+.comp-header .formats-title { margin-top: 0; }
+
 .diag-head { display: flex; align-items: baseline; justify-content: space-between; }
 
 /* Components sub-tabs */

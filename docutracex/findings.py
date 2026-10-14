@@ -68,7 +68,7 @@ def consolidate(modules: dict[str, Any]) -> list[dict[str, Any]]:
                  a.get("detail") or a.get("target") or "",
                  a.get("part") or a.get("rels_file") or a.get("target") or "")
 
-    for name in _OFFICE_MODULES:
+    for name in _OFFICE_MODULES + ("email",):
         mod = modules.get(name)
         if not mod:
             continue
