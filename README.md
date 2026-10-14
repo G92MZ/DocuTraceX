@@ -75,17 +75,17 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 
 ### App base, gestión de casos y ciclo de vida
 
-- [ ] Interfaz web básica en inglés con carga de ficheros y paneles desplegables (ref. WinHound)
-- [ ] Navegación: Overview, Marks, Components/analysis, Reports, Tasks
-- [ ] Validar nombre, extensión y estructura de entrada (sin máximo fijo de tamaño)
-- [ ] Guardar original sin modificar + ID único + carpeta aislada `cases\<analysis_id>\`
-- [ ] Estructura de caso: `case.json`, `original\`, `extracted\`, `results\`, `reports\` con rutas relativas
-- [ ] Manifiesto versionado: esquema, ID, fechas, hashes, metadatos, estado, versiones de herramientas
-- [ ] Pantalla inicial: listado de casos con búsqueda y filtros
+- [ ] Interfaz web básica en inglés con carga de ficheros y paneles desplegables (ref. WinHound) — *parcial: carga de ficheros y paneles listos; faltan desplegables y estilo WinHound*
+- [ ] Navegación: Overview, Marks, Components/analysis, Reports, Tasks — *parcial: pestañas presentes, aún sin funcionalidad por vista*
+- [ ] Validar nombre, extensión y estructura de entrada (sin máximo fijo de tamaño) — *parcial: nombre saneado y extensión capturada; falta validación estructural real*
+- [x] Guardar original sin modificar + ID único + carpeta aislada `cases\<analysis_id>\`
+- [x] Estructura de caso: `case.json`, `original\`, `extracted\`, `results\`, `reports\` con rutas relativas
+- [x] Manifiesto versionado: esquema, ID, fechas, hashes, metadatos, estado, versiones de herramientas
+- [ ] Pantalla inicial: listado de casos con búsqueda y filtros — *parcial: listado funcionando; faltan búsqueda y filtros*
 - [ ] Acción «Reabrir caso» por selección de carpeta (restaurar sin reejecutar); admitir casos movidos/copiados
 - [ ] Validar manifiesto, esquema, rutas contenidas y hashes al reabrir; abrir como degradado si hay discrepancias
 - [ ] Borrado manual explícito con confirmación (sin borrado automático)
-- [ ] Prevención de traversal, rutas UNC/absolutas inesperadas y sobrescrituras
+- [ ] Prevención de traversal, rutas UNC/absolutas inesperadas y sobrescrituras — *parcial: saneado de nombre y contención de rutas en la capa de almacenamiento; falta cubrir reapertura*
 - [ ] Mostrar contenido potencialmente activo como datos escapados
 
 *Aceptación: original verificable por hash; análisis aislados y persistentes; reapertura sin reejecutar (incluso tras mover); manifiestos corruptos y hashes discrepantes detectados.*
@@ -106,7 +106,7 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 
 ### Núcleo común (hashes, identificación, modelos)
 
-- [ ] Hashes MD5, SHA-1 y SHA-256 (original y componentes)
+- [ ] Hashes MD5, SHA-1 y SHA-256 (original y componentes) — *parcial: original hecho (en streaming); componentes al extraerlos*
 - [ ] libmagic (motor del comando `file`, BSD) como identificador general primario — registrar versión, salida y errores; empaquetar la DLL nativa + `magic.mgc` en `tools\` (verificar que el paquete de binarios Windows esté mantenido; `python-magic-bin` está abandonado)
 - [ ] Firmas ampliables vía formato `magic(5)` para añadir tipos nuevos; la extensibilidad ambiciosa (reglas complejas) se reserva a la fase YARA
 - [ ] DIE y Apache Tika quedan descartados como identificador general (DIE marcaba todo OOXML como ZIP; Tika arrastra Java)

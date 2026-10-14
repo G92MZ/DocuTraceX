@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from . import __version__
+from .api.cases import router as cases_router
 from .config import settings
 from .errors import DocuTraceXError
 from .logging_config import configure_logging, get_logger
@@ -38,6 +39,8 @@ def create_app() -> FastAPI:
     async def _app_error_handler(_request: Request, exc: DocuTraceXError) -> JSONResponse:
         log.warning("Application error: %s", exc)
         return JSONResponse(status_code=400, content={"error": str(exc)})
+
+    app.include_router(cases_router)
 
     @app.get("/health", response_class=JSONResponse)
     async def health() -> dict:

@@ -27,14 +27,31 @@
 
   <main class="content">
     <section class="panel">
-      <h1>Scaffold ready</h1>
-      <p>
-        The application skeleton is up. Case lifecycle, parsers and the report
-        views are built in the following phases. Navigation and styling are a
-        placeholder to be aligned with the WinHound look (colors, menus).
-      </p>
-      <p class="hint">Health check: <code>GET /health</code></p>
+      <h1>New analysis</h1>
+      <p>Upload a file to open a case. The original is stored unmodified and hashed; no content is executed.</p>
+      <form id="upload-form" class="upload">
+        <input type="file" id="file-input" required />
+        <button type="submit">Analyze</button>
+        <span id="upload-status" class="status"></span>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>Cases</h2>
+      <table class="cases" id="cases-table">
+        <thead>
+          <tr>
+            <th>Created (UTC)</th><th>File</th><th>Ext</th>
+            <th>Size</th><th>SHA-256</th><th>State</th>
+          </tr>
+        </thead>
+        <tbody id="cases-body">
+          <tr><td colspan="6" class="empty">No cases yet.</td></tr>
+        </tbody>
+      </table>
     </section>
   </main>
+
+  <script src="/static/app.js"></script>
 </body>
 </html>
