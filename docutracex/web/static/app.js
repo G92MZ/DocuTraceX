@@ -12,20 +12,32 @@ const FORMATS = [
   { name: "Email", color: "#7f93ad", glyph: "mail", exts: [".eml", ".emlx", ".msg"] },
 ];
 
+// Playful document "character": page + eyes + smile, colored band + letter.
 function docIcon(color, glyph) {
-  const fontSize = glyph.length > 1 ? 6.5 : 10;
+  const fontSize = glyph.length > 1 ? 6 : 8.5;
+  const y = glyph.length > 1 ? 40.5 : 41.5;
   return `<svg viewBox="0 0 40 48" class="fmt-ico" aria-hidden="true">
-    <path d="M6 2h18l10 10v32a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" fill="#1b2431" stroke="#2f3b4d" stroke-width="1.2"/>
-    <path d="M24 2l10 10h-8a2 2 0 0 1-2-2z" fill="#2f3b4d"/>
-    <rect x="4" y="29" width="30" height="13" rx="2" fill="${color}"/>
-    <text x="19" y="${glyph.length > 1 ? 37.5 : 38.5}" text-anchor="middle" font-size="${fontSize}" font-weight="700" fill="#fff" font-family="Segoe UI, sans-serif">${glyph}</text>
+    <path d="M6 2h18l10 10v32a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" fill="#eef3f8" stroke="#cfd9e4" stroke-width="1"/>
+    <path d="M24 2l10 10h-8a2 2 0 0 1-2-2z" fill="#cfd9e4"/>
+    <circle cx="14" cy="20" r="3.2" fill="#fff" stroke="${color}" stroke-width="1.4"/>
+    <circle cx="24" cy="20" r="3.2" fill="#fff" stroke="${color}" stroke-width="1.4"/>
+    <circle cx="14.6" cy="20.6" r="1.3" fill="#1b2431"/>
+    <circle cx="24.6" cy="20.6" r="1.3" fill="#1b2431"/>
+    <path d="M14 26 q5 4 10 0" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round"/>
+    <rect x="4" y="33" width="30" height="11" rx="2" fill="${color}"/>
+    <text x="19" y="${y}" text-anchor="middle" font-size="${fontSize}" font-weight="700" fill="#fff" font-family="Segoe UI, sans-serif">${glyph}</text>
   </svg>`;
 }
 
+// Email envelope with a little face.
 function mailIcon(color) {
   return `<svg viewBox="0 0 40 48" class="fmt-ico" aria-hidden="true">
-    <rect x="3" y="11" width="34" height="24" rx="3" fill="#1b2431" stroke="${color}" stroke-width="2"/>
-    <path d="M4 13l16 13 16-13" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>
+    <rect x="3" y="11" width="34" height="26" rx="4" fill="#eef3f8" stroke="${color}" stroke-width="1.6"/>
+    <path d="M4 13l16 12 16-12" fill="none" stroke="${color}" stroke-width="1.6" stroke-linejoin="round"/>
+    <circle cx="14" cy="29" r="3" fill="#fff" stroke="#5c6f87" stroke-width="1.3"/>
+    <circle cx="26" cy="29" r="3" fill="#fff" stroke="#5c6f87" stroke-width="1.3"/>
+    <circle cx="14.5" cy="29.5" r="1.2" fill="#1b2431"/>
+    <circle cx="26.5" cy="29.5" r="1.2" fill="#1b2431"/>
   </svg>`;
 }
 
