@@ -136,11 +136,12 @@ document.getElementById("upload-form").addEventListener("submit", async (e) => {
     const resp = await fetch("/api/cases", { method: "POST", body: data });
     if (!resp.ok) throw new Error("upload failed");
     const manifest = await resp.json();
-    status.textContent = "Case created: " + manifest.analysis_id;
+    status.textContent = "Case queued for analysis: " + manifest.analysis_id;
     fileInput.value = "";
     fileName.textContent = "No file selected";
     fileName.classList.remove("has-file");
     loadCases();
+    startTaskPoller();
   } catch (err) {
     status.textContent = "Upload failed.";
   }
@@ -703,9 +704,106 @@ async function openComponents(analysisId) {
     }
     _compState = { sections, active: sections[0].id, header: headerHtml };
     renderSubtabs();
+    renderRerun(analysisId, d);
   } catch (err) {
     bodyEl.innerHTML = `<p class="hint-line">Could not load components.</p>`;
   }
+}
+
+// Re-run control: whole case, or one module in isolation (marks preserved).
+function renderRerun(analysisId, d) {
+  const el = document.getElementById("comp-actions");
+  if (!el) return;
+  const ran = ((d.modules && Object.keys(d.modules)) || []).filter((m) => m !== "iocs");
+  const opts = ['<option value="full">Full case</option>']
+    .concat(ran.map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`)).join("");
+  el.innerHTML = `<span class="hint-line">Re-run:</span>
+    <select id="rerun-target">${opts}</select>
+    <button id="rerun-btn" class="btn btn-ghost btn-sm" type="button">Re-run</button>
+    <span id="rerun-status" class="hint-line"></span>`;
+  document.getElementById("rerun-btn").addEventListener("click", async () => {
+    const target = document.getElementById("rerun-target").value;
+    const body = target === "full" ? {} : { module: target };
+    document.getElementById("rerun-status").textContent = "Queued…";
+    try {
+      await fetch(`/api/cases/${encodeURIComponent(analysisId)}/rerun`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      startTaskPoller();
+      // Refresh this view when the queue drains.
+      setTimeout(() => openComponents(analysisId), 1200);
+    } catch (err) {
+      document.getElementById("rerun-status").textContent = "Could not queue re-run.";
+    }
+  });
+}
+
+// --- Tasks view --------------------------------------------------------------
+const TASK_STATE_CLS = {
+  queued: "muted", running: "warn", cancelling: "warn", cancelled: "muted",
+  completed: "ok", partial: "warn", failed: "bad",
+};
+const TASK_ACTIVE = new Set(["queued", "running", "cancelling"]);
+let _tasksPoll = null;
+
+function taskProgress(t) {
+  if (TASK_ACTIVE.has(t.state)) {
+    return t.progress == null
+      ? '<span class="spin" aria-label="working">●</span> working'
+      : `${Math.round(t.progress * 100)}%`;
+  }
+  return "—";
+}
+
+function renderTasks(data) {
+  const summary = document.getElementById("tasks-summary");
+  const body = document.getElementById("tasks-body");
+  const tasks = (data && data.tasks) || [];
+  summary.textContent = `${data.active || 0} active · ${tasks.length} total`;
+  summary.className = "status " + ((data.active || 0) ? "" : "ok-text");
+  if (!tasks.length) { body.innerHTML = `<p class="hint-line">No tasks yet.</p>`; return; }
+  const rows = tasks.map((t) => {
+    const cls = TASK_STATE_CLS[t.state] || "muted";
+    const target = t.target && t.target !== "full" ? t.target : "full case";
+    const cancel = TASK_ACTIVE.has(t.state)
+      ? `<button class="btn btn-ghost btn-sm" data-cancel="${escapeHtml(t.id)}">Cancel</button>` : "";
+    const err = t.error ? `<div class="hint-line bad-text">${escapeHtml(t.error)}</div>` : "";
+    return `<tr>
+      <td class="mono">${escapeHtml(t.id)}</td>
+      <td class="file">${escapeHtml(t.filename || "")}<div class="hint-line">${escapeHtml(t.type)} · ${escapeHtml(target)}</div></td>
+      <td><span class="badge badge-${cls}">${escapeHtml(t.state)}</span></td>
+      <td>${taskProgress(t)}</td>
+      <td class="mono">${t.duration_s != null ? t.duration_s + "s" : ""}</td>
+      <td>${cancel}${err}</td>
+    </tr>`;
+  }).join("");
+  body.innerHTML = table(["Task", "Case / action", "State", "Progress", "Duration", ""], rows);
+  body.querySelectorAll("[data-cancel]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await fetch(`/api/tasks/${encodeURIComponent(btn.getAttribute("data-cancel"))}/cancel`, { method: "POST" });
+      loadTasks();
+    });
+  });
+}
+
+async function loadTasks() {
+  try {
+    const data = await fetch("/api/tasks").then((r) => r.json());
+    renderTasks(data);
+    return data;
+  } catch (err) {
+    document.getElementById("tasks-body").innerHTML = `<p class="hint-line">Could not load tasks.</p>`;
+    return { active: 0, tasks: [] };
+  }
+}
+
+// Poll while any task is active: refresh Tasks (if visible) and the cases list.
+function startTaskPoller() {
+  if (_tasksPoll) return;
+  _tasksPoll = setInterval(async () => {
+    const data = await loadTasks();
+    loadCases();
+    if (!data.active) { clearInterval(_tasksPoll); _tasksPoll = null; }
+  }, 2500);
 }
 
 // --- Marks view --------------------------------------------------------------
@@ -782,6 +880,7 @@ function setupTabs() {
       views.forEach((v) => { v.hidden = v.getAttribute("data-view") !== target; });
       if (target === "diagnostics") loadDiagnostics();
       if (target === "marks") loadMarks(_openCaseId);
+      if (target === "tasks") loadTasks();
     });
   });
 }

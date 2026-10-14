@@ -26,13 +26,16 @@ def _load_findings_with_marks(analysis_id: str) -> dict:
 
 @router.post("")
 async def create_case(file: UploadFile = File(...)) -> JSONResponse:
-    """Upload a file, create a case, and run the applicable analysis."""
+    """Upload a file, create a case, and queue its analysis (runs in the
+    background worker — one analysis per instance, the rest queued)."""
+    from ..tasks import manager
+
     manifest = case_service.create_case(file.file, file.filename or "upload.bin")
-    case_root = settings.cases_dir / manifest["analysis_id"]
-    analysis.run_analysis(case_root)
-    # Return the updated manifest (analysis may have changed state/counts).
-    updated = case_service.get_case(manifest["analysis_id"])
-    return JSONResponse(status_code=201, content=updated)
+    task = manager.submit("analyze", manifest["analysis_id"],
+                          manifest["original"]["filename"], target="full",
+                          cases_dir=settings.cases_dir)
+    manifest["task"] = task.public()
+    return JSONResponse(status_code=201, content=manifest)
 
 
 @router.get("")
@@ -97,6 +100,40 @@ async def get_marks(analysis_id: str) -> dict:
         "counts": marked["counts"],
         "orphans": marked["orphans"],
     }
+
+
+@router.post("/{analysis_id}/rerun")
+async def rerun_case(analysis_id: str, payload: dict = Body(default={})) -> dict:
+    """Queue a re-analysis of a case: the whole case, or one module in isolation
+    (``{"module": "oletools"}``). Marks are preserved (stable finding ids)."""
+    from ..tasks import manager
+
+    try:
+        manifest = case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    module = (payload or {}).get("module")
+    task = manager.submit(
+        "rerun_module" if module else "rerun", analysis_id,
+        manifest["original"]["filename"], target=module or "full",
+        cases_dir=settings.cases_dir,
+    )
+    return {"task": task.public()}
+
+
+@router.get("/{analysis_id}/tasks")
+async def case_tasks(analysis_id: str) -> dict:
+    """Attempt history for a case (results/tasks.json) plus its live tasks."""
+    from ..storage import CasePaths, read_json
+    from ..tasks import manager
+
+    try:
+        case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    history = read_json(CasePaths(analysis_id).tasks) or {"attempts": []}
+    return {"analysis_id": analysis_id, "attempts": history.get("attempts", []),
+            "live": manager.list(analysis_id)}
 
 
 @router.put("/{analysis_id}/marks/{finding_id}")

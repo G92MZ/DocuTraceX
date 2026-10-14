@@ -97,6 +97,7 @@
           <span id="comp-summary" class="status"></span>
         </div>
         <div id="comp-case" class="hint-line"></div>
+        <div id="comp-actions" class="comp-actions"></div>
         <div id="comp-body">
           <p class="hint-line">Select a case in Overview to inspect its components.</p>
         </div>
@@ -106,7 +107,16 @@
       <section class="panel"><h2>Reports</h2><p>Not implemented yet.</p></section>
     </div>
     <div class="view" data-view="tasks" hidden>
-      <section class="panel"><h2>Tasks</h2><p>Not implemented yet.</p></section>
+      <section class="panel">
+        <div class="diag-head">
+          <h2>Tasks</h2>
+          <span id="tasks-summary" class="status"></span>
+        </div>
+        <p class="hint-line">One analysis runs per instance; the rest wait in the queue. A failed task never blocks the others.</p>
+        <div id="tasks-body">
+          <p class="hint-line">No tasks yet.</p>
+        </div>
+      </section>
     </div>
   </main>
 
