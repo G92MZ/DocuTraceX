@@ -7,6 +7,9 @@ ensures the portable exists before starting the app.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import uvicorn
 
 from .config import settings
@@ -15,8 +18,27 @@ from .logging_config import configure_logging, get_logger
 log = get_logger(__name__)
 
 
+def _ensure_portable() -> None:
+    """Ensure the portable Python + tools exist (provision on first run).
+
+    Best-effort: never blocks app startup. Skip with DOCUTRACEX_SKIP_SETUP=1.
+    """
+    import os
+
+    if os.environ.get("DOCUTRACEX_SKIP_SETUP") == "1":
+        return
+    scripts_dir = Path(__file__).resolve().parent.parent / "scripts"
+    try:
+        sys.path.insert(0, str(scripts_dir))
+        from setup_portable_python import ensure  # type: ignore
+        ensure()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Portable setup check failed: %s", exc)
+
+
 def main() -> None:
     configure_logging(settings.log_level)
+    _ensure_portable()
     log.info("Starting DocuTraceX on http://%s:%s", settings.host, settings.port)
     uvicorn.run(
         "docutracex.app:app",
