@@ -74,7 +74,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 
         # External tools: the oletools suite (olevba, oleid, mraptor, msodde,
         # oleobj) — runs on the portable.
-        from .parsers import oletools_suite
+        from .parsers import crypto, didier, oletools_suite
 
         ole_res = oletools_suite.analyze(original, paths.extracted_dir)
         write_subresult(paths, "oletools", ole_res)
@@ -82,6 +82,20 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         findings_total += ole_res.get("counts", {}).get("findings", 0)
         if ole_res.get("findings") and state == "completed":
             state = "partial"
+
+        # External tool: encrypted-document detection / default-password decrypt.
+        crypto_res = crypto.analyze(original, paths.extracted_dir)
+        write_subresult(paths, "msoffcrypto", crypto_res)
+        ran.append("msoffcrypto")
+        findings_total += crypto_res.get("counts", {}).get("findings", 0)
+        if crypto_res.get("findings") and state == "completed":
+            state = "partial"
+
+        # External scripts: Didier Stevens Suite (zipdump, oledump) — raw output.
+        didier_res = didier.analyze(original, "ooxml")
+        if didier_res.get("available"):
+            write_subresult(paths, "didier", didier_res)
+            ran.append("didier")
     else:
         # No parser for this family yet.
         state = "completed"
