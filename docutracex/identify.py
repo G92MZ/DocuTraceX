@@ -72,6 +72,65 @@ _INCONCLUSIVE = "inconclusive"
 _UNKNOWN = "unknown"
 
 
+# Probe run INSIDE the tool interpreter (portable) to identify with libmagic.
+_MAGIC_PROBE = r"""
+import json, sys
+p = sys.argv[1]
+out = {"available": True, "mime": None, "name": None, "version": None, "error": None}
+try:
+    import magic
+    out["mime"] = magic.from_file(p, mime=True)
+    out["name"] = magic.from_file(p)
+    v = getattr(magic, "version", None)
+    try:
+        out["version"] = ("libmagic %s" % v()) if callable(v) else "libmagic"
+    except Exception:
+        out["version"] = "libmagic"
+except Exception as e:
+    out["available"] = False
+    out["error"] = str(e)
+print(json.dumps(out))
+"""
+
+
+def _run_libmagic(path: Path) -> dict[str, Any]:
+    """Identify with libmagic. Runs on the portable Python (tool runtime) when
+    available; falls back to in-process import for development."""
+    import json as _json
+    import subprocess
+
+    from . import native
+    from .config import settings
+
+    portable = settings.portable_python()
+    if portable:
+        try:
+            proc = subprocess.run(
+                [str(portable), "-I", "-c", _MAGIC_PROBE, str(path)],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=30, env=native.subprocess_env(),
+            )
+            if proc.returncode == 0 and proc.stdout.strip():
+                return _json.loads(proc.stdout)
+            log.warning("libmagic probe on portable failed: %s", proc.stderr.strip()[:200])
+        except Exception as exc:  # noqa: BLE001
+            log.warning("libmagic via portable failed: %s", exc)
+        # fall through to in-process attempt
+
+    native.setup_libmagic()
+    res: dict[str, Any] = {"available": True, "mime": None, "name": None,
+                           "version": None, "error": None}
+    try:
+        import magic  # type: ignore
+        res["mime"] = magic.from_file(str(path), mime=True)
+        res["name"] = magic.from_file(str(path))
+        res["version"] = _libmagic_version()
+    except Exception as exc:  # noqa: BLE001
+        res["available"] = False
+        res["error"] = str(exc)
+    return res
+
+
 def _libmagic_version() -> str | None:
     try:
         import magic  # type: ignore
@@ -174,31 +233,21 @@ def identify(path: Path, declared_ext: str = "") -> dict[str, Any]:
     result["structural"] = structural
     structural_family = structural["family"] if structural else None
 
-    from . import native
-
-    native.setup_libmagic()  # wire bundled libmagic (no-op if not bundled/needed)
-    try:
-        import magic  # type: ignore
-    except Exception as exc:  # noqa: BLE001
-        result["error"] = f"libmagic unavailable: {exc}"
-        log.warning("libmagic not available: %s", exc)
-        # Still classify from structure alone if we have it.
+    # libmagic runs on the portable tool interpreter (or in-process fallback).
+    m = _run_libmagic(path)
+    if not m.get("available"):
+        result["error"] = m.get("error") or "libmagic unavailable"
+        log.warning("libmagic not available: %s", result["error"])
         result["discrepancy"] = classify_discrepancy(declared_ext, "", "", structural_family)
         return result
 
-    try:
-        mime = magic.from_file(str(path), mime=True)
-        name = magic.from_file(str(path))
-    except Exception as exc:  # noqa: BLE001
-        result["error"] = f"identification failed: {exc}"
-        log.warning("Identification failed for %s: %s", path, exc)
-        return result
-
+    mime = m.get("mime") or ""
+    name = m.get("name") or ""
     result.update(
         available=True,
-        tool_version=_libmagic_version(),
-        mime=mime,
-        name=name,
+        tool_version=m.get("version"),
+        mime=mime or None,
+        name=name or None,
         discrepancy=classify_discrepancy(declared_ext, mime, name, structural_family),
     )
     return result

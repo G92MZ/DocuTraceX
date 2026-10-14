@@ -80,10 +80,12 @@ def test_run_checks_structure(monkeypatch: pytest.MonkeyPatch) -> None:
     report = run_checks()
     assert "checks" in report and report["checks"]
     cats = {c["category"] for c in report["checks"]}
-    assert "Runtime" in cats and "Python dependency" in cats
-    # Portable-python check should warn when none is bundled.
+    assert "Runtime" in cats
+    assert "App dependency" in cats and "Tool dependency" in cats
+    # Portable-python check should warn when none is bundled, pointing at setup.
     portable = next(c for c in report["checks"] if c["name"] == "Portable Python (tools/)")
     assert portable["status"] == "warn"
-    assert portable["remedy"]
-    # Every check has a status in the allowed set.
+    assert "setup_portable_python" in portable["remedy"]
+    # App interpreter is always reported.
+    assert any(c["name"] == "App interpreter" for c in report["checks"])
     assert all(c["status"] in ("ok", "warn", "fail") for c in report["checks"])

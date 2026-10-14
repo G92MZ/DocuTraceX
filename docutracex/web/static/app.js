@@ -151,14 +151,18 @@ async function loadDiagnostics() {
   const dot = document.getElementById("diag-dot");
   try {
     const d = await fetch("/api/diagnostics").then((r) => r.json());
-    const it = d.interpreter || {};
-    const kind = it.is_portable ? "portable" : (it.source || "current");
+    const app = d.app_interpreter || {};
+    const tools = d.tools_interpreter;
     const c = d.counts || { ok: 0, warn: 0, fail: 0 };
 
     summary.textContent = `${c.ok} ok · ${c.warn} warning · ${c.fail} failed`;
     summary.className = "status " + (d.ok ? "ok-text" : "bad-text");
-    document.getElementById("diag-interp").textContent =
-      `Interpreter: ${kind} · Python ${it.python_version || "?"} · ${it.executable || ""}`;
+    const toolsLine = tools
+      ? `Tools: portable · Python ${tools.python_version || "?"} · ${tools.executable || ""}`
+      : "Tools: portable not provisioned yet";
+    document.getElementById("diag-interp").innerHTML =
+      `App: Python ${app.python_version || "?"} · ${escapeHtml(app.executable || "")}<br>` +
+      `${escapeHtml(toolsLine)}`;
 
     // Nav dot: red if any failure, amber if warnings, hidden otherwise.
     if (dot) {

@@ -62,21 +62,29 @@ class Dependency:
     install_hint: str = ""    # extra guidance (e.g. native library on Windows)
 
 
-# Python dependencies. Extend this list as tools are integrated.
-PYTHON_DEPS: list[Dependency] = [
+# App dependencies: the web app runs on the launching interpreter (your Python).
+APP_DEPS: list[Dependency] = [
     Dependency("fastapi", "fastapi", "Web framework"),
     Dependency("uvicorn", "uvicorn", "ASGI server"),
     Dependency("jinja2", "jinja2", "HTML templates"),
     Dependency("multipart", "python-multipart", "File uploads"),
+]
+
+# Tool dependencies: the analysis tools run on the portable Python under tools/.
+# Extend this list as parsers/identifiers are integrated.
+TOOL_DEPS: list[Dependency] = [
     Dependency(
         "magic", "python-magic", "Type identification (libmagic)",
         required=False,
         install_hint=(
-            "needs the native libmagic library; on Windows bundle the DLL under "
-            "tools/ (or, for development, `pip install python-magic-bin`)"
+            "run scripts/setup_portable_python.py to provision the portable "
+            "Python and the native libmagic under tools/"
         ),
     ),
 ]
+
+# Combined (kept for backward compatibility / generic checks).
+PYTHON_DEPS: list[Dependency] = APP_DEPS + TOOL_DEPS
 
 
 @dataclass
@@ -226,12 +234,18 @@ def check_runtime(deps: list[Dependency] | None = None) -> tuple[dict[str, Any],
     """
     portable = settings.portable_python()
     if portable:
-        # Always probe the bundled interpreter in its own environment: even a
-        # venv that shares the base binary has its own site-packages.
-        probed = check_in_interpreter(portable, deps)
-        if probed is not None:
-            return probed
-        log.warning("Falling back to the current interpreter for the dependency check")
+        try:
+            on_portable = portable.resolve() == Path(sys.executable).resolve()
+        except OSError:
+            on_portable = False
+        if not on_portable:
+            # Probe the bundled interpreter in its own environment: even a venv
+            # that shares the base binary has its own site-packages.
+            probed = check_in_interpreter(portable, deps)
+            if probed is not None:
+                return probed
+            log.warning("Falling back to the current interpreter for the dependency check")
+    # We are already running on the portable (or none is bundled): check in-process.
     return current_interpreter_info(), check_dependencies(deps)
 
 
@@ -271,39 +285,9 @@ class Check:
         }
 
 
-def run_checks(deps: list[Dependency] | None = None) -> dict[str, Any]:
-    """Run all diagnostics and return a structured report for the UI/endpoint."""
-    interp, dep_results = check_runtime(deps)
+def _dep_checks(results: list[DepStatus], category: str) -> list[Check]:
     checks: list[Check] = []
-
-    # --- Runtime checks ---
-    portable = settings.portable_python()
-    checks.append(
-        Check(
-            category="Runtime",
-            name="Portable Python (tools/)",
-            status="ok" if portable else "warn",
-            detail=str(portable) if portable
-            else "No bundled interpreter found under tools/; using the system Python.",
-            remedy="" if portable
-            else "Bundle a portable Python under tools/python/ (runtime phase) "
-                 "or set DOCUTRACEX_PYTHON.",
-            purpose="Interpreter that runs the bundled tools",
-        )
-    )
-    checks.append(
-        Check(
-            category="Runtime",
-            name="Interpreter in use",
-            status="ok",
-            detail=f"{'portable' if interp.get('is_portable') else interp.get('source')} · "
-                   f"Python {interp.get('python_version') or '?'} · {interp.get('executable')}",
-            purpose="Where dependencies are checked",
-        )
-    )
-
-    # --- Python dependency checks (in the interpreter above) ---
-    for r in dep_results:
+    for r in results:
         if r.installed:
             status, detail, remedy = "ok", f"version {r.version or '?'}", ""
         else:
@@ -311,21 +295,74 @@ def run_checks(deps: list[Dependency] | None = None) -> dict[str, Any]:
             detail = r.error or "not importable"
             remedy = r.install_hint or "pip install -e ."
         checks.append(
+            Check(category=category, name=r.pip_name, status=status,
+                  detail=detail, remedy=remedy, purpose=r.purpose)
+        )
+    return checks
+
+
+def run_checks() -> dict[str, Any]:
+    """Run all diagnostics for the UI/endpoint.
+
+    The web app runs on the current interpreter; the analysis tools run on the
+    portable Python under tools/. App dependencies are checked on the current
+    interpreter, tool dependencies on the portable one.
+    """
+    checks: list[Check] = []
+
+    # --- App interpreter (runs the web app) ---
+    app_info = current_interpreter_info()
+    app_results = check_dependencies(APP_DEPS)
+
+    # --- Tool interpreter (runs the bundled tools) ---
+    portable = settings.portable_python()
+    if portable:
+        probed = check_in_interpreter(portable, TOOL_DEPS)
+        if probed is not None:
+            tool_info, tool_results = probed
+        else:
+            tool_info, tool_results = current_interpreter_info(), check_dependencies(TOOL_DEPS)
+    else:
+        tool_info, tool_results = None, check_dependencies(TOOL_DEPS)
+
+    # --- Runtime checks ---
+    checks.append(
+        Check(
+            category="Runtime",
+            name="Portable Python (tools/)",
+            status="ok" if portable else "warn",
+            detail=str(portable) if portable
+            else "Not provisioned yet; tools will not run until it exists.",
+            remedy="" if portable else "Run: python scripts/setup_portable_python.py",
+            purpose="Interpreter that runs the bundled analysis tools",
+        )
+    )
+    checks.append(
+        Check(
+            category="Runtime", name="App interpreter", status="ok",
+            detail=f"Python {app_info.get('python_version') or '?'} · {app_info.get('executable')}",
+            purpose="Runs the web app (your Python)",
+        )
+    )
+    if tool_info:
+        checks.append(
             Check(
-                category="Python dependency",
-                name=r.pip_name,
-                status=status,
-                detail=detail,
-                remedy=remedy,
-                purpose=r.purpose,
+                category="Runtime", name="Tools interpreter", status="ok",
+                detail=f"portable · Python {tool_info.get('python_version') or '?'} · "
+                       f"{tool_info.get('executable')}",
+                purpose="Runs the bundled analysis tools",
             )
         )
+
+    checks.extend(_dep_checks(app_results, "App dependency"))
+    checks.extend(_dep_checks(tool_results, "Tool dependency"))
 
     counts = {"ok": 0, "warn": 0, "fail": 0}
     for c in checks:
         counts[c.status] = counts.get(c.status, 0) + 1
     return {
-        "interpreter": interp,
+        "app_interpreter": app_info,
+        "tools_interpreter": tool_info,
         "ok": counts["fail"] == 0,
         "counts": counts,
         "checks": [c.as_dict() for c in checks],
@@ -333,29 +370,14 @@ def run_checks(deps: list[Dependency] | None = None) -> dict[str, Any]:
 
 
 def log_startup_report() -> dict[str, Any]:
-    """Run the runtime check and log a concise report. Returns the summary."""
-    interp, results = check_runtime()
-    summary = summarize(results)
-    summary["interpreter"] = interp
-    kind = "portable" if interp.get("is_portable") else interp.get("source", "current")
-    log.info(
-        "Dependency check (%s Python %s at %s): %d/%d present",
-        kind,
-        interp.get("python_version") or "?",
-        interp.get("executable"),
-        summary["present"],
-        summary["total"],
-    )
-    for r in results:
-        if r.installed:
+    """Run all checks and log a concise report. Returns the structured report."""
+    report = run_checks()
+    c = report["counts"]
+    log.info("Checks: %d ok · %d warning · %d failed", c["ok"], c["warn"], c["fail"])
+    for ch in report["checks"]:
+        if ch["status"] == "ok":
             continue
-        level = log.warning if not r.required else log.error
-        hint = f" — {r.install_hint}" if r.install_hint else ""
-        kind = "required" if r.required else "optional"
-        level("Missing %s dependency: %s (%s)%s", kind, r.pip_name, r.purpose, hint)
-    if summary["missing_required"]:
-        log.error(
-            "Required dependencies missing: %s. Install with: pip install -e .",
-            ", ".join(summary["missing_required"]),
-        )
-    return summary
+        level = log.error if ch["status"] == "fail" else log.warning
+        remedy = f" — {ch['remedy']}" if ch["remedy"] else ""
+        level("[%s] %s: %s%s", ch["category"], ch["name"], ch["detail"], remedy)
+    return report
