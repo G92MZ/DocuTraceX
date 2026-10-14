@@ -136,7 +136,7 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 - [ ] Método reproducible para fijar/distribuir dependencias por entorno
 - [ ] Forzar invocación explícita del intérprete/entorno asignado (nunca Python global ni PATH)
 - [ ] Pruebas automatizadas de importación, ejecución y compatibilidad por entorno
-- [ ] Diagnóstico visible de versiones/entornos; probar traslado a otra ruta/máquina — *parcial: chequeo de dependencias al arrancar (log + `/api/diagnostics` + panel Environment); falta diagnóstico de runtimes portables*
+- [ ] Diagnóstico visible de versiones/entornos; probar traslado a otra ruta/máquina — *parcial: pestaña «Diagnostics» con checks por categoría (Runtime: existe Python portable e intérprete en uso; dependencias en ese intérprete) con estado y motivo; indicador en la barra de pestañas; log al arrancar y `/api/diagnostics`. Falta cubrir herramientas externas y traslado*
 - [ ] Java + Apache POI: decidir por pruebas si se incorpora (compatibilidad, licencia, utilidad real); JARs + **OpenJDK** portable (Temurin/Zulu/Liberica, GPLv2+CPE — **nunca Oracle JDK**) en `tools\` con rutas relativas; nunca Java global
 
 *Aceptación: toda herramienta Python con ficha revisada y pruebas en su entorno; sin invocación accidental del Python global; incompatibilidades resueltas o herramienta excluida.*

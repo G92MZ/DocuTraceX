@@ -18,58 +18,77 @@
   </header>
 
   <nav class="tabs" aria-label="Main navigation">
-    <button class="tab is-active" type="button">Overview</button>
-    <button class="tab" type="button">Marks</button>
-    <button class="tab" type="button">Components</button>
-    <button class="tab" type="button">Reports</button>
-    <button class="tab" type="button">Tasks</button>
+    <button class="tab is-active" type="button" data-view="overview">Overview</button>
+    <button class="tab" type="button" data-view="marks">Marks</button>
+    <button class="tab" type="button" data-view="components">Components</button>
+    <button class="tab" type="button" data-view="reports">Reports</button>
+    <button class="tab" type="button" data-view="tasks">Tasks</button>
+    <button class="tab tab-right" type="button" data-view="diagnostics">
+      Diagnostics <span id="diag-dot" class="diag-dot"></span>
+    </button>
   </nav>
 
   <main class="content">
-    <section class="panel" id="diag-panel">
-      <div class="diag-head">
-        <h2>Environment</h2>
-        <span id="diag-summary" class="status"></span>
-      </div>
-      <div id="diag-interp" class="hint-line mono"></div>
-      <table class="cases" id="diag-table">
-        <thead>
-          <tr><th>Dependency</th><th>Purpose</th><th>Version</th><th>Status</th></tr>
-        </thead>
-        <tbody id="diag-body"></tbody>
-      </table>
-    </section>
+    <!-- Overview -->
+    <div class="view" data-view="overview">
+      <section class="panel">
+        <h1>New analysis</h1>
+        <p>Upload a file to open a case. The original is stored unmodified and hashed; no content is executed.</p>
+        <form id="upload-form" class="upload">
+          <input type="file" id="file-input" class="file-native" required />
+          <label for="file-input" class="btn btn-ghost">Choose file</label>
+          <span id="file-name" class="file-name">No file selected</span>
+          <button type="submit" class="btn btn-primary">Analyze</button>
+          <span id="upload-status" class="status"></span>
+        </form>
 
-    <section class="panel">
-      <h1>New analysis</h1>
-      <p>Upload a file to open a case. The original is stored unmodified and hashed; no content is executed.</p>
-      <form id="upload-form" class="upload">
-        <input type="file" id="file-input" class="file-native" required />
-        <label for="file-input" class="btn btn-ghost">Choose file</label>
-        <span id="file-name" class="file-name">No file selected</span>
-        <button type="submit" class="btn btn-primary">Analyze</button>
-        <span id="upload-status" class="status"></span>
-      </form>
+        <h3 class="formats-title">Supported formats</h3>
+        <div id="formats-grid" class="formats"></div>
+      </section>
 
-      <h3 class="formats-title">Supported formats</h3>
-      <div id="formats-grid" class="formats"></div>
-    </section>
+      <section class="panel">
+        <h2>Cases</h2>
+        <table class="cases" id="cases-table">
+          <thead>
+            <tr>
+              <th>Created (UTC)</th><th>File</th><th>Ext</th>
+              <th>Detected</th><th>Match</th>
+              <th>Size</th><th>SHA-256</th><th>State</th>
+            </tr>
+          </thead>
+          <tbody id="cases-body">
+            <tr><td colspan="8" class="empty">No cases yet.</td></tr>
+          </tbody>
+        </table>
+      </section>
+    </div>
 
-    <section class="panel">
-      <h2>Cases</h2>
-      <table class="cases" id="cases-table">
-        <thead>
-          <tr>
-            <th>Created (UTC)</th><th>File</th><th>Ext</th>
-            <th>Detected</th><th>Match</th>
-            <th>Size</th><th>SHA-256</th><th>State</th>
-          </tr>
-        </thead>
-        <tbody id="cases-body">
-          <tr><td colspan="8" class="empty">No cases yet.</td></tr>
-        </tbody>
-      </table>
-    </section>
+    <!-- Diagnostics -->
+    <div class="view" data-view="diagnostics" hidden>
+      <section class="panel">
+        <div class="diag-head">
+          <h2>Diagnostics</h2>
+          <span id="diag-summary" class="status"></span>
+        </div>
+        <div id="diag-interp" class="hint-line mono"></div>
+        <button id="diag-refresh" class="btn btn-ghost" type="button">Re-run checks</button>
+        <div id="diag-groups"></div>
+      </section>
+    </div>
+
+    <!-- Placeholder views -->
+    <div class="view" data-view="marks" hidden>
+      <section class="panel"><h2>Marks</h2><p>Not implemented yet.</p></section>
+    </div>
+    <div class="view" data-view="components" hidden>
+      <section class="panel"><h2>Components</h2><p>Not implemented yet.</p></section>
+    </div>
+    <div class="view" data-view="reports" hidden>
+      <section class="panel"><h2>Reports</h2><p>Not implemented yet.</p></section>
+    </div>
+    <div class="view" data-view="tasks" hidden>
+      <section class="panel"><h2>Tasks</h2><p>Not implemented yet.</p></section>
+    </div>
   </main>
 
   <script src="/static/app.js"></script>

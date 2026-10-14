@@ -143,40 +143,71 @@ document.getElementById("upload-form").addEventListener("submit", async (e) => {
   }
 });
 
+const STATUS_CLASS = { ok: "ok", warn: "warn", fail: "bad" };
+
 async function loadDiagnostics() {
-  const body = document.getElementById("diag-body");
   const summary = document.getElementById("diag-summary");
+  const groupsEl = document.getElementById("diag-groups");
+  const dot = document.getElementById("diag-dot");
   try {
     const d = await fetch("/api/diagnostics").then((r) => r.json());
     const it = d.interpreter || {};
     const kind = it.is_portable ? "portable" : (it.source || "current");
-    summary.textContent = `${d.present}/${d.total} present` +
-      (d.ok ? "" : " — missing required: " + d.missing_required.join(", "));
+    const c = d.counts || { ok: 0, warn: 0, fail: 0 };
+
+    summary.textContent = `${c.ok} ok · ${c.warn} warning · ${c.fail} failed`;
     summary.className = "status " + (d.ok ? "ok-text" : "bad-text");
-    const interpLine = document.getElementById("diag-interp");
-    if (interpLine) {
-      interpLine.textContent =
-        `Interpreter: ${kind} · Python ${it.python_version || "?"} · ${it.executable || ""}`;
+    document.getElementById("diag-interp").textContent =
+      `Interpreter: ${kind} · Python ${it.python_version || "?"} · ${it.executable || ""}`;
+
+    // Nav dot: red if any failure, amber if warnings, hidden otherwise.
+    if (dot) {
+      dot.className = "diag-dot" + (c.fail ? " dot-bad" : (c.warn ? " dot-warn" : ""));
     }
-    body.innerHTML = d.dependencies.map((x) => {
-      let cls, label;
-      if (x.installed) { cls = "ok"; label = "installed"; }
-      else if (x.required) { cls = "bad"; label = "missing (required)"; }
-      else { cls = "warn"; label = "missing (optional)"; }
-      const hint = (!x.installed && x.install_hint)
-        ? `<div class="hint-line">${escapeHtml(x.install_hint)}</div>` : "";
-      return `<tr>
-        <td class="file">${escapeHtml(x.name)}</td>
-        <td>${escapeHtml(x.purpose)}${hint}</td>
-        <td class="mono">${escapeHtml(x.version || "")}</td>
-        <td><span class="badge badge-${cls}">${escapeHtml(label)}</span></td>
-      </tr>`;
+
+    // Group checks by category.
+    const groups = {};
+    (d.checks || []).forEach((ch) => { (groups[ch.category] ||= []).push(ch); });
+    groupsEl.innerHTML = Object.entries(groups).map(([cat, items]) => {
+      const rows = items.map((ch) => {
+        const cls = STATUS_CLASS[ch.status] || "warn";
+        const remedy = (ch.status !== "ok" && ch.remedy)
+          ? `<div class="hint-line">${escapeHtml(ch.remedy)}</div>` : "";
+        return `<tr>
+          <td class="file">${escapeHtml(ch.name)}
+            ${ch.purpose ? `<div class="hint-line">${escapeHtml(ch.purpose)}</div>` : ""}</td>
+          <td>${escapeHtml(ch.detail || "")}${remedy}</td>
+          <td><span class="badge badge-${cls}">${escapeHtml(ch.status)}</span></td>
+        </tr>`;
+      }).join("");
+      return `<h3 class="formats-title">${escapeHtml(cat)}</h3>
+        <table class="cases"><thead>
+          <tr><th>Check</th><th>Detail</th><th>Status</th></tr>
+        </thead><tbody>${rows}</tbody></table>`;
     }).join("");
   } catch (err) {
     summary.textContent = "Could not load diagnostics.";
   }
 }
 
+// --- Tab navigation ----------------------------------------------------------
+function setupTabs() {
+  const tabs = document.querySelectorAll(".tab");
+  const views = document.querySelectorAll(".view");
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      const target = tab.getAttribute("data-view");
+      tabs.forEach((t) => t.classList.toggle("is-active", t === tab));
+      views.forEach((v) => { v.hidden = v.getAttribute("data-view") !== target; });
+      if (target === "diagnostics") loadDiagnostics();
+    });
+  });
+}
+
+const diagRefresh = document.getElementById("diag-refresh");
+if (diagRefresh) diagRefresh.addEventListener("click", loadDiagnostics);
+
+setupTabs();
 renderFormats();
-loadDiagnostics();
+loadDiagnostics(); // initial load to set the nav indicator
 loadCases();

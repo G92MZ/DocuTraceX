@@ -244,6 +244,89 @@ def summarize(results: list[DepStatus]) -> dict[str, Any]:
     }
 
 
+@dataclass
+class Check:
+    """A single diagnostic check for the Diagnostics tab."""
+
+    category: str
+    name: str
+    status: str          # "ok" | "warn" | "fail"
+    detail: str = ""     # what was found / why it failed
+    remedy: str = ""     # how to fix it
+    purpose: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "category": self.category,
+            "name": self.name,
+            "status": self.status,
+            "detail": self.detail,
+            "remedy": self.remedy,
+            "purpose": self.purpose,
+        }
+
+
+def run_checks(deps: list[Dependency] | None = None) -> dict[str, Any]:
+    """Run all diagnostics and return a structured report for the UI/endpoint."""
+    interp, dep_results = check_runtime(deps)
+    checks: list[Check] = []
+
+    # --- Runtime checks ---
+    portable = settings.portable_python()
+    checks.append(
+        Check(
+            category="Runtime",
+            name="Portable Python (tools/)",
+            status="ok" if portable else "warn",
+            detail=str(portable) if portable
+            else "No bundled interpreter found under tools/; using the system Python.",
+            remedy="" if portable
+            else "Bundle a portable Python under tools/python/ (runtime phase) "
+                 "or set DOCUTRACEX_PYTHON.",
+            purpose="Interpreter that runs the bundled tools",
+        )
+    )
+    checks.append(
+        Check(
+            category="Runtime",
+            name="Interpreter in use",
+            status="ok",
+            detail=f"{'portable' if interp.get('is_portable') else interp.get('source')} · "
+                   f"Python {interp.get('python_version') or '?'} · {interp.get('executable')}",
+            purpose="Where dependencies are checked",
+        )
+    )
+
+    # --- Python dependency checks (in the interpreter above) ---
+    for r in dep_results:
+        if r.installed:
+            status, detail, remedy = "ok", f"version {r.version or '?'}", ""
+        else:
+            status = "fail" if r.required else "warn"
+            detail = r.error or "not importable"
+            remedy = r.install_hint or "pip install -e ."
+        checks.append(
+            Check(
+                category="Python dependency",
+                name=r.pip_name,
+                status=status,
+                detail=detail,
+                remedy=remedy,
+                purpose=r.purpose,
+            )
+        )
+
+    counts = {"ok": 0, "warn": 0, "fail": 0}
+    for c in checks:
+        counts[c.status] = counts.get(c.status, 0) + 1
+    return {
+        "interpreter": interp,
+        "ok": counts["fail"] == 0,
+        "counts": counts,
+        "checks": [c.as_dict() for c in checks],
+    }
+
+
 def log_startup_report() -> dict[str, Any]:
     """Run the runtime check and log a concise report. Returns the summary."""
     interp, results = check_runtime()
