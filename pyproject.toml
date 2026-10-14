@@ -18,6 +18,8 @@ dependencies = [
     # libmagic binding (primary identifier). On Windows the native libmagic DLL
     # must be bundled under tools/; identification degrades gracefully if absent.
     "python-magic>=0.4.27",
+    # Safe XML parsing for the OOXML engine (no external entities / DTD fetch).
+    "defusedxml>=0.7.1",
 ]
 
 [project.optional-dependencies]

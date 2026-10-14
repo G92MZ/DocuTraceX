@@ -185,13 +185,13 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 
 ### Motor OOXML común
 
-- [ ] Inventario ZIP, `[Content_Types].xml`, relaciones y `docProps`
-- [ ] Parser XML seguro (sin entidades externas ni red); evaluar `defusedxml`
-- [ ] Detectar relaciones externas, destinos rotos, partes huérfanas, duplicados ZIP, tipos incoherentes, XML malformado y rutas peligrosas
-- [ ] IDs estables por ruta interna normalizada
-- [ ] Extraer medios/objetos a espacio aislado, calcular hashes e identificar con libmagic; registrar metadatos para la fase IOC
+- [x] Inventario ZIP, `[Content_Types].xml`, relaciones *(docProps se inventaría como parte; parseo semántico pendiente)*
+- [x] Parser XML seguro con `defusedxml` (sin entidades externas ni red)
+- [ ] Detectar relaciones externas, destinos rotos, partes huérfanas, duplicados ZIP, tipos incoherentes, XML malformado y rutas peligrosas — *parcial: hecho externas, destinos rotos, duplicados, sin content-type, XML malformado y rutas peligrosas; falta «partes huérfanas»*
+- [x] IDs estables por ruta interna normalizada
+- [x] Extraer medios/objetos a espacio aislado, calcular hashes e identificar con libmagic; registrar metadatos para la fase IOC
 - [ ] Manejar firmas, cifrado, partes desconocidas, `AlternateContent` y límites
-- [ ] Detener el análisis profundo automático (apertura como análisis independiente)
+- [x] Detener el análisis profundo automático (apertura como análisis independiente)
 
 *Aceptación: inventario reproducible; componentes trazables; sin extracción fuera del espacio de trabajo; errores y parcial visibles.*
 

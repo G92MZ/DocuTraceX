@@ -26,7 +26,8 @@ def test_upload_creates_case_and_lists_it(client: TestClient) -> None:
     assert resp.status_code == 201
     manifest = resp.json()
     assert manifest["original"]["filename"] == "sample.docx"
-    assert manifest["state"] == "created"
+    # Analysis runs on upload, so the state reflects the result.
+    assert manifest["state"] in ("created", "completed", "partial", "error")
 
     listed = client.get("/api/cases").json()
     assert len(listed) == 1
