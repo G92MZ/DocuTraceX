@@ -1,5 +1,48 @@
 "use strict";
 
+// --- Supported formats grid (upload section only) ----------------------------
+const FORMATS = [
+  { name: "Word", color: "#2b7cd3", glyph: "W",
+    exts: [".doc", ".dot", ".docx", ".docm", ".dotx", ".dotm"] },
+  { name: "Excel", color: "#1f9e5f", glyph: "X",
+    exts: [".xls", ".xlt", ".xla", ".xlsx", ".xlsm", ".xltx", ".xltm", ".xlam", ".xlsb"] },
+  { name: "PowerPoint", color: "#d35230", glyph: "P",
+    exts: [".ppt", ".pot", ".pptx", ".pptm", ".potx", ".potm", ".ppsx", ".ppsm", ".ppam", ".sldx", ".sldm"] },
+  { name: "PDF", color: "#c0392b", glyph: "PDF", exts: [".pdf"] },
+  { name: "Email", color: "#7f93ad", glyph: "mail", exts: [".eml", ".emlx", ".msg"] },
+];
+
+function docIcon(color, glyph) {
+  const fontSize = glyph.length > 1 ? 6.5 : 10;
+  return `<svg viewBox="0 0 40 48" class="fmt-ico" aria-hidden="true">
+    <path d="M6 2h18l10 10v32a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" fill="#1b2431" stroke="#2f3b4d" stroke-width="1.2"/>
+    <path d="M24 2l10 10h-8a2 2 0 0 1-2-2z" fill="#2f3b4d"/>
+    <rect x="4" y="29" width="30" height="13" rx="2" fill="${color}"/>
+    <text x="19" y="${glyph.length > 1 ? 37.5 : 38.5}" text-anchor="middle" font-size="${fontSize}" font-weight="700" fill="#fff" font-family="Segoe UI, sans-serif">${glyph}</text>
+  </svg>`;
+}
+
+function mailIcon(color) {
+  return `<svg viewBox="0 0 40 48" class="fmt-ico" aria-hidden="true">
+    <rect x="3" y="11" width="34" height="24" rx="3" fill="#1b2431" stroke="${color}" stroke-width="2"/>
+    <path d="M4 13l16 13 16-13" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round"/>
+  </svg>`;
+}
+
+function renderFormats() {
+  const grid = document.getElementById("formats-grid");
+  if (!grid) return;
+  grid.innerHTML = FORMATS.map((f) => {
+    const icon = f.glyph === "mail" ? mailIcon(f.color) : docIcon(f.color, f.glyph);
+    const chips = f.exts.map((e) => `<span class="ext-chip">${e}</span>`).join("");
+    return `<div class="fmt-card">
+      ${icon}
+      <div class="fmt-name">${f.name}</div>
+      <div class="fmt-exts">${chips}</div>
+    </div>`;
+  }).join("");
+}
+
 function fmtSize(bytes) {
   if (bytes == null) return "";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -122,5 +165,6 @@ async function loadDiagnostics() {
   }
 }
 
+renderFormats();
 loadDiagnostics();
 loadCases();
