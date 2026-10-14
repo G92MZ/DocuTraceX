@@ -156,6 +156,8 @@ def check_in_interpreter(
     Returns (interpreter_info, results), or None if the interpreter could not
     be probed (so the caller can fall back to the current one).
     """
+    from . import native
+
     deps = deps or PYTHON_DEPS
     payload = json.dumps([[d.import_name, d.pip_name] for d in deps])
     try:
@@ -163,9 +165,12 @@ def check_in_interpreter(
             [str(executable), "-I", "-c", _PROBE, payload],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",  # child output may not be valid UTF-8 (e.g. cp1252)
             timeout=30,
+            env=native.subprocess_env(),
         )
-    except (OSError, subprocess.SubprocessError) as exc:
+    except Exception as exc:  # noqa: BLE001  (never let a probe failure break startup)
         log.warning("Could not run probe in %s: %s", executable, exc)
         return None
     if proc.returncode != 0 or not proc.stdout.strip():

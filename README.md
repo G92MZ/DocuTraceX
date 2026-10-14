@@ -32,7 +32,17 @@ pytest -q                  # ejecuta los tests
 
 Configurable por entorno: `DOCUTRACEX_HOST`, `DOCUTRACEX_PORT`, `DOCUTRACEX_LOG_LEVEL`.
 
-Al arrancar, la app comprueba sus dependencias **en el intérprete que realmente ejecutará las herramientas**: si hay un Python portable en `tools\` (o `DOCUTRACEX_PYTHON`), el check se ejecuta *dentro* de ese intérprete por subproceso, no en el que lanzó la app. El resultado va al log, a `GET /api/diagnostics` (incluye qué intérprete se usa: portable vs sistema) y al panel «Environment» de la UI. En Windows, para la identificación con libmagic hace falta la librería nativa (de momento, en desarrollo: `pip install python-magic-bin`; el empaquetado de la DLL en `tools\` llegará con el gestor de herramientas).
+### Python portable (tools/)
+
+Para distribución, DocuTraceX corre sobre un **Python portable** en `tools\python\` (CPython **3.13**, la versión con mejor cobertura de ruedas hoy; preparado para añadir una 2ª versión si algún parser la necesita). Se provisiona con un comando:
+
+```bash
+python scripts/setup_portable_python.py
+```
+
+Descarga el build de **python-build-standalone** (Astral) para tu plataforma, lo extrae a `tools\python\`, instala la app y sus dependencias **dentro** de ese intérprete y, en Windows, provisiona además la **libmagic nativa** (`libmagic.dll` + `magic.mgc`) en `tools\libmagic\` extrayéndola del wheel `python-magic-bin` (sin depender de que ese paquete se instale en 3.13/3.14). La app localiza esa DLL (vía `add_dll_directory` + `MAGIC`) antes de importar `magic`.
+
+Al arrancar, la app comprueba sus dependencias **en el intérprete que realmente ejecutará las herramientas**: si hay Python portable en `tools\` (o `DOCUTRACEX_PYTHON`), el check se ejecuta *dentro* de ese intérprete por subproceso, no en el que lanzó la app. El resultado va al log, a `GET /api/diagnostics` y a la pestaña **Diagnostics** (indica qué intérprete se usa: portable vs sistema).
 
 Ficheros de prueba (uno por tipo del alcance) en `samples/` — ver `samples/README.md`; se regeneran con `python scripts/make_samples.py`.
 
@@ -60,7 +70,7 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 - [ ] Crear plantilla de ficha de compatibilidad (nada se integra sin ella)
 - [ ] Incorporar decisiones funcionales (ejecución automática, UI inglés en paneles tipo WinHound, Overview, Marks, panel de casos, informe único, local sin auth, un análisis por instancia)
 - [ ] **Decisión abierta — presupuestos de recursos** configurables por caso con alerta/pausa (no abortar), para no colgar la instancia ni perder la muestra
-- [ ] **Decisión abierta — reemplazo del Python *embeddable*** (evaluar python-build-standalone u otra distribución portable con pip)
+- [x] **Decidido — reemplazo del Python *embeddable*: python-build-standalone** (Astral), provisionado con `scripts/setup_portable_python.py`
 - [x] **Decidido — identificador primario: libmagic** (motor del comando `file`, licencia BSD, firmas ampliables) en vez de TrID. TrID es *freeware no comercial* y pieza única; libmagic es permisivo y redistribuible para una distribución gratuita. DIE descartado porque identificaba DOCX/XLSX/PPTX como **ZIP** (son contenedores comprimidos); Apache Tika descartado por el peso del runtime Java salvo que se incorpore por Apache POI
 
 *Aceptación: cada formato con alcance mínimo + pruebas; exclusiones documentadas; plantilla de ficha lista; «sin detecciones» ≠ seguro.*
@@ -111,7 +121,7 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 ### Núcleo común (hashes, identificación, modelos)
 
 - [ ] Hashes MD5, SHA-1 y SHA-256 (original y componentes) — *parcial: original hecho (en streaming); componentes al extraerlos*
-- [x] libmagic (motor del comando `file`, BSD) como identificador general primario — registrar versión, salida y errores; *en Linux vía `python-magic`; falta empaquetar la DLL nativa + `magic.mgc` en `tools\` para Windows (`python-magic-bin` está abandonado)*
+- [x] libmagic (motor del comando `file`, BSD) como identificador general primario — registrar versión, salida y errores; en Windows la DLL nativa + `magic.mgc` se provisionan en `tools\libmagic\` (extraídas del wheel `python-magic-bin`) y la app las localiza antes de importar `magic`
 - [ ] Firmas ampliables vía formato `magic(5)` para añadir tipos nuevos; la extensibilidad ambiciosa (reglas complejas) se reserva a la fase YARA
 - [x] DIE y Apache Tika quedan descartados como identificador general (DIE marcaba todo OOXML como ZIP; Tika arrastra Java)
 - [ ] Adaptador de herramientas: versión, argumentos, código de salida, stdout/stderr, duración, resultado normalizado, prueba funcional
@@ -130,11 +140,11 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 - [ ] Inventariar versiones mínima/máxima de Python por herramienta/biblioteca
 - [ ] Identificar dependencias nativas, runtimes y restricciones de Windows por combinación
 - [ ] Separar dos problemas: aislar *dependencias* (venvs sobre 1 intérprete) vs aislar *intérpretes* (solo si una herramienta no arranca en la versión elegida)
-- [ ] Probar Python 3.13 x64 como candidato inicial (no definitivo) contra toda la matriz
-- [ ] Evaluar python-build-standalone como distribución portable con pip (en vez del *embeddable*)
-- [ ] Decidir nº de entornos/intérpretes según la matriz (permitir varios si hace falta)
-- [ ] Método reproducible para fijar/distribuir dependencias por entorno
-- [ ] Forzar invocación explícita del intérprete/entorno asignado (nunca Python global ni PATH)
+- [x] Python 3.13 x64 como versión inicial (mejor cobertura de ruedas; 2ª versión más adelante si algún parser la exige)
+- [x] python-build-standalone como distribución portable con pip (en vez del *embeddable*)
+- [ ] Decidir nº de entornos/intérpretes según la matriz (permitir varios si hace falta) — *de momento 1 (3.13); abierto a añadir*
+- [x] Método reproducible para fijar/distribuir dependencias por entorno (`scripts/setup_portable_python.py` + `pip install -e .` en el portable)
+- [ ] Forzar invocación explícita del intérprete/entorno asignado (nunca Python global ni PATH) — *parcial: el check y el provisionado usan el intérprete portable explícito; falta enrutar la ejecución de cada herramienta por él*
 - [ ] Pruebas automatizadas de importación, ejecución y compatibilidad por entorno
 - [ ] Diagnóstico visible de versiones/entornos; probar traslado a otra ruta/máquina — *parcial: pestaña «Diagnostics» con checks por categoría (Runtime: existe Python portable e intérprete en uso; dependencias en ese intérprete) con estado y motivo; indicador en la barra de pestañas; log al arrancar y `/api/diagnostics`. Falta cubrir herramientas externas y traslado*
 - [ ] Java + Apache POI: decidir por pruebas si se incorpora (compatibilidad, licencia, utilidad real); JARs + **OpenJDK** portable (Temurin/Zulu/Liberica, GPLv2+CPE — **nunca Oracle JDK**) en `tools\` con rutas relativas; nunca Java global

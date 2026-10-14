@@ -174,6 +174,9 @@ def identify(path: Path, declared_ext: str = "") -> dict[str, Any]:
     result["structural"] = structural
     structural_family = structural["family"] if structural else None
 
+    from . import native
+
+    native.setup_libmagic()  # wire bundled libmagic (no-op if not bundled/needed)
     try:
         import magic  # type: ignore
     except Exception as exc:  # noqa: BLE001
