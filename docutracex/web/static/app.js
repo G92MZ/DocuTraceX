@@ -320,10 +320,16 @@ function paneContent(sem, ole) {
       <pre class="text-sample">${escapeHtml(sem.text_sample.slice(0, 8000))}</pre>`;
   }
   const olevba = ole && ole.tools && ole.tools.olevba;
-  if (olevba && olevba.macros && ole.code_text) {
-    const mods = (olevba.modules || []).map((m) => `${m.stream} (${m.code_length})`).join(", ");
-    html += `<p class="hint-line">VBA source — modules: ${escapeHtml(mods)}</p>
-      <pre class="text-sample">${escapeHtml(ole.code_text.slice(0, 8000))}</pre>`;
+  if (olevba && olevba.macros) {
+    const modules = olevba.modules || [];
+    html += `<p class="hint-line">VBA source — ${modules.length} module(s)</p>`;
+    modules.forEach((m) => {
+      const name = m.vba_filename || m.stream || "module";
+      const trunc = m.code_truncated ? ` — truncated at ${(m.code || "").length} of ${m.code_length} chars` : "";
+      const code = m.code != null ? m.code : "";
+      html += `<p class="hint-line mono">${escapeHtml(name)} (${m.code_length} chars)${escapeHtml(trunc)}</p>
+        <pre class="text-sample">${escapeHtml(code)}</pre>`;
+    });
   }
   return html || `<p class="hint-line">No reconstructed content.</p>`;
 }
