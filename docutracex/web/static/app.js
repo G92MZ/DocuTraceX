@@ -230,17 +230,20 @@ async function openComponents(analysisId) {
     const mods = d.modules || {};
     const ooxml = mods.ooxml;
     const sem = mods.word || mods.excel || mods.powerpoint;
+    const iocs = d.iocs;
     if (!ooxml && !sem) {
       bodyEl.innerHTML = `<p class="hint-line">No component analysis for this case yet.</p>`;
       return;
     }
     const c = (ooxml && ooxml.counts) || {};
     const nf = (sem && sem.counts && sem.counts.findings) || 0;
+    const ni = (iocs && iocs.counts && iocs.counts.total) || 0;
     summary.textContent =
-      `${c.components || 0} parts · ${c.external_relationships || 0} external · ${(c.anomalies || 0) + nf} findings`;
+      `${c.components || 0} parts · ${c.external_relationships || 0} external · ${(c.anomalies || 0) + nf} findings · ${ni} IOCs`;
     summary.className = "status " + ((c.anomalies || 0) + nf ? "bad-text" : "ok-text");
     bodyEl.innerHTML =
       (sem ? renderSemantic(sem) : "") +
+      renderIocs(iocs) +
       (ooxml ? renderAnomalies(ooxml.anomalies) : "") +
       (ooxml ? renderRelationships(ooxml.relationships) : "") +
       (ooxml ? renderExtracted(ooxml.extracted) : "") +
@@ -251,6 +254,31 @@ async function openComponents(analysisId) {
 }
 
 const SEV_CLASS = { high: "bad", medium: "warn", low: "warn", info: "ok" };
+
+const IOC_TYPE_LABEL = {
+  url: "URL", domain: "Domain", ipv4: "IPv4", ipv6: "IPv6", hash_like: "Hash-like",
+};
+
+function renderIocs(iocs) {
+  if (!iocs || !iocs.iocs || !iocs.iocs.length) return "";
+  const rows = iocs.iocs.map((i) => {
+    const occ = i.occurrences || [];
+    const where = occ.map((o) => `${o.module}/${o.location}`);
+    const uniqWhere = [...new Set(where)].slice(0, 4).join(", ");
+    return `<tr>
+      <td>${escapeHtml(IOC_TYPE_LABEL[i.type] || i.type)}</td>
+      <td class="mono">${escapeHtml(i.value)}</td>
+      <td>${i.count}</td>
+      <td class="mono" title="${escapeHtml(where.join(", "))}">${escapeHtml(uniqWhere)}</td>
+    </tr>`;
+  }).join("");
+  const c = iocs.counts || {};
+  const bits = Object.keys(c).filter((k) => k !== "total").map((k) => `${c[k]} ${k}`);
+  return `<h3 class="formats-title">IOCs (${c.total || 0})</h3>
+    ${bits.length ? `<p class="hint-line">${escapeHtml(bits.join(" · "))}</p>` : ""}
+    <table class="cases"><thead><tr><th>Type</th><th>Value</th><th>Count</th><th>Provenance</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
 
 function renderSemantic(sem) {
   let html = "";

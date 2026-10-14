@@ -196,6 +196,7 @@ def _analyze_excel(zf: zipfile.ZipFile) -> dict[str, Any]:
 
     # Scan formulas in worksheets for suspicious functions.
     formula_hits = 0
+    formulas: list[str] = []
     for name in zf.namelist():
         if not re.match(r"xl/worksheets/sheet\d+\.xml$", name):
             continue
@@ -209,7 +210,10 @@ def _analyze_excel(zf: zipfile.ZipFile) -> dict[str, Any]:
             continue
         for f in root.iter(f"{XL}f"):
             formula_hits += 1
-            txt = (f.text or "").upper()
+            raw = f.text or ""
+            if raw and len(formulas) < 500:
+                formulas.append(raw)
+            txt = raw.upper()
             for kw, (rule, sev) in _EXCEL_FUNC_KEYWORDS.items():
                 if kw in txt:
                     findings.append(_finding(rule, sev, f"Formula uses {kw}", name))
@@ -221,6 +225,7 @@ def _analyze_excel(zf: zipfile.ZipFile) -> dict[str, Any]:
         "hidden_sheets": [s["name"] for s in sheets if s["state"] in ("hidden", "veryHidden")],
         "external_links": len(ext_links),
         "formula_count": formula_hits,
+        "formulas": formulas,
         "findings": findings,
     }
 

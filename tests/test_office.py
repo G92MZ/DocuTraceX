@@ -93,3 +93,31 @@ def test_xlsb_has_no_semantic_parser_yet(tmp_path: Path) -> None:
     pkg = tmp_path / "m.xlsb"
     _zip(pkg, {"[Content_Types].xml": CT_BASE})
     assert office.analyze(pkg, ".xlsb") is None
+
+
+# --- enriched sample files ---------------------------------------------------
+
+import pytest  # noqa: E402
+
+from docutracex import analyze, cases  # noqa: E402
+from docutracex.storage import CasePaths, read_json  # noqa: E402
+
+SAMPLES = Path(__file__).resolve().parent.parent / "samples"
+has_rich = pytest.mark.skipif(
+    not (SAMPLES / "sample.docm").exists(),
+    reason="samples not generated (run scripts/make_samples.py)",
+)
+
+
+@has_rich
+def test_sample_docm_findings_and_iocs(tmp_path: Path) -> None:
+    with (SAMPLES / "sample.docm").open("rb") as fh:
+        manifest = cases.create_case(fh, "sample.docm", cases_dir=tmp_path)
+    analyze.analyze_case(tmp_path / manifest["analysis_id"])
+    paths = CasePaths(manifest["analysis_id"], cases_dir=tmp_path)
+    sem = read_json(paths.subresult("word"))
+    iocs = read_json(paths.subresult("iocs"))
+    rules = {f["rule"] for f in sem["findings"]}
+    assert "dde_auto" in rules and "vba_macros_present" in rules
+    types = {i["type"] for i in iocs["iocs"]}
+    assert {"url", "domain", "ipv4"} <= types
