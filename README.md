@@ -63,12 +63,12 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 
 ### Infraestructura, repositorio y calidad
 
-- [ ] Crear estructura de aplicación y configuración
-- [ ] Definir rutas relativas (sin rutas de una máquina concreta)
-- [ ] Configurar pruebas automatizadas, linting y análisis estático
+- [x] Crear estructura de aplicación y configuración
+- [x] Definir rutas relativas (sin rutas de una máquina concreta)
+- [ ] Configurar pruebas automatizadas, linting y análisis estático — *parcial: pytest (6 tests) y ruff configurados; falta análisis estático de tipos*
 - [ ] Añadir revisión de dependencias/vulnerabilidades (SCA)
-- [ ] Crear documentación base, plantillas de issues y PR
-- [ ] Establecer convenciones de logs, manejo de errores y versionado
+- [ ] Crear documentación base, plantillas de issues y PR — *parcial: README + LICENSE/NOTICE; faltan plantillas de issues/PR*
+- [x] Establecer convenciones de logs, manejo de errores y versionado
 - [ ] Montar CI (tests + lint + análisis en cada PR)
 
 *Aceptación: entorno reproducible; tests básicos y CI operativos; sin rutas específicas de máquina.*
