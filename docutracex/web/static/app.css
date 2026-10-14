@@ -134,3 +134,8 @@ table.cases td.empty { color: var(--text-dim); text-align: center; padding: 18px
 .badge-ok { color: #5fd38b; border-color: #2f6b45; }
 .badge-bad { color: #e8795a; border-color: #7a3a2a; }
 .badge-warn { color: #e0b65a; border-color: #7a632a; }
+
+.diag-head { display: flex; align-items: baseline; justify-content: space-between; }
+.ok-text { color: #5fd38b; }
+.bad-text { color: #e8795a; }
+.hint-line { color: var(--text-dim); font-size: 12px; margin-top: 3px; }

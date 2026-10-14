@@ -88,4 +88,32 @@ document.getElementById("upload-form").addEventListener("submit", async (e) => {
   }
 });
 
+async function loadDiagnostics() {
+  const body = document.getElementById("diag-body");
+  const summary = document.getElementById("diag-summary");
+  try {
+    const d = await fetch("/api/diagnostics").then((r) => r.json());
+    summary.textContent = `${d.present}/${d.total} present` +
+      (d.ok ? "" : " — missing required: " + d.missing_required.join(", "));
+    summary.className = "status " + (d.ok ? "ok-text" : "bad-text");
+    body.innerHTML = d.dependencies.map((x) => {
+      let cls, label;
+      if (x.installed) { cls = "ok"; label = "installed"; }
+      else if (x.required) { cls = "bad"; label = "missing (required)"; }
+      else { cls = "warn"; label = "missing (optional)"; }
+      const hint = (!x.installed && x.install_hint)
+        ? `<div class="hint-line">${escapeHtml(x.install_hint)}</div>` : "";
+      return `<tr>
+        <td class="file">${escapeHtml(x.name)}</td>
+        <td>${escapeHtml(x.purpose)}${hint}</td>
+        <td class="mono">${escapeHtml(x.version || "")}</td>
+        <td><span class="badge badge-${cls}">${escapeHtml(label)}</span></td>
+      </tr>`;
+    }).join("");
+  } catch (err) {
+    summary.textContent = "Could not load diagnostics.";
+  }
+}
+
+loadDiagnostics();
 loadCases();

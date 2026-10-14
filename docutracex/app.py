@@ -16,6 +16,7 @@ from fastapi.templating import Jinja2Templates
 from . import __version__
 from .api.cases import router as cases_router
 from .config import settings
+from .deps import check_dependencies, log_startup_report, summarize
 from .errors import DocuTraceXError
 from .logging_config import configure_logging, get_logger
 
@@ -28,6 +29,9 @@ _TEMPLATES = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
 def create_app() -> FastAPI:
     configure_logging(settings.log_level)
     settings.ensure_dirs()
+
+    # Check dependencies at startup and log a concise report.
+    log_startup_report()
 
     app = FastAPI(title="DocuTraceX", version=__version__)
 
@@ -45,6 +49,10 @@ def create_app() -> FastAPI:
     @app.get("/health", response_class=JSONResponse)
     async def health() -> dict:
         return {"status": "ok", "version": __version__}
+
+    @app.get("/api/diagnostics", response_class=JSONResponse)
+    async def diagnostics() -> dict:
+        return {"version": __version__, **summarize(check_dependencies())}
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:

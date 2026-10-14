@@ -32,6 +32,8 @@ pytest -q                  # ejecuta los tests
 
 Configurable por entorno: `DOCUTRACEX_HOST`, `DOCUTRACEX_PORT`, `DOCUTRACEX_LOG_LEVEL`.
 
+Al arrancar, la app comprueba sus dependencias y lo registra en el log; el estado está también en `GET /api/diagnostics` y en el panel «Environment» de la UI. En Windows, para la identificación con libmagic hace falta la librería nativa (de momento, en desarrollo: `pip install python-magic-bin`; el empaquetado de la DLL en `tools\` llegará con el gestor de herramientas).
+
 Ficheros de prueba (uno por tipo del alcance) en `samples/` — ver `samples/README.md`; se regeneran con `python scripts/make_samples.py`.
 
 ### Arquitectura inicial
@@ -134,7 +136,7 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 - [ ] Método reproducible para fijar/distribuir dependencias por entorno
 - [ ] Forzar invocación explícita del intérprete/entorno asignado (nunca Python global ni PATH)
 - [ ] Pruebas automatizadas de importación, ejecución y compatibilidad por entorno
-- [ ] Diagnóstico visible de versiones/entornos; probar traslado a otra ruta/máquina
+- [ ] Diagnóstico visible de versiones/entornos; probar traslado a otra ruta/máquina — *parcial: chequeo de dependencias al arrancar (log + `/api/diagnostics` + panel Environment); falta diagnóstico de runtimes portables*
 - [ ] Java + Apache POI: decidir por pruebas si se incorpora (compatibilidad, licencia, utilidad real); JARs + **OpenJDK** portable (Temurin/Zulu/Liberica, GPLv2+CPE — **nunca Oracle JDK**) en `tools\` con rutas relativas; nunca Java global
 
 *Aceptación: toda herramienta Python con ficha revisada y pruebas en su entorno; sin invocación accidental del Python global; incompatibilidades resueltas o herramienta excluida.*
