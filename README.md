@@ -32,6 +32,8 @@ pytest -q                  # ejecuta los tests
 
 Configurable por entorno: `DOCUTRACEX_HOST`, `DOCUTRACEX_PORT`, `DOCUTRACEX_LOG_LEVEL`.
 
+Ficheros de prueba (uno por tipo del alcance) en `samples/` — ver `samples/README.md`; se regeneran con `python scripts/make_samples.py`.
+
 ### Arquitectura inicial
 
 - **Backend:** Python + FastAPI (servicio web local), al estilo de WinHound/Longanizer.
@@ -107,15 +109,15 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 ### Núcleo común (hashes, identificación, modelos)
 
 - [ ] Hashes MD5, SHA-1 y SHA-256 (original y componentes) — *parcial: original hecho (en streaming); componentes al extraerlos*
-- [ ] libmagic (motor del comando `file`, BSD) como identificador general primario — registrar versión, salida y errores; empaquetar la DLL nativa + `magic.mgc` en `tools\` (verificar que el paquete de binarios Windows esté mantenido; `python-magic-bin` está abandonado)
+- [x] libmagic (motor del comando `file`, BSD) como identificador general primario — registrar versión, salida y errores; *en Linux vía `python-magic`; falta empaquetar la DLL nativa + `magic.mgc` en `tools\` para Windows (`python-magic-bin` está abandonado)*
 - [ ] Firmas ampliables vía formato `magic(5)` para añadir tipos nuevos; la extensibilidad ambiciosa (reglas complejas) se reserva a la fase YARA
-- [ ] DIE y Apache Tika quedan descartados como identificador general (DIE marcaba todo OOXML como ZIP; Tika arrastra Java)
+- [x] DIE y Apache Tika quedan descartados como identificador general (DIE marcaba todo OOXML como ZIP; Tika arrastra Java)
 - [ ] Adaptador de herramientas: versión, argumentos, código de salida, stdout/stderr, duración, resultado normalizado, prueba funcional
 - [ ] Modelos de componente, relación, hallazgo y evidencia (IDs estables, no índices efímeros)
 - [ ] Modelo persistente de Marks por hallazgo: TP/FP/Suspicious/Informational/Unreviewed, comentarios, fecha de revisión; sin tocar la evidencia automática
 - [ ] Pivotado desde cada Mark a su origen (fichero/componente, parser, sección, offset)
 - [ ] Diseñar modelo y motor común de IOC (sin ejecutarlo dentro de cada parser; ejecución en fase posterior)
-- [ ] Comparación extensión / libmagic / validador estructural / parser semántico, con registro de discrepancias
+- [ ] Comparación extensión / libmagic / validador estructural / parser semántico, con registro de discrepancias — *parcial: extensión vs libmagic (por familia) hecho; faltan validador estructural y parser semántico*
 - [ ] Extracción de cadenas (ASCII/UTF-16) con implementación propia en Python — Sysinternals Strings descartado (su licencia prohíbe redistribuir)
 - [ ] FLOSS descartado
 

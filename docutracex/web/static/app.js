@@ -12,13 +12,24 @@ function shortHash(h) {
   return h ? h.slice(0, 12) + "…" : "";
 }
 
+function discrepancyBadge(status) {
+  const map = {
+    match: ["ok", "match"],
+    mismatch: ["bad", "mismatch"],
+    inconclusive: ["warn", "container"],
+    unknown: ["warn", "unknown"],
+  };
+  const [cls, label] = map[status] || ["warn", status || "—"];
+  return `<span class="badge badge-${cls}">${escapeHtml(label)}</span>`;
+}
+
 async function loadCases() {
   const body = document.getElementById("cases-body");
   try {
     const resp = await fetch("/api/cases");
     const cases = await resp.json();
     if (!cases.length) {
-      body.innerHTML = '<tr><td colspan="6" class="empty">No cases yet.</td></tr>';
+      body.innerHTML = '<tr><td colspan="8" class="empty">No cases yet.</td></tr>';
       return;
     }
     body.innerHTML = cases.map((c) => `
@@ -26,12 +37,14 @@ async function loadCases() {
         <td>${c.created_utc || ""}</td>
         <td class="file">${escapeHtml(c.filename || "")}</td>
         <td>${escapeHtml(c.declared_extension || "")}</td>
+        <td class="mono" title="${escapeHtml(c.detected_name || "")}">${escapeHtml(c.detected_mime || "")}</td>
+        <td>${discrepancyBadge(c.discrepancy)}</td>
         <td>${fmtSize(c.size_bytes)}</td>
         <td class="mono" title="${c.sha256 || ""}">${shortHash(c.sha256)}</td>
         <td><span class="badge">${escapeHtml(c.state || "")}</span></td>
       </tr>`).join("");
   } catch (err) {
-    body.innerHTML = '<tr><td colspan="6" class="empty">Could not load cases.</td></tr>';
+    body.innerHTML = '<tr><td colspan="8" class="empty">Could not load cases.</td></tr>';
   }
 }
 
