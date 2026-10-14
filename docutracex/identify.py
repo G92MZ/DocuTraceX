@@ -13,6 +13,7 @@ rather than a false mismatch — the exact problem that made DIE unusable here.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -103,7 +104,13 @@ def _run_libmagic(path: Path) -> dict[str, Any]:
     from .config import settings
 
     portable = settings.portable_python()
+    already_on_portable = False
     if portable:
+        try:
+            already_on_portable = portable.resolve() == Path(sys.executable).resolve()
+        except OSError:
+            already_on_portable = False
+    if portable and not already_on_portable:
         try:
             proc = subprocess.run(
                 [str(portable), "-I", "-c", _MAGIC_PROBE, str(path)],

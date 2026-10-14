@@ -5,7 +5,9 @@ from __future__ import annotations
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
+from .. import analyze as analysis
 from .. import cases as case_service
+from ..config import settings
 from ..errors import CaseError
 
 router = APIRouter(prefix="/api/cases", tags=["cases"])
@@ -13,9 +15,13 @@ router = APIRouter(prefix="/api/cases", tags=["cases"])
 
 @router.post("")
 async def create_case(file: UploadFile = File(...)) -> JSONResponse:
-    """Upload a file and create a new case. The original is stored unmodified."""
+    """Upload a file, create a case, and run the applicable analysis."""
     manifest = case_service.create_case(file.file, file.filename or "upload.bin")
-    return JSONResponse(status_code=201, content=manifest)
+    case_root = settings.cases_dir / manifest["analysis_id"]
+    analysis.run_analysis(case_root)
+    # Return the updated manifest (analysis may have changed state/counts).
+    updated = case_service.get_case(manifest["analysis_id"])
+    return JSONResponse(status_code=201, content=updated)
 
 
 @router.get("")
