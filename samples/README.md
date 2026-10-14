@@ -1,8 +1,27 @@
 # Samples
 
 Benign sample files, one per in-scope type, for testing identification and the
-parsers. **They are minimal and carry no findings yet** — findings-bearing
-samples will be added later, on request.
+parsers. The **OOXML samples (Word/Excel/PowerPoint) now carry realistic benign
+content** that produces findings and IOCs; the other families are still minimal
+valid files of their type (their parsers come later).
+
+All content is benign — the "malicious"-looking strings are documentation
+examples (RFC 5737 TEST-NET IPs like `203.0.113.10`, `example.*` URLs), not real
+payloads.
+
+## What the enriched OOXML samples contain
+
+- **Metadata** (docProps): creator `gmzpt`, title, dates, Application/Company.
+- **Text** with benign IOCs: `http://malware.example.com/payload.bin`, `203.0.113.10`.
+- **Macro-enabled variants** (`.docm .dotm .xlsm .xltm .xlam .pptm .potm .ppsm .ppam .sldm`):
+  a `vbaProject.bin` (VBA detected) and, for Word, a **DDEAUTO** field.
+- **Template variants** (`.dotx .dotm .xltx .xltm .potx .potm`): an **external
+  relationship** to `http://templates.example.org/corp.dotm`.
+- **Excel**: a **hidden (veryHidden) sheet** and a **WEBSERVICE** formula pointing
+  to `http://feeds.example.net/data`.
+
+Upload any of these and open the case in **Components** to see findings, metadata,
+relationships and extracted IOCs.
 
 Regenerate with:
 

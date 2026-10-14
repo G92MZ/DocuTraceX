@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 """Generate benign sample files, one per in-scope type, under ``samples/``.
 
-These are *minimal, structurally valid* files of each type, for exercising
-identification and the parsers. They are benign and carry no findings yet
-(findings-bearing samples come later, on request).
+The OOXML samples (Word/Excel/PowerPoint) carry realistic *benign* content that
+exercises the parsers and produces findings and IOCs:
+- document metadata (docProps)
+- reconstructable text with benign IOCs (RFC 5737 TEST-NET IPs, example.* URLs)
+- macro-enabled variants include a VBA project and (Word) a DDEAUTO field
+- template variants include an external relationship
+- Excel includes a hidden sheet and a WEBSERVICE formula
 
-What each one is:
-- OOXML/OPC packages (.docx family, .xlsx family, .pptx family, .xlsb): minimal
-  Open Packaging Convention ZIP packages with the correct content type for the
-  declared extension.
-- Legacy Office (.doc/.xls/.ppt and variants) and .msg: minimal valid OLE/CFB
-  compound files (container-valid; not full Office documents).
-- .pdf: a minimal valid PDF.
-- .eml: a valid RFC 822 message. .emlx: an Apple Mail wrapper around one.
+The legacy OLE/CFB files, XLSB, PDF, EML/EMLX/MSG remain minimal valid files of
+their type (their parsers come later). Everything is benign — the "malicious"
+strings are documentation examples, not real payloads.
 
 Run:  python scripts/make_samples.py
 """
@@ -27,67 +26,180 @@ from pathlib import Path
 
 SAMPLES = Path(__file__).resolve().parent.parent / "samples"
 
-REL_OFFICE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
+# Benign documentation IOCs (RFC 5737 / RFC 2606 / example.*).
+URL_A = "http://malware.example.com/payload.bin"
+URL_FEED = "http://feeds.example.net/data"
+IP_A = "203.0.113.10"
+EXT_TEMPLATE = "http://templates.example.org/corp.dotm"
+
+REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+PKGREL = "http://schemas.openxmlformats.org/package/2006/relationships"
+
+MACRO_EXTS = {".docm", ".dotm", ".xlsm", ".xltm", ".xlam", ".pptm", ".potm",
+              ".ppsm", ".ppam", ".sldm"}
+TEMPLATE_EXTS = {".dotx", ".dotm", ".xltx", ".xltm", ".potx", ".potm"}
+
+# ext -> (family, main_part, main_content_type)
+OOXML_MAIN: dict[str, tuple[str, str, str]] = {
+    ".docx": ("word", "word/document.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"),
+    ".docm": ("word", "word/document.xml", "application/vnd.ms-word.document.macroEnabled.main+xml"),
+    ".dotx": ("word", "word/document.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml"),
+    ".dotm": ("word", "word/document.xml", "application/vnd.ms-word.template.macroEnabledTemplate.main+xml"),
+    ".xlsx": ("excel", "xl/workbook.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"),
+    ".xlsm": ("excel", "xl/workbook.xml", "application/vnd.ms-excel.sheet.macroEnabled.main+xml"),
+    ".xltx": ("excel", "xl/workbook.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml"),
+    ".xltm": ("excel", "xl/workbook.xml", "application/vnd.ms-excel.template.macroEnabled.main+xml"),
+    ".xlam": ("excel", "xl/workbook.xml", "application/vnd.ms-excel.addin.macroEnabled.main+xml"),
+    ".pptx": ("powerpoint", "ppt/presentation.xml", "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"),
+    ".pptm": ("powerpoint", "ppt/presentation.xml", "application/vnd.ms-powerpoint.presentation.macroEnabled.main+xml"),
+    ".potx": ("powerpoint", "ppt/presentation.xml", "application/vnd.openxmlformats-officedocument.presentationml.template.main+xml"),
+    ".potm": ("powerpoint", "ppt/presentation.xml", "application/vnd.ms-powerpoint.template.macroEnabled.main+xml"),
+    ".ppsx": ("powerpoint", "ppt/presentation.xml", "application/vnd.openxmlformats-officedocument.presentationml.slideshow.main+xml"),
+    ".ppsm": ("powerpoint", "ppt/presentation.xml", "application/vnd.ms-powerpoint.slideshow.macroEnabled.main+xml"),
+    ".ppam": ("powerpoint", "ppt/presentation.xml", "application/vnd.ms-powerpoint.addin.macroEnabled.main+xml"),
+    ".sldx": ("powerpoint", "ppt/presentation.xml", "application/vnd.openxmlformats-officedocument.presentationml.slide.main+xml"),
+    ".sldm": ("powerpoint", "ppt/presentation.xml", "application/vnd.ms-powerpoint.slide.macroEnabled.main+xml"),
+    ".xlsb": ("xlsb", "xl/workbook.bin", "application/vnd.ms-excel.sheet.binary.macroEnabled.main"),
+}
+
+OLE_EXTS = [".doc", ".dot", ".xls", ".xlt", ".xla", ".ppt", ".pot", ".msg"]
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 X_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
+A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 
-WORD_BODY = f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:document xmlns:w="{W_NS}"><w:body/></w:document>'
-XL_BODY = f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<workbook xmlns="{X_NS}"><sheets/></workbook>'
-PP_BODY = f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<p:presentation xmlns:p="{P_NS}"/>'
-
-# extension -> (main part path, content type, main part bytes)
-OOXML: dict[str, tuple[str, str, bytes]] = {
-    # Word
-    ".docx": ("word/document.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml", WORD_BODY.encode()),
-    ".docm": ("word/document.xml", "application/vnd.ms-word.document.macroEnabled.main+xml", WORD_BODY.encode()),
-    ".dotx": ("word/document.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml", WORD_BODY.encode()),
-    ".dotm": ("word/document.xml", "application/vnd.ms-word.template.macroEnabledTemplate.main+xml", WORD_BODY.encode()),
-    # Excel
-    ".xlsx": ("xl/workbook.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml", XL_BODY.encode()),
-    ".xlsm": ("xl/workbook.xml", "application/vnd.ms-excel.sheet.macroEnabled.main+xml", XL_BODY.encode()),
-    ".xltx": ("xl/workbook.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml", XL_BODY.encode()),
-    ".xltm": ("xl/workbook.xml", "application/vnd.ms-excel.template.macroEnabled.main+xml", XL_BODY.encode()),
-    ".xlam": ("xl/workbook.xml", "application/vnd.ms-excel.addin.macroEnabled.main+xml", XL_BODY.encode()),
-    # PowerPoint
-    ".pptx": ("ppt/presentation.xml", "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml", PP_BODY.encode()),
-    ".pptm": ("ppt/presentation.xml", "application/vnd.ms-powerpoint.presentation.macroEnabled.main+xml", PP_BODY.encode()),
-    ".potx": ("ppt/presentation.xml", "application/vnd.openxmlformats-officedocument.presentationml.template.main+xml", PP_BODY.encode()),
-    ".potm": ("ppt/presentation.xml", "application/vnd.ms-powerpoint.template.macroEnabled.main+xml", PP_BODY.encode()),
-    ".ppsx": ("ppt/presentation.xml", "application/vnd.openxmlformats-officedocument.presentationml.slideshow.main+xml", PP_BODY.encode()),
-    ".ppsm": ("ppt/presentation.xml", "application/vnd.ms-powerpoint.slideshow.macroEnabled.main+xml", PP_BODY.encode()),
-    ".ppam": ("ppt/presentation.xml", "application/vnd.ms-powerpoint.addin.macroEnabled.main+xml", PP_BODY.encode()),
-    ".sldx": ("ppt/presentation.xml", "application/vnd.openxmlformats-officedocument.presentationml.slide.main+xml", PP_BODY.encode()),
-    ".sldm": ("ppt/presentation.xml", "application/vnd.ms-powerpoint.slide.macroEnabled.main+xml", PP_BODY.encode()),
-    # Excel binary (OPC package with a binary workbook part)
-    ".xlsb": ("xl/workbook.bin", "application/vnd.ms-excel.sheet.binary.macroEnabled.main", b"\x00\x00\x00\x00 placeholder xlsb workbook part"),
-}
-
-# Legacy OLE/CFB formats (same minimal compound file, different extension).
-OLE_EXTS = [".doc", ".dot", ".xls", ".xlt", ".xla", ".ppt", ".pot", ".msg"]
+CORE_XML = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"'
+    ' xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/"'
+    ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+    '<dc:title>DocuTraceX benign sample</dc:title>'
+    '<dc:creator>gmzpt</dc:creator>'
+    '<cp:lastModifiedBy>analyst</cp:lastModifiedBy>'
+    '<dcterms:created xsi:type="dcterms:W3CDTF">2026-10-14T00:00:00Z</dcterms:created>'
+    '<dcterms:modified xsi:type="dcterms:W3CDTF">2026-10-14T00:00:00Z</dcterms:modified>'
+    "</cp:coreProperties>"
+)
 
 
-def make_opc(path: Path, main_part: str, content_type: str, body: bytes) -> None:
-    content_types = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+def _app_xml(app_name: str) -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">'
+        f"<Application>{app_name}</Application><Company>DocuTraceX Test</Company>"
+        "<AppVersion>16.0000</AppVersion></Properties>"
+    )
+
+
+def _content_types(main_part: str, main_ct: str) -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
         '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
         '<Default Extension="xml" ContentType="application/xml"/>'
-        '<Default Extension="bin" ContentType="application/vnd.ms-excel.sheet.binary.macroEnabled.main"/>'
-        f'<Override PartName="/{main_part}" ContentType="{content_type}"/>'
+        '<Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/>'
+        f'<Override PartName="/{main_part}" ContentType="{main_ct}"/>'
+        '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'
+        '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>'
+        '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        '<Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>'
         "</Types>"
     )
-    rels = (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        f'<Relationship Id="rId1" Type="{REL_OFFICE}" Target="{main_part}"/>'
-        "</Relationships>"
+
+
+def _root_rels(main_part: str, external_template: bool) -> str:
+    rels = [
+        f'<Relationship Id="rId1" Type="{REL}/officeDocument" Target="{main_part}"/>',
+        f'<Relationship Id="rId2" Type="{REL}/metadata/core-properties" Target="docProps/core.xml"/>',
+        f'<Relationship Id="rId3" Type="{REL}/extended-properties" Target="docProps/app.xml"/>',
+    ]
+    if external_template:
+        rels.append(
+            f'<Relationship Id="rId9" Type="{REL}/attachedTemplate" '
+            f'Target="{EXT_TEMPLATE}" TargetMode="External"/>'
+        )
+    return (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<Relationships xmlns="{PKGREL}">{"".join(rels)}</Relationships>'
     )
+
+
+def _word_doc(macro: bool) -> str:
+    body = [
+        f'<w:p><w:r><w:t>Confidential quarterly report. See {URL_A} and host {IP_A} for details.</w:t></w:r></w:p>'
+    ]
+    if macro:
+        body.append(
+            '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            '<w:r><w:instrText> DDEAUTO c:\\\\Windows\\\\System32\\\\cmd.exe "/k calc.exe" </w:instrText></w:r>'
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>'
+        )
+    return (
+        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<w:document xmlns:w="{W_NS}"><w:body>{"".join(body)}</w:body></w:document>'
+    )
+
+
+def _xl_workbook() -> str:
+    return (
+        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<workbook xmlns="{X_NS}"><sheets>'
+        '<sheet name="Summary" sheetId="1"/>'
+        '<sheet name="Hidden" sheetId="2" state="veryHidden"/>'
+        "</sheets></workbook>"
+    )
+
+
+def _xl_sheet() -> str:
+    return (
+        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<worksheet xmlns="{X_NS}"><sheetData>'
+        f'<row r="1"><c r="A1"><f>WEBSERVICE("{URL_FEED}")</f><v>0</v></c></row>'
+        "</sheetData></worksheet>"
+    )
+
+
+def _ppt_presentation() -> str:
+    return (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<p:presentation xmlns:p="{P_NS}"/>')
+
+
+def _ppt_slide() -> str:
+    return (
+        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<p:sld xmlns:p="{P_NS}" xmlns:a="{A_NS}"><p:cSld><p:spTree><p:sp><p:txBody>'
+        f'<a:p><a:r><a:t>Project kickoff. Visit {URL_A} ({IP_A}).</a:t></a:r></a:p>'
+        "</p:txBody></p:sp></p:spTree></p:cSld></p:sld>"
+    )
+
+
+APP_NAME = {"word": "Microsoft Office Word", "excel": "Microsoft Excel",
+            "powerpoint": "Microsoft Office PowerPoint", "xlsb": "Microsoft Excel"}
+
+
+def make_ooxml(path: Path, ext: str) -> None:
+    family, main_part, main_ct = OOXML_MAIN[ext]
+    macro = ext in MACRO_EXTS
+    external = ext in TEMPLATE_EXTS
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("[Content_Types].xml", content_types)
-        z.writestr("_rels/.rels", rels)
-        z.writestr(main_part, body)
+        z.writestr("[Content_Types].xml", _content_types(main_part, main_ct))
+        z.writestr("_rels/.rels", _root_rels(main_part, external))
+        z.writestr("docProps/core.xml", CORE_XML)
+        z.writestr("docProps/app.xml", _app_xml(APP_NAME[family]))
+        if family == "word":
+            z.writestr(main_part, _word_doc(macro))
+        elif family == "excel":
+            z.writestr(main_part, _xl_workbook())
+            z.writestr("xl/worksheets/sheet1.xml", _xl_sheet())
+        elif family == "powerpoint":
+            z.writestr(main_part, _ppt_presentation())
+            z.writestr("ppt/slides/slide1.xml", _ppt_slide())
+        else:  # xlsb — minimal binary workbook part
+            z.writestr(main_part, b"\x00\x00\x00\x00 placeholder xlsb workbook part")
+        if macro:
+            vba_dir = {"word": "word", "excel": "xl", "powerpoint": "ppt"}[family]
+            z.writestr(f"{vba_dir}/vbaProject.bin", b"\x00VBA placeholder (benign sample)")
 
 
 def make_cfb(path: Path) -> None:
@@ -98,47 +210,38 @@ def make_cfb(path: Path) -> None:
     FATSECT = 0xFFFFFFFD
 
     header = bytearray(SECTOR)
-    header[0:8] = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"  # signature
-    # CLSID (16) zeros already
-    struct.pack_into("<H", header, 0x18, 0x003E)  # minor version
-    struct.pack_into("<H", header, 0x1A, 0x0003)  # major version (v3, 512B)
-    struct.pack_into("<H", header, 0x1C, 0xFFFE)  # byte order LE
-    struct.pack_into("<H", header, 0x1E, 0x0009)  # sector shift 2^9
-    struct.pack_into("<H", header, 0x20, 0x0006)  # mini sector shift 2^6
-    struct.pack_into("<I", header, 0x28, 0)        # num dir sectors (0 for v3)
-    struct.pack_into("<I", header, 0x2C, 1)        # num FAT sectors
-    struct.pack_into("<I", header, 0x30, 1)        # first dir sector = #1
-    struct.pack_into("<I", header, 0x34, 0)        # transaction sig
-    struct.pack_into("<I", header, 0x38, 0x00001000)  # mini stream cutoff
-    struct.pack_into("<I", header, 0x3C, ENDOFCHAIN)  # first mini FAT sector
-    struct.pack_into("<I", header, 0x40, 0)        # num mini FAT sectors
-    struct.pack_into("<I", header, 0x44, ENDOFCHAIN)  # first DIFAT sector
-    struct.pack_into("<I", header, 0x48, 0)        # num DIFAT sectors
-    # DIFAT array (109 entries): first points to FAT sector #0, rest FREESECT
+    header[0:8] = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+    struct.pack_into("<H", header, 0x18, 0x003E)
+    struct.pack_into("<H", header, 0x1A, 0x0003)
+    struct.pack_into("<H", header, 0x1C, 0xFFFE)
+    struct.pack_into("<H", header, 0x1E, 0x0009)
+    struct.pack_into("<H", header, 0x20, 0x0006)
+    struct.pack_into("<I", header, 0x2C, 1)
+    struct.pack_into("<I", header, 0x30, 1)
+    struct.pack_into("<I", header, 0x38, 0x00001000)
+    struct.pack_into("<I", header, 0x3C, ENDOFCHAIN)
+    struct.pack_into("<I", header, 0x44, ENDOFCHAIN)
     struct.pack_into("<I", header, 0x4C, 0)
     for i in range(1, 109):
         struct.pack_into("<I", header, 0x4C + i * 4, FREESECT)
 
-    # FAT sector (#0): entry0=FATSECT, entry1=ENDOFCHAIN (dir chain), rest FREE
     fat = bytearray(SECTOR)
     struct.pack_into("<I", fat, 0, FATSECT)
     struct.pack_into("<I", fat, 4, ENDOFCHAIN)
     for i in range(2, SECTOR // 4):
         struct.pack_into("<I", fat, i * 4, FREESECT)
 
-    # Directory sector (#1): 4 entries of 128 bytes
     directory = bytearray(SECTOR)
     name = "Root Entry".encode("utf-16-le")
     directory[0:len(name)] = name
-    struct.pack_into("<H", directory, 0x40, len(name) + 2)  # name length incl null
-    directory[0x42] = 0x05  # object type: root storage
-    directory[0x43] = 0x01  # color: black
-    struct.pack_into("<I", directory, 0x44, FREESECT)  # left sibling
-    struct.pack_into("<I", directory, 0x48, FREESECT)  # right sibling
-    struct.pack_into("<I", directory, 0x4C, FREESECT)  # child
-    struct.pack_into("<I", directory, 0x74, ENDOFCHAIN)  # starting sector (mini)
-    struct.pack_into("<Q", directory, 0x78, 0)  # stream size
-    # Unused entries 1..3: mark siblings/child as NOSTREAM
+    struct.pack_into("<H", directory, 0x40, len(name) + 2)
+    directory[0x42] = 0x05
+    directory[0x43] = 0x01
+    struct.pack_into("<I", directory, 0x44, FREESECT)
+    struct.pack_into("<I", directory, 0x48, FREESECT)
+    struct.pack_into("<I", directory, 0x4C, FREESECT)
+    struct.pack_into("<I", directory, 0x74, ENDOFCHAIN)
+    struct.pack_into("<Q", directory, 0x78, 0)
     for e in range(1, 4):
         base = e * 128
         struct.pack_into("<I", directory, base + 0x44, FREESECT)
@@ -175,7 +278,7 @@ def _build_eml() -> bytes:
     msg["Subject"] = "DocuTraceX benign sample"
     msg["Date"] = formatdate(localtime=False)
     msg["Message-ID"] = "<sample-0001@example.com>"
-    msg.set_content("Benign plain-text body for testing.\n")
+    msg.set_content(f"Benign body. Reference: {URL_A} and {IP_A}.\n")
     return msg.as_bytes()
 
 
@@ -191,16 +294,15 @@ def make_emlx(path: Path) -> None:
         b'"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
         b'<plist version="1.0"><dict><key>flags</key><integer>0</integer></dict></plist>\n'
     )
-    # emlx: byte count of the message, newline, message, then the plist.
     path.write_bytes(f"{len(message)}\n".encode() + message + plist)
 
 
 def main() -> None:
     SAMPLES.mkdir(parents=True, exist_ok=True)
     made = []
-    for ext, (main_part, ct, body) in OOXML.items():
+    for ext in OOXML_MAIN:
         p = SAMPLES / f"sample{ext}"
-        make_opc(p, main_part, ct, body)
+        make_ooxml(p, ext)
         made.append(p.name)
     for ext in OLE_EXTS:
         p = SAMPLES / f"sample{ext}"

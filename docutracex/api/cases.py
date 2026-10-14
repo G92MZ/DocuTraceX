@@ -55,9 +55,11 @@ async def get_components(analysis_id: str) -> dict:
         data = read_json(paths.subresult(module))
         if data is not None:
             modules[module] = data
+    iocs = read_json(paths.subresult("iocs"))
     return {
         "analysis_id": analysis_id,
         "filename": manifest["original"]["filename"],
         "state": manifest.get("state"),
         "modules": modules,
+        "iocs": iocs,
     }

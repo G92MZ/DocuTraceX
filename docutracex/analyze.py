@@ -77,6 +77,19 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 
     overall_counts["findings"] = findings_total
 
+    # Common IOC extraction: a single phase AFTER all parsers, over their outputs.
+    if ran:
+        from . import ioc
+
+        modules: dict[str, Any] = {}
+        for m in ran:
+            data = read_json(paths.subresult(m))
+            if data is not None:
+                modules[m] = data
+        ioc_result = ioc.extract(ioc.sources_from_modules(modules))
+        write_subresult(paths, "iocs", ioc_result)
+        overall_counts["iocs"] = ioc_result.get("counts", {}).get("total", 0)
+
     # Update summary.json (fast-read view) and the manifest.
     summary = read_json(paths.summary) or {}
     summary["counts"] = overall_counts
