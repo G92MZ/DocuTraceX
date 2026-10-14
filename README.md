@@ -50,6 +50,14 @@ Descarga el build de **python-build-standalone** (Astral) para tu plataforma, lo
 
 La pestaña **Diagnostics** (y `GET /api/diagnostics`, y el log al arrancar) muestran por separado el **App interpreter** (tu Python) y el **Tools interpreter** (el portable), con el estado de las dependencias de cada uno.
 
+### Layout de `tools/` (todo relativo, en `.gitignore`)
+
+- `tools/python/` — Python portable (intérprete de las herramientas).
+- `tools/python/Lib/site-packages/` (Windows) — paquetes de herramientas instalados en el portable: `defusedxml`, `oletools`, el binding `python-magic`, etc.
+- `tools/libmagic/` — libmagic nativo en Windows: `libmagic.dll` + `magic.mgc`.
+
+Los **hallazgos** los produce código propio (`docutracex/parsers/`, `docutracex/ioc.py`) más herramientas externas que se ejecutan en el portable. Integradas hasta ahora: **libmagic** (identificación) y **oletools** (análisis de macros VBA). Pendientes: pypdf/qpdf/pdfid/pypdfium2/Tesseract (PDF/OCR), extract-msg (correo), Apache POI + OpenJDK (Office antiguo).
+
 Ficheros de prueba (uno por tipo del alcance) en `samples/` — ver `samples/README.md`; se regeneran con `python scripts/make_samples.py`.
 
 ### Arquitectura inicial
@@ -202,7 +210,7 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 - [ ] Campos, texto oculto y revisiones recuperables; metadatos core/app/personalizados — *parcial: metadatos core/app y campos; falta texto oculto/revisiones*
 - [ ] Plantillas adjuntas y relaciones externas *(relaciones externas vía motor OOXML)*
 - [x] Detección de HYPERLINK, INCLUDETEXT, INCLUDEPICTURE, DDE/DDEAUTO (en field codes)
-- [ ] Inventario de `vbaProject.bin`/VBA; extracción de objetos y medios — *parcial: presencia de VBA detectada; medios vía motor OOXML; falta extraer/inspeccionar el VBA*
+- [x] Inventario de `vbaProject.bin`/VBA; extracción de objetos y medios — presencia de VBA (propio) + **extracción/análisis de macros con oletools** (autoexec, keywords sospechosas, IOCs); medios vía motor OOXML
 
 **Excel (.xlsx/.xlsm/.xltx/.xltm/.xlam)**
 - [ ] Inventario de libro, hojas, relaciones y visibilidad; shared strings y estilos — *parcial: hojas + visibilidad hidden/veryHidden; falta shared strings/estilos/relaciones completas*

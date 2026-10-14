@@ -20,6 +20,8 @@ dependencies = [
     "python-magic>=0.4.27",
     # Safe XML parsing for the OOXML engine (no external entities / DTD fetch).
     "defusedxml>=0.7.1",
+    # External analysis tool: VBA macro extraction/analysis (runs on the portable).
+    "oletools>=0.60",
 ]
 
 [project.optional-dependencies]
