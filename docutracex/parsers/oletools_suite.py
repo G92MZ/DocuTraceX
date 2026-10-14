@@ -25,7 +25,8 @@ from ..logging_config import get_logger
 
 log = get_logger(__name__)
 
-_CODE_BOUND = 100000
+_CODE_BOUND = 400000       # total VBA source kept for the IOC phase
+_MODULE_BOUND = 200000     # per-module source kept for display
 
 # olevba analyze_macros result type -> severity
 _OLEVBA_SEV = {
@@ -51,8 +52,14 @@ def _run_olevba(path: Path, result: dict[str, Any]) -> str:
                 info["macros"] = True
                 parts = []
                 for (_f, stream, vba_name, c) in vp.extract_macros():
-                    info["modules"].append({"stream": stream, "vba_filename": vba_name,
-                                            "code_length": len(c or "")})
+                    c = c or ""
+                    info["modules"].append({
+                        "stream": stream,
+                        "vba_filename": vba_name,
+                        "code_length": len(c),
+                        "code": c[:_MODULE_BOUND],
+                        "code_truncated": len(c) > _MODULE_BOUND,
+                    })
                     if c:
                         parts.append(c)
                 code = "\n".join(parts)
