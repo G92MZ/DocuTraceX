@@ -62,8 +62,15 @@ body {
 
 .tab:hover { color: var(--text); }
 .tab.is-active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab-right { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+
+.diag-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: transparent; }
+.diag-dot.dot-bad { background: #e8795a; }
+.diag-dot.dot-warn { background: #e0b65a; }
 
 .content { padding: 24px 20px; }
+.view[hidden] { display: none; }
+#diag-refresh { margin: 4px 0 8px; }
 
 .panel {
   background: var(--panel);

@@ -13,6 +13,7 @@ from docutracex.deps import (
     check_dependencies,
     check_in_interpreter,
     check_runtime,
+    run_checks,
     summarize,
 )
 
@@ -72,3 +73,17 @@ def test_check_runtime_falls_back_to_current(monkeypatch: pytest.MonkeyPatch) ->
     assert interp["source"] == "current"
     assert interp["executable"] == sys.executable
     assert results
+
+
+def test_run_checks_structure(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "portable_python", lambda: None)
+    report = run_checks()
+    assert "checks" in report and report["checks"]
+    cats = {c["category"] for c in report["checks"]}
+    assert "Runtime" in cats and "Python dependency" in cats
+    # Portable-python check should warn when none is bundled.
+    portable = next(c for c in report["checks"] if c["name"] == "Portable Python (tools/)")
+    assert portable["status"] == "warn"
+    assert portable["remedy"]
+    # Every check has a status in the allowed set.
+    assert all(c["status"] in ("ok", "warn", "fail") for c in report["checks"])
