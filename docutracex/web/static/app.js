@@ -197,16 +197,21 @@ async function loadDiagnostics() {
   }
 }
 
-// --- Components view ---------------------------------------------------------
+// --- Components view (sub-tabbed) --------------------------------------------
 const ANOMALY_SEVERITY = {
-  external_relationship: "bad",
-  broken_relationship_target: "warn",
-  malformed_xml: "warn",
-  dangerous_path: "bad",
-  duplicate_zip_entry: "warn",
-  no_content_type: "warn",
-  not_a_zip: "bad",
-  missing_content_types: "warn",
+  external_relationship: "high",
+  broken_relationship_target: "medium",
+  malformed_xml: "medium",
+  dangerous_path: "high",
+  duplicate_zip_entry: "medium",
+  no_content_type: "low",
+  not_a_zip: "high",
+  missing_content_types: "medium",
+};
+const SEV_CLASS = { high: "bad", medium: "warn", low: "warn", info: "ok" };
+const SEV_RANK = { high: 0, medium: 1, low: 2, info: 3 };
+const IOC_TYPE_LABEL = {
+  url: "URL", domain: "Domain", ipv4: "IPv4", ipv6: "IPv6", hash_like: "Hash-like",
 };
 
 function showTab(view) {
@@ -214,6 +219,159 @@ function showTab(view) {
     t.classList.toggle("is-active", t.getAttribute("data-view") === view));
   document.querySelectorAll(".view").forEach((v) =>
     { v.hidden = v.getAttribute("data-view") !== view; });
+}
+
+function table(headers, rowsHtml) {
+  const head = headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("");
+  return `<table class="cases"><thead><tr>${head}</tr></thead><tbody>${rowsHtml}</tbody></table>`;
+}
+
+// Collect all findings (anomalies + semantic + VBA) into one list with source.
+function collectFindings(mods, ooxml) {
+  const out = [];
+  (ooxml && ooxml.anomalies || []).forEach((a) => out.push({
+    severity: ANOMALY_SEVERITY[a.kind] || "medium",
+    source: "ooxml",
+    rule: a.kind,
+    detail: a.detail || a.target || "",
+    location: a.part || a.rels_file || a.target || "",
+  }));
+  ["word", "excel", "powerpoint", "vba"].forEach((name) => {
+    const mod = mods[name];
+    if (!mod) return;
+    (mod.findings || []).forEach((f) => out.push({
+      severity: f.severity, source: name, rule: f.rule,
+      detail: f.detail || "", location: f.location || "",
+    }));
+  });
+  out.sort((a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9));
+  return out;
+}
+
+function paneFindings(findings) {
+  if (!findings.length) return `<p class="hint-line">No findings.</p>`;
+  const rows = findings.map((f) => `<tr>
+    <td><span class="badge badge-${SEV_CLASS[f.severity] || "warn"}">${escapeHtml(f.severity)}</span></td>
+    <td>${escapeHtml(f.source)}</td>
+    <td class="mono">${escapeHtml(f.rule)}</td>
+    <td>${escapeHtml(f.detail)}</td>
+    <td class="mono">${escapeHtml(f.location)}</td>
+  </tr>`).join("");
+  return table(["Severity", "Source", "Rule", "Detail", "Location"], rows);
+}
+
+function paneIocs(iocs) {
+  if (!iocs || !iocs.iocs || !iocs.iocs.length) return `<p class="hint-line">No IOCs.</p>`;
+  const rows = iocs.iocs.map((i) => {
+    const where = (i.occurrences || []).map((o) => `${o.module}/${o.location}`);
+    const uniq = [...new Set(where)].slice(0, 4).join(", ");
+    return `<tr>
+      <td>${escapeHtml(IOC_TYPE_LABEL[i.type] || i.type)}</td>
+      <td class="mono">${escapeHtml(i.value)}</td>
+      <td>${i.count}</td>
+      <td class="mono" title="${escapeHtml(where.join(", "))}">${escapeHtml(uniq)}</td>
+    </tr>`;
+  }).join("");
+  const c = iocs.counts || {};
+  const bits = Object.keys(c).filter((k) => k !== "total").map((k) => `${c[k]} ${k}`);
+  return (bits.length ? `<p class="hint-line">${escapeHtml(bits.join(" · "))}</p>` : "") +
+    table(["Type", "Value", "Count", "Provenance"], rows);
+}
+
+function paneMetadata(sem, vba) {
+  let html = "";
+  const meta = (sem && sem.metadata) || {};
+  const keys = Object.keys(meta);
+  if (keys.length) {
+    const rows = keys.map((k) =>
+      `<tr><td class="file">${escapeHtml(k)}</td><td>${escapeHtml(String(meta[k]))}</td></tr>`).join("");
+    html += table(["Property", "Value"], rows);
+  }
+  const bits = [];
+  if (sem && sem.format === "excel") {
+    bits.push(`${sem.sheet_count} sheets`);
+    if (sem.hidden_sheets && sem.hidden_sheets.length) bits.push(`hidden: ${sem.hidden_sheets.join(", ")}`);
+    bits.push(`${sem.formula_count} formulas`);
+    if (sem.external_links) bits.push(`${sem.external_links} external link parts`);
+  }
+  if (sem && sem.format === "powerpoint") bits.push(`${sem.slide_count} slides · ${sem.notes_count} notes`);
+  if (sem && typeof sem.text_length === "number") bits.push(`${sem.text_length} chars of text`);
+  if (vba && vba.available) bits.push(`VBA: ${vba.macros ? "macros extracted" : "no macros"} (oletools ${vba.tool_version || ""})`);
+  if (bits.length) html += `<p class="hint-line">${escapeHtml(bits.join(" · "))}</p>`;
+  return html || `<p class="hint-line">No metadata.</p>`;
+}
+
+function paneContent(sem, vba) {
+  let html = "";
+  if (sem && sem.text_sample) {
+    html += `<p class="hint-line">Reconstructed text (sample)</p>
+      <pre class="text-sample">${escapeHtml(sem.text_sample.slice(0, 8000))}</pre>`;
+  }
+  if (vba && vba.macros && vba.code_text) {
+    const mods = (vba.vba_modules || []).map((m) => `${m.stream} (${m.code_length})`).join(", ");
+    html += `<p class="hint-line">VBA source — modules: ${escapeHtml(mods)}</p>
+      <pre class="text-sample">${escapeHtml(vba.code_text.slice(0, 8000))}</pre>`;
+  }
+  return html || `<p class="hint-line">No reconstructed content.</p>`;
+}
+
+function paneRelationships(rels) {
+  if (!rels || !rels.length) return `<p class="hint-line">No relationships.</p>`;
+  const rows = rels.map((r) => {
+    const ext = r.mode === "External";
+    const typeShort = (r.type || "").split("/").pop();
+    return `<tr>
+      <td class="mono">${escapeHtml(r.id || "")}</td>
+      <td title="${escapeHtml(r.type || "")}">${escapeHtml(typeShort || "")}</td>
+      <td class="mono">${escapeHtml(r.target || "")}</td>
+      <td>${ext ? '<span class="badge badge-bad">external</span>' : '<span class="badge badge-ok">internal</span>'}</td>
+    </tr>`;
+  }).join("");
+  return table(["Id", "Type", "Target", "Mode"], rows);
+}
+
+function paneParts(parts) {
+  if (!parts || !parts.length) return `<p class="hint-line">No parts.</p>`;
+  const sorted = [...parts].sort((a, b) => (a.path > b.path ? 1 : -1));
+  const rows = sorted.map((p) => {
+    const flag = p.xml_malformed ? ' <span class="badge badge-warn">malformed</span>' : "";
+    const ct = (p.content_type || "").split("+")[0].split(".").pop();
+    return `<tr>
+      <td class="mono">${escapeHtml(p.path)}</td>
+      <td title="${escapeHtml(p.content_type || "")}">${escapeHtml(ct || "")}</td>
+      <td>${fmtSize(p.size_bytes)}</td>
+      <td class="mono" title="${escapeHtml(p.sha256 || "")}">${shortHash(p.sha256)}${flag}</td>
+    </tr>`;
+  }).join("");
+  return table(["Path", "Type", "Size", "SHA-256"], rows);
+}
+
+function paneExtracted(items) {
+  if (!items || !items.length) return `<p class="hint-line">No extracted media/objects.</p>`;
+  const rows = items.map((e) => `<tr>
+    <td class="mono">${escapeHtml(e.id || "")}</td>
+    <td>${fmtSize(e.size_bytes)}</td>
+    <td class="mono" title="${escapeHtml(e.detected_name || "")}">${escapeHtml(e.detected_mime || "")}</td>
+    <td class="mono" title="${escapeHtml(e.sha256 || "")}">${shortHash(e.sha256)}</td>
+  </tr>`).join("");
+  return table(["Part", "Size", "Detected", "SHA-256"], rows);
+}
+
+let _compState = { sections: [], active: null };
+
+function renderSubtabs() {
+  const bar = _compState.sections.map((s) =>
+    `<button class="subtab${s.id === _compState.active ? " is-active" : ""}" data-sub="${s.id}">${escapeHtml(s.label)}</button>`
+  ).join("");
+  const pane = (_compState.sections.find((s) => s.id === _compState.active) || {}).html || "";
+  const bodyEl = document.getElementById("comp-body");
+  bodyEl.innerHTML = `<div class="subtabs">${bar}</div><div class="subpane">${pane}</div>`;
+  bodyEl.querySelectorAll(".subtab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      _compState.active = btn.getAttribute("data-sub");
+      renderSubtabs();
+    });
+  });
 }
 
 async function openComponents(analysisId) {
@@ -230,195 +388,38 @@ async function openComponents(analysisId) {
     const mods = d.modules || {};
     const ooxml = mods.ooxml;
     const sem = mods.word || mods.excel || mods.powerpoint;
+    const vba = mods.vba;
     const iocs = d.iocs;
-    if (!ooxml && !sem) {
+    if (!ooxml && !sem && !vba) {
       bodyEl.innerHTML = `<p class="hint-line">No component analysis for this case yet.</p>`;
       return;
     }
-    const c = (ooxml && ooxml.counts) || {};
-    const nf = (sem && sem.counts && sem.counts.findings) || 0;
+    const findings = collectFindings(mods, ooxml);
     const ni = (iocs && iocs.counts && iocs.counts.total) || 0;
     summary.textContent =
-      `${c.components || 0} parts · ${c.external_relationships || 0} external · ${(c.anomalies || 0) + nf} findings · ${ni} IOCs`;
-    summary.className = "status " + ((c.anomalies || 0) + nf ? "bad-text" : "ok-text");
-    bodyEl.innerHTML =
-      (sem ? renderSemantic(sem) : "") +
-      renderVba(mods.vba) +
-      renderIocs(iocs) +
-      (ooxml ? renderAnomalies(ooxml.anomalies) : "") +
-      (ooxml ? renderRelationships(ooxml.relationships) : "") +
-      (ooxml ? renderExtracted(ooxml.extracted) : "") +
-      (ooxml ? renderParts(ooxml.components) : "");
+      `${(ooxml && ooxml.counts && ooxml.counts.components) || 0} parts · ${findings.length} findings · ${ni} IOCs`;
+    summary.className = "status " + (findings.length ? "bad-text" : "ok-text");
+
+    // Build only the sub-tabs that have content.
+    const sections = [];
+    sections.push({ id: "findings", label: `Findings (${findings.length})`, html: paneFindings(findings) });
+    sections.push({ id: "iocs", label: `IOCs (${ni})`, html: paneIocs(iocs) });
+    if (sem || (vba && vba.available)) {
+      sections.push({ id: "metadata", label: "Metadata", html: paneMetadata(sem, vba) });
+      sections.push({ id: "content", label: "Content", html: paneContent(sem, vba) });
+    }
+    if (ooxml) {
+      sections.push({ id: "relationships", label: `Relationships (${(ooxml.relationships || []).length})`, html: paneRelationships(ooxml.relationships) });
+      sections.push({ id: "parts", label: `Parts (${(ooxml.components || []).length})`, html: paneParts(ooxml.components) });
+      if ((ooxml.extracted || []).length) {
+        sections.push({ id: "extracted", label: `Extracted (${ooxml.extracted.length})`, html: paneExtracted(ooxml.extracted) });
+      }
+    }
+    _compState = { sections, active: sections[0].id };
+    renderSubtabs();
   } catch (err) {
     bodyEl.innerHTML = `<p class="hint-line">Could not load components.</p>`;
   }
-}
-
-const SEV_CLASS = { high: "bad", medium: "warn", low: "warn", info: "ok" };
-
-const IOC_TYPE_LABEL = {
-  url: "URL", domain: "Domain", ipv4: "IPv4", ipv6: "IPv6", hash_like: "Hash-like",
-};
-
-function renderIocs(iocs) {
-  if (!iocs || !iocs.iocs || !iocs.iocs.length) return "";
-  const rows = iocs.iocs.map((i) => {
-    const occ = i.occurrences || [];
-    const where = occ.map((o) => `${o.module}/${o.location}`);
-    const uniqWhere = [...new Set(where)].slice(0, 4).join(", ");
-    return `<tr>
-      <td>${escapeHtml(IOC_TYPE_LABEL[i.type] || i.type)}</td>
-      <td class="mono">${escapeHtml(i.value)}</td>
-      <td>${i.count}</td>
-      <td class="mono" title="${escapeHtml(where.join(", "))}">${escapeHtml(uniqWhere)}</td>
-    </tr>`;
-  }).join("");
-  const c = iocs.counts || {};
-  const bits = Object.keys(c).filter((k) => k !== "total").map((k) => `${c[k]} ${k}`);
-  return `<h3 class="formats-title">IOCs (${c.total || 0})</h3>
-    ${bits.length ? `<p class="hint-line">${escapeHtml(bits.join(" · "))}</p>` : ""}
-    <table class="cases"><thead><tr><th>Type</th><th>Value</th><th>Count</th><th>Provenance</th></tr></thead>
-    <tbody>${rows}</tbody></table>`;
-}
-
-function renderSemantic(sem) {
-  let html = "";
-  // Findings
-  const findings = sem.findings || [];
-  if (findings.length) {
-    const rows = findings.map((f) => `<tr>
-      <td><span class="badge badge-${SEV_CLASS[f.severity] || "warn"}">${escapeHtml(f.severity)}</span></td>
-      <td class="mono">${escapeHtml(f.rule)}</td>
-      <td>${escapeHtml(f.detail || "")}</td>
-      <td class="mono">${escapeHtml(f.location || "")}</td>
-    </tr>`).join("");
-    html += `<h3 class="formats-title">Findings (${sem.format})</h3>
-      <table class="cases"><thead><tr><th>Severity</th><th>Rule</th><th>Detail</th><th>Location</th></tr></thead>
-      <tbody>${rows}</tbody></table>`;
-  }
-  // Metadata
-  const meta = sem.metadata || {};
-  const metaKeys = Object.keys(meta);
-  if (metaKeys.length) {
-    const rows = metaKeys.map((k) =>
-      `<tr><td class="file">${escapeHtml(k)}</td><td>${escapeHtml(String(meta[k]))}</td></tr>`).join("");
-    html += `<h3 class="formats-title">Metadata</h3>
-      <table class="cases"><tbody>${rows}</tbody></table>`;
-  }
-  // Format-specific summary line
-  const bits = [];
-  if (sem.vba) bits.push(`VBA: ${sem.vba.present ? "yes" : "no"}`);
-  if (sem.format === "excel") {
-    bits.push(`${sem.sheet_count} sheets`);
-    if (sem.hidden_sheets && sem.hidden_sheets.length) bits.push(`hidden: ${sem.hidden_sheets.join(", ")}`);
-    bits.push(`${sem.formula_count} formulas`);
-    if (sem.external_links) bits.push(`${sem.external_links} external link parts`);
-  }
-  if (sem.format === "powerpoint") bits.push(`${sem.slide_count} slides · ${sem.notes_count} notes`);
-  if (typeof sem.text_length === "number") bits.push(`${sem.text_length} chars of text`);
-  if (bits.length) html += `<p class="hint-line">${escapeHtml(bits.join(" · "))}</p>`;
-  // Text sample
-  if (sem.text_sample) {
-    html += `<h3 class="formats-title">Text (sample)</h3>
-      <pre class="text-sample">${escapeHtml(sem.text_sample.slice(0, 4000))}</pre>`;
-  }
-  return html;
-}
-
-function renderVba(vba) {
-  if (!vba) return "";
-  const tool = `oletools ${escapeHtml(vba.tool_version || "")}`;
-  if (!vba.available) {
-    return `<h3 class="formats-title">VBA (oletools)</h3>
-      <p class="hint-line">Tool unavailable: ${escapeHtml(vba.error || "")}</p>`;
-  }
-  let html = `<h3 class="formats-title">VBA macros (${tool})</h3>`;
-  if (!vba.macros) {
-    html += `<p class="hint-line">No VBA macros extracted${vba.error ? " — " + escapeHtml(vba.error) : ""}.</p>`;
-    return html;
-  }
-  const mods = (vba.vba_modules || []).map((m) =>
-    `${escapeHtml(m.stream || "")} (${m.code_length} chars)`).join(", ");
-  html += `<p class="hint-line">Modules: ${escapeHtml(mods)}</p>`;
-  const findings = vba.findings || [];
-  if (findings.length) {
-    const rows = findings.map((f) => `<tr>
-      <td><span class="badge badge-${SEV_CLASS[f.severity] || "warn"}">${escapeHtml(f.severity)}</span></td>
-      <td class="mono">${escapeHtml(f.rule)}</td>
-      <td>${escapeHtml(f.detail || "")}</td>
-    </tr>`).join("");
-    html += `<table class="cases"><thead><tr><th>Severity</th><th>Rule</th><th>Detail</th></tr></thead>
-      <tbody>${rows}</tbody></table>`;
-  }
-  if (vba.code_text) {
-    html += `<pre class="text-sample">${escapeHtml(vba.code_text.slice(0, 4000))}</pre>`;
-  }
-  return html;
-}
-
-function renderAnomalies(items) {
-  if (!items || !items.length) return "";
-  const rows = items.map((a) => {
-    const cls = ANOMALY_SEVERITY[a.kind] || "warn";
-    const where = a.part || a.rels_file || a.target || "";
-    const detail = a.detail || a.target || "";
-    return `<tr>
-      <td><span class="badge badge-${cls}">${escapeHtml(a.kind)}</span></td>
-      <td class="mono">${escapeHtml(where)}</td>
-      <td>${escapeHtml(detail)}</td>
-    </tr>`;
-  }).join("");
-  return `<h3 class="formats-title">Anomalies</h3>
-    <table class="cases"><thead><tr><th>Kind</th><th>Where</th><th>Detail</th></tr></thead>
-    <tbody>${rows}</tbody></table>`;
-}
-
-function renderRelationships(rels) {
-  if (!rels || !rels.length) return "";
-  const rows = rels.map((r) => {
-    const ext = r.mode === "External";
-    const typeShort = (r.type || "").split("/").pop();
-    return `<tr>
-      <td class="mono">${escapeHtml(r.id || "")}</td>
-      <td title="${escapeHtml(r.type || "")}">${escapeHtml(typeShort || "")}</td>
-      <td class="mono">${escapeHtml(r.target || "")}</td>
-      <td>${ext ? '<span class="badge badge-bad">external</span>' : '<span class="badge badge-ok">internal</span>'}</td>
-    </tr>`;
-  }).join("");
-  return `<h3 class="formats-title">Relationships</h3>
-    <table class="cases"><thead><tr><th>Id</th><th>Type</th><th>Target</th><th>Mode</th></tr></thead>
-    <tbody>${rows}</tbody></table>`;
-}
-
-function renderExtracted(items) {
-  if (!items || !items.length) return "";
-  const rows = items.map((e) => `<tr>
-    <td class="mono">${escapeHtml(e.id || "")}</td>
-    <td>${fmtSize(e.size_bytes)}</td>
-    <td class="mono" title="${escapeHtml(e.detected_name || "")}">${escapeHtml(e.detected_mime || "")}</td>
-    <td class="mono" title="${escapeHtml(e.sha256 || "")}">${shortHash(e.sha256)}</td>
-  </tr>`).join("");
-  return `<h3 class="formats-title">Extracted media / objects</h3>
-    <table class="cases"><thead><tr><th>Part</th><th>Size</th><th>Detected</th><th>SHA-256</th></tr></thead>
-    <tbody>${rows}</tbody></table>`;
-}
-
-function renderParts(parts) {
-  if (!parts || !parts.length) return "";
-  const sorted = [...parts].sort((a, b) => (a.path > b.path ? 1 : -1));
-  const rows = sorted.map((p) => {
-    const flag = p.xml_malformed ? '<span class="badge badge-warn">malformed</span>' : "";
-    const ct = (p.content_type || "").split("+")[0].split(".").pop();
-    return `<tr>
-      <td class="mono">${escapeHtml(p.path)}</td>
-      <td title="${escapeHtml(p.content_type || "")}">${escapeHtml(ct || "")}</td>
-      <td>${fmtSize(p.size_bytes)}</td>
-      <td class="mono" title="${escapeHtml(p.sha256 || "")}">${shortHash(p.sha256)} ${flag}</td>
-    </tr>`;
-  }).join("");
-  return `<h3 class="formats-title">Parts (${parts.length})</h3>
-    <table class="cases"><thead><tr><th>Path</th><th>Type</th><th>Size</th><th>SHA-256</th></tr></thead>
-    <tbody>${rows}</tbody></table>`;
 }
 
 // --- Tab navigation ----------------------------------------------------------
