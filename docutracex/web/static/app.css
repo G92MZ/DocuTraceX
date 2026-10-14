@@ -77,18 +77,39 @@ body {
 .panel h1, .panel h2 { margin-top: 0; font-size: 18px; }
 .panel p { color: var(--text-dim); line-height: 1.6; }
 
-.upload { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
-.upload input[type="file"] { color: var(--text-dim); font-size: 13px; }
-.upload button {
-  background: var(--accent-dim);
-  color: var(--text);
-  border: 1px solid var(--accent);
+.upload { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+
+/* hide the native file input; the label acts as the button */
+.file-native {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); border: 0;
+}
+
+.btn {
   border-radius: 6px;
   padding: 8px 16px;
   font-size: 14px;
   cursor: pointer;
+  font-family: inherit;
+  transition: background 0.12s ease, color 0.12s ease;
 }
-.upload button:hover { background: var(--accent); color: #0b0e12; }
+.btn-ghost {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--panel-border);
+}
+.btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+.btn-primary {
+  background: var(--accent-dim);
+  color: var(--text);
+  border: 1px solid var(--accent);
+}
+.btn-primary:hover { background: var(--accent); color: #0b0e12; }
+
+.file-name { color: var(--text-dim); font-size: 13px; }
+.file-name.has-file { color: var(--text); }
 .status { color: var(--text-dim); font-size: 13px; }
 
 table.cases { width: 100%; border-collapse: collapse; font-size: 13px; }

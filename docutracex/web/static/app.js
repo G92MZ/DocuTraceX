@@ -41,20 +41,34 @@ function escapeHtml(s) {
   ));
 }
 
+const fileInput = document.getElementById("file-input");
+const fileName = document.getElementById("file-name");
+
+fileInput.addEventListener("change", () => {
+  if (fileInput.files.length) {
+    fileName.textContent = fileInput.files[0].name;
+    fileName.classList.add("has-file");
+  } else {
+    fileName.textContent = "No file selected";
+    fileName.classList.remove("has-file");
+  }
+});
+
 document.getElementById("upload-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const input = document.getElementById("file-input");
   const status = document.getElementById("upload-status");
-  if (!input.files.length) return;
+  if (!fileInput.files.length) return;
   const data = new FormData();
-  data.append("file", input.files[0]);
+  data.append("file", fileInput.files[0]);
   status.textContent = "Uploading…";
   try {
     const resp = await fetch("/api/cases", { method: "POST", body: data });
     if (!resp.ok) throw new Error("upload failed");
     const manifest = await resp.json();
     status.textContent = "Case created: " + manifest.analysis_id;
-    input.value = "";
+    fileInput.value = "";
+    fileName.textContent = "No file selected";
+    fileName.classList.remove("has-file");
     loadCases();
   } catch (err) {
     status.textContent = "Upload failed.";
