@@ -31,5 +31,34 @@ class Settings:
         self.cases_dir.mkdir(parents=True, exist_ok=True)
         self.tools_dir.mkdir(parents=True, exist_ok=True)
 
+    def portable_python(self) -> Path | None:
+        """Locate the bundled portable Python interpreter under ``tools/``.
+
+        Order: the ``DOCUTRACEX_PYTHON`` env var (explicit path), then common
+        layouts under ``tools/python/``. Returns None if none is bundled (the
+        app then falls back to the current interpreter). The exact portable
+        layout is decided in the runtime phase; discovery is deliberately loose.
+        """
+        env = os.environ.get("DOCUTRACEX_PYTHON")
+        if env and Path(env).is_file():
+            return Path(env)
+        base = self.tools_dir / "python"
+        candidates = [
+            base / "python.exe",
+            base / "python3.exe",
+            base / "bin" / "python3",
+            base / "bin" / "python",
+            base / "python",
+            base / "python3",
+        ]
+        for c in candidates:
+            if c.is_file():
+                return c
+        for pattern in ("python*/python.exe", "python*/bin/python3", "python*/bin/python"):
+            for p in sorted(self.tools_dir.glob(pattern)):
+                if p.is_file():
+                    return p
+        return None
+
 
 settings = Settings()
