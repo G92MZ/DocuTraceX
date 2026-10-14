@@ -22,6 +22,23 @@ La interfaz estará **íntegramente en inglés**, será **visual** y se basará 
 - Overview: resumen conciso y expandible, alineado con el informe.
 - Uso local, sin login ni gestión de usuarios.
 
+## Ejecución (desarrollo)
+
+```bash
+pip install -e ".[dev]"   # instala docutracex + dependencias de desarrollo
+python -m docutracex       # levanta el servidor en http://127.0.0.1:8000
+pytest -q                  # ejecuta los tests
+```
+
+Configurable por entorno: `DOCUTRACEX_HOST`, `DOCUTRACEX_PORT`, `DOCUTRACEX_LOG_LEVEL`.
+
+### Arquitectura inicial
+
+- **Backend:** Python + FastAPI (servicio web local), al estilo de WinHound/Longanizer.
+- **Frontend:** servido por el propio backend (plantillas Jinja2 + estático), UI en inglés con paneles.
+- **Persistencia por caso:** JSON partido por tipo de información en `cases/<analysis_id>/`; cada parser escribe su propio subresultado en `results/<módulo>.json` y se consolida en `summary.json`. `marks.json` va aparte y no se sobrescribe al reanalizar.
+- **Licencia:** Apache 2.0.
+
 ## Backlog de tareas
 
 Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área; cada formato lleva sus subtareas juntas. El orden refleja dependencias, no fechas. Marca las casillas conforme avances.
