@@ -260,6 +260,11 @@ function collectFindings(mods, ooxml) {
     severity: f.severity, source: "xlmdeobf", rule: f.rule,
     detail: f.detail || "", location: f.location || "xlm",
   }));
+  const oms = mods.officemalscanner;
+  if (oms) (oms.findings || []).forEach((f) => out.push({
+    severity: f.severity, source: "officemalscanner", rule: f.rule,
+    detail: f.detail || "", location: f.location || "officemalscanner",
+  }));
   out.sort((a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9));
   return out;
 }
@@ -401,6 +406,20 @@ function paneDidier(didier) {
   return html || `<p class="hint-line">No output.</p>`;
 }
 
+function paneOms(oms) {
+  if (!oms || !oms.available) return `<p class="hint-line">OfficeMalScanner not provisioned.</p>`;
+  const tools = oms.tools || {};
+  let html = "";
+  Object.keys(tools).forEach((name) => {
+    const t = tools[name];
+    const cmd = t.command ? ` — <span class="mono">${escapeHtml(t.command)}</span>` : "";
+    html += `<p class="hint-line">${escapeHtml(name)}${t.returncode != null ? ` (rc ${t.returncode})` : ""}${cmd}</p>`;
+    if (t.error) html += `<p class="hint-line">${escapeHtml(t.error)}</p>`;
+    if (t.output) html += `<pre class="text-sample">${escapeHtml(t.output.slice(0, 8000))}</pre>`;
+  });
+  return html || `<p class="hint-line">No output.</p>`;
+}
+
 function paneRelationships(rels) {
   if (!rels || !rels.length) return `<p class="hint-line">No relationships.</p>`;
   const rows = rels.map((r) => {
@@ -478,6 +497,7 @@ async function openComponents(analysisId) {
     const crypto = mods.msoffcrypto;
     const xlm = mods.xlmdeobf;
     const didier = mods.didier;
+    const oms = mods.officemalscanner;
     const iocs = d.iocs;
     if (!ooxml && !sem && !ole) {
       bodyEl.innerHTML = `<p class="hint-line">No component analysis for this case yet.</p>`;
@@ -497,6 +517,7 @@ async function openComponents(analysisId) {
       sections.push({ id: "tools", label: "Tools", html: paneTools(ole, crypto, xlm) });
     }
     if (didier && didier.available) sections.push({ id: "didier", label: "Didier", html: paneDidier(didier) });
+    if (oms && oms.available) sections.push({ id: "oms", label: "OfficeMalScanner", html: paneOms(oms) });
     if (sem || (ole && ole.available) || (xlm && xlm.xlm_macros)) {
       sections.push({ id: "metadata", label: "Metadata", html: paneMetadata(sem, ole) });
       sections.push({ id: "content", label: "Content", html: paneContent(sem, ole, xlm) });

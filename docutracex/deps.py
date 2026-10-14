@@ -396,6 +396,23 @@ def run_checks() -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
 
+    # External binary: OfficeMalScanner (optional, Windows; checked by presence).
+    try:
+        from .parsers.officemalscanner import EXE_NAME, exe_path, oms_dir
+        present = exe_path() is not None
+        checks.append(Check(
+            category="External scripts",
+            name="OfficeMalScanner",
+            status="ok" if present else "warn",
+            detail=f"{EXE_NAME} present in tools/officemalscanner/" if present
+                   else "not provisioned (optional; skipped until present)",
+            remedy="" if present
+                   else f"run scripts/setup_portable_python.py, or drop {EXE_NAME} into {oms_dir()}",
+            purpose="Shellcode/embedded-object scan + VBA/OLE info (legacy OLE and OOXML)",
+        ))
+    except Exception:  # noqa: BLE001
+        pass
+
     counts = {"ok": 0, "warn": 0, "fail": 0}
     for c in checks:
         counts[c.status] = counts.get(c.status, 0) + 1

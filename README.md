@@ -69,6 +69,9 @@ Los **hallazgos** los produce código propio (`docutracex/parsers/`, `docutracex
 | **msoffcrypto-tool** | Detecta Office cifrado y descifra con password por defecto (`VelvetSweatshop` → evasión) | Office cifrado |
 | **XLMMacroDeobfuscator** | Detecta y desofusca macros Excel 4.0 (XLM) en hojas ocultas; las fórmulas alimentan el extractor de IOC | Excel |
 | **Didier Stevens** · `oledump` / `zipdump` | Volcado de streams OLE / entradas ZIP (salida cruda) | Office/OLE |
+| **OfficeMalScanner** (opcional, Windows) | Shellcode / objetos embebidos (`scan brute`) + estructura VBA/OLE (`info`); en OOXML hace `inflate` y analiza los `vbaProject.bin` | Office OLE y OOXML |
+
+OfficeMalScanner es un binario PE de Windows (freeware, Frank Boldewin): se descarga de `reconstructer.org` al provisionar el portable y se extrae a `tools/officemalscanner/`. Si el sitio no responde o el AV lo bloquea, se omite sin romper nada y se ve en Diagnostics → *External scripts* (puedes soltar el `.exe` ahí a mano).
 
 Además, el parser de Excel **desoculta las hojas** `hidden`/`veryHidden`: genera una copia con las hojas visibles en `extracted/unhidden/` y lo registra como *finding* (sin tocar el original).
 
