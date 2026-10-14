@@ -1,0 +1,56 @@
+"""FastAPI application factory.
+
+Serves the local web UI and a health endpoint. Analysis modules and the case
+lifecycle are wired in later phases.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+
+from . import __version__
+from .config import settings
+from .errors import DocuTraceXError
+from .logging_config import configure_logging, get_logger
+
+log = get_logger(__name__)
+
+_WEB_DIR = Path(__file__).resolve().parent / "web"
+_TEMPLATES = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
+
+
+def create_app() -> FastAPI:
+    configure_logging(settings.log_level)
+    settings.ensure_dirs()
+
+    app = FastAPI(title="DocuTraceX", version=__version__)
+
+    static_dir = _WEB_DIR / "static"
+    if static_dir.is_dir():
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+    @app.exception_handler(DocuTraceXError)
+    async def _app_error_handler(_request: Request, exc: DocuTraceXError) -> JSONResponse:
+        log.warning("Application error: %s", exc)
+        return JSONResponse(status_code=400, content={"error": str(exc)})
+
+    @app.get("/health", response_class=JSONResponse)
+    async def health() -> dict:
+        return {"status": "ok", "version": __version__}
+
+    @app.get("/", response_class=HTMLResponse)
+    async def index(request: Request) -> HTMLResponse:
+        return _TEMPLATES.TemplateResponse(
+            request, "index.html", {"version": __version__}
+        )
+
+    log.info("DocuTraceX %s ready", __version__)
+    return app
+
+
+app = create_app()
