@@ -166,8 +166,11 @@ def sources_from_modules(modules: dict[str, dict[str, Any]]) -> list[dict[str, A
             if isinstance(v, str):
                 add(mod_name, f"metadata/{k}", v)
 
-    # VBA macro source (from oletools).
-    vba = modules.get("vba")
-    if vba and vba.get("code_text"):
-        add("vba", "macro_code", vba["code_text"])
+    # oletools suite: VBA macro source and DDE links.
+    ole = modules.get("oletools")
+    if ole:
+        if ole.get("code_text"):
+            add("oletools", "vba_code", ole["code_text"])
+        for link in ole.get("dde_links", []) or []:
+            add("oletools", "dde_link", link)
     return sources

@@ -72,14 +72,15 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             elif sem.get("findings") and state == "completed":
                 state = "partial"
 
-        # External tool: VBA macro analysis with oletools (on the portable).
-        from .parsers import vba
+        # External tools: the oletools suite (olevba, oleid, mraptor, msodde,
+        # oleobj) — runs on the portable.
+        from .parsers import oletools_suite
 
-        vba_res = vba.analyze(original)
-        write_subresult(paths, "vba", vba_res)
-        ran.append("vba")
-        findings_total += vba_res.get("counts", {}).get("findings", 0)
-        if vba_res.get("findings") and state == "completed":
+        ole_res = oletools_suite.analyze(original, paths.extracted_dir)
+        write_subresult(paths, "oletools", ole_res)
+        ran.append("oletools")
+        findings_total += ole_res.get("counts", {}).get("findings", 0)
+        if ole_res.get("findings") and state == "completed":
             state = "partial"
     else:
         # No parser for this family yet.

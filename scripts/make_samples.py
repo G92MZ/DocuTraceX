@@ -92,7 +92,14 @@ def _app_xml(app_name: str) -> str:
     )
 
 
-def _content_types(main_part: str, main_ct: str) -> str:
+def _content_types(family: str, main_part: str, main_ct: str) -> str:
+    extra = ""
+    if family == "excel":
+        extra = ('<Override PartName="/xl/worksheets/sheet1.xml" '
+                 'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>')
+    elif family == "powerpoint":
+        extra = ('<Override PartName="/ppt/slides/slide1.xml" '
+                 'ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>')
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
@@ -102,8 +109,7 @@ def _content_types(main_part: str, main_ct: str) -> str:
         f'<Override PartName="/{main_part}" ContentType="{main_ct}"/>'
         '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'
         '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>'
-        '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
-        '<Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>'
+        f"{extra}"
         "</Types>"
     )
 
@@ -183,7 +189,7 @@ def make_ooxml(path: Path, ext: str) -> None:
     macro = ext in MACRO_EXTS
     external = ext in TEMPLATE_EXTS
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("[Content_Types].xml", _content_types(main_part, main_ct))
+        z.writestr("[Content_Types].xml", _content_types(family, main_part, main_ct))
         z.writestr("_rels/.rels", _root_rels(main_part, external))
         z.writestr("docProps/core.xml", CORE_XML)
         z.writestr("docProps/app.xml", _app_xml(APP_NAME[family]))

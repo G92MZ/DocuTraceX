@@ -84,6 +84,6 @@ def test_analyze_case_end_to_end(tmp_path: Path) -> None:
     assert sub.is_file()
     updated = cases.get_case(manifest["analysis_id"], cases_dir=tmp_path)
     assert updated["state"] in ("completed", "partial")
-    # OOXML engine, the Word semantic parser, and the VBA tool run for a .docx.
-    assert updated["analysis"]["modules_run"] == ["ooxml", "word", "vba"]
+    # OOXML engine, the Word semantic parser, and the oletools suite run.
+    assert updated["analysis"]["modules_run"] == ["ooxml", "word", "oletools"]
     assert (case_root / "results" / "word.json").is_file()

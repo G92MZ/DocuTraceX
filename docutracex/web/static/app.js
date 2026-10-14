@@ -236,7 +236,7 @@ function collectFindings(mods, ooxml) {
     detail: a.detail || a.target || "",
     location: a.part || a.rels_file || a.target || "",
   }));
-  ["word", "excel", "powerpoint", "vba"].forEach((name) => {
+  ["word", "excel", "powerpoint"].forEach((name) => {
     const mod = mods[name];
     if (!mod) return;
     (mod.findings || []).forEach((f) => out.push({
@@ -244,6 +244,12 @@ function collectFindings(mods, ooxml) {
       detail: f.detail || "", location: f.location || "",
     }));
   });
+  // oletools suite: findings carry their own tool (olevba/oleid/mraptor/...).
+  const ole = mods.oletools;
+  if (ole) (ole.findings || []).forEach((f) => out.push({
+    severity: f.severity, source: f.tool || "oletools", rule: f.rule,
+    detail: f.detail || "", location: f.location || "",
+  }));
   out.sort((a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9));
   return out;
 }
@@ -278,7 +284,7 @@ function paneIocs(iocs) {
     table(["Type", "Value", "Count", "Provenance"], rows);
 }
 
-function paneMetadata(sem, vba) {
+function paneMetadata(sem, ole) {
   let html = "";
   const meta = (sem && sem.metadata) || {};
   const keys = Object.keys(meta);
@@ -296,23 +302,52 @@ function paneMetadata(sem, vba) {
   }
   if (sem && sem.format === "powerpoint") bits.push(`${sem.slide_count} slides · ${sem.notes_count} notes`);
   if (sem && typeof sem.text_length === "number") bits.push(`${sem.text_length} chars of text`);
-  if (vba && vba.available) bits.push(`VBA: ${vba.macros ? "macros extracted" : "no macros"} (oletools ${vba.tool_version || ""})`);
+  const olevba = ole && ole.tools && ole.tools.olevba;
+  if (olevba) bits.push(`VBA: ${olevba.macros ? "macros extracted" : "no macros"}`);
   if (bits.length) html += `<p class="hint-line">${escapeHtml(bits.join(" · "))}</p>`;
   return html || `<p class="hint-line">No metadata.</p>`;
 }
 
-function paneContent(sem, vba) {
+function paneContent(sem, ole) {
   let html = "";
   if (sem && sem.text_sample) {
     html += `<p class="hint-line">Reconstructed text (sample)</p>
       <pre class="text-sample">${escapeHtml(sem.text_sample.slice(0, 8000))}</pre>`;
   }
-  if (vba && vba.macros && vba.code_text) {
-    const mods = (vba.vba_modules || []).map((m) => `${m.stream} (${m.code_length})`).join(", ");
+  const olevba = ole && ole.tools && ole.tools.olevba;
+  if (olevba && olevba.macros && ole.code_text) {
+    const mods = (olevba.modules || []).map((m) => `${m.stream} (${m.code_length})`).join(", ");
     html += `<p class="hint-line">VBA source — modules: ${escapeHtml(mods)}</p>
-      <pre class="text-sample">${escapeHtml(vba.code_text.slice(0, 8000))}</pre>`;
+      <pre class="text-sample">${escapeHtml(ole.code_text.slice(0, 8000))}</pre>`;
   }
   return html || `<p class="hint-line">No reconstructed content.</p>`;
+}
+
+function paneTools(ole) {
+  if (!ole) return `<p class="hint-line">No external tools run.</p>`;
+  if (!ole.available) return `<p class="hint-line">oletools unavailable: ${escapeHtml(ole.error || "")}</p>`;
+  const t = ole.tools || {};
+  const rows = [];
+  const add = (name, status, detail) => rows.push(`<tr>
+    <td class="file">${escapeHtml(name)}</td>
+    <td>${status}</td>
+    <td>${escapeHtml(detail)}</td></tr>`);
+
+  if (t.olevba) add("olevba", t.olevba.error ? '<span class="badge badge-warn">error</span>' : (t.olevba.macros ? '<span class="badge badge-bad">macros</span>' : '<span class="badge badge-ok">no macros</span>'),
+    t.olevba.error || `${(t.olevba.modules || []).length} module(s)`);
+  if (t.oleid) {
+    const inds = t.oleid.indicators || [];
+    const risky = inds.filter((i) => ["low", "medium", "high"].includes(i.risk));
+    add("oleid", `<span class="badge badge-${risky.length ? "warn" : "ok"}">${inds.length} indicators</span>`,
+      risky.map((i) => `${i.name}=${i.value}`).join(", ") || t.oleid.error || "nothing risky");
+  }
+  if (t.mraptor) add("mraptor", t.mraptor.suspicious ? '<span class="badge badge-bad">suspicious</span>' : '<span class="badge badge-ok">clean</span>',
+    t.mraptor.error || `flags ${t.mraptor.flags || ""} ${(t.mraptor.matches || []).join(", ")}`);
+  if (t.msodde) { const dde = t.msodde.dde_links || []; add("msodde", `<span class="badge badge-${dde.length ? "bad" : "ok"}">${dde.length} DDE</span>`, t.msodde.error || dde.join(" | ")); }
+  if (t.oleobj) { const objs = t.oleobj.objects || []; add("oleobj", `<span class="badge badge-${objs.length ? "warn" : "ok"}">${objs.length} objects</span>`, t.oleobj.error || `${objs.length} embedded OLE object(s)`); }
+
+  return `<p class="hint-line">oletools ${escapeHtml((ole.tool_versions && ole.tool_versions.oletools) || "")}</p>` +
+    table(["Tool", "Status", "Detail"], rows.join(""));
 }
 
 function paneRelationships(rels) {
@@ -388,9 +423,9 @@ async function openComponents(analysisId) {
     const mods = d.modules || {};
     const ooxml = mods.ooxml;
     const sem = mods.word || mods.excel || mods.powerpoint;
-    const vba = mods.vba;
+    const ole = mods.oletools;
     const iocs = d.iocs;
-    if (!ooxml && !sem && !vba) {
+    if (!ooxml && !sem && !ole) {
       bodyEl.innerHTML = `<p class="hint-line">No component analysis for this case yet.</p>`;
       return;
     }
@@ -404,9 +439,10 @@ async function openComponents(analysisId) {
     const sections = [];
     sections.push({ id: "findings", label: `Findings (${findings.length})`, html: paneFindings(findings) });
     sections.push({ id: "iocs", label: `IOCs (${ni})`, html: paneIocs(iocs) });
-    if (sem || (vba && vba.available)) {
-      sections.push({ id: "metadata", label: "Metadata", html: paneMetadata(sem, vba) });
-      sections.push({ id: "content", label: "Content", html: paneContent(sem, vba) });
+    if (ole) sections.push({ id: "tools", label: "Tools", html: paneTools(ole) });
+    if (sem || (ole && ole.available)) {
+      sections.push({ id: "metadata", label: "Metadata", html: paneMetadata(sem, ole) });
+      sections.push({ id: "content", label: "Content", html: paneContent(sem, ole) });
     }
     if (ooxml) {
       sections.push({ id: "relationships", label: `Relationships (${(ooxml.relationships || []).length})`, html: paneRelationships(ooxml.relationships) });

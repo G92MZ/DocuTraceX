@@ -56,7 +56,11 @@ La pestaña **Diagnostics** (y `GET /api/diagnostics`, y el log al arrancar) mue
 - `tools/python/Lib/site-packages/` (Windows) — paquetes de herramientas instalados en el portable: `defusedxml`, `oletools`, el binding `python-magic`, etc.
 - `tools/libmagic/` — libmagic nativo en Windows: `libmagic.dll` + `magic.mgc`.
 
-Los **hallazgos** los produce código propio (`docutracex/parsers/`, `docutracex/ioc.py`) más herramientas externas que se ejecutan en el portable. Integradas hasta ahora: **libmagic** (identificación) y **oletools** (análisis de macros VBA). Pendientes: pypdf/qpdf/pdfid/pypdfium2/Tesseract (PDF/OCR), extract-msg (correo), Apache POI + OpenJDK (Office antiguo).
+Los **hallazgos** los produce código propio (`docutracex/parsers/`, `docutracex/ioc.py`) más herramientas externas que se ejecutan en el portable. Integradas hasta ahora:
+- **libmagic** — identificación de tipo.
+- **oletools (suite completa)** — `olevba` (macros VBA), `oleid` (características sospechosas), `mraptor` (macros con auto-exec+write+execute = probable malicioso), `msodde` (enlaces DDE), `oleobj` (extracción de objetos OLE incrustados).
+
+Pendientes: pypdf/qpdf/pdfid/pdf-parser/pypdfium2/Tesseract (PDF/OCR), extract-msg (correo), Apache POI + OpenJDK (Office antiguo).
 
 Ficheros de prueba (uno por tipo del alcance) en `samples/` — ver `samples/README.md`; se regeneran con `python scripts/make_samples.py`.
 
