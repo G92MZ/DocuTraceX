@@ -23,6 +23,7 @@ from typing import Any, BinaryIO
 from . import __version__
 from .errors import CaseError, StorageError
 from .hashing import copy_and_hash
+from .identify import identify
 from .logging_config import get_logger
 from .storage import CasePaths, read_json, write_json
 
@@ -91,6 +92,14 @@ def create_case(
     except OSError:
         log.warning("Could not set original read-only: %s", dest)
 
+    declared_ext = _declared_extension(original_filename)
+
+    # Primary identification with libmagic (does not execute content).
+    ident = identify(dest, declared_ext)
+    tool_versions = {"docutracex": __version__}
+    if ident.get("tool_version"):
+        tool_versions["libmagic"] = ident["tool_version"]
+
     manifest: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "analysis_id": analysis_id,
@@ -100,12 +109,23 @@ def create_case(
         "original": {
             "filename": original_filename,
             "stored_path": str(dest.relative_to(paths.root).as_posix()),
-            "declared_extension": _declared_extension(original_filename),
+            "declared_extension": declared_ext,
             "size_bytes": size,
             "hashes": hashes,
         },
-        "format": {"declared": _declared_extension(original_filename), "detected": None},
-        "tool_versions": {"docutracex": __version__},
+        "format": {
+            "declared": declared_ext,
+            "detected": {
+                "mime": ident.get("mime"),
+                "name": ident.get("name"),
+                "tool": ident.get("tool"),
+                "tool_version": ident.get("tool_version"),
+                "available": ident.get("available"),
+                "error": ident.get("error"),
+            },
+            "discrepancy": ident.get("discrepancy"),
+        },
+        "tool_versions": tool_versions,
         "limits": {},
         "errors": [],
     }
@@ -118,6 +138,9 @@ def create_case(
 def _summary_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     """Minimal data for the case list / Overview (fast to read)."""
     orig = manifest["original"]
+    fmt = manifest["format"]
+    detected = fmt.get("detected") or {}
+    discrepancy = fmt.get("discrepancy") or {}
     return {
         "analysis_id": manifest["analysis_id"],
         "created_utc": manifest["created_utc"],
@@ -127,7 +150,9 @@ def _summary_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         "size_bytes": orig["size_bytes"],
         "sha256": orig["hashes"].get("sha256"),
         "declared_extension": orig["declared_extension"],
-        "detected_format": manifest["format"]["detected"],
+        "detected_mime": detected.get("mime"),
+        "detected_name": detected.get("name"),
+        "discrepancy": discrepancy.get("status"),
         "counts": {"components": 0, "findings": 0, "iocs": 0},
     }
 
