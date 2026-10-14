@@ -87,7 +87,12 @@ TOOL_DEPS: list[Dependency] = [
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
     ),
     Dependency(
-        "oletools", "oletools", "VBA macro analysis (olevba)",
+        "oletools", "oletools", "Office analysis suite (olevba, oleid, mraptor, msodde, oleobj)",
+        required=False,
+        install_hint="run scripts/setup_portable_python.py (installed into the portable)",
+    ),
+    Dependency(
+        "msoffcrypto", "msoffcrypto-tool", "Encrypted Office detection/decryption",
         required=False,
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
     ),
@@ -366,6 +371,24 @@ def run_checks() -> dict[str, Any]:
 
     checks.extend(_dep_checks(app_results, "App dependency"))
     checks.extend(_dep_checks(tool_results, "Tool dependency"))
+
+    # External scripts: Didier Stevens Suite (not importable; checked by presence).
+    try:
+        from .parsers.didier import SCRIPTS, didier_dir
+        d = didier_dir()
+        present = sum(1 for fn in SCRIPTS.values() if (d / fn).is_file())
+        total = len(SCRIPTS)
+        checks.append(Check(
+            category="External scripts",
+            name="Didier Stevens Suite",
+            status="ok" if present == total else ("warn" if present else "warn"),
+            detail=f"{present}/{total} scripts in tools/didier/"
+                   + ("" if present == total else " (missing ones are skipped)"),
+            remedy="" if present == total else "run scripts/setup_portable_python.py to download them",
+            purpose="oledump/zipdump (Office/OLE), pdfid/pdf-parser (PDF), emldump (email)",
+        ))
+    except Exception:  # noqa: BLE001
+        pass
 
     counts = {"ok": 0, "warn": 0, "fail": 0}
     for c in checks:

@@ -57,10 +57,21 @@ La pestaña **Diagnostics** (y `GET /api/diagnostics`, y el log al arrancar) mue
 - `tools/libmagic/` — libmagic nativo en Windows: `libmagic.dll` + `magic.mgc`.
 
 Los **hallazgos** los produce código propio (`docutracex/parsers/`, `docutracex/ioc.py`) más herramientas externas que se ejecutan en el portable. Integradas hasta ahora:
-- **libmagic** — identificación de tipo.
-- **oletools (suite completa)** — `olevba` (macros VBA), `oleid` (características sospechosas), `mraptor` (macros con auto-exec+write+execute = probable malicioso), `msodde` (enlaces DDE), `oleobj` (extracción de objetos OLE incrustados).
 
-Pendientes: pypdf/qpdf/pdfid/pdf-parser/pypdfium2/Tesseract (PDF/OCR), extract-msg (correo), Apache POI + OpenJDK (Office antiguo).
+| Herramienta | Qué hace | Aplica a |
+|---|---|---|
+| **libmagic** | Identificación de tipo | todos |
+| **oletools** · `olevba` | Macros VBA (extracción + análisis) | Office OOXML/OLE |
+| **oletools** · `oleid` | Características sospechosas del documento | Office |
+| **oletools** · `mraptor` | Macro probable maliciosa (AutoExec+Write+Execute) | Office con VBA |
+| **oletools** · `msodde` | Enlaces DDE peligrosos | Office |
+| **oletools** · `oleobj` | Extrae objetos OLE incrustados | Office |
+| **msoffcrypto-tool** | Detecta Office cifrado y descifra con password por defecto (`VelvetSweatshop` → evasión) | Office cifrado |
+| **Didier Stevens** · `oledump` / `zipdump` | Volcado de streams OLE / entradas ZIP (salida cruda) | Office/OLE |
+
+Las de Didier Stevens (`tools/didier/`) se descargan al provisionar el portable (en tu equipo, con salida a GitHub). Si faltan, se omiten sin romper nada (se ve en Diagnostics → *External scripts*).
+
+**Pensadas para otras familias (cuando lleguen sus parsers):** `pdfid` / `pdf-parser` (Didier) + `pypdf` / `qpdf` / `pypdfium2` / `Tesseract` para **PDF**; `emldump` (Didier) + `extract-msg` para **correo**; `oledump` ya aplica al **Office antiguo (OLE)**; Apache POI + OpenJDK para la interpretación semántica de Office antiguo.
 
 Ficheros de prueba (uno por tipo del alcance) en `samples/` — ver `samples/README.md`; se regeneran con `python scripts/make_samples.py`.
 

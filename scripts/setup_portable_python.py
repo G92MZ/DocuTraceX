@@ -36,6 +36,10 @@ ROOT = Path(__file__).resolve().parent.parent
 TOOLS = ROOT / "tools"
 PY_DIR = TOOLS / "python"
 LIBMAGIC_DIR = TOOLS / "libmagic"
+DIDIER_DIR = TOOLS / "didier"
+
+DIDIER_BASE = "https://raw.githubusercontent.com/DidierStevens/DidierStevensSuite/master/"
+DIDIER_FILES = ["oledump.py", "zipdump.py", "pdfid.py", "pdf-parser.py", "emldump.py"]
 
 PBS_API = "https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest"
 DEFAULT_VERSION = "3.13"
@@ -165,6 +169,25 @@ def install_libmagic_windows() -> None:
         print(f"[+] libmagic files: {', '.join(extracted) or 'none'} -> {LIBMAGIC_DIR}")
 
 
+def install_didier() -> None:
+    """Download the Didier Stevens Suite scripts into tools/didier/ (public domain)."""
+    print("[>] Provisioning Didier Stevens Suite scripts into tools/didier/")
+    DIDIER_DIR.mkdir(parents=True, exist_ok=True)
+    got = []
+    for name in DIDIER_FILES:
+        try:
+            data = _get(DIDIER_BASE + name)
+            (DIDIER_DIR / name).write_bytes(data)
+            got.append(name)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[!] Could not download {name}: {exc}")
+    print(f"[+] Didier scripts: {', '.join(got) or 'none'}")
+
+
+def _didier_present() -> bool:
+    return all((DIDIER_DIR / f).is_file() for f in DIDIER_FILES)
+
+
 def verify() -> None:
     py = _portable_python()
     print("[>] Verifying the portable runtime")
@@ -197,6 +220,7 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
     install_deps()
     if sys.platform.startswith("win"):
         install_libmagic_windows()
+    install_didier()
     verify()
 
 
@@ -243,13 +267,18 @@ def ensure(version: str = DEFAULT_VERSION) -> bool:
     try:
         if _portable_present():
             py = _portable_python()
-            if _tool_deps_ok(py):
-                print(f"[=] Portable Python present with tool deps OK at {PY_DIR}")
+            deps_ok = _tool_deps_ok(py)
+            didier_ok = _didier_present()
+            if deps_ok and didier_ok:
+                print(f"[=] Portable Python present with tools OK at {PY_DIR}")
                 return True
-            print("[>] Portable present but tool dependencies missing — updating...")
-            install_deps()
-            if sys.platform.startswith("win"):
-                install_libmagic_windows()
+            if not deps_ok:
+                print("[>] Portable present but tool dependencies missing — updating...")
+                install_deps()
+                if sys.platform.startswith("win"):
+                    install_libmagic_windows()
+            if not didier_ok:
+                install_didier()
             return _tool_deps_ok(py)
 
         print("[>] Portable Python not found — provisioning it now...")

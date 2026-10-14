@@ -250,6 +250,11 @@ function collectFindings(mods, ooxml) {
     severity: f.severity, source: f.tool || "oletools", rule: f.rule,
     detail: f.detail || "", location: f.location || "",
   }));
+  const cr = mods.msoffcrypto;
+  if (cr) (cr.findings || []).forEach((f) => out.push({
+    severity: f.severity, source: "msoffcrypto", rule: f.rule,
+    detail: f.detail || "", location: f.location || "document",
+  }));
   out.sort((a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9));
   return out;
 }
@@ -323,31 +328,52 @@ function paneContent(sem, ole) {
   return html || `<p class="hint-line">No reconstructed content.</p>`;
 }
 
-function paneTools(ole) {
-  if (!ole) return `<p class="hint-line">No external tools run.</p>`;
-  if (!ole.available) return `<p class="hint-line">oletools unavailable: ${escapeHtml(ole.error || "")}</p>`;
-  const t = ole.tools || {};
+function paneTools(ole, crypto) {
   const rows = [];
   const add = (name, status, detail) => rows.push(`<tr>
     <td class="file">${escapeHtml(name)}</td>
     <td>${status}</td>
     <td>${escapeHtml(detail)}</td></tr>`);
 
-  if (t.olevba) add("olevba", t.olevba.error ? '<span class="badge badge-warn">error</span>' : (t.olevba.macros ? '<span class="badge badge-bad">macros</span>' : '<span class="badge badge-ok">no macros</span>'),
-    t.olevba.error || `${(t.olevba.modules || []).length} module(s)`);
-  if (t.oleid) {
-    const inds = t.oleid.indicators || [];
-    const risky = inds.filter((i) => ["low", "medium", "high"].includes(i.risk));
-    add("oleid", `<span class="badge badge-${risky.length ? "warn" : "ok"}">${inds.length} indicators</span>`,
-      risky.map((i) => `${i.name}=${i.value}`).join(", ") || t.oleid.error || "nothing risky");
+  if (ole && ole.available) {
+    const t = ole.tools || {};
+    if (t.olevba) add("olevba", t.olevba.error ? '<span class="badge badge-warn">error</span>' : (t.olevba.macros ? '<span class="badge badge-bad">macros</span>' : '<span class="badge badge-ok">no macros</span>'),
+      t.olevba.error || `${(t.olevba.modules || []).length} module(s)`);
+    if (t.oleid) {
+      const inds = t.oleid.indicators || [];
+      const risky = inds.filter((i) => ["low", "medium", "high"].includes(i.risk));
+      add("oleid", `<span class="badge badge-${risky.length ? "warn" : "ok"}">${inds.length} indicators</span>`,
+        risky.map((i) => `${i.name}=${i.value}`).join(", ") || t.oleid.error || "nothing risky");
+    }
+    if (t.mraptor) add("mraptor", t.mraptor.suspicious ? '<span class="badge badge-bad">suspicious</span>' : '<span class="badge badge-ok">clean</span>',
+      t.mraptor.error || `flags ${t.mraptor.flags || ""} ${(t.mraptor.matches || []).join(", ")}`);
+    if (t.msodde) { const dde = t.msodde.dde_links || []; add("msodde", `<span class="badge badge-${dde.length ? "bad" : "ok"}">${dde.length} DDE</span>`, t.msodde.error || dde.join(" | ")); }
+    if (t.oleobj) { const objs = t.oleobj.objects || []; add("oleobj", `<span class="badge badge-${objs.length ? "warn" : "ok"}">${objs.length} objects</span>`, t.oleobj.error || `${objs.length} embedded OLE object(s)`); }
   }
-  if (t.mraptor) add("mraptor", t.mraptor.suspicious ? '<span class="badge badge-bad">suspicious</span>' : '<span class="badge badge-ok">clean</span>',
-    t.mraptor.error || `flags ${t.mraptor.flags || ""} ${(t.mraptor.matches || []).join(", ")}`);
-  if (t.msodde) { const dde = t.msodde.dde_links || []; add("msodde", `<span class="badge badge-${dde.length ? "bad" : "ok"}">${dde.length} DDE</span>`, t.msodde.error || dde.join(" | ")); }
-  if (t.oleobj) { const objs = t.oleobj.objects || []; add("oleobj", `<span class="badge badge-${objs.length ? "warn" : "ok"}">${objs.length} objects</span>`, t.oleobj.error || `${objs.length} embedded OLE object(s)`); }
+  if (crypto && crypto.available) {
+    const st = crypto.encrypted
+      ? (crypto.decrypted ? '<span class="badge badge-bad">encrypted (default pw)</span>' : '<span class="badge badge-warn">encrypted</span>')
+      : '<span class="badge badge-ok">not encrypted</span>';
+    const detail = crypto.encrypted
+      ? (crypto.decrypted ? `decrypted with '${crypto.decrypted_password}'` : "encrypted; no default password worked")
+      : (crypto.error ? "not applicable" : "");
+    add("msoffcrypto", st, detail);
+  }
+  if (!rows.length) return `<p class="hint-line">No external tools run.</p>`;
+  return table(["Tool", "Status", "Detail"], rows.join(""));
+}
 
-  return `<p class="hint-line">oletools ${escapeHtml((ole.tool_versions && ole.tool_versions.oletools) || "")}</p>` +
-    table(["Tool", "Status", "Detail"], rows.join(""));
+function paneDidier(didier) {
+  if (!didier || !didier.available) return `<p class="hint-line">Didier Stevens scripts not provisioned.</p>`;
+  const tools = didier.tools || {};
+  let html = "";
+  Object.keys(tools).forEach((name) => {
+    const t = tools[name];
+    html += `<p class="hint-line">${escapeHtml(name)}${t.returncode != null ? ` (rc ${t.returncode})` : ""}</p>`;
+    if (t.error) html += `<p class="hint-line">${escapeHtml(t.error)}</p>`;
+    if (t.output) html += `<pre class="text-sample">${escapeHtml(t.output.slice(0, 8000))}</pre>`;
+  });
+  return html || `<p class="hint-line">No output.</p>`;
 }
 
 function paneRelationships(rels) {
@@ -424,6 +450,8 @@ async function openComponents(analysisId) {
     const ooxml = mods.ooxml;
     const sem = mods.word || mods.excel || mods.powerpoint;
     const ole = mods.oletools;
+    const crypto = mods.msoffcrypto;
+    const didier = mods.didier;
     const iocs = d.iocs;
     if (!ooxml && !sem && !ole) {
       bodyEl.innerHTML = `<p class="hint-line">No component analysis for this case yet.</p>`;
@@ -439,7 +467,8 @@ async function openComponents(analysisId) {
     const sections = [];
     sections.push({ id: "findings", label: `Findings (${findings.length})`, html: paneFindings(findings) });
     sections.push({ id: "iocs", label: `IOCs (${ni})`, html: paneIocs(iocs) });
-    if (ole) sections.push({ id: "tools", label: "Tools", html: paneTools(ole) });
+    if (ole || crypto) sections.push({ id: "tools", label: "Tools", html: paneTools(ole, crypto) });
+    if (didier && didier.available) sections.push({ id: "didier", label: "Didier", html: paneDidier(didier) });
     if (sem || (ole && ole.available)) {
       sections.push({ id: "metadata", label: "Metadata", html: paneMetadata(sem, ole) });
       sections.push({ id: "content", label: "Content", html: paneContent(sem, ole) });

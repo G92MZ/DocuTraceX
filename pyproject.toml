@@ -22,6 +22,8 @@ dependencies = [
     "defusedxml>=0.7.1",
     # External analysis tool: VBA macro extraction/analysis (runs on the portable).
     "oletools>=0.60",
+    # Encrypted Office detection + default-password decryption (evasion check).
+    "msoffcrypto-tool>=5.1",
 ]
 
 [project.optional-dependencies]
