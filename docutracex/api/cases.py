@@ -37,3 +37,22 @@ async def get_case(analysis_id: str) -> dict:
         return case_service.get_case(analysis_id)
     except CaseError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/{analysis_id}/components")
+async def get_components(analysis_id: str) -> dict:
+    """Return the component/relationship analysis for a case (OOXML for now)."""
+    from ..storage import CasePaths, read_json
+
+    try:
+        manifest = case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    paths = CasePaths(analysis_id)
+    ooxml = read_json(paths.subresult("ooxml"))
+    return {
+        "analysis_id": analysis_id,
+        "filename": manifest["original"]["filename"],
+        "state": manifest.get("state"),
+        "modules": {"ooxml": ooxml} if ooxml else {},
+    }
