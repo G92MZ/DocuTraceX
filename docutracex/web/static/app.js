@@ -93,9 +93,16 @@ async function loadDiagnostics() {
   const summary = document.getElementById("diag-summary");
   try {
     const d = await fetch("/api/diagnostics").then((r) => r.json());
+    const it = d.interpreter || {};
+    const kind = it.is_portable ? "portable" : (it.source || "current");
     summary.textContent = `${d.present}/${d.total} present` +
       (d.ok ? "" : " — missing required: " + d.missing_required.join(", "));
     summary.className = "status " + (d.ok ? "ok-text" : "bad-text");
+    const interpLine = document.getElementById("diag-interp");
+    if (interpLine) {
+      interpLine.textContent =
+        `Interpreter: ${kind} · Python ${it.python_version || "?"} · ${it.executable || ""}`;
+    }
     body.innerHTML = d.dependencies.map((x) => {
       let cls, label;
       if (x.installed) { cls = "ok"; label = "installed"; }

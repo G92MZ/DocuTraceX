@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 from . import __version__
 from .api.cases import router as cases_router
 from .config import settings
-from .deps import check_dependencies, log_startup_report, summarize
+from .deps import check_runtime, log_startup_report, summarize
 from .errors import DocuTraceXError
 from .logging_config import configure_logging, get_logger
 
@@ -52,7 +52,8 @@ def create_app() -> FastAPI:
 
     @app.get("/api/diagnostics", response_class=JSONResponse)
     async def diagnostics() -> dict:
-        return {"version": __version__, **summarize(check_dependencies())}
+        interp, results = check_runtime()
+        return {"version": __version__, "interpreter": interp, **summarize(results)}
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:

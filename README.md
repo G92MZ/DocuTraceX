@@ -32,7 +32,7 @@ pytest -q                  # ejecuta los tests
 
 Configurable por entorno: `DOCUTRACEX_HOST`, `DOCUTRACEX_PORT`, `DOCUTRACEX_LOG_LEVEL`.
 
-Al arrancar, la app comprueba sus dependencias y lo registra en el log; el estado está también en `GET /api/diagnostics` y en el panel «Environment» de la UI. En Windows, para la identificación con libmagic hace falta la librería nativa (de momento, en desarrollo: `pip install python-magic-bin`; el empaquetado de la DLL en `tools\` llegará con el gestor de herramientas).
+Al arrancar, la app comprueba sus dependencias **en el intérprete que realmente ejecutará las herramientas**: si hay un Python portable en `tools\` (o `DOCUTRACEX_PYTHON`), el check se ejecuta *dentro* de ese intérprete por subproceso, no en el que lanzó la app. El resultado va al log, a `GET /api/diagnostics` (incluye qué intérprete se usa: portable vs sistema) y al panel «Environment» de la UI. En Windows, para la identificación con libmagic hace falta la librería nativa (de momento, en desarrollo: `pip install python-magic-bin`; el empaquetado de la DLL en `tools\` llegará con el gestor de herramientas).
 
 Ficheros de prueba (uno por tipo del alcance) en `samples/` — ver `samples/README.md`; se regeneran con `python scripts/make_samples.py`.
 
