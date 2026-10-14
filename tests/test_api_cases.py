@@ -40,3 +40,23 @@ def test_upload_creates_case_and_lists_it(client: TestClient) -> None:
 
 def test_get_missing_case_returns_404(client: TestClient) -> None:
     assert client.get("/api/cases/nope").status_code == 404
+
+
+def test_reveal_and_download_guard_path_traversal(client: TestClient) -> None:
+    resp = client.post(
+        "/api/cases",
+        files={"file": ("x.bin", b"hello world", "application/octet-stream")},
+    )
+    manifest = resp.json()
+    cid = manifest["analysis_id"]
+    stored = manifest["original"]["stored_path"]
+    # The original copy is inside the case folder → downloadable.
+    ok = client.get(f"/api/cases/{cid}/file", params={"path": stored})
+    assert ok.status_code == 200
+    assert ok.content == b"hello world"
+    # Path traversal is refused.
+    bad = client.get(f"/api/cases/{cid}/file", params={"path": "../../etc/passwd"})
+    assert bad.status_code == 400
+    # Reveal validates the path the same way (missing file → 404).
+    missing = client.post(f"/api/cases/{cid}/reveal", json={"path": "nope/none.bin"})
+    assert missing.status_code == 404

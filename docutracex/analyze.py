@@ -32,6 +32,62 @@ def _family(manifest: dict[str, Any]) -> str | None:
     return disc.get("declared_family")
 
 
+# Attachment types worth deep-scanning with the Office third-party tools.
+_SCANNABLE_EXT = {
+    ".doc", ".dot", ".docx", ".docm", ".dotx", ".dotm",
+    ".xls", ".xlt", ".xla", ".xlsx", ".xlsm", ".xltx", ".xltm", ".xlam", ".xlsb",
+    ".ppt", ".pot", ".pptx", ".pptm", ".potx", ".potm", ".ppsx", ".ppsm", ".ppam",
+    ".rtf", ".vbs", ".zip",
+}
+_SCANNABLE_MIME = ("officedocument", "msword", "ms-excel", "ms-powerpoint",
+                   "vnd.ms-", "application/zip", "cdfv2", "composite")
+
+
+def _scan_attachments(mail_res: dict[str, Any] | None, paths: CasePaths) -> dict[str, Any]:
+    """Run the oletools suite over each extracted Office/OLE attachment.
+
+    This is where third-party tools 'pull things out' of an email: macros
+    (olevba), DDE (msodde), suspicious indicators (oleid), macro verdict
+    (mraptor) and embedded objects (oleobj) — each finding tagged with the
+    attachment it came from.
+    """
+    result: dict[str, Any] = {"module": "attachments", "scanned": [], "findings": [],
+                              "status": "ok"}
+    if not mail_res:
+        result["counts"] = {"findings": 0}
+        return result
+    from .parsers import oletools_suite
+
+    for att in mail_res.get("attachments", []) or []:
+        rel = att.get("stored_path")
+        name = att.get("filename", "")
+        if not rel:
+            continue
+        ext = ("." + name.lower().rsplit(".", 1)[1]) if "." in name else ""
+        mime = (att.get("detected_mime") or "").lower()
+        if ext not in _SCANNABLE_EXT and not any(m in mime for m in _SCANNABLE_MIME):
+            continue
+        att_path = paths.root / rel
+        if not att_path.is_file():
+            continue
+        sub = oletools_suite.analyze(att_path, paths.extracted_dir / "attachments")
+        entry = {"filename": name, "available": sub.get("available"),
+                 "findings": len(sub.get("findings", []))}
+        result["scanned"].append(entry)
+        for f in sub.get("findings", []) or []:
+            result["findings"].append({
+                "tool": f.get("tool", "oletools"),
+                "rule": f.get("rule", ""),
+                "severity": f.get("severity", "info"),
+                "detail": f"[{name}] {f.get('detail', '')}",
+                "location": f"attachment:{name}",
+            })
+    result["counts"] = {"findings": len(result["findings"])}
+    if result["findings"]:
+        result["status"] = "ok_with_findings"
+    return result
+
+
 def analyze_case(case_root: Path) -> dict[str, Any]:
     """Run the applicable parsers on a case (in-process). Returns a summary."""
     case_root = Path(case_root)
@@ -57,7 +113,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         if res.get("status") == "error":
             state = "error"
         elif res.get("anomalies"):
-            state = "partial"
+            state = "completed"
 
         # Semantic parser for the specific Office app (Word/Excel/PowerPoint).
         declared_ext = manifest["original"].get("declared_extension", "")
@@ -68,9 +124,9 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             ran.append(module)
             findings_total += sem.get("counts", {}).get("findings", 0)
             if sem.get("status") == "error" and state != "error":
-                state = "partial"
+                state = "completed"
             elif sem.get("findings") and state == "completed":
-                state = "partial"
+                state = "completed"
 
         # External tool: Excel 4.0 (XLM) macro deobfuscation — Excel only.
         if sem is not None and sem.get("module") == "excel":
@@ -81,7 +137,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             ran.append("xlmdeobf")
             findings_total += xlm_res.get("counts", {}).get("findings", 0)
             if xlm_res.get("findings") and state == "completed":
-                state = "partial"
+                state = "completed"
 
         # External tools: the oletools suite (olevba, oleid, mraptor, msodde,
         # oleobj) — runs on the portable.
@@ -92,7 +148,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         ran.append("oletools")
         findings_total += ole_res.get("counts", {}).get("findings", 0)
         if ole_res.get("findings") and state == "completed":
-            state = "partial"
+            state = "completed"
 
         # External tool: encrypted-document detection / default-password decrypt.
         crypto_res = crypto.analyze(original, paths.extracted_dir)
@@ -100,7 +156,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         ran.append("msoffcrypto")
         findings_total += crypto_res.get("counts", {}).get("findings", 0)
         if crypto_res.get("findings") and state == "completed":
-            state = "partial"
+            state = "completed"
 
         # External scripts: Didier Stevens Suite (zipdump, oledump) — raw output.
         didier_res = didier.analyze(original, "ooxml")
@@ -117,7 +173,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             ran.append("officemalscanner")
             findings_total += oms_res.get("counts", {}).get("findings", 0)
             if oms_res.get("findings") and state == "completed":
-                state = "partial"
+                state = "completed"
     elif family == "email" or manifest["original"].get("declared_extension", "").lower() == ".msg":
         # Email family: .eml/.emlx (RFC 822) and .msg (Outlook MAPI/OLE).
         from .parsers import didier, mail
@@ -132,7 +188,27 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             if mail_res.get("status") == "error":
                 state = "error"
             elif mail_res.get("findings"):
-                state = "partial"
+                state = "completed"
+
+        # Third-party tools on the message itself: olevba extracts macros from
+        # Office attachments inside the .eml/.msg, msodde flags DDE, oleid/mraptor
+        # rate them. These produce real findings (not just raw output).
+        from .parsers import oletools_suite
+
+        ole_res = oletools_suite.analyze(original, paths.extracted_dir)
+        if ole_res.get("available"):
+            write_subresult(paths, "oletools", ole_res)
+            ran.append("oletools")
+            findings_total += ole_res.get("counts", {}).get("findings", 0)
+            if ole_res.get("findings") and state == "completed":
+                state = "completed"
+
+        # Deep scan of each extracted attachment with the third-party tools.
+        att_res = _scan_attachments(mail_res, paths)
+        if att_res.get("findings") or att_res.get("scanned"):
+            write_subresult(paths, "attachments", att_res)
+            ran.append("attachments")
+            findings_total += att_res.get("counts", {}).get("findings", 0)
 
         # External scripts: emldump (MIME) for .eml, oledump (OLE streams) for .msg.
         didier_family = "ole" if declared_ext.lower() == ".msg" else "email"
@@ -189,12 +265,14 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 # Modules that can be re-run in isolation over an existing case.
 _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto",
                "xlmdeobf", "officemalscanner", "didier", "email")
+# Modules whose findings feed the consolidated view (includes derived ones).
+_COLLECTABLE = _RERUNNABLE + ("attachments",)
 
 
 def _collect_modules(paths: CasePaths) -> dict[str, Any]:
     """Read every module sub-result present on disk for a case."""
     modules: dict[str, Any] = {}
-    for name in _RERUNNABLE:
+    for name in _COLLECTABLE:
         data = read_json(paths.subresult(name))
         if data is not None:
             modules[name] = data
@@ -277,9 +355,7 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
     summary.setdefault("counts", {})
     summary["counts"]["iocs"] = ioc_total
     summary["counts"]["findings"] = findings_total
-    state = "partial" if findings_total else summary.get("state", "completed")
-    if state == "error":
-        state = "partial"
+    state = "completed"
     summary["state"] = state
     summary["updated_utc"] = _now()
     write_json(paths.summary, summary)

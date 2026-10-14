@@ -183,6 +183,27 @@ def _ppt_slide() -> str:
 APP_NAME = {"word": "Microsoft Office Word", "excel": "Microsoft Excel",
             "powerpoint": "Microsoft Office PowerPoint", "xlsb": "Microsoft Excel"}
 
+_DOCM_CT = "application/vnd.ms-word.document.macroEnabled.main+xml"
+
+
+def _docm_bytes() -> bytes:
+    """A macro-enabled Word doc (DDEAUTO + vbaProject.bin), built in memory.
+
+    Used as an email attachment so the third-party tools (olevba, msodde) have
+    something real to pull out of the message.
+    """
+    import io
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", _content_types("word", "word/document.xml", _DOCM_CT))
+        z.writestr("_rels/.rels", _root_rels("word/document.xml", False))
+        z.writestr("docProps/core.xml", CORE_XML)
+        z.writestr("docProps/app.xml", _app_xml(APP_NAME["word"]))
+        z.writestr("word/document.xml", _word_doc(macro=True))
+        z.writestr("word/vbaProject.bin", b"\x00VBA placeholder (benign sample)")
+    return buf.getvalue()
+
 
 def make_ooxml(path: Path, ext: str) -> None:
     family, main_part, main_ct = OOXML_MAIN[ext]
@@ -304,6 +325,10 @@ def _build_eml() -> bytes:
     msg.add_attachment(b"MZ fake payload (benign sample)",
                        maintype="application", subtype="octet-stream",
                        filename="invoice.pdf.exe")
+    # A real macro-enabled Office attachment so third-party tools find macros/DDE.
+    msg.add_attachment(_docm_bytes(), maintype="application",
+                       subtype="vnd.ms-word.document.macroEnabled.12",
+                       filename="report.docm")
     return msg.as_bytes()
 
 
@@ -332,7 +357,9 @@ def make_msg(path: Path) -> None:
     )
     write_msg(path, headers, "DocuTraceX sample — please review invoice",
               f"Benign-looking body. Reference: {URL_A} and {IP_A}.",
-              "attacker@evil.example", [("invoice.pdf.exe", b"MZ fake payload (benign sample)")])
+              "attacker@evil.example",
+              [("invoice.pdf.exe", b"MZ fake payload (benign sample)"),
+               ("report.docm", _docm_bytes())])
 
 
 def make_emlx(path: Path) -> None:

@@ -274,6 +274,38 @@ async function saveMark(cell, analysisId, onSaved) {
   }
 }
 
+// File actions for extracted items: open the containing folder / download.
+function fileActions(rel) {
+  if (!rel) return "";
+  const r = escapeHtml(rel);
+  return `<span class="file-actions">
+    <button class="btn btn-ghost btn-sm" data-reveal="${r}" title="Open containing folder">📁 Folder</button>
+    <button class="btn btn-ghost btn-sm" data-download="${r}" title="Download">↓</button>
+  </span>`;
+}
+
+function wireFileActions(root, analysisId) {
+  if (!analysisId) return;
+  root.querySelectorAll("[data-reveal]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const label = btn.textContent;
+      btn.textContent = "Opening…";
+      try {
+        const resp = await fetch(`/api/cases/${encodeURIComponent(analysisId)}/reveal`,
+          { method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: btn.getAttribute("data-reveal") }) });
+        btn.textContent = resp.ok ? label : "unavailable here";
+      } catch (err) { btn.textContent = "unavailable here"; }
+    });
+  });
+  root.querySelectorAll("[data-download]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const rel = encodeURIComponent(btn.getAttribute("data-download"));
+      window.open(`/api/cases/${encodeURIComponent(analysisId)}/file?path=${rel}`, "_blank");
+    });
+  });
+}
+
 function wireMarks(root, analysisId, onSaved) {
   if (!analysisId) return;
   root.querySelectorAll(".mark-cell").forEach((cell) => {
@@ -532,8 +564,9 @@ function paneExtracted(items) {
     <td>${fmtSize(e.size_bytes)}</td>
     <td class="mono" title="${escapeHtml(e.detected_name || "")}">${escapeHtml(e.detected_mime || "")}</td>
     <td class="mono" title="${escapeHtml(e.sha256 || "")}">${shortHash(e.sha256)}</td>
+    <td>${fileActions(e.stored_path)}</td>
   </tr>`).join("");
-  return table(["Part", "Size", "Detected", "SHA-256"], rows);
+  return table(["Part", "Size", "Detected", "SHA-256", "Actions"], rows);
 }
 
 // --- Email panes -------------------------------------------------------------
@@ -595,16 +628,27 @@ function paneAuth(email) {
   return html;
 }
 
-function paneAttachments(email) {
+function paneAttachments(email, attMod) {
   const items = (email && email.attachments) || [];
   if (!items.length) return `<p class="hint-line">No attachments.</p>`;
-  const rows = items.map((a) => `<tr>
-    <td class="file">${escapeHtml(a.filename)}</td>
-    <td>${fmtSize(a.size_bytes)}</td>
-    <td class="mono">${escapeHtml(a.detected_mime || "")}</td>
-    <td class="mono" title="${escapeHtml(a.sha256 || "")}">${shortHash(a.sha256)}</td>
-  </tr>`).join("");
-  return table(["Filename", "Size", "Detected", "SHA-256"], rows);
+  // Third-party tool findings per attachment (from the "attachments" module).
+  const byName = {};
+  ((attMod && attMod.scanned) || []).forEach((s) => { byName[s.filename] = s.findings; });
+  const rows = items.map((a) => {
+    const nf = byName[a.filename];
+    const scan = nf != null
+      ? (nf ? `<span class="badge badge-bad">${nf} finding(s)</span>` : '<span class="badge badge-ok">clean</span>')
+      : "";
+    return `<tr>
+      <td class="file">${escapeHtml(a.filename)}</td>
+      <td>${fmtSize(a.size_bytes)}</td>
+      <td class="mono">${escapeHtml(a.detected_mime || "")}</td>
+      <td class="mono" title="${escapeHtml(a.sha256 || "")}">${shortHash(a.sha256)}</td>
+      <td>${scan}</td>
+      <td>${fileActions(a.stored_path)}</td>
+    </tr>`;
+  }).join("");
+  return table(["Filename", "Size", "Detected", "SHA-256", "Tool scan", "Actions"], rows);
 }
 
 function paneEmailBody(email) {
@@ -637,6 +681,7 @@ function renderSubtabs() {
   });
   // Wire the mark controls present in the active pane (Findings).
   wireMarks(bodyEl, _openCaseId);
+  wireFileActions(bodyEl, _openCaseId);
 }
 
 async function openComponents(analysisId) {
@@ -683,7 +728,7 @@ async function openComponents(analysisId) {
     if (email) {
       sections.push({ id: "auth", label: "Authentication", html: paneAuth(email) });
       sections.push({ id: "headers", label: `Headers (${(email.headers || []).length})`, html: paneEmailHeaders(email) });
-      sections.push({ id: "attachments", label: `Attachments (${email.attachment_count || 0})`, html: paneAttachments(email) });
+      sections.push({ id: "attachments", label: `Attachments (${email.attachment_count || 0})`, html: paneAttachments(email, mods.attachments) });
       sections.push({ id: "body", label: "Body", html: paneEmailBody(email) });
     }
     if (ole || crypto || (xlm && xlm.available)) {
@@ -740,7 +785,7 @@ function renderRerun(analysisId, d) {
 // --- Tasks view --------------------------------------------------------------
 const TASK_STATE_CLS = {
   queued: "muted", running: "warn", cancelling: "warn", cancelled: "muted",
-  completed: "ok", partial: "warn", failed: "bad",
+  completed: "ok", failed: "bad",
 };
 const TASK_ACTIVE = new Set(["queued", "running", "cancelling"]);
 let _tasksPoll = null;

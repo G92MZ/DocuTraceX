@@ -216,6 +216,7 @@ table.cases td.mono { word-break: break-all; }
 .btn-sm { padding: 3px 10px; font-size: 12px; }
 .spin { color: var(--accent); animation: dtx-pulse 1s ease-in-out infinite; }
 @keyframes dtx-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+.file-actions { display: inline-flex; gap: 6px; }
 
 .diag-head { display: flex; align-items: baseline; justify-content: space-between; }
 

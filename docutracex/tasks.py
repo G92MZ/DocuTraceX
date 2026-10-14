@@ -2,7 +2,7 @@
 
 One analysis runs per instance; the rest wait in a FIFO queue, processed by a
 single daemon worker. Each task carries a live state (queued, running,
-cancelling, cancelled, completed, partial, failed), a coarse phase and an
+cancelling, cancelled, completed, failed), a coarse phase and an
 optional progress (``None`` means *unknown*, deliberately distinct from 0%).
 
 A failed task never blocks the independent ones behind it (each run is wrapped).
@@ -32,9 +32,9 @@ log = get_logger(__name__)
 
 # Live states.
 QUEUED, RUNNING, CANCELLING, CANCELLED = "queued", "running", "cancelling", "cancelled"
-COMPLETED, PARTIAL, FAILED = "completed", "partial", "failed"
+COMPLETED, FAILED = "completed", "failed"
 _ACTIVE = {QUEUED, RUNNING, CANCELLING}
-_FINAL_FROM_SUMMARY = {"completed": COMPLETED, "partial": PARTIAL, "error": FAILED}
+_FINAL_FROM_SUMMARY = {"completed": COMPLETED, "error": FAILED}
 
 
 def _now() -> str:
