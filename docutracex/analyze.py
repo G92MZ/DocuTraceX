@@ -107,6 +107,17 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         if didier_res.get("available"):
             write_subresult(paths, "didier", didier_res)
             ran.append("didier")
+
+        # External binary: OfficeMalScanner (optional, Windows) — inflate+scan/info.
+        from .parsers import officemalscanner
+
+        oms_res = officemalscanner.analyze(original, "ooxml", paths.extracted_dir)
+        if oms_res.get("available"):
+            write_subresult(paths, "officemalscanner", oms_res)
+            ran.append("officemalscanner")
+            findings_total += oms_res.get("counts", {}).get("findings", 0)
+            if oms_res.get("findings") and state == "completed":
+                state = "partial"
     else:
         # No parser for this family yet.
         state = "completed"
