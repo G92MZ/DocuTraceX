@@ -178,4 +178,18 @@ def sources_from_modules(modules: dict[str, dict[str, Any]]) -> list[dict[str, A
     xlm = modules.get("xlmdeobf")
     if xlm and xlm.get("code_text"):
         add("xlmdeobf", "xlm_formula", xlm["code_text"])
+
+    # Email: body, header values, Received hops and attachment names.
+    email = modules.get("email")
+    if email:
+        add("email", "body", email.get("body_sample"))
+        for h in email.get("headers", []) or []:
+            if h.get("name") in ("Received", "Received-SPF", "Authentication-Results",
+                                 "Return-Path", "Reply-To", "From", "To", "X-Mailer"):
+                add("email", f"header/{h['name']}", h.get("value"))
+        for hop in email.get("received_chain", []) or []:
+            for key in ("from", "by", "ip"):
+                add("email", f"received/{key}", hop.get(key))
+        for att in email.get("attachments", []) or []:
+            add("email", "attachment_name", att.get("filename"))
     return sources

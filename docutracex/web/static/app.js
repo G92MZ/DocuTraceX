@@ -535,7 +535,90 @@ function paneExtracted(items) {
   return table(["Part", "Size", "Detected", "SHA-256"], rows);
 }
 
-let _compState = { sections: [], active: null };
+// --- Email panes -------------------------------------------------------------
+
+function fmtDelta(sec) {
+  if (sec == null) return "";
+  if (sec === 0) return "0s";
+  const sign = sec < 0 ? "−" : "+";
+  const s = Math.abs(sec);
+  if (s < 60) return `${sign}${s}s`;
+  if (s < 3600) return `${sign}${Math.round(s / 60)}m`;
+  return `${sign}${(s / 3600).toFixed(1)}h`;
+}
+
+// The Received hop chain — shown prominently at the top of an email case.
+function hopsTable(email) {
+  const hops = (email && email.received_chain) || [];
+  if (!hops.length) return `<p class="hint-line">No Received chain (no hops parsed).</p>`;
+  const rows = hops.map((h, i) => `<tr>
+    <td>${i + 1}</td>
+    <td class="mono">${escapeHtml(h.from || "")}</td>
+    <td class="mono">${escapeHtml(h.by || "")}</td>
+    <td class="mono">${escapeHtml(h.ip || "")}</td>
+    <td>${escapeHtml(h.with || "")}</td>
+    <td class="mono">${escapeHtml(h.timestamp || "")}</td>
+    <td class="mono">${escapeHtml(fmtDelta(h.delta_seconds))}</td>
+  </tr>`).join("");
+  return `<h3 class="formats-title">Received chain — ${hops.length} hop(s), origin → destination</h3>`
+    + table(["#", "From", "By", "IP", "With", "Timestamp", "Δt"], rows);
+}
+
+function paneEmailHeaders(email) {
+  const hs = (email && email.headers) || [];
+  if (!hs.length) return `<p class="hint-line">No headers.</p>`;
+  const rows = hs.map((h) =>
+    `<tr><td class="file">${escapeHtml(h.name)}</td><td class="mono">${escapeHtml(h.value)}</td></tr>`).join("");
+  return table(["Header", "Value"], rows);
+}
+
+function paneAuth(email) {
+  const a = (email && email.authentication) || {};
+  const addr = (email && email.addresses) || {};
+  const verdict = (v) => {
+    const cls = v === "pass" ? "ok" : (v === "fail" ? "bad" : "warn");
+    return `<span class="badge badge-${cls}">${escapeHtml(v || "—")}</span>`;
+  };
+  let html = table(["Mechanism", "Result"], [
+    `<tr><td>SPF</td><td>${verdict(a.spf)}</td></tr>`,
+    `<tr><td>DKIM</td><td>${verdict(a.dkim)}${a.dkim_signature_present ? ' <span class="hint-line">signature present</span>' : ""}</td></tr>`,
+    `<tr><td>DMARC</td><td>${verdict(a.dmarc)}</td></tr>`,
+  ].join(""));
+  const rows = Object.entries({
+    From: addr.from, "From display": addr.from_display, "Return-Path": addr.return_path,
+    "Reply-To": addr.reply_to, Sender: addr.sender, Subject: addr.subject,
+    "Message-ID": addr.message_id, Date: addr.date, "X-Mailer": addr.x_mailer,
+  }).filter(([, v]) => v).map(([k, v]) =>
+    `<tr><td class="file">${escapeHtml(k)}</td><td class="mono">${escapeHtml(String(v))}</td></tr>`).join("");
+  if (rows) html += `<h3 class="formats-title">Sender / routing</h3>` + table(["Field", "Value"], rows);
+  return html;
+}
+
+function paneAttachments(email) {
+  const items = (email && email.attachments) || [];
+  if (!items.length) return `<p class="hint-line">No attachments.</p>`;
+  const rows = items.map((a) => `<tr>
+    <td class="file">${escapeHtml(a.filename)}</td>
+    <td>${fmtSize(a.size_bytes)}</td>
+    <td class="mono">${escapeHtml(a.detected_mime || "")}</td>
+    <td class="mono" title="${escapeHtml(a.sha256 || "")}">${shortHash(a.sha256)}</td>
+  </tr>`).join("");
+  return table(["Filename", "Size", "Detected", "SHA-256"], rows);
+}
+
+function paneEmailBody(email) {
+  let html = "";
+  if (email && email.mime_structure && email.mime_structure.length) {
+    html += `<p class="hint-line">MIME structure: ${escapeHtml(email.mime_structure.join(" · "))}${email.has_html ? " · HTML present" : ""}</p>`;
+  }
+  const body = (email && email.body_sample) || "";
+  html += body
+    ? `<pre class="text-sample">${escapeHtml(body.slice(0, 8000))}</pre>`
+    : `<p class="hint-line">No text body.</p>`;
+  return html;
+}
+
+let _compState = { sections: [], active: null, header: "" };
 
 function renderSubtabs() {
   const bar = _compState.sections.map((s) =>
@@ -543,7 +626,8 @@ function renderSubtabs() {
   ).join("");
   const pane = (_compState.sections.find((s) => s.id === _compState.active) || {}).html || "";
   const bodyEl = document.getElementById("comp-body");
-  bodyEl.innerHTML = `<div class="subtabs">${bar}</div><div class="subpane">${pane}</div>`;
+  const header = _compState.header ? `<div class="comp-header">${_compState.header}</div>` : "";
+  bodyEl.innerHTML = `${header}<div class="subtabs">${bar}</div><div class="subpane">${pane}</div>`;
   bodyEl.querySelectorAll(".subtab").forEach((btn) => {
     btn.addEventListener("click", () => {
       _compState.active = btn.getAttribute("data-sub");
@@ -574,8 +658,9 @@ async function openComponents(analysisId) {
     const xlm = mods.xlmdeobf;
     const didier = mods.didier;
     const oms = mods.officemalscanner;
+    const email = mods.email;
     const iocs = d.iocs;
-    if (!ooxml && !sem && !ole) {
+    if (!ooxml && !sem && !ole && !email) {
       bodyEl.innerHTML = `<p class="hint-line">No component analysis for this case yet.</p>`;
       return;
     }
@@ -583,14 +668,23 @@ async function openComponents(analysisId) {
     // fall back to the client-side collector for older cases.
     const findings = (d.findings && d.findings.length) ? d.findings : collectFindings(mods, ooxml);
     const ni = (iocs && iocs.counts && iocs.counts.total) || 0;
-    summary.textContent =
-      `${(ooxml && ooxml.counts && ooxml.counts.components) || 0} parts · ${findings.length} findings · ${ni} IOCs`;
+    const compLabel = email
+      ? `${email.hop_count || 0} hops · ${email.attachment_count || 0} attachments`
+      : `${(ooxml && ooxml.counts && ooxml.counts.components) || 0} parts`;
+    summary.textContent = `${compLabel} · ${findings.length} findings · ${ni} IOCs`;
     summary.className = "status " + (findings.length ? "bad-text" : "ok-text");
 
     // Build only the sub-tabs that have content.
     const sections = [];
+    const headerHtml = email ? hopsTable(email) : "";
     sections.push({ id: "findings", label: `Findings (${findings.length})`, html: paneFindings(findings) });
     sections.push({ id: "iocs", label: `IOCs (${ni})`, html: paneIocs(iocs) });
+    if (email) {
+      sections.push({ id: "auth", label: "Authentication", html: paneAuth(email) });
+      sections.push({ id: "headers", label: `Headers (${(email.headers || []).length})`, html: paneEmailHeaders(email) });
+      sections.push({ id: "attachments", label: `Attachments (${email.attachment_count || 0})`, html: paneAttachments(email) });
+      sections.push({ id: "body", label: "Body", html: paneEmailBody(email) });
+    }
     if (ole || crypto || (xlm && xlm.available)) {
       sections.push({ id: "tools", label: "Tools", html: paneTools(ole, crypto, xlm) });
     }
@@ -607,7 +701,7 @@ async function openComponents(analysisId) {
         sections.push({ id: "extracted", label: `Extracted (${ooxml.extracted.length})`, html: paneExtracted(ooxml.extracted) });
       }
     }
-    _compState = { sections, active: sections[0].id };
+    _compState = { sections, active: sections[0].id, header: headerHtml };
     renderSubtabs();
   } catch (err) {
     bodyEl.innerHTML = `<p class="hint-line">Could not load components.</p>`;

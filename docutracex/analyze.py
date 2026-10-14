@@ -118,6 +118,28 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             findings_total += oms_res.get("counts", {}).get("findings", 0)
             if oms_res.get("findings") and state == "completed":
                 state = "partial"
+    elif family == "email" or manifest["original"].get("declared_extension", "").lower() == ".msg":
+        # Email family: .eml/.emlx (RFC 822) and .msg (Outlook MAPI/OLE).
+        from .parsers import didier, mail
+
+        declared_ext = manifest["original"].get("declared_extension", "")
+        mail_res = mail.analyze(original, declared_ext, paths.extracted_dir)
+        if mail_res is not None:
+            write_subresult(paths, "email", mail_res)
+            ran.append("email")
+            overall_counts["components"] = mail_res.get("attachment_count", 0)
+            findings_total += mail_res.get("counts", {}).get("findings", 0)
+            if mail_res.get("status") == "error":
+                state = "error"
+            elif mail_res.get("findings"):
+                state = "partial"
+
+        # External scripts: emldump (MIME) for .eml, oledump (OLE streams) for .msg.
+        didier_family = "ole" if declared_ext.lower() == ".msg" else "email"
+        didier_res = didier.analyze(original, didier_family)
+        if didier_res.get("available"):
+            write_subresult(paths, "didier", didier_res)
+            ran.append("didier")
     else:
         # No parser for this family yet.
         state = "completed"
