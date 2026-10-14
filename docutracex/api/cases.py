@@ -102,6 +102,62 @@ async def get_marks(analysis_id: str) -> dict:
     }
 
 
+def _safe_target(analysis_id: str, rel: str):
+    """Resolve a case-relative path and ensure it stays inside the case folder."""
+    from ..storage import CasePaths
+
+    paths = CasePaths(analysis_id)
+    root = paths.root.resolve()
+    target = (paths.root / (rel or "")).resolve()
+    if target != root and root not in target.parents:
+        raise HTTPException(status_code=400, detail="Path escapes the case directory")
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    return target
+
+
+@router.post("/{analysis_id}/reveal")
+async def reveal_path(analysis_id: str, payload: dict = Body(...)) -> dict:
+    """Open the extracted file's containing folder in the OS file manager.
+
+    Local tool only: this acts on the machine running the web app.
+    """
+    import subprocess
+    import sys
+
+    try:
+        case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    target = _safe_target(analysis_id, str(payload.get("path", "")))
+    try:
+        if sys.platform.startswith("win"):
+            subprocess.run(["explorer", f"/select,{target}"], check=False)  # non-zero on success
+        elif sys.platform == "darwin":
+            subprocess.run(["open", "-R", str(target)], check=False)
+        else:
+            subprocess.run(["xdg-open", str(target.parent)], check=False)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Could not open file manager: {exc}") from exc
+    return {"opened": True, "path": str(target)}
+
+
+@router.get("/{analysis_id}/file")
+async def download_file(analysis_id: str, path: str):
+    """Download an extracted file (fallback when the file manager isn't local)."""
+    from fastapi.responses import FileResponse
+
+    try:
+        case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    target = _safe_target(analysis_id, path)
+    if not target.is_file():
+        raise HTTPException(status_code=400, detail="Not a file")
+    return FileResponse(str(target), filename=target.name,
+                        media_type="application/octet-stream")
+
+
 @router.post("/{analysis_id}/rerun")
 async def rerun_case(analysis_id: str, payload: dict = Body(default={})) -> dict:
     """Queue a re-analysis of a case: the whole case, or one module in isolation

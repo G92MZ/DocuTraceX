@@ -72,6 +72,9 @@ Los **hallazgos** los produce código propio (`docutracex/parsers/`, `docutracex
 | **OfficeMalScanner** (opcional, Windows) | Shellcode / objetos embebidos (`scan brute`) + estructura VBA/OLE (`info`); en OOXML hace `inflate` y analiza los `vbaProject.bin` | Office OLE y OOXML |
 | **Parser de correo propio** | `.eml`/`.emlx` (stdlib `email`) y `.msg` (MAPI sobre `olefile`, sin GPL); cadena `Received` con Δt, auth SPF/DKIM/DMARC (leído, sin DNS), spoofing (From/Return-Path/Reply-To/display-name), adjuntos (hash + libmagic + extensión peligrosa/doble) | Correo |
 | **Didier Stevens** · `emldump` / `oledump` | Volcado MIME del `.eml` / streams OLE del `.msg` (salida cruda) | Correo |
+| **oletools sobre adjuntos** | Cada adjunto Office/OLE del correo se escanea con olevba/oleid/msodde/mraptor/oleobj; sus hallazgos (p. ej. DDE del `.docm` adjunto) entran en la vista unificada con su herramienta de origen | Correo |
+
+Las cosas extraídas (adjuntos, objetos OLE, medios, copias desocultadas) tienen botones **📁 Folder** (abre la carpeta contenedora en el explorador del sistema — herramienta local) y **↓** (descarga), con validación de ruta dentro del caso.
 
 OfficeMalScanner es un binario PE de Windows (freeware, Frank Boldewin): se descarga de `reconstructer.org` al provisionar el portable y se extrae a `tools/officemalscanner/`. Si el sitio no responde o el AV lo bloquea, se omite sin romper nada y se ve en Diagnostics → *External scripts* (puedes soltar el `.exe` ahí a mano).
 
