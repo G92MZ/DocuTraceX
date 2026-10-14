@@ -628,12 +628,12 @@ function paneAuth(email) {
   return html;
 }
 
-function paneAttachments(email, attMod) {
+function paneAttachments(email, nestedMod) {
   const items = (email && email.attachments) || [];
   if (!items.length) return `<p class="hint-line">No attachments.</p>`;
-  // Third-party tool findings per attachment (from the "attachments" module).
+  // Recursive tool scan results per attachment (from the "nested" module).
   const byName = {};
-  ((attMod && attMod.scanned) || []).forEach((s) => { byName[s.filename] = s.findings; });
+  ((nestedMod && nestedMod.tree) || []).forEach((n) => { byName[n.filename] = (n.findings || []).length; });
   const rows = items.map((a) => {
     const nf = byName[a.filename];
     const scan = nf != null
@@ -661,6 +661,83 @@ function paneEmailBody(email) {
     ? `<pre class="text-sample">${escapeHtml(body.slice(0, 8000))}</pre>`
     : `<p class="hint-line">No text body.</p>`;
   return html;
+}
+
+// --- PDF panes ---------------------------------------------------------------
+
+function panePdf(pdf) {
+  const bits = [`version ${escapeHtml(pdf.version || "?")}`];
+  if (pdf.page_count != null) bits.push(`${pdf.page_count} page(s)`);
+  if (pdf.incremental_updates) bits.push(`${pdf.incremental_updates} incremental update(s)`);
+  if (pdf.encrypted) bits.push("encrypted");
+  let html = `<p class="hint-line">${escapeHtml(bits.join(" · "))}</p>`;
+  const kc = pdf.keyword_counts || {};
+  const keys = Object.keys(kc);
+  if (keys.length) {
+    const rows = keys.map((k) =>
+      `<tr><td class="mono">${escapeHtml(k)}</td><td>${kc[k]}</td></tr>`).join("");
+    html += table(["Keyword", "Count"], rows);
+  }
+  const uris = pdf.uris || [];
+  if (uris.length) {
+    html += `<h3 class="formats-title">URIs (${uris.length})</h3>`
+      + table(["URI"], uris.map((u) => `<tr><td class="mono">${escapeHtml(u)}</td></tr>`).join(""));
+  }
+  return html;
+}
+
+function panePdfMeta(pdf) {
+  const md = pdf.metadata || {};
+  const keys = Object.keys(md);
+  if (!keys.length) return `<p class="hint-line">No document metadata.</p>`;
+  return table(["Property", "Value"],
+    keys.map((k) => `<tr><td class="file">${escapeHtml(k)}</td><td>${escapeHtml(String(md[k]))}</td></tr>`).join(""));
+}
+
+function panePdfEmbedded(pdf) {
+  const items = pdf.embedded || [];
+  if (!items.length) return `<p class="hint-line">No embedded files.</p>`;
+  const rows = items.map((e) => `<tr>
+    <td class="file">${escapeHtml(e.filename)}</td>
+    <td>${fmtSize(e.size_bytes)}</td>
+    <td class="mono" title="${escapeHtml(e.sha256 || "")}">${shortHash(e.sha256)}</td>
+    <td>${fileActions(e.stored_path)}</td>
+  </tr>`).join("");
+  return table(["Filename", "Size", "SHA-256", "Actions"], rows);
+}
+
+// --- Nested (recursive child analysis) --------------------------------------
+
+function nestedNode(n) {
+  const fcount = (n.findings || []).length;
+  const badge = fcount
+    ? `<span class="badge badge-bad">${fcount} finding(s)</span>`
+    : (n.kind === "other" ? '<span class="badge badge-muted">not analyzable</span>'
+                          : '<span class="badge badge-ok">clean</span>');
+  let html = `<div class="nested-node">
+    <div class="nested-row">
+      <span class="mono">${escapeHtml(n.filename)}</span>
+      <span class="badge badge-muted">${escapeHtml(n.kind)}</span>
+      ${badge}
+      ${fileActions(n.stored_path)}
+    </div>`;
+  (n.findings || []).forEach((f) => {
+    html += `<div class="nested-finding"><span class="badge badge-${SEV_CLASS[f.severity] || "warn"}">${escapeHtml(f.severity)}</span>
+      <span class="mono">${escapeHtml(f.tool)}/${escapeHtml(f.rule)}</span> ${escapeHtml(f.detail)}</div>`;
+  });
+  if ((n.children || []).length) {
+    html += `<div class="nested-children">` + n.children.map(nestedNode).join("") + `</div>`;
+  }
+  html += `</div>`;
+  return html;
+}
+
+function paneNested(nested) {
+  const tree = (nested && nested.tree) || [];
+  if (!tree.length) return `<p class="hint-line">No extracted children.</p>`;
+  const c = (nested.counts || {});
+  return `<p class="hint-line">${c.nodes || tree.length} extracted item(s) scanned recursively · ${c.findings || 0} finding(s)</p>`
+    + tree.map(nestedNode).join("");
 }
 
 let _compState = { sections: [], active: null, header: "" };
@@ -705,8 +782,10 @@ async function openComponents(analysisId) {
     const didier = mods.didier;
     const oms = mods.officemalscanner;
     const email = mods.email;
+    const pdf = mods.pdf;
+    const nested = mods.nested;
     const iocs = d.iocs;
-    if (!ooxml && !sem && !ole && !email) {
+    if (!ooxml && !sem && !ole && !email && !pdf) {
       bodyEl.innerHTML = `<p class="hint-line">No component analysis for this case yet.</p>`;
       return;
     }
@@ -714,9 +793,10 @@ async function openComponents(analysisId) {
     // fall back to the client-side collector for older cases.
     const findings = (d.findings && d.findings.length) ? d.findings : collectFindings(mods, ooxml);
     const ni = (iocs && iocs.counts && iocs.counts.total) || 0;
-    const compLabel = email
-      ? `${email.hop_count || 0} hops · ${email.attachment_count || 0} attachments`
-      : `${(ooxml && ooxml.counts && ooxml.counts.components) || 0} parts`;
+    let compLabel;
+    if (email) compLabel = `${email.hop_count || 0} hops · ${email.attachment_count || 0} attachments`;
+    else if (pdf) compLabel = `${pdf.page_count || 0} pages · ${(pdf.embedded || []).length} embedded`;
+    else compLabel = `${(ooxml && ooxml.counts && ooxml.counts.components) || 0} parts`;
     summary.textContent = `${compLabel} · ${findings.length} findings · ${ni} IOCs`;
     summary.className = "status " + (findings.length ? "bad-text" : "ok-text");
 
@@ -728,8 +808,17 @@ async function openComponents(analysisId) {
     if (email) {
       sections.push({ id: "auth", label: "Authentication", html: paneAuth(email) });
       sections.push({ id: "headers", label: `Headers (${(email.headers || []).length})`, html: paneEmailHeaders(email) });
-      sections.push({ id: "attachments", label: `Attachments (${email.attachment_count || 0})`, html: paneAttachments(email, mods.attachments) });
+      sections.push({ id: "attachments", label: `Attachments (${email.attachment_count || 0})`, html: paneAttachments(email, nested) });
       sections.push({ id: "body", label: "Body", html: paneEmailBody(email) });
+    }
+    if (pdf) {
+      sections.push({ id: "pdf", label: "PDF", html: panePdf(pdf) });
+      sections.push({ id: "pdfmeta", label: "Metadata", html: panePdfMeta(pdf) });
+      sections.push({ id: "embedded", label: `Embedded (${(pdf.embedded || []).length})`, html: panePdfEmbedded(pdf) });
+      sections.push({ id: "pdftext", label: "Text", html: `<pre class="text-sample">${escapeHtml((pdf.text_sample || "").slice(0, 8000)) || "(no text)"}</pre>` });
+    }
+    if (nested && (nested.tree || []).length) {
+      sections.push({ id: "nested", label: `Nested (${(nested.counts || {}).nodes || 0})`, html: paneNested(nested) });
     }
     if (ole || crypto || (xlm && xlm.available)) {
       sections.push({ id: "tools", label: "Tools", html: paneTools(ole, crypto, xlm) });

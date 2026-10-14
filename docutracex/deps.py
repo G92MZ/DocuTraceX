@@ -102,6 +102,16 @@ TOOL_DEPS: list[Dependency] = [
         required=False,
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
     ),
+    Dependency(
+        "pypdf", "pypdf", "PDF structure / embedded-file extraction",
+        required=False,
+        install_hint="run scripts/setup_portable_python.py (installed into the portable)",
+    ),
+    Dependency(
+        "pdfminer", "pdfminer.six", "PDF text extraction (IOC phase)",
+        required=False,
+        install_hint="run scripts/setup_portable_python.py (installed into the portable)",
+    ),
 ]
 
 # Combined (kept for backward compatibility / generic checks).

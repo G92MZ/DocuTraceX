@@ -179,6 +179,13 @@ def sources_from_modules(modules: dict[str, dict[str, Any]]) -> list[dict[str, A
     if xlm and xlm.get("code_text"):
         add("xlmdeobf", "xlm_formula", xlm["code_text"])
 
+    # PDF: reconstructed text and the URIs found in the body/actions.
+    pdf = modules.get("pdf")
+    if pdf:
+        add("pdf", "text", pdf.get("text_sample"))
+        for u in pdf.get("uris", []) or []:
+            add("pdf", "uri", u)
+
     # Email: body, header values, Received hops and attachment names.
     email = modules.get("email")
     if email:

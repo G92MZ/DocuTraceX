@@ -36,7 +36,7 @@ SCRIPTS = {
 FAMILY_SCRIPTS = {
     "ooxml": ["zipdump", "oledump"],
     "ole": ["oledump"],
-    "pdf": ["pdfid"],
+    "pdf": ["pdfid", "pdf-parser"],
     "email": ["emldump"],
 }
 
