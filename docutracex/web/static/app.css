@@ -112,6 +112,37 @@ body {
 .file-name.has-file { color: var(--text); }
 .status { color: var(--text-dim); font-size: 13px; }
 
+/* Supported-formats grid (upload section only) */
+.formats-title {
+  margin: 22px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.formats { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 14px; }
+.fmt-card {
+  background: #0f1419;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 14px 12px;
+  width: 168px;
+  text-align: center;
+}
+.fmt-ico { width: 38px; height: 46px; display: block; margin: 0 auto 8px; }
+.fmt-name { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 9px; }
+.fmt-exts { display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; }
+.ext-chip {
+  background: #0b0e12;
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 1px 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: "Cascadia Code", Consolas, monospace;
+}
+
 table.cases { width: 100%; border-collapse: collapse; font-size: 13px; }
 table.cases th, table.cases td {
   text-align: left;
