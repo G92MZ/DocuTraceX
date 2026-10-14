@@ -88,7 +88,7 @@ async function loadCases() {
       return;
     }
     body.innerHTML = cases.map((c) => `
-      <tr>
+      <tr class="case-row" data-id="${escapeHtml(c.analysis_id)}" title="Open components">
         <td>${c.created_utc || ""}</td>
         <td class="file">${escapeHtml(c.filename || "")}</td>
         <td>${escapeHtml(c.declared_extension || "")}</td>
@@ -98,6 +98,9 @@ async function loadCases() {
         <td class="mono" title="${c.sha256 || ""}">${shortHash(c.sha256)}</td>
         <td><span class="badge">${escapeHtml(c.state || "")}</span></td>
       </tr>`).join("");
+    body.querySelectorAll(".case-row").forEach((row) => {
+      row.addEventListener("click", () => openComponents(row.getAttribute("data-id")));
+    });
   } catch (err) {
     body.innerHTML = '<tr><td colspan="8" class="empty">Could not load cases.</td></tr>';
   }
@@ -192,6 +195,119 @@ async function loadDiagnostics() {
   } catch (err) {
     summary.textContent = "Could not load diagnostics.";
   }
+}
+
+// --- Components view ---------------------------------------------------------
+const ANOMALY_SEVERITY = {
+  external_relationship: "bad",
+  broken_relationship_target: "warn",
+  malformed_xml: "warn",
+  dangerous_path: "bad",
+  duplicate_zip_entry: "warn",
+  no_content_type: "warn",
+  not_a_zip: "bad",
+  missing_content_types: "warn",
+};
+
+function showTab(view) {
+  document.querySelectorAll(".tab").forEach((t) =>
+    t.classList.toggle("is-active", t.getAttribute("data-view") === view));
+  document.querySelectorAll(".view").forEach((v) =>
+    { v.hidden = v.getAttribute("data-view") !== view; });
+}
+
+async function openComponents(analysisId) {
+  showTab("components");
+  const caseLine = document.getElementById("comp-case");
+  const summary = document.getElementById("comp-summary");
+  const bodyEl = document.getElementById("comp-body");
+  caseLine.textContent = "Loading…";
+  summary.textContent = "";
+  bodyEl.innerHTML = "";
+  try {
+    const d = await fetch(`/api/cases/${encodeURIComponent(analysisId)}/components`).then((r) => r.json());
+    caseLine.innerHTML = `Case <span class="mono">${escapeHtml(d.analysis_id)}</span> · ${escapeHtml(d.filename || "")} · state: ${escapeHtml(d.state || "")}`;
+    const ooxml = d.modules && d.modules.ooxml;
+    if (!ooxml) {
+      bodyEl.innerHTML = `<p class="hint-line">No component analysis for this case (only OOXML is parsed so far).</p>`;
+      return;
+    }
+    const c = ooxml.counts || {};
+    summary.textContent = `${c.components || 0} parts · ${c.relationships || 0} rels · ${c.external_relationships || 0} external · ${c.anomalies || 0} anomalies`;
+    summary.className = "status " + (ooxml.status === "error" || (c.anomalies || 0) ? "bad-text" : "ok-text");
+    bodyEl.innerHTML =
+      renderAnomalies(ooxml.anomalies) +
+      renderRelationships(ooxml.relationships) +
+      renderExtracted(ooxml.extracted) +
+      renderParts(ooxml.components);
+  } catch (err) {
+    bodyEl.innerHTML = `<p class="hint-line">Could not load components.</p>`;
+  }
+}
+
+function renderAnomalies(items) {
+  if (!items || !items.length) return "";
+  const rows = items.map((a) => {
+    const cls = ANOMALY_SEVERITY[a.kind] || "warn";
+    const where = a.part || a.rels_file || a.target || "";
+    const detail = a.detail || a.target || "";
+    return `<tr>
+      <td><span class="badge badge-${cls}">${escapeHtml(a.kind)}</span></td>
+      <td class="mono">${escapeHtml(where)}</td>
+      <td>${escapeHtml(detail)}</td>
+    </tr>`;
+  }).join("");
+  return `<h3 class="formats-title">Anomalies</h3>
+    <table class="cases"><thead><tr><th>Kind</th><th>Where</th><th>Detail</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
+
+function renderRelationships(rels) {
+  if (!rels || !rels.length) return "";
+  const rows = rels.map((r) => {
+    const ext = r.mode === "External";
+    const typeShort = (r.type || "").split("/").pop();
+    return `<tr>
+      <td class="mono">${escapeHtml(r.id || "")}</td>
+      <td title="${escapeHtml(r.type || "")}">${escapeHtml(typeShort || "")}</td>
+      <td class="mono">${escapeHtml(r.target || "")}</td>
+      <td>${ext ? '<span class="badge badge-bad">external</span>' : '<span class="badge badge-ok">internal</span>'}</td>
+    </tr>`;
+  }).join("");
+  return `<h3 class="formats-title">Relationships</h3>
+    <table class="cases"><thead><tr><th>Id</th><th>Type</th><th>Target</th><th>Mode</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
+
+function renderExtracted(items) {
+  if (!items || !items.length) return "";
+  const rows = items.map((e) => `<tr>
+    <td class="mono">${escapeHtml(e.id || "")}</td>
+    <td>${fmtSize(e.size_bytes)}</td>
+    <td class="mono" title="${escapeHtml(e.detected_name || "")}">${escapeHtml(e.detected_mime || "")}</td>
+    <td class="mono" title="${escapeHtml(e.sha256 || "")}">${shortHash(e.sha256)}</td>
+  </tr>`).join("");
+  return `<h3 class="formats-title">Extracted media / objects</h3>
+    <table class="cases"><thead><tr><th>Part</th><th>Size</th><th>Detected</th><th>SHA-256</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
+
+function renderParts(parts) {
+  if (!parts || !parts.length) return "";
+  const sorted = [...parts].sort((a, b) => (a.path > b.path ? 1 : -1));
+  const rows = sorted.map((p) => {
+    const flag = p.xml_malformed ? '<span class="badge badge-warn">malformed</span>' : "";
+    const ct = (p.content_type || "").split("+")[0].split(".").pop();
+    return `<tr>
+      <td class="mono">${escapeHtml(p.path)}</td>
+      <td title="${escapeHtml(p.content_type || "")}">${escapeHtml(ct || "")}</td>
+      <td>${fmtSize(p.size_bytes)}</td>
+      <td class="mono" title="${escapeHtml(p.sha256 || "")}">${shortHash(p.sha256)} ${flag}</td>
+    </tr>`;
+  }).join("");
+  return `<h3 class="formats-title">Parts (${parts.length})</h3>
+    <table class="cases"><thead><tr><th>Path</th><th>Type</th><th>Size</th><th>SHA-256</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
 }
 
 // --- Tab navigation ----------------------------------------------------------

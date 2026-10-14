@@ -128,14 +128,19 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-.formats { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 14px; }
+.formats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
 .fmt-card {
   background: #0f1419;
   border: 1px solid var(--panel-border);
   border-radius: 8px;
   padding: 14px 12px;
-  width: 168px;
   text-align: center;
+  overflow: visible;
 }
 .fmt-ico { width: 38px; height: 46px; display: block; margin: 0 auto 8px; }
 .fmt-name { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 9px; }
@@ -160,6 +165,9 @@ table.cases th { color: var(--text-dim); font-weight: 600; }
 table.cases td.file { color: var(--text); }
 table.cases td.mono, .mono { font-family: "Cascadia Code", Consolas, monospace; color: var(--text-dim); }
 table.cases td.empty { color: var(--text-dim); text-align: center; padding: 18px; }
+tr.case-row { cursor: pointer; }
+tr.case-row:hover td { background: #10161f; }
+table.cases td.mono { word-break: break-all; }
 .badge {
   background: #0b0e12;
   border: 1px solid var(--panel-border);
