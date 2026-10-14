@@ -186,8 +186,120 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     return {"modules_run": ran, "state": state, "counts": overall_counts}
 
 
-def run_analysis(case_root: Path) -> None:
-    """Trigger analysis for a case, preferring the portable tool interpreter."""
+# Modules that can be re-run in isolation over an existing case.
+_RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto",
+               "xlmdeobf", "officemalscanner", "didier", "email")
+
+
+def _collect_modules(paths: CasePaths) -> dict[str, Any]:
+    """Read every module sub-result present on disk for a case."""
+    modules: dict[str, Any] = {}
+    for name in _RERUNNABLE:
+        data = read_json(paths.subresult(name))
+        if data is not None:
+            modules[name] = data
+    return modules
+
+
+def _recompute_derived(paths: CasePaths) -> tuple[int, int]:
+    """Recompute IOC + consolidated findings from whatever modules exist.
+
+    Never touches marks.json (findings keep stable ids, so marks still match).
+    Returns (ioc_total, findings_total).
+    """
+    from . import findings as findings_mod
+    from . import ioc
+
+    modules = _collect_modules(paths)
+    ioc_result = ioc.extract(ioc.sources_from_modules(modules))
+    write_subresult(paths, "iocs", ioc_result)
+    consolidated = findings_mod.consolidate(modules)
+    write_subresult(paths, "findings", {"findings": consolidated,
+                                        "counts": {"total": len(consolidated)}})
+    return ioc_result.get("counts", {}).get("total", 0), len(consolidated)
+
+
+def run_module(case_root: Path, module: str) -> dict[str, Any]:
+    """Re-run ONE parser/tool module over an existing case, then recompute the
+    derived IOC + findings. Isolated: other modules' results are left as-is."""
+    case_root = Path(case_root)
+    paths = CasePaths(case_root.name, cases_dir=case_root.parent)
+    manifest = read_json(paths.manifest)
+    if manifest is None:
+        raise FileNotFoundError(f"No case.json in {case_root}")
+    if module not in _RERUNNABLE:
+        raise ValueError(f"Module not re-runnable: {module!r}")
+
+    original = paths.root / manifest["original"]["stored_path"]
+    declared_ext = manifest["original"].get("declared_extension", "")
+    family = _family(manifest)
+    ed = paths.extracted_dir
+
+    if module == "ooxml":
+        from .parsers import ooxml
+        res = ooxml.analyze(original, ed)
+    elif module in ("word", "excel", "powerpoint"):
+        from .parsers import office
+        res = office.analyze(original, declared_ext, ed)
+    elif module == "oletools":
+        from .parsers import oletools_suite
+        res = oletools_suite.analyze(original, ed)
+    elif module == "msoffcrypto":
+        from .parsers import crypto
+        res = crypto.analyze(original, ed)
+    elif module == "xlmdeobf":
+        from .parsers import xlm
+        res = xlm.analyze(original)
+    elif module == "officemalscanner":
+        from .parsers import officemalscanner
+        res = officemalscanner.analyze(original, "ooxml", ed)
+    elif module == "didier":
+        from .parsers import didier
+        fam = "ole" if declared_ext.lower() == ".msg" else (family or "ooxml")
+        res = didier.analyze(original, fam)
+    elif module == "email":
+        from .parsers import mail
+        res = mail.analyze(original, declared_ext, ed)
+    else:  # pragma: no cover
+        raise ValueError(module)
+
+    if res is None:
+        raise ValueError(f"Module {module!r} not applicable to this case")
+    written = res.get("module", module)
+    write_subresult(paths, written, res)
+
+    ioc_total, findings_total = _recompute_derived(paths)
+    summary = read_json(paths.summary) or {}
+    ran = summary.get("modules_run", [])
+    if written not in ran:
+        ran.append(written)
+    summary["modules_run"] = ran
+    summary.setdefault("counts", {})
+    summary["counts"]["iocs"] = ioc_total
+    summary["counts"]["findings"] = findings_total
+    state = "partial" if findings_total else summary.get("state", "completed")
+    if state == "error":
+        state = "partial"
+    summary["state"] = state
+    summary["updated_utc"] = _now()
+    write_json(paths.summary, summary)
+
+    manifest["state"] = state
+    manifest["updated_utc"] = _now()
+    manifest.setdefault("analysis", {})["modules_run"] = ran
+    manifest["analysis"]["updated_utc"] = _now()
+    write_json(paths.manifest, manifest)
+    log.info("Re-ran module %r on case %s (findings=%d)", written, case_root.name, findings_total)
+    return {"module": written, "state": state,
+            "counts": {"iocs": ioc_total, "findings": findings_total}}
+
+
+def run_analysis(case_root: Path, module: str | None = None) -> None:
+    """Trigger analysis for a case, preferring the portable tool interpreter.
+
+    With ``module`` set, re-runs only that module (isolated); otherwise the
+    whole case.
+    """
     import subprocess
 
     from . import native
@@ -202,10 +314,12 @@ def run_analysis(case_root: Path) -> None:
         except OSError:
             already = False
     if portable and not already:
+        cmd = [str(portable), "-m", "docutracex.analyze", str(case_root)]
+        if module:
+            cmd += ["--module", module]
         try:
             proc = subprocess.run(
-                [str(portable), "-m", "docutracex.analyze", str(case_root)],
-                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=600, env=native.subprocess_env(),
             )
             if proc.returncode == 0:
@@ -217,7 +331,10 @@ def run_analysis(case_root: Path) -> None:
         # fall through to in-process
 
     try:
-        analyze_case(case_root)
+        if module:
+            run_module(case_root, module)
+        else:
+            analyze_case(case_root)
     except Exception as exc:  # noqa: BLE001  (analysis failure must not break upload)
         log.warning("In-process analysis failed for %s: %s", case_root, exc)
 
@@ -225,9 +342,14 @@ def run_analysis(case_root: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
     if not argv:
-        print("usage: python -m docutracex.analyze <case_root>")
+        print("usage: python -m docutracex.analyze <case_root> [--module NAME]")
         return 2
-    analyze_case(Path(argv[0]))
+    case_root = Path(argv[0])
+    if "--module" in argv:
+        idx = argv.index("--module")
+        run_module(case_root, argv[idx + 1])
+    else:
+        analyze_case(case_root)
     return 0
 
 

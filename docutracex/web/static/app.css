@@ -207,6 +207,16 @@ table.cases td.mono { word-break: break-all; }
 }
 .comp-header .formats-title { margin-top: 0; }
 
+/* Re-run control + Tasks */
+.comp-actions { display: flex; align-items: center; gap: 8px; margin: 6px 0 2px; flex-wrap: wrap; }
+.comp-actions select {
+  background: #0b0e12; border: 1px solid var(--panel-border); border-radius: 6px;
+  color: var(--text); font: inherit; font-size: 12px; padding: 3px 6px;
+}
+.btn-sm { padding: 3px 10px; font-size: 12px; }
+.spin { color: var(--accent); animation: dtx-pulse 1s ease-in-out infinite; }
+@keyframes dtx-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+
 .diag-head { display: flex; align-items: baseline; justify-content: space-between; }
 
 /* Components sub-tabs */

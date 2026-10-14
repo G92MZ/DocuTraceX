@@ -127,7 +127,7 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 ### App base, gestión de casos y ciclo de vida
 
 - [ ] Interfaz web básica en inglés con carga de ficheros y paneles desplegables (ref. WinHound) — *parcial: carga de ficheros y paneles listos; faltan desplegables y estilo WinHound*
-- [ ] Navegación: Overview, Marks, Components/analysis, Reports, Tasks — *parcial: pestañas presentes, aún sin funcionalidad por vista*
+- [ ] Navegación: Overview, Marks, Components/analysis, Reports, Tasks — *parcial: Marks, Components y Tasks funcionales; faltan Overview (panel de resumen) y Reports*
 - [ ] Validar nombre, extensión y estructura de entrada (sin máximo fijo de tamaño) — *parcial: nombre saneado y extensión capturada; falta validación estructural real*
 - [x] Guardar original sin modificar + ID único + carpeta aislada `cases\<analysis_id>\`
 - [x] Estructura de caso: `case.json`, `original\`, `extracted\`, `results\`, `reports\` con rutas relativas
@@ -143,17 +143,19 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 
 ### Gestor de tareas y cola (pestaña Tasks)
 
-- [ ] Gestor central de tareas + pestaña global «Tasks» accesible desde todos los módulos
-- [ ] Por tarea: tipo/acción, caso y archivo/componente, estado, progreso, fase, inicio/duración, errores
-- [ ] Estados: en cola, en ejecución, pausada, cancelando, cancelada, completada, parcial/con advertencias, fallida (distinguir progreso desconocido de 0 %)
-- [ ] Un análisis de caso por instancia; resto en cola; paralelismo solo con instancias en puertos distintos
-- [ ] Cancelación; pausa/reanudación solo donde sea seguro
-- [ ] Acción «Rerun task»: relanzar una herramienta/fase aislada sobre el mismo caso/componente; no repetir el caso entero sin petición
-- [ ] Historial de intentos (fecha, herramienta/versión, estado, duración, errores, resultados); versionar resultados previos sin sobrescribir
-- [ ] Al completar un intento: actualizar resultados e informe, recalcular IOC, preservar Marks/comentarios y señalar los que requieren revisión
-- [ ] Aislamiento de errores: una tarea fallida no bloquea las independientes
+- [x] Gestor central de tareas (`tasks.py`) + pestaña global «Tasks»
+- [x] Por tarea: tipo/acción, caso y archivo, estado, progreso, fase, inicio/duración, errores
+- [x] Estados: en cola, en ejecución, cancelando, cancelada, completada, parcial, fallida (progreso `null` = desconocido, distinto de 0 %)
+- [x] Un análisis por instancia (worker único, cola FIFO); el resto en cola
+- [x] Cancelación de tareas en cola (la que corre: *cancelling*, best-effort) — *pausa/reanudación: pendiente*
+- [x] Acción «Rerun»: relanzar el caso completo **o un módulo aislado** sin repetir el resto
+- [x] Historial de intentos en `results/tasks.json`; resultados previos versionados en `results/history/<ts>/` sin sobrescribir
+- [x] Al completar un intento: recalcular IOC y findings, **preservar Marks** (ids estables)
+- [x] Aislamiento de errores: una tarea fallida no bloquea las siguientes
 
-*Aceptación: lista unificada visible; cola secuencial por instancia; relanzamiento aislado con historial; Marks preservadas.*
+*Aceptación: lista unificada visible; cola secuencial por instancia; relanzamiento aislado con historial; Marks preservadas.* ✓
+
+Pendiente del gestor: pausa/reanudación segura y paralelismo entre instancias en puertos distintos.
 
 ### Núcleo común (hashes, identificación, modelos)
 

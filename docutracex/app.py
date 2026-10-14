@@ -54,6 +54,22 @@ def create_app() -> FastAPI:
     async def diagnostics() -> dict:
         return {"version": __version__, **run_checks()}
 
+    @app.get("/api/tasks", response_class=JSONResponse)
+    async def tasks() -> dict:
+        from .tasks import manager
+        items = manager.list()
+        return {"tasks": items, "active": sum(1 for t in items if t["state"] in
+                                              ("queued", "running", "cancelling"))}
+
+    @app.post("/api/tasks/{task_id}/cancel", response_class=JSONResponse)
+    async def cancel_task(task_id: str) -> JSONResponse:
+        from .tasks import manager
+        ok = manager.cancel(task_id)
+        if not ok:
+            return JSONResponse(status_code=409,
+                                content={"error": "Task cannot be cancelled (unknown or already finished)."})
+        return JSONResponse(content={"cancelled": task_id, "task": manager.get(task_id)})
+
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
         return _TEMPLATES.TemplateResponse(
