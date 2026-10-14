@@ -57,13 +57,16 @@ def main() -> None:
 
     # 3. Fetch and compare with the remote.
     print("Fetching latest changes...")
-    if run(["git", "fetch", "--quiet"]).returncode != 0:
+    if run(["git", "fetch", "--quiet", "origin", branch]).returncode != 0:
         fail("Could not reach the remote. Check your connection and Git auth.")
 
     local = run(["git", "rev-parse", "HEAD"], capture=True).stdout.strip()
-    remote = run(["git", "rev-parse", "@{u}"], capture=True).stdout.strip()
+    # Ask the remote directly for the branch head — does not depend on a
+    # remote-tracking ref existing locally.
+    ls = run(["git", "ls-remote", "origin", f"refs/heads/{branch}"], capture=True)
+    remote = ls.stdout.split("\t")[0].strip() if ls.stdout.strip() else ""
     if not remote:
-        fail(f"Branch '{branch}' has no upstream. Run: git push -u origin {branch}")
+        fail(f"Branch '{branch}' does not exist on the remote.")
 
     if local == remote:
         print("\n[=] Already up to date.")
@@ -75,7 +78,7 @@ def main() -> None:
 
     # 5. Fast-forward only — never create a merge or rewrite history.
     print("Updating...")
-    pull = run(["git", "pull", "--ff-only"])
+    pull = run(["git", "pull", "--ff-only", "origin", branch])
     if pull.returncode != 0:
         fail(
             "Could not fast-forward (branches have diverged). Resolve manually:\n"
