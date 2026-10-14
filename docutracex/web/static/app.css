@@ -180,6 +180,22 @@ table.cases td.mono { word-break: break-all; }
 .badge-ok { color: #5fd38b; border-color: #2f6b45; }
 .badge-bad { color: #e8795a; border-color: #7a3a2a; }
 .badge-warn { color: #e0b65a; border-color: #7a632a; }
+.badge-muted { color: var(--text-dim); border-color: var(--panel-border); }
+
+/* Mark controls (per-finding triage) */
+.mark-cell { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.mark-cell .mark-select,
+.mark-cell .mark-comment {
+  background: #0b0e12;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 6px;
+}
+.mark-cell .mark-comment { min-width: 120px; flex: 1; }
+.mark-cell .mark-date { flex-basis: 100%; margin-top: 0; }
 
 .diag-head { display: flex; align-items: baseline; justify-content: space-between; }
 
