@@ -1212,9 +1212,55 @@ function marksTable(findings) {
     <td class="mono">${escapeHtml(f.rule)}</td>
     <td>${escapeHtml(f.detail)}</td>
     <td class="mono">${escapeHtml(f.location)}</td>
-    <td>${markControlsHtml(f)}</td>
+    <td>${markControlsHtml(f)}${f.source === "manual"
+      ? `<button class="btn btn-ghost btn-sm" data-unmark="${escapeHtml(f.id)}" title="Delete this manual entry">✕ delete</button>` : ""}</td>
   </tr>`).join("");
   return table(["Severity", "Source", "Rule", "Detail", "Origin", "Mark"], rows);
+}
+
+// Free-text entry: something the analyst concluded that no tool reported,
+// triaged like any finding (state + justification) and, as TP, reported.
+function noteFormHtml() {
+  const states = MARK_STATES.filter((x) => x.id !== "unreviewed").map((x) =>
+    `<option value="${x.id}">${escapeHtml(x.label)}</option>`).join("");
+  return `<details class="disclose note-box" id="note-box">
+    <summary>＋ Add note (free text, not based on a finding)</summary>
+    <form class="note-form" id="note-form">
+      <label>Observation<input type="text" id="note-detail" maxlength="4000" required
+        placeholder="e.g. Sender domain registered 2 days before the email" /></label>
+      <label>Justification<textarea id="note-comment" rows="3" maxlength="4000"
+        placeholder="Why you classify it this way: evidence, sources, reasoning…"></textarea></label>
+      <div class="note-row">
+        <label>Mark<select id="note-state">${states}</select></label>
+        <label>Severity<select id="note-sev"><option value="high">high</option><option value="medium" selected>medium</option><option value="low">low</option><option value="info">info</option></select></label>
+        <label class="note-where">Where (optional)<input type="text" id="note-location" maxlength="200" placeholder="e.g. body, attachment invoice.html" /></label>
+        <button class="btn btn-primary" type="submit">Add</button>
+        <span id="note-status" class="status"></span>
+      </div>
+    </form>
+  </details>`;
+}
+
+function wireNoteForm(root, analysisId) {
+  const form = root.querySelector("#note-form");
+  if (!form) return;
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const status = form.querySelector("#note-status");
+    const body = {
+      kind: "note",
+      detail: form.querySelector("#note-detail").value.trim(),
+      comment: form.querySelector("#note-comment").value.trim(),
+      state: form.querySelector("#note-state").value,
+      severity: form.querySelector("#note-sev").value,
+      location: form.querySelector("#note-location").value.trim() || "analyst note",
+    };
+    if (!body.detail) { status.textContent = "Write the observation first."; return; }
+    const r = await fetch(`/api/cases/${encodeURIComponent(analysisId)}/manual-findings`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!r.ok) { status.textContent = "Could not add the note."; return; }
+    loadMarks(analysisId);
+  });
 }
 
 async function loadMarks(analysisId) {
@@ -1257,8 +1303,17 @@ async function loadMarks(analysisId) {
       return;
     }
     if (_marksFilter !== "all") shown = shown.filter((f) => (f.mark && f.mark.state) === _marksFilter);
-    body.innerHTML = marksTable(shown);
+    body.innerHTML = noteFormHtml() + marksTable(shown);
     wireMarks(body, analysisId, () => loadMarks(analysisId));
+    wireNoteForm(body, analysisId);
+    body.querySelectorAll("[data-unmark]").forEach((b) => {
+      b.addEventListener("click", async () => {
+        if (!confirm("Delete this manual entry and its mark?")) return;
+        await fetch(`/api/cases/${encodeURIComponent(analysisId)}/manual-findings/${encodeURIComponent(b.dataset.unmark)}`,
+          { method: "DELETE" });
+        loadMarks(analysisId);
+      });
+    });
   } catch (err) {
     body.innerHTML = `<p class="hint-line">Could not load marks.</p>`;
   }
