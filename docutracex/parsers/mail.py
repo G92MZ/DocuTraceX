@@ -265,9 +265,13 @@ def _analyze_eml_body(msg: Message, extracted_dir: Path | None, result: dict[str
     result["body_sample"] = text[:_BODY_SAMPLE]
     result["body_length"] = len(text)
     result["has_html"] = bool(html)
-    _html_link_mismatch("\n".join(html), result)
+    html_text = "\n".join(html)
+    result["html_links"] = list(dict.fromkeys(_RE_HREF.findall(html_text)))[:_MAX_LINKS]
+    _html_link_mismatch(html_text, result)
 
 
+_RE_HREF = re.compile(r'href=["\']?((?:https?|ftp)://[^"\'>\s]+)', re.IGNORECASE)
+_MAX_LINKS = 500
 _RE_ANCHOR = re.compile(r'<a\s[^>]*href=["\']?(https?://[^"\'>\s]+)["\']?[^>]*>(.*?)</a>',
                         re.IGNORECASE | re.DOTALL)
 
@@ -375,7 +379,7 @@ def analyze(original_path: Path, declared_ext: str,
         "module": "email", "format": "email", "status": "ok",
         "headers": [], "received_chain": [], "hop_count": 0,
         "authentication": {}, "addresses": {}, "mime_structure": [],
-        "body_sample": "", "body_length": 0, "has_html": False,
+        "body_sample": "", "body_length": 0, "has_html": False, "html_links": [],
         "attachments": [], "findings": [],
     }
     try:

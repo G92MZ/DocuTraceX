@@ -188,17 +188,11 @@ def sources_from_modules(modules: dict[str, dict[str, Any]]) -> list[dict[str, A
         for js in pdf.get("javascript", []) or []:
             add("pdf", "javascript", js.get("code"))
 
-    # Email: body, header values, Received hops and attachment names.
+    # Email: message content only (plain-text body and links in the HTML body).
+    # Headers, Received hops and attachment names are deliberately not scanned.
     email = modules.get("email")
     if email:
         add("email", "body", email.get("body_sample"))
-        for h in email.get("headers", []) or []:
-            if h.get("name") in ("Received", "Received-SPF", "Authentication-Results",
-                                 "Return-Path", "Reply-To", "From", "To", "X-Mailer"):
-                add("email", f"header/{h['name']}", h.get("value"))
-        for hop in email.get("received_chain", []) or []:
-            for key in ("from", "by", "ip"):
-                add("email", f"received/{key}", hop.get(key))
-        for att in email.get("attachments", []) or []:
-            add("email", "attachment_name", att.get("filename"))
+        for link in email.get("html_links", []) or []:
+            add("email", "body_html_link", link)
     return sources
