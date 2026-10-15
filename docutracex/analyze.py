@@ -361,6 +361,19 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         # No parser for this family yet.
         state = "completed"
 
+    # JavaScript: extracted from every place it can hide (PDF, HTML body,
+    # attachments, OLE packages, nested children...), analysed and sandboxed.
+    from .parsers import javascript
+    if ran or original.suffix.lower() in javascript._SCRIPT_EXT:
+        js_mods = {m: read_json(paths.subresult(m)) for m in ("pdf", "email", "oletools")}
+        js_res = run("javascript: extraction · static analysis · STPyV8 sandbox",
+                     lambda: javascript.analyze(original, paths.extracted_dir,
+                                                {k: v for k, v in js_mods.items() if v}))
+        if js_res.get("scripts"):
+            write_subresult(paths, "javascript", js_res)
+            ran.append("javascript")
+            findings_total += js_res.get("counts", {}).get("findings", 0)
+
     # YARA runs only on demand (YARA tab / re-run "yara"), never automatically.
     # A previous on-demand scan of this case is kept across full re-analyses.
     prev_yara = read_json(paths.subresult("yara"))
@@ -419,7 +432,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 # Modules that can be re-run in isolation over an existing case.
 _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto",
                "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole",
-               "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules")
+               "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules", "javascript")
 # Modules whose findings feed the consolidated view (includes derived ones).
 _COLLECTABLE = _RERUNNABLE + ("nested",)
 
@@ -509,6 +522,10 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
     elif module == "email":
         from .parsers import mail
         res = mail.analyze(original, declared_ext, ed)
+    elif module == "javascript":
+        from .parsers import javascript
+        mods = {m: read_json(paths.subresult(m)) for m in ("pdf", "email", "oletools")}
+        res = javascript.analyze(original, ed, {k: v for k, v in mods.items() if v})
     elif module == "mailrules":
         from .parsers import mail_rules
         res = mail_rules.analyze(original, declared_ext, read_json(paths.subresult("email")) or {}, paths.root)

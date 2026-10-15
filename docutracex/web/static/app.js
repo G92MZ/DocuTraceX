@@ -407,6 +407,7 @@ function pivotTarget(f, ids) {
   if (src === "ole") return has("ole") ? "ole" : null;
   if (src === "pdf") return has("pdf") ? "pdf" : null;
   if (src === "pdftools") return has("pdftools") ? "pdftools" : null;
+  if (src === "javascript") return has("javascript") ? "javascript" : null;
   if (src === "mailrules") {
     if (loc.startsWith("attachment")) return has("attachments") ? "attachments" : null;
     if (/dkim|lookalike|idn_domain|homoglyph|mass_mailer|messageid|missing_message/.test(rule)) return has("auth") ? "auth" : null;
@@ -1079,6 +1080,57 @@ function panePdfTools(pt) {
   return html;
 }
 
+// JavaScript: every script found in the case — origin, suspicious lines
+// (highlighted), what the STPyV8 sandbox recorded, decoded strings, code.
+function paneJavascript(js) {
+  const scripts = js.scripts || [];
+  if (!scripts.length) return `<p class="hint-line">No JavaScript found.</p>`;
+  let html = `<p class="hint-line">${scripts.length} script(s). Analysed statically and run in an isolated V8 sandbox (no file system, network or processes; only recording stubs).</p>`;
+  html += '<div class="row" style="margin:4px 0 10px"><button class="btn btn-ghost btn-sm" type="button" onclick="this.closest(\'.subpane\').querySelectorAll(\'details.js-card\').forEach(e=>e.open=true)">Expand all</button> <button class="btn btn-ghost btn-sm" type="button" onclick="this.closest(\'.subpane\').querySelectorAll(\'details.js-card\').forEach(e=>e.open=false)">Collapse all</button></div>';
+  scripts.forEach((sc) => {
+    const hits = sc.hits || [];
+    const sev = hits.some((h) => h.severity === "high") ? "bad" : (hits.length ? "warn" : "ok");
+    const rules = [...new Set(hits.map((h) => h.label))];
+    const m = sc.metrics || {};
+    const sb = sc.sandbox || {};
+    const logs = sb.log || [];
+    const hitLines = new Set(hits.map((h) => h.line_no));
+    const codeHtml = (sc.code || "").split("\n").map((ln, i) => {
+      const t = escapeHtml(ln);
+      return hitLines.has(i + 1) ? `<mark>${t}</mark>` : t;
+    }).join("\n");
+    let body = "";
+    if (sc.note) body += `<p class="hint-line">${escapeHtml(sc.note)}</p>`;
+    body += `<p class="hint-line">${m.lines || 0} lines · ${sc.size} chars · longest line ${m.longest_line || 0} · entropy ${m.entropy || 0} · obfuscation score ${m.obfuscation_score || 0}</p>`;
+    if (hits.length) {
+      body += table(["Line", "Why", "Code"], hits.map((h) => `<tr><td>${h.line_no}</td>
+        <td class="${h.severity === "high" ? "bad-text" : ""}">${escapeHtml(h.label)}</td>
+        <td class="mono">${escapeHtml(h.line)}</td></tr>`).join(""));
+    }
+    if (logs.length || sb.error) {
+      body += `<p class="hint-line"><strong>Sandbox</strong>${sb.timed_out ? " — stopped by the time limit" : ""}${sb.error && !sb.timed_out ? " — " + escapeHtml(sb.error) : ""}</p>`;
+      if (logs.length) {
+        body += table(["Event", "Name", "Arguments"], logs.slice(0, 200).map((e) => `<tr>
+          <td>${escapeHtml(e.kind)}</td><td class="mono">${escapeHtml(e.name)}</td>
+          <td class="mono">${escapeHtml((e.args || []).join(" | ").slice(0, 1500))}</td></tr>`).join(""));
+      }
+    }
+    if ((sc.decoded || []).length) {
+      body += `<p class="hint-line"><strong>Decoded strings</strong></p>` + table(["Method", "Decoded"],
+        sc.decoded.map((d) => `<tr><td>${escapeHtml(d.method)}</td><td class="mono">${escapeHtml(d.decoded)}</td></tr>`).join(""));
+    }
+    body += `<details class="disclose"${hits.length ? " open" : ""}><summary>Code${sc.code_truncated ? " (truncated)" : ""}</summary><pre class="text-sample js-code">${codeHtml}</pre></details>`;
+    if (sc.pretty) body += `<details class="disclose"><summary>Pretty-printed</summary><pre class="text-sample">${escapeHtml(sc.pretty)}</pre></details>`;
+    html += `<details class="disclose js-card"${sev === "bad" ? " open" : ""}>
+      <summary><span class="badge badge-${sev}">${hits.length} hit(s)</span>
+        <span class="mono">${escapeHtml(sc.origin)}</span>
+        <span class="badge badge-muted">${escapeHtml(sc.kind)}</span>
+        <span class="hint-line">${escapeHtml(rules.slice(0, 4).join(" · "))}</span></summary>
+      <div style="padding:8px 10px">${body}</div></details>`;
+  });
+  return html;
+}
+
 function panePdfMeta(pdf) {
   const md = pdf.metadata || {};
   const keys = Object.keys(md);
@@ -1207,7 +1259,7 @@ async function openComponents(analysisId, keepTab) {
     const oleLegacy = mods.ole;
     const nested = mods.nested;
     const iocs = d.iocs;
-    if (!ooxml && !sem && !ole && !email && !pdf && !oleLegacy) {
+    if (!ooxml && !sem && !ole && !email && !pdf && !oleLegacy && !mods.javascript) {
       bodyEl.innerHTML = `<p class="hint-line">No component analysis for this case yet.</p>`;
       return;
     }
@@ -1223,6 +1275,7 @@ async function openComponents(analysisId, keepTab) {
     if (email) compLabel = `${email.hop_count || 0} hops · ${email.attachment_count || 0} attachments`;
     else if (pdf) compLabel = `${pdf.page_count || 0} pages · ${(pdf.embedded || []).length} embedded`;
     else if (oleLegacy) compLabel = `${oleLegacy.kind || "ole"} · ${(oleLegacy.streams || []).length} streams`;
+    else if (!ooxml && mods.javascript) compLabel = `${(mods.javascript.scripts || []).length} script(s)`;
     else compLabel = `${(ooxml && ooxml.counts && ooxml.counts.components) || 0} parts`;
     summary.textContent = `${compLabel} · ${findings.length} findings · ${ni} IOCs`;
     summary.className = "status " + (findings.length ? "bad-text" : "ok-text");
@@ -1257,6 +1310,10 @@ async function openComponents(analysisId, keepTab) {
     const yara = mods.yara;
     if (yara && yara.rule_count) {
       sections.push({ id: "yara", label: `YARA (${yara.match_count || 0})`, render: () => paneYara(yara, findings) });
+    }
+    const jsm = mods.javascript;
+    if (jsm && (jsm.scripts || []).length) {
+      sections.push({ id: "javascript", label: `JavaScript (${jsm.scripts.length})`, html: paneJavascript(jsm) });
     }
     const vbat = mods.vbatools;
     const vmon = mods.vipermonkey;

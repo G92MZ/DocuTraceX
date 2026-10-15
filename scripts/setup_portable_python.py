@@ -43,6 +43,7 @@ OMS_DIR = TOOLS / "officemalscanner"
 DIDIER_BASE = "https://raw.githubusercontent.com/DidierStevens/DidierStevensSuite/master/"
 DIDIER_FILES = [
     "oledump.py", "zipdump.py", "pdfid.py", "pdf-parser.py", "emldump.py", "rtfdump.py",
+    "decode-vbe.py",  # decodes Script Encoder (.jse/.vbe) payloads
     # oledump plugins (loaded with -p): BIFF/XLM records, VBA summary/DCO/routines,
     # HTTP-looking strings and generic stream object heuristics.
     "plugin_biff.py", "plugin_vba_summary.py", "plugin_vba_dco.py",
