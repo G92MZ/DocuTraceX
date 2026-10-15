@@ -266,3 +266,21 @@ def test_msg_html_body(tmp_path: Path, html_stream: str) -> None:
     assert res["has_html"]
     assert "Pulse <https://evil.example/login>" in res["html_text_sample"]
     assert res["html_links"] == ["https://evil.example/login"]
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("OAF - RFQ - xlsx.html", {"double_extension", "html_attachment"}),
+    ("invoice.pdf.exe", {"double_extension", "dangerous_attachment"}),
+    ("scan.pdf        .js", {"double_extension", "dangerous_attachment"}),
+    ("RFQ (xlsx).svg", {"double_extension", "html_attachment"}),
+    ("Factura‮fdp.exe", {"filename_spoofing", "dangerous_attachment"}),
+    ("photo.jpg.zip", {"double_extension"}),
+    ("report.pdf", set()),
+    ("Guide - pdf.docx", set()),
+    ("archive.tar.gz", set()),
+    ("my.backup.docx", set()),
+])
+def test_attachment_name_flags(name: str, expected: set) -> None:
+    res = {"findings": []}
+    mail._flag_attachment(name, res)
+    assert {f["rule"] for f in res["findings"]} == expected
