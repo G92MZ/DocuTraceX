@@ -716,6 +716,26 @@ function panePdf(pdf) {
     html += `<h3 class="formats-title">URIs (${uris.length})</h3>`
       + table(["URI"], uris.map((u) => `<tr><td class="mono">${escapeHtml(u)}</td></tr>`).join(""));
   }
+  // Extracted JavaScript — expandable, not executed.
+  const js = pdf.javascript || [];
+  if (js.length) {
+    html += `<h3 class="formats-title">Extracted JavaScript (${js.length})</h3>`;
+    js.forEach((j, i) => {
+      html += `<details class="disclose" open><summary>JS block ${i + 1} · ${escapeHtml(j.encoding)}</summary>
+        <pre class="text-sample">${escapeHtml(j.code || "")}</pre></details>`;
+    });
+  }
+  // Suspicious objects — expandable dictionary content behind each keyword.
+  const objs = pdf.objects || [];
+  if (objs.length) {
+    html += `<h3 class="formats-title">Suspicious objects (${objs.length})</h3>`;
+    objs.forEach((o) => {
+      const tags = (o.dangerous || []).map((d) => `<span class="badge badge-warn">${escapeHtml(d)}</span>`).join(" ");
+      const trunc = o.snippet_truncated ? '<div class="hint-line">(truncated)</div>' : "";
+      html += `<details class="disclose"><summary><span class="mono">${escapeHtml(o.id)}</span> ${tags}${o.has_stream ? ' <span class="badge badge-muted">stream</span>' : ""}</summary>
+        <pre class="text-sample">${escapeHtml(o.snippet || "")}</pre>${trunc}</details>`;
+    });
+  }
   return html;
 }
 
@@ -922,6 +942,28 @@ function taskProgress(t) {
   return "—";
 }
 
+const STEP_STATE_CLS = {
+  ok: "ok", ok_with_findings: "warn", error: "bad", unavailable: "muted", skipped: "muted",
+};
+
+function stepsTable(steps) {
+  if (!steps || !steps.length) return `<p class="hint-line">No sub-steps recorded.</p>`;
+  const rows = steps.map((s) => {
+    const cls = STEP_STATE_CLS[s.status] || "muted";
+    const extra = [];
+    if (s.findings != null) extra.push(`${s.findings} finding(s)`);
+    if (s.iocs != null) extra.push(`${s.iocs} IOC(s)`);
+    if (s.note) extra.push(escapeHtml(s.note));
+    return `<tr>
+      <td>${escapeHtml(s.step)}</td>
+      <td><span class="badge badge-${cls}">${escapeHtml(s.status)}</span></td>
+      <td class="mono">${s.duration_s != null ? s.duration_s + "s" : ""}</td>
+      <td class="hint-line">${extra.join(" · ")}</td>
+    </tr>`;
+  }).join("");
+  return table(["Sub-step (tool executed)", "Status", "Time", "Result"], rows);
+}
+
 function renderTasks(data) {
   const summary = document.getElementById("tasks-summary");
   const body = document.getElementById("tasks-body");
@@ -929,24 +971,28 @@ function renderTasks(data) {
   summary.textContent = `${data.active || 0} active · ${tasks.length} total`;
   summary.className = "status " + ((data.active || 0) ? "" : "ok-text");
   if (!tasks.length) { body.innerHTML = `<p class="hint-line">No tasks yet.</p>`; return; }
-  const rows = tasks.map((t) => {
+  body.innerHTML = tasks.map((t) => {
     const cls = TASK_STATE_CLS[t.state] || "muted";
     const target = t.target && t.target !== "full" ? t.target : "full case";
     const cancel = TASK_ACTIVE.has(t.state)
       ? `<button class="btn btn-ghost btn-sm" data-cancel="${escapeHtml(t.id)}">Cancel</button>` : "";
     const err = t.error ? `<div class="hint-line bad-text">${escapeHtml(t.error)}</div>` : "";
-    return `<tr>
-      <td class="mono">${escapeHtml(t.id)}</td>
-      <td class="file">${escapeHtml(t.filename || "")}<div class="hint-line">${escapeHtml(t.type)} · ${escapeHtml(target)}</div></td>
-      <td><span class="badge badge-${cls}">${escapeHtml(t.state)}</span></td>
-      <td>${taskProgress(t)}</td>
-      <td class="mono">${t.duration_s != null ? t.duration_s + "s" : ""}</td>
-      <td>${cancel}${err}</td>
-    </tr>`;
+    const dur = t.duration_s != null ? ` · ${t.duration_s}s` : "";
+    const nsteps = (t.steps || []).length;
+    return `<details class="disclose"${TASK_ACTIVE.has(t.state) ? " open" : ""}>
+      <summary>
+        <span class="mono">${escapeHtml(t.id)}</span>
+        <span class="file">${escapeHtml(t.filename || "")}</span>
+        <span class="badge badge-${cls}">${escapeHtml(t.state)}</span>
+        <span class="hint-line">${escapeHtml(t.type)} · ${escapeHtml(target)}${dur} · ${taskProgress(t)}${nsteps ? ` · ${nsteps} sub-steps` : ""}</span>
+        ${cancel}
+      </summary>
+      <div style="padding:8px 10px">${err}${stepsTable(t.steps)}</div>
+    </details>`;
   }).join("");
-  body.innerHTML = table(["Task", "Case / action", "State", "Progress", "Duration", ""], rows);
   body.querySelectorAll("[data-cancel]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
+    btn.addEventListener("click", async (e) => {
+      e.preventDefault();
       await fetch(`/api/tasks/${encodeURIComponent(btn.getAttribute("data-cancel"))}/cancel`, { method: "POST" });
       loadTasks();
     });

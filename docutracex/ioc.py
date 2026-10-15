@@ -185,6 +185,8 @@ def sources_from_modules(modules: dict[str, dict[str, Any]]) -> list[dict[str, A
         add("pdf", "text", pdf.get("text_sample"))
         for u in pdf.get("uris", []) or []:
             add("pdf", "uri", u)
+        for js in pdf.get("javascript", []) or []:
+            add("pdf", "javascript", js.get("code"))
 
     # Email: body, header values, Received hops and attachment names.
     email = modules.get("email")
