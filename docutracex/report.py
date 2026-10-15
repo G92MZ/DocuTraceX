@@ -124,8 +124,11 @@ def build_report_html(analysis_id: str, cases_dir=None) -> str:
     disc = fmt.get("discrepancy", {})
     det = fmt.get("detected", {})
 
+    # The report shows only the analyst-confirmed (True positive) findings.
+    tp_findings = [f for f in findings if (f.get("mark") or {}).get("state") == "true_positive"]
+    tp_count = len(tp_findings)
     sev_counts = {s: 0 for s in _SEV_ORDER}
-    for f in findings:
+    for f in tp_findings:
         sev_counts[f.get("severity", "info")] = sev_counts.get(f.get("severity", "info"), 0) + 1
     mk = marked["counts"]
 
@@ -168,17 +171,15 @@ def build_report_html(analysis_id: str, cases_dir=None) -> str:
 </style></head><body>
 <h1>DocuTraceX — static forensic report</h1>
 <div class="muted">Generated {_now()} · analysis {_e(analysis_id)}</div>
-<div class="summary-chips">{sev_chips or "<span class='chip'>no findings</span>"}
-  <span class="chip">{len(findings)} findings</span>
-  <span class="chip">{ioc_total} IOCs</span>
-  <span class="chip">{mk.get('reviewed', 0)}/{mk.get('total', 0)} reviewed</span></div>
+<div class="summary-chips">{sev_chips or "<span class='chip'>no confirmed findings</span>"}
+  <span class="chip">{tp_count} confirmed (TP)</span>
+  <span class="chip">{len(findings)} total reviewed</span>
+  <span class="chip">{ioc_total} IOCs</span></div>
 <h2>Case</h2>
 <table><tbody>{header_rows}</tbody></table>
-<h2>Overview — confirmed findings (True positive)</h2>
-<p class="muted">Only findings marked True positive, from any source (YARA included). Mark findings in the app to populate this.</p>
-{_findings_section([f for f in findings if (f.get('mark') or {}).get('state') == 'true_positive'])}
-<h2>All findings ({len(findings)})</h2>
-{_findings_section(findings)}
+<h2>Confirmed findings — True positive ({tp_count} of {len(findings)})</h2>
+<p class="muted">This report lists only the findings marked <b>True positive</b>, from any source (YARA included). The other {len(findings) - tp_count} finding(s) were reviewed and not confirmed.</p>
+{_findings_section(tp_findings)}
 <h2>Indicators of compromise ({ioc_total})</h2>
 {_iocs_section(iocs)}
 {_nested_section(modules.get('nested'))}

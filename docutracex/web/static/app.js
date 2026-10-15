@@ -268,7 +268,6 @@ async function saveMark(cell, analysisId, onSaved) {
     if (date) date.textContent = txt;
     else if (txt) cell.insertAdjacentHTML("beforeend", `<span class="hint-line mark-date">${escapeHtml(txt)}</span>`);
     if (onSaved) onSaved(fid, data.mark);
-    loadOverview(analysisId);  // keep the TP-only overview in sync
   } catch (err) {
     const badge = cell.querySelector(".mark-badge");
     if (badge) badge.insertAdjacentHTML("afterend", ' <span class="bad-text">save failed</span>');
@@ -759,14 +758,18 @@ function panePdf(pdf) {
         <pre class="text-sample">${escapeHtml(j.code || "")}</pre></details>`;
     });
   }
-  // Suspicious objects — expandable dictionary content behind each keyword.
+  // All objects — expandable. Dangerous ones first (red), the rest browsable.
   const objs = pdf.objects || [];
   if (objs.length) {
-    html += `<h3 class="formats-title">Suspicious objects (${objs.length})</h3>`;
+    const sus = objs.filter((o) => (o.dangerous || []).length).length;
+    html += `<h3 class="formats-title">Objects (${objs.length}${sus ? ` · ${sus} suspicious` : ""})</h3>`;
+    html += '<div class="row" style="margin:4px 0 8px"><button class="btn btn-ghost btn-sm" onclick="document.querySelectorAll(\'#comp-body .pdf-obj\').forEach(e=>e.open=true)">Expand all</button> <button class="btn btn-ghost btn-sm" onclick="document.querySelectorAll(\'#comp-body .pdf-obj\').forEach(e=>e.open=false)">Collapse all</button></div>';
     objs.forEach((o) => {
-      const tags = (o.dangerous || []).map((d) => `<span class="badge badge-warn">${escapeHtml(d)}</span>`).join(" ");
+      const bad = (o.dangerous || []).length > 0;
+      const tags = (o.dangerous || []).map((d) => `<span class="badge badge-bad">${escapeHtml(d)}</span>`).join(" ");
+      const type = o.type ? `<span class="badge badge-muted">${escapeHtml(o.type)}</span>` : "";
       const trunc = o.snippet_truncated ? '<div class="hint-line">(truncated)</div>' : "";
-      html += `<details class="disclose"><summary><span class="mono">${escapeHtml(o.id)}</span> ${tags}${o.has_stream ? ' <span class="badge badge-muted">stream</span>' : ""}</summary>
+      html += `<details class="disclose pdf-obj"${bad ? " open" : ""}><summary><span class="mono">${escapeHtml(o.id)}</span> ${type} ${tags}${o.has_stream ? ' <span class="badge badge-muted">stream</span>' : ""}</summary>
         <pre class="text-sample">${escapeHtml(o.snippet || "")}</pre>${trunc}</details>`;
     });
   }
@@ -1177,51 +1180,6 @@ function loadReports(analysisId) {
   if (btn) btn.addEventListener("click", () => { frame.src = url + "?t=" + Date.now(); });
 }
 
-// --- Overview (confirmed TP findings only) -----------------------------------
-async function loadOverview(analysisId) {
-  const panel = document.getElementById("overview-summary");
-  if (!panel) return;
-  if (!analysisId) { panel.hidden = true; return; }
-  panel.hidden = false;
-  const verdict = document.getElementById("ov-verdict");
-  const caseLine = document.getElementById("ov-case");
-  const body = document.getElementById("ov-body");
-  caseLine.textContent = "Loading…";
-  try {
-    const [mk, manifest] = await Promise.all([
-      fetch(`/api/cases/${encodeURIComponent(analysisId)}/marks`).then((r) => r.json()),
-      fetch(`/api/cases/${encodeURIComponent(analysisId)}`).then((r) => r.json()),
-    ]);
-    const det = (manifest.format || {}).detected || {};
-    caseLine.innerHTML = `Case <span class="mono">${escapeHtml(analysisId)}</span> · ${escapeHtml((manifest.original || {}).filename || "")} · ${escapeHtml(det.mime || "")} · state: ${escapeHtml(manifest.state || "")}`;
-    const tp = (mk.findings || []).filter((f) => (f.mark && f.mark.state) === "true_positive");
-    const c = mk.counts || {};
-    verdict.textContent = tp.length
-      ? `${tp.length} confirmed (TP) · ${c.total || 0} total findings`
-      : `0 confirmed · ${c.total || 0} total findings`;
-    verdict.className = "status " + (tp.length ? "bad-text" : "ok-text");
-    if (!tp.length) {
-      body.innerHTML = `<p class="hint-line">No findings marked as True positive yet. Open the case in Components or Marks and mark the real ones.</p>`;
-      return;
-    }
-    tp.sort((a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9));
-    const rows = tp.map((f) => {
-      const ev = f.evidence ? `<div class="evidence mono">${escapeHtml(f.evidence)}</div>` : "";
-      const comment = (f.mark || {}).comment ? `<div class="hint-line">${escapeHtml(f.mark.comment)}</div>` : "";
-      return `<tr>
-        <td><span class="badge badge-${SEV_CLASS[f.severity] || "warn"}">${escapeHtml(f.severity)}</span></td>
-        <td>${escapeHtml(f.source)}</td>
-        <td class="mono">${escapeHtml(f.rule)}</td>
-        <td>${escapeHtml(f.detail)}${ev}${comment}</td>
-        <td class="mono">${escapeHtml(f.location)}</td>
-      </tr>`;
-    }).join("");
-    body.innerHTML = table(["Severity", "Source", "Rule", "Confirmed finding", "Location"], rows);
-  } catch (err) {
-    body.innerHTML = `<p class="hint-line">Could not load the case overview.</p>`;
-  }
-}
-
 // --- YARA management ---------------------------------------------------------
 async function loadYara() {
   const summary = document.getElementById("yara-summary");
@@ -1403,7 +1361,6 @@ function setupTabs() {
       if (target === "tasks") loadTasks();
       if (target === "reports") loadReports(_openCaseId);
       if (target === "yara") loadYara();
-      if (target === "overview") loadOverview(_openCaseId);
     });
   });
 }

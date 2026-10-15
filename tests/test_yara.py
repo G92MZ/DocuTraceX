@@ -98,7 +98,9 @@ def test_matches_recorded_but_not_findings_until_enabled(client: TestClient, env
     comp2 = client.get(f"/api/cases/{cid}/components").json()
     yf = [f for f in comp2["findings"] if f["source"] == "yara"]
     assert yf and yf[0]["rule"] == "yara:Has_VBA"
-    # And it reaches the report.
+    # The report lists only confirmed (TP) findings, so mark it, then it appears.
+    assert "yara:Has_VBA" not in client.get(f"/api/cases/{cid}/report").text
+    client.put(f"/api/cases/{cid}/marks/{yf[0]['id']}", json={"state": "true_positive"})
     assert "yara:Has_VBA" in client.get(f"/api/cases/{cid}/report").text
 
 

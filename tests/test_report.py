@@ -44,15 +44,20 @@ def test_report_contains_findings_iocs_and_evidence(client: TestClient, tmp_path
         if client.get(f"/api/cases/{cid}").json().get("state") in ("completed", "error"):
             break
         time.sleep(0.05)
+    # The report shows ONLY findings marked True positive.
+    comp = client.get(f"/api/cases/{cid}/components").json()
+    ws = next(f for f in comp["findings"] if f["rule"] == "webservice")
+    # Before marking: WEBSERVICE is not in the report.
+    assert "WEBSERVICE" not in client.get(f"/api/cases/{cid}/report").text
+    client.put(f"/api/cases/{cid}/marks/{ws['id']}", json={"state": "true_positive"})
+
     r = client.get(f"/api/cases/{cid}/report")
     assert r.status_code == 200
     assert "text/html" in r.headers.get("content-type", "")
     body = r.text
-    assert "<h2>All findings" in body
-    assert "confirmed findings (True positive)" in body
+    assert "Confirmed findings" in body and "True positive" in body
     assert "Indicators of compromise" in body
-    assert "WEBSERVICE" in body  # evidence rendered
-    # Persisted copy exists.
+    assert "WEBSERVICE" in body  # now confirmed, so it appears with its evidence
     assert (CasePaths(cid, cases_dir=tmp_path).reports_dir / "report.html").is_file()
 
 

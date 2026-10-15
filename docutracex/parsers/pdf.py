@@ -57,7 +57,7 @@ _OBJ_RE = re.compile(rb"(\d+)\s+(\d+)\s+obj\b(.*?)\bendobj", re.DOTALL)
 _JS_STR = re.compile(rb"/JS\s*\((.*?)(?<!\\)\)", re.DOTALL)
 _JS_HEX = re.compile(rb"/JS\s*<([0-9A-Fa-f\s]+)>")
 _OBJ_SNIPPET = 1500
-_MAX_OBJECTS = 200
+_MAX_OBJECTS = 500
 _MAX_JS = 50
 
 
@@ -154,27 +154,33 @@ def _extract_javascript(data: bytes, result: dict[str, Any]) -> None:
 
 
 def _extract_objects(data: bytes, result: dict[str, Any]) -> None:
-    """Keep the suspicious objects (those carrying a dangerous token) with a
-    bounded text snippet of their dictionary, for the collapsible view."""
+    """Keep EVERY object with a bounded text snippet of its dictionary, for the
+    collapsible view. Dangerous ones (carrying a flagged token) are marked and
+    listed first so the suspicious ones stay prominent while all are browsable."""
     objs: list[dict[str, Any]] = []
     for m in _OBJ_RE.finditer(data):
         if len(objs) >= _MAX_OBJECTS:
             break
         body = m.group(3)
         dangerous = [k for k in _KEYWORDS if k.encode() in body]
-        if not dangerous:
-            continue
         has_stream = b"stream" in body
         dict_part = body.split(b"stream", 1)[0]
         snippet = dict_part.decode("latin-1", "replace").strip()
+        # A short "type" hint from the dictionary, for the summary line.
+        tmatch = re.search(r"/Type\s*/([A-Za-z0-9]+)", snippet)
         objs.append({
             "id": f"{m.group(1).decode()} {m.group(2).decode()} obj",
+            "type": tmatch.group(1) if tmatch else "",
             "dangerous": dangerous,
             "has_stream": has_stream,
             "snippet": snippet[:_OBJ_SNIPPET],
             "snippet_truncated": len(snippet) > _OBJ_SNIPPET,
         })
+    # Dangerous objects first, then the rest in document order.
+    objs.sort(key=lambda o: (0 if o["dangerous"] else 1))
     result["objects"] = objs
+    result["object_count"] = len(objs)
+    result["suspicious_object_count"] = sum(1 for o in objs if o["dangerous"])
 
 
 def _extract_text(path: Path, result: dict[str, Any]) -> None:
