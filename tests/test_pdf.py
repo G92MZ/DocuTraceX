@@ -41,6 +41,24 @@ def test_extracts_uris(tmp_path: Path) -> None:
     assert "http://evil.example/x" in r["uris"]
 
 
+def test_extracts_javascript_code(tmp_path: Path) -> None:
+    p = _mini_pdf(tmp_path, b"5 0 obj << /S /JavaScript /JS (app.alert('x'); evil();) >> endobj")
+    r = pdf.analyze(p, tmp_path / "extracted")
+    assert r["javascript"]
+    assert "app.alert" in r["javascript"][0]["code"]
+    assert any(f["rule"] == "javascript_extracted" for f in r["findings"])
+
+
+def test_lists_suspicious_objects_with_snippet(tmp_path: Path) -> None:
+    body = b"5 0 obj << /S /Launch /Win << /F (cmd.exe) >> >> endobj"
+    p = _mini_pdf(tmp_path, body)
+    r = pdf.analyze(p, tmp_path / "extracted")
+    objs = r["objects"]
+    assert objs
+    launch_obj = next(o for o in objs if "/Launch" in o["dangerous"])
+    assert "cmd.exe" in launch_obj["snippet"]
+
+
 def test_no_header_flagged(tmp_path: Path) -> None:
     p = tmp_path / "x.pdf"
     p.write_bytes(b"not a pdf at all")

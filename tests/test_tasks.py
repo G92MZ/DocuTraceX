@@ -84,6 +84,22 @@ def test_cancel_queued_task(tmp_path: Path) -> None:
 # --- API integration ---------------------------------------------------------
 
 @has_samples
+def test_task_records_executed_substeps(client: TestClient) -> None:
+    """The task carries the list of tools it executed (what ran per file)."""
+    with (SAMPLES / "sample.xlsm").open("rb") as fh:
+        cid = client.post("/api/cases", files={"file": ("sample.xlsm", fh.read())}).json()["analysis_id"]
+    _wait(lambda: client.get(f"/api/cases/{cid}").json().get("state"),
+          lambda s: s in ("completed", "error"))
+    task = next(t for t in client.get("/api/tasks").json()["tasks"] if t["analysis_id"] == cid)
+    step_names = " ".join(s["step"] for s in task["steps"])
+    assert "oletools" in step_names
+    assert "office" in step_names
+    assert "ioc" in step_names
+    # Each step has a status; some carry timing.
+    assert all("status" in s for s in task["steps"])
+
+
+@has_samples
 def test_upload_queues_and_completes(client: TestClient) -> None:
     with (SAMPLES / "sample.xlsm").open("rb") as fh:
         r = client.post("/api/cases", files={"file": ("sample.xlsm", fh.read())}).json()

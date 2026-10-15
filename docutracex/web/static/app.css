@@ -231,6 +231,13 @@ table.cases td.mono { word-break: break-all; }
 .nested-finding { margin: 3px 0 3px 18px; font-size: 12px; color: var(--text-dim); display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
 .nested-children { margin-left: 18px; padding-left: 10px; border-left: 2px solid var(--panel-border); }
 
+/* Collapsible disclosures (PDF objects / JS, task steps) */
+.disclose { margin: 6px 0; border: 1px solid var(--panel-border); border-radius: 6px; background: #0b0e12; }
+.disclose > summary { cursor: pointer; padding: 7px 10px; font-size: 13px; user-select: none; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.disclose > summary::-webkit-details-marker { color: var(--accent); }
+.disclose[open] > summary { border-bottom: 1px solid var(--panel-border); }
+.disclose > pre, .disclose > .text-sample { margin: 0; border: none; border-radius: 0 0 6px 6px; }
+
 /* Reports */
 .report-frame { width: 100%; height: 72vh; border: 1px solid var(--panel-border); border-radius: 8px; background: #0d1016; margin-top: 10px; }
 

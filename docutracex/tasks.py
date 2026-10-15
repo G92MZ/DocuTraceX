@@ -66,6 +66,7 @@ class Task:
     duration_s: float | None = None
     error: str | None = None
     counts: dict[str, Any] = field(default_factory=dict)
+    steps: list[dict[str, Any]] = field(default_factory=list)
     cases_dir: str | None = None
 
     def public(self) -> dict[str, Any]:
@@ -75,7 +76,7 @@ class Task:
             "phase": self.phase, "progress": self.progress,
             "created_utc": self.created_utc, "started_utc": self.started_utc,
             "finished_utc": self.finished_utc, "duration_s": self.duration_s,
-            "error": self.error, "counts": self.counts,
+            "error": self.error, "counts": self.counts, "steps": self.steps,
         }
 
 
@@ -229,6 +230,7 @@ class TaskManager:
             task.finished_utc = _now()
             task.duration_s = _elapsed(task.started_utc or task.finished_utc, task.finished_utc)
             task.counts = summary.get("counts", {})
+            task.steps = summary.get("steps", [])
             task.phase = "done"
             if tid in self._cancel:
                 task.state = CANCELLED

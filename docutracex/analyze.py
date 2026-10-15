@@ -49,10 +49,38 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     state = "completed"
 
     findings_total = 0
+    steps: list[dict[str, Any]] = []
+
+    def run(name: str, fn, note: str = ""):
+        """Run one analysis step, timing it and recording it for the Tasks view."""
+        import time as _time
+        t0 = _time.perf_counter()
+        err = None
+        try:
+            res = fn()
+        except Exception as exc:  # noqa: BLE001  (one step must not kill the run)
+            res, err = {}, str(exc)
+        rec: dict[str, Any] = {"step": name, "duration_s": round(_time.perf_counter() - t0, 3)}
+        if err:
+            rec["status"] = "error"
+            rec["note"] = err
+        elif isinstance(res, dict):
+            rec["status"] = "unavailable" if res.get("available") is False else res.get("status", "ok")
+            rec["findings"] = res.get("counts", {}).get("findings", 0)
+            if res.get("available") is False:
+                rec["note"] = note or "not provisioned"
+        else:
+            rec["status"] = "ok" if res is not None else "skipped"
+        if note and "note" not in rec:
+            rec["note"] = note
+        steps.append(rec)
+        return res
+
     if family == "ooxml":
         from .parsers import ooxml, office
 
-        res = ooxml.analyze(original, paths.extracted_dir)
+        res = run("ooxml: OPC engine (parts, rels, extraction)",
+                  lambda: ooxml.analyze(original, paths.extracted_dir))
         write_subresult(paths, "ooxml", res)
         ran.append("ooxml")
         overall_counts["components"] = res.get("counts", {}).get("components", 0)
@@ -63,7 +91,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 
         # Semantic parser for the specific Office app (Word/Excel/PowerPoint).
         declared_ext = manifest["original"].get("declared_extension", "")
-        sem = office.analyze(original, declared_ext, paths.extracted_dir)
+        sem = run("office: semantic parser (metadata, DDE, formulas, hidden sheets)",
+                  lambda: office.analyze(original, declared_ext, paths.extracted_dir))
         if sem is not None:
             module = sem["module"]
             write_subresult(paths, module, sem)
@@ -78,7 +107,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         if sem is not None and sem.get("module") == "excel":
             from .parsers import xlm
 
-            xlm_res = xlm.analyze(original)
+            xlm_res = run("xlmdeobf: XLMMacroDeobfuscator (Excel 4.0 macros)",
+                          lambda: xlm.analyze(original))
             write_subresult(paths, "xlmdeobf", xlm_res)
             ran.append("xlmdeobf")
             findings_total += xlm_res.get("counts", {}).get("findings", 0)
@@ -89,7 +119,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         # oleobj) — runs on the portable.
         from .parsers import crypto, didier, oletools_suite
 
-        ole_res = oletools_suite.analyze(original, paths.extracted_dir)
+        ole_res = run("oletools: olevba · oleid · mraptor · msodde · oleobj",
+                      lambda: oletools_suite.analyze(original, paths.extracted_dir))
         write_subresult(paths, "oletools", ole_res)
         ran.append("oletools")
         findings_total += ole_res.get("counts", {}).get("findings", 0)
@@ -97,7 +128,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             state = "completed"
 
         # External tool: encrypted-document detection / default-password decrypt.
-        crypto_res = crypto.analyze(original, paths.extracted_dir)
+        crypto_res = run("msoffcrypto: encryption / default-password decrypt",
+                         lambda: crypto.analyze(original, paths.extracted_dir))
         write_subresult(paths, "msoffcrypto", crypto_res)
         ran.append("msoffcrypto")
         findings_total += crypto_res.get("counts", {}).get("findings", 0)
@@ -105,7 +137,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             state = "completed"
 
         # External scripts: Didier Stevens Suite (zipdump, oledump) — raw output.
-        didier_res = didier.analyze(original, "ooxml")
+        didier_res = run("didier: zipdump · oledump",
+                         lambda: didier.analyze(original, "ooxml"), note="not provisioned")
         if didier_res.get("available"):
             write_subresult(paths, "didier", didier_res)
             ran.append("didier")
@@ -113,7 +146,9 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         # External binary: OfficeMalScanner (optional, Windows) — inflate+scan/info.
         from .parsers import officemalscanner
 
-        oms_res = officemalscanner.analyze(original, "ooxml", paths.extracted_dir)
+        oms_res = run("officemalscanner: inflate · scan · info",
+                      lambda: officemalscanner.analyze(original, "ooxml", paths.extracted_dir),
+                      note="not provisioned")
         if oms_res.get("available"):
             write_subresult(paths, "officemalscanner", oms_res)
             ran.append("officemalscanner")
@@ -129,7 +164,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                  for o in ole_res.get("tools", {}).get("oleobj", {}).get("objects", []) or []
                  if o.get("stored_path")]
         if items:
-            nested_res = nested.scan_children(items, paths)
+            nested_res = run("nested: recursive scan of embedded OLE objects",
+                             lambda: nested.scan_children(items, paths))
             if nested_res.get("tree"):
                 write_subresult(paths, "nested", nested_res)
                 ran.append("nested")
@@ -140,7 +176,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         from .parsers import didier
         from .parsers import pdf as pdf_parser
 
-        pdf_res = pdf_parser.analyze(original, paths.extracted_dir)
+        pdf_res = run("pdf: raw token scan · JS/objects · pypdf · pdfminer",
+                      lambda: pdf_parser.analyze(original, paths.extracted_dir))
         write_subresult(paths, "pdf", pdf_res)
         ran.append("pdf")
         overall_counts["components"] = len(pdf_res.get("embedded", []))
@@ -148,7 +185,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         if pdf_res.get("status") == "error":
             state = "error"
 
-        didier_res = didier.analyze(original, "pdf")
+        didier_res = run("didier: pdfid · pdf-parser",
+                         lambda: didier.analyze(original, "pdf"), note="not provisioned")
         if didier_res.get("available"):
             write_subresult(paths, "didier", didier_res)
             ran.append("didier")
@@ -156,7 +194,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         items = [{"path": str(paths.root / e["stored_path"]), "filename": e.get("filename")}
                  for e in pdf_res.get("embedded", []) or [] if e.get("stored_path")]
         if items:
-            nested_res = nested.scan_children(items, paths)
+            nested_res = run("nested: recursive scan of embedded files",
+                             lambda: nested.scan_children(items, paths))
             if nested_res.get("tree"):
                 write_subresult(paths, "nested", nested_res)
                 ran.append("nested")
@@ -166,7 +205,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         from .parsers import didier, mail
 
         declared_ext = manifest["original"].get("declared_extension", "")
-        mail_res = mail.analyze(original, declared_ext, paths.extracted_dir)
+        mail_res = run("email: parser (headers, Received chain, auth, attachments)",
+                       lambda: mail.analyze(original, declared_ext, paths.extracted_dir))
         if mail_res is not None:
             write_subresult(paths, "email", mail_res)
             ran.append("email")
@@ -182,7 +222,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         # rate them. These produce real findings (not just raw output).
         from .parsers import oletools_suite
 
-        ole_res = oletools_suite.analyze(original, paths.extracted_dir)
+        ole_res = run("oletools: olevba · oleid · msodde (message + attachments)",
+                      lambda: oletools_suite.analyze(original, paths.extracted_dir))
         if ole_res.get("available"):
             write_subresult(paths, "oletools", ole_res)
             ran.append("oletools")
@@ -197,7 +238,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         items = [{"path": str(paths.root / a["stored_path"]), "filename": a.get("filename")}
                  for a in (mail_res.get("attachments", []) if mail_res else [])
                  if a.get("stored_path")]
-        nested_res = nested.scan_children(items, paths)
+        nested_res = run("nested: recursive scan of attachments",
+                         lambda: nested.scan_children(items, paths))
         if nested_res.get("tree"):
             write_subresult(paths, "nested", nested_res)
             ran.append("nested")
@@ -205,7 +247,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 
         # External scripts: emldump (MIME) for .eml, oledump (OLE streams) for .msg.
         didier_family = "ole" if declared_ext.lower() == ".msg" else "email"
-        didier_res = didier.analyze(original, didier_family)
+        didier_res = run("didier: emldump / oledump",
+                         lambda: didier.analyze(original, didier_family), note="not provisioned")
         if didier_res.get("available"):
             write_subresult(paths, "didier", didier_res)
             ran.append("didier")
@@ -224,22 +267,27 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             data = read_json(paths.subresult(m))
             if data is not None:
                 modules[m] = data
-        ioc_result = ioc.extract(ioc.sources_from_modules(modules))
+        ioc_result = run("ioc: common extractor (URLs, domains, IPs, hashes)",
+                         lambda: ioc.extract(ioc.sources_from_modules(modules)))
         write_subresult(paths, "iocs", ioc_result)
         overall_counts["iocs"] = ioc_result.get("counts", {}).get("total", 0)
+        steps[-1]["iocs"] = overall_counts["iocs"]
 
         # Consolidated findings with stable ids (source of truth for marks).
         # Written separately; never touches marks.json.
         from . import findings as findings_mod
 
-        consolidated = findings_mod.consolidate(modules)
+        consolidated = run("findings: consolidation (stable ids for marks)",
+                           lambda: findings_mod.consolidate(modules))
         write_subresult(paths, "findings", {"findings": consolidated,
                                             "counts": {"total": len(consolidated)}})
         overall_counts["findings"] = len(consolidated)
+        steps[-1]["findings"] = len(consolidated)
 
     # Update summary.json (fast-read view) and the manifest.
     summary = read_json(paths.summary) or {}
     summary["counts"] = overall_counts
+    summary["steps"] = steps
     summary["state"] = state
     summary["modules_run"] = ran
     summary["updated_utc"] = _now()
@@ -351,6 +399,12 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
     summary.setdefault("counts", {})
     summary["counts"]["iocs"] = ioc_total
     summary["counts"]["findings"] = findings_total
+    summary["steps"] = [
+        {"step": f"rerun: {written}", "status": res.get("status", "ok"),
+         "findings": res.get("counts", {}).get("findings", 0)},
+        {"step": "ioc: recompute", "status": "ok", "iocs": ioc_total},
+        {"step": "findings: recompute", "status": "ok", "findings": findings_total},
+    ]
     state = "completed"
     summary["state"] = state
     summary["updated_utc"] = _now()

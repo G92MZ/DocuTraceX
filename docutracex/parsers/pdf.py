@@ -53,6 +53,12 @@ _HEX_NAME = re.compile(rb"/[A-Za-z]*#[0-9A-Fa-f]{2}")
 _URI_IN_PDF = re.compile(rb"/URI\s*\(([^)]{1,2000})\)")
 _HTTP_IN_PDF = re.compile(rb"https?://[^\s()<>\"'\]]{3,2000}")
 _PDF_HEADER = re.compile(rb"%PDF-(\d\.\d)")
+_OBJ_RE = re.compile(rb"(\d+)\s+(\d+)\s+obj\b(.*?)\bendobj", re.DOTALL)
+_JS_STR = re.compile(rb"/JS\s*\((.*?)(?<!\\)\)", re.DOTALL)
+_JS_HEX = re.compile(rb"/JS\s*<([0-9A-Fa-f\s]+)>")
+_OBJ_SNIPPET = 1500
+_MAX_OBJECTS = 200
+_MAX_JS = 50
 
 
 def _finding(rule: str, severity: str, detail: str, location: str = "pdf") -> dict[str, Any]:
@@ -114,6 +120,63 @@ def _extract_embedded(path: Path, extracted_dir: Path | None, result: dict[str, 
             continue
 
 
+def _unescape_pdf_string(raw: bytes) -> str:
+    s = raw.decode("latin-1", "replace")
+    for a, b in (("\\n", "\n"), ("\\r", "\r"), ("\\t", "\t"),
+                 ("\\(", "("), ("\\)", ")"), ("\\\\", "\\")):
+        s = s.replace(a, b)
+    return s
+
+
+def _extract_javascript(data: bytes, result: dict[str, Any]) -> None:
+    """Pull the actual JavaScript out of /JS literal and hex strings."""
+    js: list[dict[str, str]] = []
+    for m in _JS_STR.finditer(data):
+        if len(js) >= _MAX_JS:
+            break
+        code = _unescape_pdf_string(m.group(1))
+        if code.strip():
+            js.append({"encoding": "literal", "code": code[:8000]})
+    for m in _JS_HEX.finditer(data):
+        if len(js) >= _MAX_JS:
+            break
+        try:
+            code = bytes.fromhex(m.group(1).decode().replace(" ", "").replace("\n", "")) \
+                .decode("utf-16-le", "replace") if len(m.group(1)) % 4 == 0 else ""
+        except ValueError:
+            code = ""
+        if code.strip():
+            js.append({"encoding": "hex", "code": code[:8000]})
+    result["javascript"] = js
+    if js:
+        result["findings"].append(_finding("javascript_extracted", "high",
+            f"{len(js)} JavaScript block(s) extracted", "javascript"))
+
+
+def _extract_objects(data: bytes, result: dict[str, Any]) -> None:
+    """Keep the suspicious objects (those carrying a dangerous token) with a
+    bounded text snippet of their dictionary, for the collapsible view."""
+    objs: list[dict[str, Any]] = []
+    for m in _OBJ_RE.finditer(data):
+        if len(objs) >= _MAX_OBJECTS:
+            break
+        body = m.group(3)
+        dangerous = [k for k in _KEYWORDS if k.encode() in body]
+        if not dangerous:
+            continue
+        has_stream = b"stream" in body
+        dict_part = body.split(b"stream", 1)[0]
+        snippet = dict_part.decode("latin-1", "replace").strip()
+        objs.append({
+            "id": f"{m.group(1).decode()} {m.group(2).decode()} obj",
+            "dangerous": dangerous,
+            "has_stream": has_stream,
+            "snippet": snippet[:_OBJ_SNIPPET],
+            "snippet_truncated": len(snippet) > _OBJ_SNIPPET,
+        })
+    result["objects"] = objs
+
+
 def _extract_text(path: Path, result: dict[str, Any]) -> None:
     try:
         from pdfminer.high_level import extract_text
@@ -128,7 +191,7 @@ def analyze(original_path: Path, extracted_dir: Path | None = None) -> dict[str,
     result: dict[str, Any] = {
         "module": "pdf", "format": "pdf", "status": "ok",
         "version": None, "keyword_counts": {}, "incremental_updates": 0,
-        "uris": [], "embedded": [], "metadata": {},
+        "uris": [], "embedded": [], "metadata": {}, "javascript": [], "objects": [],
         "text_sample": "", "findings": [],
     }
     try:
@@ -182,6 +245,8 @@ def analyze(original_path: Path, extracted_dir: Path | None = None) -> dict[str,
     seen = set()
     result["uris"] = [u for u in uris if not (u in seen or seen.add(u))][:_MAX_URIS]
 
+    _extract_javascript(data, result)
+    _extract_objects(data, result)
     _extract_metadata(original_path, result)
     _extract_embedded(original_path, extracted_dir, result)
     _extract_text(original_path, result)
