@@ -187,9 +187,26 @@ def _analyze_message(msg: Message, result: dict[str, Any]) -> None:
 _DANGEROUS_EXT = {
     ".exe", ".scr", ".com", ".pif", ".bat", ".cmd", ".js", ".jse", ".vbs", ".vbe",
     ".wsf", ".wsh", ".hta", ".jar", ".ps1", ".lnk", ".iso", ".img", ".msi", ".reg",
+    ".vhd", ".vhdx", ".cpl", ".scf", ".chm", ".xll", ".iqy", ".slk", ".one", ".url",
+    ".appx", ".msix", ".appinstaller", ".application", ".library-ms", ".settingcontent-ms",
 }
+# HTML-like attachments: typical vehicle for credential phishing and HTML smuggling.
+_HTML_EXT = {".html", ".htm", ".shtml", ".xhtml", ".svg", ".mht", ".mhtml"}
 _MACRO_EXT = {".docm", ".dotm", ".xlsm", ".xltm", ".xlam", ".pptm", ".potm", ".ppam",
               ".sldm", ".xls", ".doc", ".ppt"}
+# Extensions used as a decoy before the real one ("invoice.pdf.exe",
+# "RFQ - xlsx.html", "scan_pdf   .js").
+_DECOY_EXT = (
+    "pdf doc docx docm xls xlsx xlsm xlsb csv ppt pptx pptm odt ods odp rtf txt "
+    "jpg jpeg png gif bmp tif tiff heic webp mp3 mp4 wav avi mov zip rar 7z eml msg"
+).split()
+_RE_DOUBLE_EXT = re.compile(
+    r"(?:^|([.\s_\-()\[\]]))(" + "|".join(_DECOY_EXT) + r")[\s_\-.)\]]*\.([a-z0-9_-]{1,20})$",
+    re.IGNORECASE,
+)
+# Unicode controls used to spoof the visible extension (RTLO, zero-width, ...).
+_SPOOF_CHARS = {"\u202e", "\u202d", "\u202a", "\u202b", "\u2066", "\u2067", "\u2068",
+                "\u200b", "\u200c", "\u200d", "\u200e", "\u200f", "\ufeff"}
 
 
 def _identify_bytes(data: bytes) -> str:
@@ -201,16 +218,32 @@ def _identify_bytes(data: bytes) -> str:
 
 
 def _flag_attachment(name: str, result: dict[str, Any]) -> None:
-    low = name.lower()
+    low = name.lower().strip()
     ext = ("." + low.rsplit(".", 1)[1]) if "." in low else ""
-    parts = low.split(".")
     if ext in _DANGEROUS_EXT:
         result["findings"].append(_finding("dangerous_attachment", "high",
             f"Attachment '{name}' has an executable/script extension", "attachment"))
-    if len(parts) >= 3 and ("." + parts[-2]) in (
-            {".pdf", ".doc", ".docx", ".xls", ".txt", ".jpg", ".png"}):
+    if ext in _HTML_EXT:
+        result["findings"].append(_finding("html_attachment", "medium",
+            f"Attachment '{name}' is HTML-like (credential phishing / HTML smuggling vehicle)",
+            "attachment"))
+    risky = ext in _DANGEROUS_EXT or ext in _HTML_EXT
+    m = _RE_DOUBLE_EXT.search(low)
+    # A dot always separates a decoy extension; a space/dash/underscore
+    # ("RFQ - xlsx.html") only counts when the real extension is risky.
+    if m and m.group(2) != m.group(3) and (m.group(1) == "." or risky):
+        severity = "high" if risky else "medium"
+        result["findings"].append(_finding("double_extension", severity,
+            f"Attachment '{name}' uses a double extension (looks like .{m.group(2)}, "
+            f"is {ext or 'no extension'})", "attachment"))
+    elif re.search(r"\s{3,}\.[a-z0-9]{1,20}$", low):
         result["findings"].append(_finding("double_extension", "high",
-            f"Attachment '{name}' uses a double extension", "attachment"))
+            f"Attachment '{name}' pads the name with whitespace to hide its extension",
+            "attachment"))
+    if any(c in name for c in _SPOOF_CHARS):
+        result["findings"].append(_finding("filename_spoofing", "high",
+            f"Attachment '{name}' contains Unicode direction/invisible characters "
+            "that can disguise its real extension", "attachment"))
     if ext in _MACRO_EXT:
         result["findings"].append(_finding("macro_capable_attachment", "medium",
             f"Attachment '{name}' is a macro-capable Office type", "attachment"))
