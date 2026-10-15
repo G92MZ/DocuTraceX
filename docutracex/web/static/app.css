@@ -230,6 +230,10 @@ table.cases td.mono { word-break: break-all; }
 .yara-scan { margin: 12px 0; align-items: center; }
 .yara-case-select { max-width: 520px; min-width: 240px; }
 #yara-filter { width: 100%; margin-bottom: 8px; box-sizing: border-box; }
+.yara-ctx > summary { cursor: pointer; color: var(--accent); font-size: 12px; }
+.hexdump { margin: 6px 0 0; padding: 6px 8px; font: 12px/1.45 "Cascadia Code", Consolas, monospace;
+  background: #0b0e12; border: 1px solid var(--panel-border); border-radius: 6px; white-space: pre; overflow-x: auto; max-width: 640px; }
+.hexdump mark { background: #b8860b; color: #000; border-radius: 2px; }
 .yara-hit { margin: 10px 0; padding: 8px 10px; border: 1px solid var(--panel-border); border-radius: 6px; }
 .yara-hit-head { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 6px; word-break: break-all; }
 .yara-card > summary { gap: 10px; }

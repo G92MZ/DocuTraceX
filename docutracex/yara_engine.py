@@ -450,6 +450,29 @@ def _match_to_dict(m: Any, enabled: set[str]) -> dict[str, Any]:
     }
 
 
+_CTX_LINES = 3             # hexdump lines (16 bytes) of context before/after a match
+_CTX_MAX_LINES = 16        # cap for long matches
+
+
+def _add_context(path: Path, matches: list[dict[str, Any]]) -> None:
+    """Attach to each matched string the surrounding bytes, aligned to 16-byte
+    lines (a few lines before and after), so the analyst sees the match in
+    context. Read straight from the scanned file."""
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as fh:
+            for m in matches:
+                for st in m.get("strings", []):
+                    off, ln = int(st.get("offset", 0)), max(1, int(st.get("length", 1)))
+                    start = max(0, (off // 16 - _CTX_LINES) * 16)
+                    end = min(size, ((off + ln + 15) // 16 + _CTX_LINES) * 16,
+                              start + _CTX_MAX_LINES * 16 + 2 * _CTX_LINES * 16)
+                    fh.seek(start)
+                    st["context"] = {"start": start, "data": fh.read(end - start).hex()}
+    except OSError as exc:
+        log.warning("Could not read YARA match context from %s: %s", path, exc)
+
+
 def scan_path(compiled: Any, path: Path, enabled: set[str]) -> list[dict[str, Any]]:
     if compiled is None:
         return []
@@ -458,7 +481,9 @@ def scan_path(compiled: Any, path: Path, enabled: set[str]) -> list[dict[str, An
     except Exception as exc:  # noqa: BLE001
         log.warning("YARA scan failed on %s: %s", path, exc)
         return []
-    return [_match_to_dict(m, enabled) for m in matches]
+    out = [_match_to_dict(m, enabled) for m in matches]
+    _add_context(path, out)
+    return out
 
 
 def _main(argv: list[str]) -> int:
