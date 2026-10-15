@@ -34,6 +34,31 @@ def _family(manifest: dict[str, Any]) -> str | None:
 
 
 
+def _office_extras(run, original: Path, paths: CasePaths, family: str, declared_ext: str,
+                   ole_res: dict[str, Any]) -> list[dict[str, Any]]:
+    """Own Office rules, VBA/OLE structure tools and ViperMonkey emulation."""
+    from .parsers import office_rules, vba_tools, vipermonkey
+
+    out: list[dict[str, Any]] = []
+    rules = run("officerules: remote templates/objects, Follina, Equation, ActiveX, XLM, attribution",
+                lambda: office_rules.analyze_ooxml(original) if family == "ooxml"
+                else office_rules.analyze_ole(original))
+    out.append(rules)
+    olevba = (ole_res.get("tools") or {}).get("olevba") or {}
+    has_vba = bool(olevba.get("macros"))
+    ext = (declared_ext or "").lower()
+    vt = run("vbatools: pcodedmp · pcode2code · oledump plugins · oletimes · olemeta · oledir",
+             lambda: vba_tools.analyze(original, family, has_vba, olevba.get("modules"),
+                                       is_excel_binary=(family == "ole" and ext in (".xls", ".xlt", ".xla"))))
+    out.append(vt)
+    if has_vba:
+        vm = run("vipermonkey: VBA emulation (PyPy 2.7)",
+                 lambda: vipermonkey.analyze(original, paths.extracted_dir), note="not provisioned")
+        if vm.get("available"):
+            out.append(vm)
+    return out
+
+
 def analyze_case(case_root: Path) -> dict[str, Any]:
     """Run the applicable parsers on a case (in-process). Returns a summary."""
     case_root = Path(case_root)
@@ -91,8 +116,13 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 
         # Semantic parser for the specific Office app (Word/Excel/PowerPoint).
         declared_ext = manifest["original"].get("declared_extension", "")
-        sem = run("office: semantic parser (metadata, DDE, formulas, hidden sheets)",
-                  lambda: office.analyze(original, declared_ext, paths.extracted_dir))
+        if declared_ext.lower() == ".xlsb":
+            from .parsers import xlsb
+            sem = run("xlsb: pyxlsb2 (sheets, formulas, XLM macro sheets, Auto_Open)",
+                      lambda: xlsb.analyze(original))
+        else:
+            sem = run("office: semantic parser (metadata, DDE, formulas, hidden sheets)",
+                      lambda: office.analyze(original, declared_ext, paths.extracted_dir))
         if sem is not None:
             module = sem["module"]
             write_subresult(paths, module, sem)
@@ -155,6 +185,11 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             findings_total += oms_res.get("counts", {}).get("findings", 0)
             if oms_res.get("findings") and state == "completed":
                 state = "completed"
+
+        for extra in _office_extras(run, original, paths, "ooxml", declared_ext, ole_res):
+            write_subresult(paths, extra["module"], extra)
+            ran.append(extra["module"])
+            findings_total += extra.get("counts", {}).get("findings", 0)
 
         # Recursion: analyze embedded OLE objects (oleobj) with their own tools.
         from . import nested
@@ -291,6 +326,11 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             write_subresult(paths, "didier", didier_res)
             ran.append("didier")
 
+        for extra in _office_extras(run, original, paths, "ole", declared_ext, ole_res):
+            write_subresult(paths, extra["module"], extra)
+            ran.append(extra["module"])
+            findings_total += extra.get("counts", {}).get("findings", 0)
+
         items = [{"path": str(paths.root / o["stored_path"]),
                   "filename": Path(o["stored_path"]).name}
                  for o in ole_res.get("tools", {}).get("oleobj", {}).get("objects", []) or []
@@ -363,7 +403,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 
 # Modules that can be re-run in isolation over an existing case.
 _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto",
-               "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole")
+               "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole",
+               "officerules", "vbatools", "vipermonkey")
 # Modules whose findings feed the consolidated view (includes derived ones).
 _COLLECTABLE = _RERUNNABLE + ("nested",)
 
@@ -416,8 +457,24 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
         from .parsers import ooxml
         res = ooxml.analyze(original, ed)
     elif module in ("word", "excel", "powerpoint"):
-        from .parsers import office
-        res = office.analyze(original, declared_ext, ed)
+        if declared_ext.lower() == ".xlsb":
+            from .parsers import xlsb
+            res = xlsb.analyze(original)
+        else:
+            from .parsers import office
+            res = office.analyze(original, declared_ext, ed)
+    elif module in ("officerules", "vbatools", "vipermonkey"):
+        from .parsers import office_rules, vba_tools, vipermonkey
+        fam = "ooxml" if family == "ooxml" else "ole"
+        if module == "officerules":
+            res = office_rules.analyze_ooxml(original) if fam == "ooxml" else office_rules.analyze_ole(original)
+        else:
+            olevba = ((read_json(paths.subresult("oletools")) or {}).get("tools") or {}).get("olevba") or {}
+            if module == "vbatools":
+                res = vba_tools.analyze(original, fam, bool(olevba.get("macros")), olevba.get("modules"),
+                                        is_excel_binary=(fam == "ole" and declared_ext.lower() in (".xls", ".xlt", ".xla")))
+            else:
+                res = vipermonkey.analyze(original, ed)
     elif module == "oletools":
         from .parsers import oletools_suite
         res = oletools_suite.analyze(original, ed)

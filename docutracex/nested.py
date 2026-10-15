@@ -116,11 +116,23 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
                     kids.append((paths.root / sp, Path(sp).name))
             if kind == "ooxml":
                 from .parsers import office, xlm
-                sem = office.analyze(abs_path, _ext(name), work)
+                if _ext(name) == ".xlsb":
+                    from .parsers import xlsb
+                    sem = xlsb.analyze(abs_path)
+                else:
+                    sem = office.analyze(abs_path, _ext(name), work)
                 if sem:
                     add_findings(sem.get("findings"), kind)
                 xres = xlm.analyze(abs_path)
                 add_findings(xres.get("findings"), "xlmdeobf")
+            # Own Office rules and, when there are macros, VBA emulation.
+            from .parsers import office_rules, vipermonkey
+            rules = (office_rules.analyze_ooxml(abs_path) if kind == "ooxml"
+                     else office_rules.analyze_ole(abs_path))
+            add_findings(rules.get("findings"), "officerules")
+            if ((res.get("tools") or {}).get("olevba") or {}).get("macros"):
+                vm = vipermonkey.analyze(abs_path, work)
+                add_findings(vm.get("findings"), "vipermonkey")
         elif kind == "pdf":
             from .parsers import pdf
             res = pdf.analyze(abs_path, work)
