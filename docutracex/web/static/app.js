@@ -406,6 +406,61 @@ function pivotTarget(f, ids) {
   return null;
 }
 
+// --- Manual marks on component items -------------------------------------------
+// Any row of the components (IOC, attachment, header, hop, relationship, part,
+// ...) can be added by hand as a finding and marked (TP/FP/...), so something
+// the tools missed still reaches the report.
+let _manualByKey = {};
+
+function manualKey(kind, location, detail) { return `${kind}\u001f${location}\u001f${detail}`; }
+
+function addMarkCell(kind, detail, location, evidence) {
+  const f = _manualByKey[manualKey(kind, location || "", detail)];
+  if (f) {
+    const st = (f.mark && f.mark.state) || "unreviewed";
+    return `<span class="manual-marked">${markBadge(st)}
+      <button class="btn btn-ghost btn-sm" data-unmark="${escapeHtml(f.id)}" title="Remove this manual finding">✕</button></span>`;
+  }
+  const states = MARK_STATES.filter((x) => x.id !== "unreviewed").map((x) =>
+    `<option value="${x.id}">${escapeHtml(x.label)}</option>`).join("");
+  return `<details class="add-mark" data-kind="${escapeHtml(kind)}" data-detail="${escapeHtml(detail)}"
+      data-location="${escapeHtml(location || "")}" data-evidence="${escapeHtml(evidence || "")}">
+    <summary title="Add this item as a finding and mark it">＋ mark</summary>
+    <div class="add-mark-form">
+      <select class="am-state">${states}</select>
+      <select class="am-sev"><option value="high">high</option><option value="medium" selected>medium</option><option value="low">low</option><option value="info">info</option></select>
+      <input class="am-comment" type="text" placeholder="comment…" />
+      <button class="btn btn-primary btn-sm am-add" type="button">Add</button>
+    </div>
+  </details>`;
+}
+
+function wireAddMarks(root, analysisId) {
+  if (!analysisId) return;
+  const reload = () => openComponents(analysisId, _compState.active);
+  root.querySelectorAll("details.add-mark").forEach((d) => {
+    const btn = d.querySelector(".am-add");
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      const body = {
+        kind: d.dataset.kind, detail: d.dataset.detail, location: d.dataset.location,
+        evidence: d.dataset.evidence, state: d.querySelector(".am-state").value,
+        severity: d.querySelector(".am-sev").value, comment: d.querySelector(".am-comment").value,
+      };
+      const r = await fetch(`/api/cases/${encodeURIComponent(analysisId)}/manual-findings`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (r.ok) reload(); else { btn.disabled = false; btn.textContent = "failed"; }
+    });
+  });
+  root.querySelectorAll("[data-unmark]").forEach((b) => {
+    b.addEventListener("click", async () => {
+      await fetch(`/api/cases/${encodeURIComponent(analysisId)}/manual-findings/${encodeURIComponent(b.dataset.unmark)}`,
+        { method: "DELETE" });
+      reload();
+    });
+  });
+}
+
 function paneFindings(findings, ids) {
   if (!findings.length) return `<p class="hint-line">No findings.</p>`;
   ids = ids || (_compState.sections || []).map((s) => s.id);
@@ -449,12 +504,14 @@ function paneIocs(iocs) {
       <td class="mono">${escapeHtml(i.value)}</td>
       <td>${i.count}</td>
       <td class="mono" title="${escapeHtml(where.join(", "))}">${escapeHtml(uniq)}</td>
+      <td>${addMarkCell("ioc", `${IOC_TYPE_LABEL[i.type] || i.type}: ${i.value}`, "iocs",
+        (i.occurrences || []).slice(0, 5).map((o) => `${o.module}/${o.location}: ${o.context || ""}`).join("\n"))}</td>
     </tr>`;
   }).join("");
   const c = iocs.counts || {};
   const bits = Object.keys(c).filter((k) => k !== "total").map((k) => `${c[k]} ${k}`);
   return (bits.length ? `<p class="hint-line">${escapeHtml(bits.join(" · "))}</p>` : "") +
-    table(["Type", "Value", "Count", "Provenance"], rows);
+    table(["Type", "Value", "Count", "Provenance", "Mark"], rows);
 }
 
 function paneMetadata(sem, ole) {
@@ -463,8 +520,9 @@ function paneMetadata(sem, ole) {
   const keys = Object.keys(meta);
   if (keys.length) {
     const rows = keys.map((k) =>
-      `<tr><td class="file">${escapeHtml(k)}</td><td>${escapeHtml(String(meta[k]))}</td></tr>`).join("");
-    html += table(["Property", "Value"], rows);
+      `<tr><td class="file">${escapeHtml(k)}</td><td>${escapeHtml(String(meta[k]))}</td>
+       <td>${addMarkCell("metadata", `${k}: ${meta[k]}`, "metadata", "")}</td></tr>`).join("");
+    html += table(["Property", "Value", "Mark"], rows);
   }
   const bits = [];
   if (sem && sem.format === "excel") {
@@ -562,7 +620,22 @@ function paneTools(ole, crypto, xlm) {
     add("XLMMacroDeobfuscator", st, detail);
   }
   if (!rows.length) return `<p class="hint-line">No external tools run.</p>`;
-  return table(["Tool", "Status", "Detail"], rows.join(""));
+  // Raw output of each tool as it ran, so every finding can be traced back.
+  const outs = [];
+  const t = (ole && ole.tools) || {};
+  ["olevba", "oleid", "mraptor", "msodde", "oleobj"].forEach((n) => { if (t[n]) outs.push([n, t[n]]); });
+  if (crypto && crypto.available) outs.push(["msoffcrypto", crypto]);
+  if (xlm && xlm.available) outs.push(["XLMMacroDeobfuscator", xlm]);
+  let html = table(["Tool", "Status", "Detail"], rows.join(""));
+  outs.forEach(([name, o]) => {
+    if (!o.output && !o.error) return;
+    const rc = o.returncode != null ? ` · rc ${o.returncode}` : "";
+    const cmd = o.command ? ` · <span class="mono">${escapeHtml(o.command)}</span>` : "";
+    const trunc = o.output_truncated ? '<p class="hint-line">(output truncated)</p>' : "";
+    html += `<details class="disclose"><summary>${escapeHtml(name)} output${cmd}${rc}</summary>
+      <pre class="text-sample">${escapeHtml(o.output || o.error || "")}</pre>${trunc}</details>`;
+  });
+  return html;
 }
 
 function paneDidier(didier) {
@@ -602,9 +675,10 @@ function paneRelationships(rels) {
       <td title="${escapeHtml(r.type || "")}">${escapeHtml(typeShort || "")}</td>
       <td class="mono">${escapeHtml(r.target || "")}</td>
       <td>${ext ? '<span class="badge badge-bad">external</span>' : '<span class="badge badge-ok">internal</span>'}</td>
+      <td>${addMarkCell("relationship", `${typeShort} ${r.mode || ""} → ${r.target || ""}`, r.rels_file || "relationships", r.type || "")}</td>
     </tr>`;
   }).join("");
-  return table(["Id", "Type", "Target", "Mode"], rows);
+  return table(["Id", "Type", "Target", "Mode", "Mark"], rows);
 }
 
 function paneParts(parts) {
@@ -618,9 +692,10 @@ function paneParts(parts) {
       <td title="${escapeHtml(p.content_type || "")}">${escapeHtml(ct || "")}</td>
       <td>${fmtSize(p.size_bytes)}</td>
       <td class="mono" title="${escapeHtml(p.sha256 || "")}">${shortHash(p.sha256)}${flag}</td>
+      <td>${addMarkCell("part", `Part ${p.path}`, "parts", `${p.content_type || ""} · sha256 ${p.sha256 || ""}`)}</td>
     </tr>`;
   }).join("");
-  return table(["Path", "Type", "Size", "SHA-256"], rows);
+  return table(["Path", "Type", "Size", "SHA-256", "Mark"], rows);
 }
 
 function paneExtracted(items) {
@@ -631,8 +706,9 @@ function paneExtracted(items) {
     <td class="mono" title="${escapeHtml(e.detected_name || "")}">${escapeHtml(e.detected_mime || "")}</td>
     <td class="mono" title="${escapeHtml(e.sha256 || "")}">${shortHash(e.sha256)}</td>
     <td>${fileActions(e.stored_path)}</td>
+    <td>${addMarkCell("extracted", `Extracted ${e.id || e.stored_path || ""}`, e.stored_path || "extracted", `${e.detected_mime || ""} · sha256 ${e.sha256 || ""}`)}</td>
   </tr>`).join("");
-  return table(["Part", "Size", "Detected", "SHA-256", "Actions"], rows);
+  return table(["Part", "Size", "Detected", "SHA-256", "Actions", "Mark"], rows);
 }
 
 // --- Email panes -------------------------------------------------------------
@@ -659,17 +735,19 @@ function hopsTable(email) {
     <td>${escapeHtml(h.with || "")}</td>
     <td class="mono">${escapeHtml(h.timestamp || "")}</td>
     <td class="mono">${escapeHtml(fmtDelta(h.delta_seconds))}</td>
+    <td>${addMarkCell("hop", `Hop ${i + 1}: from ${h.from || "?"} by ${h.by || "?"}${h.ip ? " [" + h.ip + "]" : ""}`, "received", h.raw || h.timestamp || "")}</td>
   </tr>`).join("");
   return `<h3 class="formats-title">Received chain — ${hops.length} hop(s), origin → destination</h3>`
-    + table(["#", "From", "By", "IP", "With", "Timestamp", "Δt"], rows);
+    + table(["#", "From", "By", "IP", "With", "Timestamp", "Δt", "Mark"], rows);
 }
 
 function paneEmailHeaders(email) {
   const hs = (email && email.headers) || [];
   if (!hs.length) return `<p class="hint-line">No headers.</p>`;
   const rows = hs.map((h) =>
-    `<tr><td class="file">${escapeHtml(h.name)}</td><td class="mono">${escapeHtml(h.value)}</td></tr>`).join("");
-  return table(["Header", "Value"], rows);
+    `<tr><td class="file">${escapeHtml(h.name)}</td><td class="mono">${escapeHtml(h.value)}</td>
+     <td>${addMarkCell("header", `${h.name}: ${h.value}`, "headers", "")}</td></tr>`).join("");
+  return table(["Header", "Value", "Mark"], rows);
 }
 
 function paneAuth(email) {
@@ -679,18 +757,19 @@ function paneAuth(email) {
     const cls = v === "pass" ? "ok" : (v === "fail" ? "bad" : "warn");
     return `<span class="badge badge-${cls}">${escapeHtml(v || "—")}</span>`;
   };
-  let html = table(["Mechanism", "Result"], [
-    `<tr><td>SPF</td><td>${verdict(a.spf)}</td></tr>`,
-    `<tr><td>DKIM</td><td>${verdict(a.dkim)}${a.dkim_signature_present ? ' <span class="hint-line">signature present</span>' : ""}</td></tr>`,
-    `<tr><td>DMARC</td><td>${verdict(a.dmarc)}</td></tr>`,
+  let html = table(["Mechanism", "Result", "Mark"], [
+    `<tr><td>SPF</td><td>${verdict(a.spf)}</td><td>${addMarkCell("auth", `SPF: ${a.spf || "none"}`, "authentication", "")}</td></tr>`,
+    `<tr><td>DKIM</td><td>${verdict(a.dkim)}${a.dkim_signature_present ? ' <span class="hint-line">signature present</span>' : ""}</td><td>${addMarkCell("auth", `DKIM: ${a.dkim || "none"}`, "authentication", "")}</td></tr>`,
+    `<tr><td>DMARC</td><td>${verdict(a.dmarc)}</td><td>${addMarkCell("auth", `DMARC: ${a.dmarc || "none"}`, "authentication", "")}</td></tr>`,
   ].join(""));
   const rows = Object.entries({
     From: addr.from, "From display": addr.from_display, "Return-Path": addr.return_path,
     "Reply-To": addr.reply_to, Sender: addr.sender, Subject: addr.subject,
     "Message-ID": addr.message_id, Date: addr.date, "X-Mailer": addr.x_mailer,
   }).filter(([, v]) => v).map(([k, v]) =>
-    `<tr><td class="file">${escapeHtml(k)}</td><td class="mono">${escapeHtml(String(v))}</td></tr>`).join("");
-  if (rows) html += `<h3 class="formats-title">Sender / routing</h3>` + table(["Field", "Value"], rows);
+    `<tr><td class="file">${escapeHtml(k)}</td><td class="mono">${escapeHtml(String(v))}</td>
+     <td>${addMarkCell("sender", `${k}: ${v}`, "authentication", "")}</td></tr>`).join("");
+  if (rows) html += `<h3 class="formats-title">Sender / routing</h3>` + table(["Field", "Value", "Mark"], rows);
   return html;
 }
 
@@ -712,9 +791,10 @@ function paneAttachments(email, nestedMod) {
       <td class="mono" title="${escapeHtml(a.sha256 || "")}">${shortHash(a.sha256)}</td>
       <td>${scan}</td>
       <td>${fileActions(a.stored_path)}</td>
+      <td>${addMarkCell("attachment", `Attachment ${a.filename}`, a.stored_path || "attachments", `${a.detected_mime || ""} · ${a.size_bytes || 0} bytes · sha256 ${a.sha256 || ""}`)}</td>
     </tr>`;
   }).join("");
-  return table(["Filename", "Size", "Detected", "SHA-256", "Tool scan", "Actions"], rows);
+  return table(["Filename", "Size", "Detected", "SHA-256", "Tool scan", "Actions", "Mark"], rows);
 }
 
 function paneEmailBody(email) {
@@ -797,8 +877,9 @@ function panePdfMeta(pdf) {
   const md = pdf.metadata || {};
   const keys = Object.keys(md);
   if (!keys.length) return `<p class="hint-line">No document metadata.</p>`;
-  return table(["Property", "Value"],
-    keys.map((k) => `<tr><td class="file">${escapeHtml(k)}</td><td>${escapeHtml(String(md[k]))}</td></tr>`).join(""));
+  return table(["Property", "Value", "Mark"],
+    keys.map((k) => `<tr><td class="file">${escapeHtml(k)}</td><td>${escapeHtml(String(md[k]))}</td>
+      <td>${addMarkCell("metadata", `${k}: ${md[k]}`, "pdf metadata", "")}</td></tr>`).join(""));
 }
 
 function panePdfEmbedded(pdf) {
@@ -809,8 +890,9 @@ function panePdfEmbedded(pdf) {
     <td>${fmtSize(e.size_bytes)}</td>
     <td class="mono" title="${escapeHtml(e.sha256 || "")}">${shortHash(e.sha256)}</td>
     <td>${fileActions(e.stored_path)}</td>
+    <td>${addMarkCell("embedded", `Embedded file ${e.filename}`, e.stored_path || "pdf embedded", `${e.size_bytes || 0} bytes · sha256 ${e.sha256 || ""}`)}</td>
   </tr>`).join("");
-  return table(["Filename", "Size", "SHA-256", "Actions"], rows);
+  return table(["Filename", "Size", "SHA-256", "Actions", "Mark"], rows);
 }
 
 // --- Nested (recursive child analysis) --------------------------------------
@@ -827,6 +909,7 @@ function nestedNode(n) {
       <span class="badge badge-muted">${escapeHtml(n.kind)}</span>
       ${badge}
       ${fileActions(n.stored_path)}
+      ${addMarkCell("nested", `Nested item ${n.filename}`, n.stored_path || "nested", n.kind || "")}
     </div>`;
   (n.findings || []).forEach((f) => {
     html += `<div class="nested-finding"><span class="badge badge-${SEV_CLASS[f.severity] || "warn"}">${escapeHtml(f.severity)}</span>
@@ -889,10 +972,11 @@ function renderSubtabs() {
     (_compState.findings || []).forEach((f) => { if (f.id === fid) f.mark = mark; });
   });
   wireFileActions(bodyEl, _openCaseId);
+  wireAddMarks(bodyEl, _openCaseId);
   wirePivots(bodyEl);
 }
 
-async function openComponents(analysisId) {
+async function openComponents(analysisId, keepTab) {
   showTab("components");
   _openCaseId = analysisId;
   const caseLine = document.getElementById("comp-case");
@@ -924,6 +1008,10 @@ async function openComponents(analysisId) {
     // Prefer the server's consolidated findings (stable ids + marks);
     // fall back to the client-side collector for older cases.
     const findings = (d.findings && d.findings.length) ? d.findings : collectFindings(mods, ooxml);
+    _manualByKey = {};
+    findings.filter((f) => f.source === "manual").forEach((f) => {
+      _manualByKey[manualKey(f.rule.replace(/^manual:/, ""), f.location || "", f.detail)] = f;
+    });
     const ni = (iocs && iocs.counts && iocs.counts.total) || 0;
     let compLabel;
     if (email) compLabel = `${email.hop_count || 0} hops · ${email.attachment_count || 0} attachments`;
@@ -981,7 +1069,8 @@ async function openComponents(analysisId) {
     const ids = sections.map((s) => s.id);
     const fIdx = sections.findIndex((s) => s.id === "findings");
     if (fIdx >= 0) sections[fIdx].render = () => paneFindings(findings, ids);
-    _compState = { sections, active: sections[0].id, header: headerHtml, findings };
+    const active = keepTab && sections.some((x) => x.id === keepTab) ? keepTab : sections[0].id;
+    _compState = { sections, active, header: headerHtml, findings };
     renderSubtabs();
     renderRerun(analysisId, d);
   } catch (err) {
@@ -1439,7 +1528,8 @@ function paneYara(yara, findings) {
     g.hits.push({ file: s.file, path: s.path || "", stored: s.stored_path || "",
       strings: m.strings || [], finding: byId[m.finding_id] });
   }));
-  html += '<div class="row" style="margin:4px 0 10px"><button class="btn btn-ghost btn-sm" onclick="document.querySelectorAll(\'#comp-body .yara-card\').forEach(e=>e.open=true)">Expand all</button> <button class="btn btn-ghost btn-sm" onclick="document.querySelectorAll(\'#comp-body .yara-card\').forEach(e=>e.open=false)">Collapse all</button></div>';
+  // Expand/Collapse act on the pane they live in (case view or YARA tab).
+  html += '<div class="row" style="margin:4px 0 10px"><button class="btn btn-ghost btn-sm" type="button" onclick="this.closest(\'.yara-pane\').querySelectorAll(\'details\').forEach(e=>e.open=true)">Expand all</button> <button class="btn btn-ghost btn-sm" type="button" onclick="this.closest(\'.yara-pane\').querySelectorAll(\'details.yara-card\').forEach(e=>e.open=false)">Collapse all</button></div>';
   Object.values(byRule).forEach((g) => {
     const tags = g.tags.length ? ` · ${escapeHtml(g.tags.join(" "))}` : "";
     const states = g.hits.map((h) => (h.finding && h.finding.mark && h.finding.mark.state) || "unreviewed");
@@ -1455,7 +1545,7 @@ function paneYara(yara, findings) {
         <td>${x.length != null ? x.length : ""}</td>
         <td class="mono">${escapeHtml(x.text || "")}</td>
         <td class="mono">${escapeHtml((x.data || "").replace(/(..)/g, "$1 ").trim())}</td>
-        <td>${x.context ? `<details class="yara-ctx"><summary>context</summary>${hexContext(x)}</details>` : ""}</td>
+        <td>${x.context ? `<details class="yara-ctx" open><summary>context</summary>${hexContext(x)}</details>` : ""}</td>
       </tr>`).join("");
       const mark = h.finding ? markControlsHtml(h.finding) : '<span class="hint-line">re-run YARA to mark</span>';
       return `<div class="yara-hit">
@@ -1477,7 +1567,7 @@ function paneYara(yara, findings) {
       <div style="padding:8px 10px">${src}${hits}</div>
     </details>`;
   });
-  return html;
+  return `<div class="yara-pane">${html}</div>`;
 }
 
 // --- Tab navigation ----------------------------------------------------------

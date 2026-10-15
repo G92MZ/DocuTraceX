@@ -92,6 +92,18 @@ def analyze(original_path: Path, extracted_dir: Path | None = None) -> dict[str,
 
 
 def _finalize(result: dict[str, Any]) -> dict[str, Any]:
+    # Readable record of what msoffcrypto reported (shown in the Tools pane).
+    lines = [f"msoffcrypto-tool {result.get('tool_version') or ''}".strip()]
+    if result.get("error"):
+        lines.append(f"Not applicable / error: {result['error']}")
+    else:
+        lines.append(f"is_encrypted: {bool(result.get('encrypted'))}")
+        if result.get("encrypted"):
+            lines.append(f"default passwords tried: {', '.join(repr(p) for p in _DEFAULT_PASSWORDS)}")
+            lines.append(f"decrypted with: {result['decrypted_password']!r} -> {result.get('decrypted_path', '')}"
+                         if result.get("decrypted") else "no default password worked")
+    result["command"] = "msoffcrypto (python API): OfficeFile.is_encrypted / load_key"
+    result["output"] = "\n".join(lines)
     result["counts"] = {"findings": len(result["findings"])}
     if result["findings"]:
         result["status"] = "ok_with_findings"

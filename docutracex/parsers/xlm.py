@@ -63,6 +63,9 @@ def analyze(original_path: Path) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         result["error"] = f"XLMMacroDeobfuscator failed: {exc}"
 
+    result["command"] = f"xlmdeobfuscator --file {original_path.name} --no-indent (python API)"
+    result["output"] = result["error"] or ("\n".join(result["formulas"]) if result["formulas"]
+                                           else "No Excel 4.0 (XLM) macros found.")
     result["counts"] = {"findings": len(result["findings"])}
     if result["findings"]:
         result["status"] = "ok_with_findings"

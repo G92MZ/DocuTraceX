@@ -60,3 +60,36 @@ def test_reveal_and_download_guard_path_traversal(client: TestClient) -> None:
     # Reveal validates the path the same way (missing file → 404).
     missing = client.post(f"/api/cases/{cid}/reveal", json={"path": "nope/none.bin"})
     assert missing.status_code == 404
+
+
+def test_manual_finding_marked_tp_reaches_report_and_survives_rerun(client: TestClient) -> None:
+    import time
+
+    cid = client.post("/api/cases", files={"file": ("note.txt", b"hello 203.0.113.9")}).json()["analysis_id"]
+    for _ in range(100):
+        if client.get(f"/api/cases/{cid}").json().get("state") not in ("queued", "running", "received"):
+            break
+        time.sleep(0.05)
+    r = client.post(f"/api/cases/{cid}/manual-findings", json={
+        "kind": "ioc", "detail": "IPv4: 203.0.113.9", "location": "iocs",
+        "evidence": "body: hello 203.0.113.9", "severity": "high", "state": "true_positive",
+        "comment": "C2 seen elsewhere"})
+    assert r.status_code == 200
+    fid = r.json()["finding"]["id"]
+    # Same item twice -> same finding (idempotent).
+    assert client.post(f"/api/cases/{cid}/manual-findings", json={
+        "kind": "ioc", "detail": "IPv4: 203.0.113.9", "location": "iocs"}).json()["finding"]["id"] == fid
+
+    f = next(x for x in client.get(f"/api/cases/{cid}/marks").json()["findings"] if x["id"] == fid)
+    assert f["source"] == "manual" and f["rule"] == "manual:ioc"
+    assert f["mark"]["state"] == "true_positive" and f["mark"]["comment"] == "C2 seen elsewhere"
+    assert "IPv4: 203.0.113.9" in client.get(f"/api/cases/{cid}/report").text
+
+    client.post(f"/api/cases/{cid}/rerun", json={})
+    time.sleep(0.3)
+    comp = client.get(f"/api/cases/{cid}/components").json()
+    assert any(x["id"] == fid for x in comp["findings"])  # kept across re-analysis
+
+    assert client.delete(f"/api/cases/{cid}/manual-findings/{fid}").status_code == 200
+    assert not any(x["id"] == fid for x in client.get(f"/api/cases/{cid}/marks").json()["findings"])
+    assert client.post(f"/api/cases/{cid}/manual-findings", json={"kind": "ioc", "detail": ""}).status_code == 400
