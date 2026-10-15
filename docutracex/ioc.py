@@ -13,6 +13,7 @@ as "hash_like".
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from typing import Any
 from urllib.parse import urlparse
@@ -20,7 +21,9 @@ from urllib.parse import urlparse
 # --- patterns ---------------------------------------------------------------
 _URL_RE = re.compile(r"\b(?:https?|ftp)://[^\s\"'<>)\]}]+", re.IGNORECASE)
 _IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
-_IPV6_RE = re.compile(r"\b(?:[A-F0-9]{1,4}:){2,7}[A-F0-9]{1,4}\b", re.IGNORECASE)
+# IPv6 candidates (full or "::"-compressed); each one is then validated with
+# ipaddress, which rejects look-alikes such as times ("15:56:42") or MACs.
+_IPV6_RE = re.compile(r"(?<![\w:.])(?:[A-F0-9]{0,4}:){2,7}[A-F0-9]{0,4}(?![\w:])", re.IGNORECASE)
 _DOMAIN_RE = re.compile(
     r"(?<![\w.@-])((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24})(?![\w-])",
     re.IGNORECASE,
@@ -41,6 +44,16 @@ _CONTEXT = 32
 def _valid_ipv4(value: str) -> bool:
     parts = value.split(".")
     return len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts)
+
+
+def _valid_ipv6(value: str) -> str | None:
+    """Normalized IPv6 address, or None if ``value`` is not one (e.g. a time)."""
+    if not any(c.isalnum() for c in value):
+        return None
+    try:
+        return ipaddress.IPv6Address(value).compressed
+    except ValueError:
+        return None
 
 
 def _clean_url(url: str) -> str:
@@ -109,9 +122,9 @@ def _scan_text(text: str, module: str, location: str, col: _Collector) -> None:
             col.add("ipv4", m.group(0), module, location, _ctx(text, m.start(), m.end()))
 
     for m in _IPV6_RE.finditer(text):
-        # Require at least one group separator run to reduce false positives.
-        if m.group(0).count(":") >= 2:
-            col.add("ipv6", m.group(0).lower(), module, location, _ctx(text, m.start(), m.end()))
+        addr = _valid_ipv6(m.group(0))
+        if addr:
+            col.add("ipv6", addr, module, location, _ctx(text, m.start(), m.end()))
 
     for m in _HASH_RE.finditer(text):
         col.add("hash_like", m.group(0).lower(), module, location, _ctx(text, m.start(), m.end()))

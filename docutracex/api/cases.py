@@ -19,8 +19,7 @@ def _load_findings_with_marks(analysis_id: str) -> dict:
     from ..storage import CasePaths, read_json
 
     paths = CasePaths(analysis_id)
-    stored = read_json(paths.subresult("findings")) or {}
-    findings = stored.get("findings", []) if isinstance(stored, dict) else []
+    findings = marks_service.case_findings(paths)
     return marks_service.apply(findings, marks_service.read_marks(paths))
 
 
@@ -233,3 +232,41 @@ async def set_mark(analysis_id: str, finding_id: str,
     except marks_service.MarkError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"finding_id": finding_id, "mark": mark}
+
+
+@router.post("/{analysis_id}/manual-findings")
+async def add_manual_finding(analysis_id: str, payload: dict = Body(...)) -> dict:
+    """Add a component item (IOC, attachment, header, ...) as a finding by hand,
+    optionally marking it right away (e.g. true_positive)."""
+    from ..storage import CasePaths
+
+    try:
+        case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    paths = CasePaths(analysis_id)
+    try:
+        f = marks_service.add_manual(
+            paths, str(payload.get("kind", "item")), str(payload.get("detail", "")),
+            str(payload.get("location", "") or ""), str(payload.get("evidence", "") or ""),
+            str(payload.get("severity", "medium") or "medium"))
+        state = str(payload.get("state", "") or "")
+        mark = None
+        if state:
+            mark = marks_service.set_mark(paths, f["id"], state, str(payload.get("comment", "") or ""))
+    except marks_service.MarkError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"finding": f, "mark": mark}
+
+
+@router.delete("/{analysis_id}/manual-findings/{finding_id}")
+async def remove_manual_finding(analysis_id: str, finding_id: str) -> dict:
+    from ..storage import CasePaths
+
+    try:
+        case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if not marks_service.remove_manual(CasePaths(analysis_id), finding_id):
+        raise HTTPException(status_code=404, detail="Manual finding not found")
+    return {"removed": finding_id}
