@@ -25,7 +25,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     return TestClient(create_app())
 
 
-def _wait(fn, ok, tries: int = 200, delay: float = 0.05):
+def _wait(fn, ok, tries: int = 1200, delay: float = 0.1):
     for _ in range(tries):
         v = fn()
         if ok(v):

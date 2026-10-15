@@ -40,10 +40,10 @@ def test_report_contains_findings_iocs_and_evidence(client: TestClient, tmp_path
 
     with (SAMPLES / "sample.xlsm").open("rb") as fh:
         cid = client.post("/api/cases", files={"file": ("sample.xlsm", fh.read())}).json()["analysis_id"]
-    for _ in range(100):
+    for _ in range(1200):  # real VBA: ViperMonkey emulation takes a few seconds
         if client.get(f"/api/cases/{cid}").json().get("state") in ("completed", "error"):
             break
-        time.sleep(0.05)
+        time.sleep(0.1)
     # The report shows ONLY findings marked True positive.
     comp = client.get(f"/api/cases/{cid}/components").json()
     ws = next(f for f in comp["findings"] if f["rule"] == "webservice")

@@ -110,7 +110,7 @@ def lure_pdf(lines: list[str], *, link: str | None = None, qr: str | None = None
                              "/ColorSpace /DeviceGray /BitsPerComponent 8")
         xobjects = f"/XObject << /Im1 {img} 0 R >>"
         content.append("q 220 0 0 220 72 420 cm /Im1 Do Q")
-    contents = b.stream("\n".join(content).encode("latin-1"))
+    contents = b.stream("\n".join(content).encode("cp1252", "replace"))  # WinAnsiEncoding
     annots = []
     if link:
         annots.append(b.add(f"<< /Type /Annot /Subtype /Link /Rect [72 380 400 400] /Border [0 0 0] "

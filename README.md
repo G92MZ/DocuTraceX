@@ -60,7 +60,10 @@ it just works.
 | 📄 **PDF** | robust raw-token scan (`/OpenAction`, `/JS`, `/Launch`, `/EmbeddedFile`, `/XFA`, `/URI`, hex-obfuscated names…), **extracted JavaScript**, every object browsable, embedded-file extraction, text & URIs |
 | 📃 **RTF** | recognised by content (a `.doc` that is really RTF too): `\objdata` objects via rtfobj (Equation Editor, OLE2Link + `\objupdate`, Package, ActiveX/MSCOMCTL) extracted and scanned recursively, remote `\*\template` and fields, font-table overflow, pFragments, deep nesting, `\objdata` obfuscation, data after the end, `\info`/generator/rsid attribution, rtfdump · RTFScan |
 | ✉️ **Email** | `.eml`/`.emlx`/`.msg`: the **`Received` hop chain** with Δt, SPF/DKIM/DMARC, From/Return-Path/Reply-To & display-name **spoofing**, attachments hashed & typed |
-| 🧰 **Real tools** | oletools (olevba · oleid · mraptor · msodde · oleobj), msoffcrypto-tool, XLMMacroDeobfuscator, OfficeMalScanner, Didier Stevens Suite (oledump/zipdump/pdfid/pdf-parser/emldump) |
+| 🧰 **Real tools** | oletools (olevba · oleid · mraptor · msodde · oleobj · rtfobj), pcodedmp · pcode2code, msoffcrypto-tool, XLMMacroDeobfuscator, pyxlsb2, peepdf · pyHanko · pdfium + zxing-cpp (QR), dkimpy, OfficeMalScanner/RTFScan, Didier Stevens Suite (oledump + plugins/zipdump/pdfid/pdf-parser/emldump/rtfdump/decode-vbe) — each tool's raw output kept next to its findings |
+| 🐒 **VBA emulation** | ViperMonkey on a second portable interpreter (PyPy 2.7), isolated and time-limited: what the macro would download, write and run |
+| 🟨 **JavaScript** | collected from PDFs, email HTML, HTML/HTA/SVG/WSF/JS/JSE attachments and JScript inside VBA; static patterns, string decoding and an isolated **STPyV8 sandbox** with recording stubs that unfolds `eval`/`Function` layers |
+| 🧩 **Own rules** | remote templates, Follina/MSHTML handlers, Equation Editor, OLE2Link, Package, ActiveX, XLM macro sheets, hidden VBA modules / locked projects, PDF revisions and signatures, look-alike domains, gateway-wrapped links, DKIM body hash, HTML smuggling… |
 | 🪆 **Recursion** | attachments, embedded OLE objects and PDF-embedded files are analyzed **in turn** with their family's tools — the DDE inside a `.docm` inside a `.pdf` surfaces with its full path |
 | 🛡️ **YARA** | your rules by upload (`.yar`/`.yara`/`.zip`/`.tar.gz`) or **server path**, compiled with streaming progress; matches shown as cards — **opt-in**: a rule becomes a finding only when you tick it |
 | 🧷 **IOC extractor** | URLs, domains, IPv4/IPv6 and hash-like strings across every parser's output, with provenance |
@@ -82,7 +85,7 @@ it just works.
 
 ## 📝 Notes
 
-- **Static only.** No macro, formula, JavaScript, PDF action, link, media or attachment is ever executed — everything is read, parsed and pattern-matched.
+- **Nothing runs for real.** No macro, formula, PDF action, link, media or attachment is ever executed by Office, a browser or the OS. The only exceptions are *emulation*: ViperMonkey (a VBA interpreter written in Python) and the STPyV8 sandbox (a bare V8 with no file system, network or processes, only recording stubs) — both in a separate process with a time limit.
 - **Runs offline.** The only network access is the one-time provisioning of the portable Python and external tools (from PyPI and GitHub) on first launch.
 - **Your data lives in** `cases/` (per-case evidence, results, marks, report), `yara/` (your rules) and `tools/` (the portable runtime) — all git-ignored and preserved across updates.
 - **Two interpreters by design:** the web app on your Python, the analysis tools on the portable one, so a messy tool dependency never touches your environment.

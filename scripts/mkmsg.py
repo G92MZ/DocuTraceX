@@ -2,8 +2,8 @@
 
 Builds a valid compound file (readable by olefile) holding the MAPI streams a
 .msg uses: subject, transport headers, body, sender and one attachment storage.
-All streams are small, so they live in the mini stream. Not a general-purpose
-writer — just enough to exercise docutracex.parsers.mail on realistic input.
+``build_cfb`` here keeps every stream in the mini stream (small fixtures only);
+``build_msg`` uses the general writer in cfb.py.
 """
 
 from __future__ import annotations
@@ -47,22 +47,25 @@ def _link_siblings(entries: list[_Entry], nodes: list["_Entry"]) -> int:
 
 
 def build_msg(headers: str, subject: str, body: str, sender: str,
-              attachments: list[tuple[str, bytes]]) -> bytes:
-    root = _Entry("Root Entry", 5)
-    top: list[_Entry] = [
-        _Entry("__substg1.0_0037001F", 2, _u(subject)),
-        _Entry("__substg1.0_007D001F", 2, _u(headers)),
-        _Entry("__substg1.0_1000001F", 2, _u(body)),
-        _Entry("__substg1.0_5D01001F", 2, _u(sender)),
-    ]
+              attachments: list[tuple[str, bytes]], html: str | None = None) -> bytes:
+    """A .msg with the MAPI streams DocuTraceX reads. Uses the general compound
+    file writer (cfb.py) so attachments of any size are stored correctly."""
+    from cfb import build_cfb as _build
+
+    tree: dict = {
+        "__substg1.0_0037001F": _u(subject),
+        "__substg1.0_007D001F": _u(headers),
+        "__substg1.0_1000001F": _u(body),
+        "__substg1.0_5D01001F": _u(sender),
+    }
+    if html:
+        tree["__substg1.0_10130102"] = html.encode("utf-8")
     for i, (name, data) in enumerate(attachments):
-        st = _Entry(f"__attach_version1.0_#{i:08X}", 1)
-        st.children = [
-            _Entry("__substg1.0_3707001F", 2, _u(name)),
-            _Entry("__substg1.0_37010102", 2, data),
-        ]
-        top.append(st)
-    return _pack(root, top)
+        tree[f"__attach_version1.0_#{i:08X}"] = {
+            "__substg1.0_3707001F": _u(name),
+            "__substg1.0_37010102": data,
+        }
+    return _build(tree)
 
 
 def build_cfb(top_spec: list) -> bytes:
@@ -203,5 +206,5 @@ def _pack(root: "_Entry", top: list["_Entry"]) -> bytes:
 
 
 def write_msg(path: Path, headers: str, subject: str, body: str, sender: str,
-              attachments: list[tuple[str, bytes]]) -> None:
-    path.write_bytes(build_msg(headers, subject, body, sender, attachments))
+              attachments: list[tuple[str, bytes]], html: str | None = None) -> None:
+    path.write_bytes(build_msg(headers, subject, body, sender, attachments, html))
