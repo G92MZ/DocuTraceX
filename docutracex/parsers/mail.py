@@ -6,7 +6,9 @@ All static, no network and nothing executed:
 - .msg         : minimal MAPI-over-OLE reader built on ``olefile`` (BSD; already
   present via oletools) — no GPL ``extract-msg`` dependency. The Outlook message
   carries the full RFC 822 headers in the transport-headers MAPI stream, so the
-  same header/auth/spoofing analysis runs for both families.
+  same header/auth/spoofing analysis runs for both families. The HTML body comes
+  from PR_HTML or, failing that, is de-encapsulated from the compressed RTF
+  (see ``msg_rtf``).
 
 Surfaces: the Received hop chain (origin -> destination, with inter-hop Δt),
 authentication results (SPF/DKIM/DMARC as stated in the headers — not re-checked
@@ -18,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from html.parser import HTMLParser
 from datetime import datetime
 from email import message_from_bytes, message_from_string
 from email.message import Message
@@ -40,6 +43,8 @@ _MAPI = {
     "subject": ("0037001F", "0037001E"),
     "transport_headers": ("007D001F", "007D001E"),
     "body": ("1000001F", "1000001E"),
+    "html": ("10130102", "1013001F", "1013001E"),
+    "rtf_compressed": ("10090102",),
     "sender_name": ("0C1A001F", "0C1A001E"),
     "sender_email": ("5D01001F", "5D01001E", "0C1F001F", "0C1F001E"),
     "display_to": ("0E04001F", "0E04001E"),
@@ -264,10 +269,75 @@ def _analyze_eml_body(msg: Message, extracted_dir: Path | None, result: dict[str
     text = "\n".join(texts)
     result["body_sample"] = text[:_BODY_SAMPLE]
     result["body_length"] = len(text)
-    result["has_html"] = bool(html)
-    html_text = "\n".join(html)
+    _set_html_body("\n".join(html), result)
+
+
+def _set_html_body(html_text: str, result: dict[str, Any]) -> None:
+    """Store the HTML body interpreted as text, its links and a source sample."""
+    result["has_html"] = bool(html_text.strip())
+    if not result["has_html"]:
+        return
+    result["html_text_sample"] = _html_to_text(html_text)[:_BODY_SAMPLE]
+    result["html_source_sample"] = html_text[:_BODY_SAMPLE]
     result["html_links"] = list(dict.fromkeys(_RE_HREF.findall(html_text)))[:_MAX_LINKS]
     _html_link_mismatch(html_text, result)
+
+
+class _HtmlToText(HTMLParser):
+    """Static HTML -> readable text (no scripts run, nothing fetched)."""
+
+    _BLOCK = {"p", "div", "br", "tr", "li", "h1", "h2", "h3", "h4", "h5", "h6",
+              "table", "ul", "ol", "blockquote", "hr", "section", "article"}
+    _SKIP = {"script", "style", "head", "title", "noscript", "template"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self._skip = 0
+        self._href: list[str | None] = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self._SKIP:
+            self._skip += 1
+        elif tag in self._BLOCK:
+            self.parts.append("\n")
+        if tag == "a":
+            self._href.append(dict(attrs).get("href"))
+        elif tag == "img":
+            alt = dict(attrs).get("alt")
+            if alt and not self._skip:
+                self.parts.append(f"[image: {alt}]")
+
+    def handle_endtag(self, tag):
+        if tag in self._SKIP:
+            self._skip = max(0, self._skip - 1)
+        elif tag in self._BLOCK:
+            self.parts.append("\n")
+        if tag == "a" and self._href:
+            href = self._href.pop()
+            if href and not self._skip and not href.lower().startswith("mailto:"):
+                self.parts.append(f" <{href}>")
+
+    def handle_data(self, data):
+        if not self._skip:
+            self.parts.append(data)
+
+    def text(self) -> str:
+        raw = "".join(self.parts).replace("\xa0", " ")
+        lines = [re.sub(r"[ \t\r\f\v]+", " ", ln).strip() for ln in raw.split("\n")]
+        return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+def _html_to_text(html: str) -> str:
+    if not html:
+        return ""
+    parser = _HtmlToText()
+    try:
+        parser.feed(html)
+        parser.close()
+    except Exception:  # noqa: BLE001
+        pass
+    return parser.text()
 
 
 _RE_HREF = re.compile(r'href=["\']?((?:https?|ftp)://[^"\'>\s]+)', re.IGNORECASE)
@@ -315,6 +385,25 @@ def _mapi_text(ole, prefix: str, suffixes) -> str:
         return raw.decode("latin-1", "replace")
 
 
+def _msg_html(ole) -> str:
+    """HTML body of a .msg: PR_HTML, else HTML encapsulated in the compressed RTF."""
+    from . import msg_rtf
+
+    for suf in _MAPI["html"]:
+        raw = _mapi_stream(ole, "", (suf,))
+        if raw:
+            if suf.endswith("0102"):
+                return msg_rtf.decode_html_bytes(raw)
+            return _mapi_text(ole, "", (suf,))
+    raw = _mapi_stream(ole, "", _MAPI["rtf_compressed"])
+    if raw:
+        try:
+            return msg_rtf.html_from_rtf(msg_rtf.decompress_rtf(raw))
+        except Exception:  # noqa: BLE001
+            return ""
+    return ""
+
+
 def _parse_msg(path: Path, extracted_dir: Path | None, result: dict[str, Any]) -> None:
     import olefile
 
@@ -350,6 +439,7 @@ def _parse_msg(path: Path, extracted_dir: Path | None, result: dict[str, Any]) -
         result["mime_structure"] = ["message/rfc822 (MAPI)"]
         result["body_sample"] = body[:_BODY_SAMPLE]
         result["body_length"] = len(body)
+        _set_html_body(_msg_html(ole), result)
 
         # Recipients and attachments live in __recip_*/__attach_* storages.
         for entry in ole.listdir(streams=False, storages=True):
@@ -380,6 +470,7 @@ def analyze(original_path: Path, declared_ext: str,
         "headers": [], "received_chain": [], "hop_count": 0,
         "authentication": {}, "addresses": {}, "mime_structure": [],
         "body_sample": "", "body_length": 0, "has_html": False, "html_links": [],
+        "html_text_sample": "", "html_source_sample": "",
         "attachments": [], "findings": [],
     }
     try:

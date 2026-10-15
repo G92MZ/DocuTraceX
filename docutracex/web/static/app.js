@@ -723,9 +723,26 @@ function paneEmailBody(email) {
     html += `<p class="hint-line">MIME structure: ${escapeHtml(email.mime_structure.join(" · "))}${email.has_html ? " · HTML present" : ""}</p>`;
   }
   const body = (email && email.body_sample) || "";
+  const htmlText = (email && email.html_text_sample) || "";
+  const htmlSrc = (email && email.html_source_sample) || "";
+  const links = (email && email.html_links) || [];
+  html += `<p class="hint-line"><strong>Text body</strong></p>`;
   html += body
     ? `<pre class="text-sample">${escapeHtml(body.slice(0, 8000))}</pre>`
     : `<p class="hint-line">No text body.</p>`;
+  if (htmlText || htmlSrc) {
+    html += `<p class="hint-line"><strong>HTML body (interpreted as text; not rendered, nothing loaded)</strong></p>`;
+    html += htmlText
+      ? `<pre class="text-sample">${escapeHtml(htmlText.slice(0, 8000))}</pre>`
+      : `<p class="hint-line">HTML body has no visible text.</p>`;
+    if (links.length) {
+      html += `<p class="hint-line"><strong>Links in HTML body (${links.length})</strong></p>`;
+      html += `<pre class="text-sample">${escapeHtml(links.join("\n"))}</pre>`;
+    }
+    if (htmlSrc) {
+      html += `<details class="disclose"><summary>HTML source</summary><pre class="text-sample">${escapeHtml(htmlSrc.slice(0, 20000))}</pre></details>`;
+    }
+  }
   return html;
 }
 
