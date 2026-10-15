@@ -256,6 +256,15 @@ def sources_from_modules(modules: dict[str, dict[str, Any]]) -> list[dict[str, A
         for js in pdf.get("javascript", []) or []:
             add("pdf", "javascript", js.get("code"))
 
+    # PDF tools: decoded QR codes and the targets of the own PDF rules.
+    pt = modules.get("pdftools")
+    if pt:
+        for c in pt.get("qr", []) or []:
+            add("pdftools", f"qr/page {c.get('page')}", c.get("text"))
+        for f in pt.get("findings", []) or []:
+            if f.get("rule") in ("form_submits_externally", "launch_command"):
+                add("pdftools", f.get("rule"), f.get("evidence"))
+
     # Email: message content only (plain-text body, HTML body as text and its links).
     # Headers, Received hops and attachment names are deliberately not scanned.
     email = modules.get("email")

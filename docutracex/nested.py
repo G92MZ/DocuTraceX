@@ -137,6 +137,8 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
             from .parsers import pdf
             res = pdf.analyze(abs_path, work)
             add_findings(res.get("findings"), "pdf")
+            from .parsers import pdf_tools
+            add_findings(pdf_tools.analyze(abs_path, res).get("findings"), "pdftools")
             for emb in res.get("embedded", []) or []:
                 sp = emb.get("stored_path")
                 if sp:
