@@ -15,11 +15,13 @@ env/
 .coverage
 htmlcov/
 
-# DocuTraceX runtime data (never commit cases or bundled tools)
+# DocuTraceX runtime data (never commit cases, bundled tools or your YARA rules)
 /cases/*
 !/cases/.gitkeep
 /tools/*
 !/tools/.gitkeep
+/yara/*
+!/yara/.gitkeep
 
 # OS / editor
 .DS_Store
