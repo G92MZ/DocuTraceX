@@ -1,9 +1,10 @@
 """Scan a case with the YARA ruleset.
 
 Runs the compiled rules over the original file and everything the parsers
-extracted (attachments, embedded files, OLE objects, media). Every match is
-recorded for display; only matches of *enabled* rules are turned into findings
-(so by default YARA never adds noise to the report — the analyst opts rules in).
+extracted (attachments, embedded files, OLE objects, media). Every hit (rule x
+file) becomes a finding the analyst triages with a mark (true/false positive,
+...); only findings marked true positive reach the report. Each hit carries the
+rule's source, what matched (offset, bytes, printable text) and the local path.
 """
 
 from __future__ import annotations
@@ -63,30 +64,46 @@ def analyze(original_path: Path, extracted_dir: Path) -> dict[str, Any]:
         result["counts"] = {"findings": 0}
         return result
 
-    enabled = yara_engine.enabled_rules()
+    from ..findings import finding_id
+
+    ns_path = {src["namespace"]: src["path"] for src in report.get("sources", [])
+               if src.get("status") == "ok"}
+    rules_info: dict[str, dict[str, str]] = {}
     total_matches = 0
     for rel, path in _iter_targets(original_path, extracted_dir):
-        matches = yara_engine.scan_path(compiled, path, enabled)
+        matches = yara_engine.scan_path(compiled, path, set())
         result["files_scanned"] += 1
         if not matches:
             continue
         total_matches += len(matches)
-        result["scanned"].append({"file": rel, "matches": matches})
+        try:
+            stored = path.relative_to(extracted_dir.parent).as_posix()
+        except ValueError:
+            stored = ""
+        result["scanned"].append({"file": rel, "path": str(path.resolve()),
+                                  "stored_path": stored, "matches": matches})
         for m in matches:
-            if not m.get("enabled"):
-                continue  # opt-in: only enabled rules become findings
+            key = f"{m.get('namespace', '')}:{m['rule']}"
+            if key not in rules_info:
+                rfile = ns_path.get(m.get("namespace", ""), "")
+                rules_info[key] = {"file": rfile,
+                                   "source": yara_engine.rule_source(rfile, m["rule"]) if rfile else ""}
             meta = m.get("meta", {})
             desc = meta.get("description") or meta.get("desc") or ""
             tags = ", ".join(m.get("tags", []))
-            result["findings"].append({
+            f = {
                 "tool": "yara", "rule": f"yara:{m['rule']}",
                 "severity": _severity(meta),
                 "detail": f"YARA rule '{m['rule']}' matched {rel}"
                           + (f" — {desc}" if desc else "") + (f" [{tags}]" if tags else ""),
                 "location": f"yara:{rel}",
                 "evidence": "; ".join(
-                    f"{s['id']}@{s['offset']}" for s in m.get("strings", [])[:8]),
-            })
+                    f"{s['id']}@{s['offset']}: {s.get('text', '')[:40]}"
+                    for s in m.get("strings", [])[:8]),
+            }
+            m["finding_id"] = finding_id(f["tool"], f["rule"], f["location"], f["detail"])
+            result["findings"].append(f)
+    result["rules_info"] = rules_info
 
     result["match_count"] = total_matches
     result["counts"] = {"findings": len(result["findings"])}
