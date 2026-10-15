@@ -22,7 +22,8 @@ class Settings:
     app_root: Path = APP_ROOT
     tools_dir: Path = APP_ROOT / "tools"
     cases_dir: Path = APP_ROOT / "cases"
-    yara_dir: Path = APP_ROOT / "yara"  # uploaded/registered YARA rules + config
+    # Uploaded/registered YARA rules + config.
+    yara_dir: Path = Path(os.environ.get("DOCUTRACEX_YARA_DIR") or APP_ROOT / "yara")
     host: str = os.environ.get("DOCUTRACEX_HOST", "127.0.0.1")
     port: int = int(os.environ.get("DOCUTRACEX_PORT", "8000"))
     log_level: str = os.environ.get("DOCUTRACEX_LOG_LEVEL", "INFO")
