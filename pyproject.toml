@@ -31,6 +31,26 @@ dependencies = [
     "pdfminer.six>=20231228",
     # YARA rule matching engine (opt-in findings).
     "yara-python>=4.3",
+    # VBA p-code disassembly / decompilation (VBA stomping). GPL-3.0: installed
+    # into the portable at provisioning time, never shipped in this repository.
+    "pcodedmp>=1.2.6",
+    "pcode2code>=0.1.1",
+    # Excel binary workbooks (.xlsb): sheets, formulas, XLM macro sheets.
+    "pyxlsb2>=0.0.9",
+    # PDF: peepdf-3 (GPL-3.0, run as a separate tool), signatures (pyhanko),
+    # page rendering for QR codes (pypdfium2).
+    "peepdf-3>=6.0",
+    "pyhanko>=0.25",
+    "pypdfium2>=4.30",
+    # QR codes in images and rendered pages.
+    "zxing-cpp>=2.2",
+    "Pillow>=10.0",
+    # Email: offline DKIM body-hash/signature checks, look-alike characters.
+    "dkimpy>=1.1",
+    "confusable_homoglyphs>=3.3",
+    # JavaScript: V8 sandbox (no host bindings) for deobfuscation, pretty-printing.
+    "stpyv8>=12.0",
+    "jsbeautifier>=1.15",
 ]
 
 [project.optional-dependencies]
@@ -52,3 +72,8 @@ include = ["docutracex*"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.pytest.ini_options]
+# Only our tests: tools/ holds third-party interpreters (PyPy ships its own tests).
+testpaths = ["tests"]
+norecursedirs = ["tools", "cases", "yara", ".git"]

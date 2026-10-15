@@ -27,11 +27,46 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _family(manifest: dict[str, Any]) -> str | None:
+def _family(manifest: dict[str, Any], original: Path | None = None) -> str | None:
+    """Family to analyse as: the declared one, except RTF, recognised by content
+    (Word opens RTF whatever the extension, e.g. a ``.doc`` that is really RTF)."""
+    if original is not None:
+        from .parsers import rtf
+        try:
+            with original.open("rb") as fh:
+                if rtf.is_rtf(fh.read(8)):
+                    return "rtf"
+        except OSError:
+            pass
     disc = manifest.get("format", {}).get("discrepancy") or {}
     return disc.get("declared_family")
 
 
+
+
+def _office_extras(run, original: Path, paths: CasePaths, family: str, declared_ext: str,
+                   ole_res: dict[str, Any]) -> list[dict[str, Any]]:
+    """Own Office rules, VBA/OLE structure tools and ViperMonkey emulation."""
+    from .parsers import office_rules, vba_tools, vipermonkey
+
+    out: list[dict[str, Any]] = []
+    rules = run("officerules: remote templates/objects, Follina, Equation, ActiveX, XLM, attribution",
+                lambda: office_rules.analyze_ooxml(original) if family == "ooxml"
+                else office_rules.analyze_ole(original))
+    out.append(rules)
+    olevba = (ole_res.get("tools") or {}).get("olevba") or {}
+    has_vba = bool(olevba.get("macros"))
+    ext = (declared_ext or "").lower()
+    vt = run("vbatools: pcodedmp · pcode2code · oledump plugins · oletimes · olemeta · oledir",
+             lambda: vba_tools.analyze(original, family, has_vba, olevba.get("modules"),
+                                       is_excel_binary=(family == "ole" and ext in (".xls", ".xlt", ".xla"))))
+    out.append(vt)
+    if has_vba:
+        vm = run("vipermonkey: VBA emulation (PyPy 2.7)",
+                 lambda: vipermonkey.analyze(original, paths.extracted_dir), note="not provisioned")
+        if vm.get("available"):
+            out.append(vm)
+    return out
 
 
 def analyze_case(case_root: Path) -> dict[str, Any]:
@@ -42,8 +77,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     if manifest is None:
         raise FileNotFoundError(f"No case.json in {case_root}")
 
-    family = _family(manifest)
     original = paths.root / manifest["original"]["stored_path"]
+    family = _family(manifest, original)
     ran: list[str] = []
     overall_counts: dict[str, int] = {"components": 0, "findings": 0, "iocs": 0}
     state = "completed"
@@ -91,8 +126,13 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 
         # Semantic parser for the specific Office app (Word/Excel/PowerPoint).
         declared_ext = manifest["original"].get("declared_extension", "")
-        sem = run("office: semantic parser (metadata, DDE, formulas, hidden sheets)",
-                  lambda: office.analyze(original, declared_ext, paths.extracted_dir))
+        if declared_ext.lower() == ".xlsb":
+            from .parsers import xlsb
+            sem = run("xlsb: pyxlsb2 (sheets, formulas, XLM macro sheets, Auto_Open)",
+                      lambda: xlsb.analyze(original))
+        else:
+            sem = run("office: semantic parser (metadata, DDE, formulas, hidden sheets)",
+                      lambda: office.analyze(original, declared_ext, paths.extracted_dir))
         if sem is not None:
             module = sem["module"]
             write_subresult(paths, module, sem)
@@ -156,6 +196,11 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             if oms_res.get("findings") and state == "completed":
                 state = "completed"
 
+        for extra in _office_extras(run, original, paths, "ooxml", declared_ext, ole_res):
+            write_subresult(paths, extra["module"], extra)
+            ran.append(extra["module"])
+            findings_total += extra.get("counts", {}).get("findings", 0)
+
         # Recursion: analyze embedded OLE objects (oleobj) with their own tools.
         from . import nested
 
@@ -165,6 +210,39 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                  if o.get("stored_path")]
         if items:
             nested_res = run("nested: recursive scan of embedded OLE objects",
+                             lambda: nested.scan_children(items, paths))
+            if nested_res.get("tree"):
+                write_subresult(paths, "nested", nested_res)
+                ran.append("nested")
+                findings_total += nested_res.get("counts", {}).get("findings", 0)
+    elif family == "rtf":
+        # RTF (also a .doc/.dot... that is really RTF): own structure/object rules,
+        # rtfobj, rtfdump and RTFScan; oleid/msodde from oletools; recursion
+        # into the extracted objects.
+        from . import nested
+        from .parsers import oletools_suite, rtf
+
+        declared_ext = manifest["original"].get("declared_extension", "")
+        rtf_res = run("rtf: structure · objects (rtfobj) · fields · template · rtfdump · RTFScan · own rules",
+                      lambda: rtf.analyze(original, declared_ext, paths.extracted_dir))
+        write_subresult(paths, "rtf", rtf_res)
+        ran.append("rtf")
+        overall_counts["components"] = len(rtf_res.get("objects") or [])
+        findings_total += rtf_res.get("counts", {}).get("findings", 0)
+        if rtf_res.get("status") == "error":
+            state = "error"
+
+        ole_res = run("oletools: oleid · msodde · olevba",
+                      lambda: oletools_suite.analyze(original, paths.extracted_dir))
+        write_subresult(paths, "oletools", ole_res)
+        ran.append("oletools")
+        findings_total += ole_res.get("counts", {}).get("findings", 0)
+
+        items = [{"path": str(paths.extracted_dir.parent / o["stored_path"]),
+                  "filename": o.get("filename") or Path(o["stored_path"]).name}
+                 for o in rtf_res.get("objects") or [] if o.get("stored_path")]
+        if items:
+            nested_res = run("nested: recursive scan of embedded RTF objects",
                              lambda: nested.scan_children(items, paths))
             if nested_res.get("tree"):
                 write_subresult(paths, "nested", nested_res)
@@ -184,6 +262,13 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         findings_total += pdf_res.get("counts", {}).get("findings", 0)
         if pdf_res.get("status") == "error":
             state = "error"
+
+        from .parsers import pdf_tools
+        pt_res = run("pdftools: peepdf · pdf-parser (targeted) · pdfid -e · signatures · QR · own rules",
+                     lambda: pdf_tools.analyze(original, pdf_res))
+        write_subresult(paths, "pdftools", pt_res)
+        ran.append("pdftools")
+        findings_total += pt_res.get("counts", {}).get("findings", 0)
 
         didier_res = run("didier: pdfid · pdf-parser",
                          lambda: didier.analyze(original, "pdf"), note="not provisioned")
@@ -216,6 +301,14 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                 state = "error"
             elif mail_res.get("findings"):
                 state = "completed"
+
+        if mail_res is not None:
+            from .parsers import mail_rules
+            mr = run("mailrules: gateway links · HTML phishing · DKIM bh · look-alikes · Received · QR",
+                     lambda: mail_rules.analyze(original, declared_ext, mail_res, paths.root))
+            write_subresult(paths, "mailrules", mr)
+            ran.append("mailrules")
+            findings_total += mr.get("counts", {}).get("findings", 0)
 
         # Third-party tools (olevba/oleid/msodde/…) are NOT run on the email
         # envelope itself: an .eml is RFC 822 text, so oleid just reports noise
@@ -291,6 +384,11 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             write_subresult(paths, "didier", didier_res)
             ran.append("didier")
 
+        for extra in _office_extras(run, original, paths, "ole", declared_ext, ole_res):
+            write_subresult(paths, extra["module"], extra)
+            ran.append(extra["module"])
+            findings_total += extra.get("counts", {}).get("findings", 0)
+
         items = [{"path": str(paths.root / o["stored_path"]),
                   "filename": Path(o["stored_path"]).name}
                  for o in ole_res.get("tools", {}).get("oleobj", {}).get("objects", []) or []
@@ -305,6 +403,19 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     else:
         # No parser for this family yet.
         state = "completed"
+
+    # JavaScript: extracted from every place it can hide (PDF, HTML body,
+    # attachments, OLE packages, nested children...), analysed and sandboxed.
+    from .parsers import javascript
+    if ran or original.suffix.lower() in javascript._SCRIPT_EXT:
+        js_mods = {m: read_json(paths.subresult(m)) for m in ("pdf", "email", "oletools")}
+        js_res = run("javascript: extraction · static analysis · STPyV8 sandbox",
+                     lambda: javascript.analyze(original, paths.extracted_dir,
+                                                {k: v for k, v in js_mods.items() if v}))
+        if js_res.get("scripts"):
+            write_subresult(paths, "javascript", js_res)
+            ran.append("javascript")
+            findings_total += js_res.get("counts", {}).get("findings", 0)
 
     # YARA runs only on demand (YARA tab / re-run "yara"), never automatically.
     # A previous on-demand scan of this case is kept across full re-analyses.
@@ -363,7 +474,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 
 # Modules that can be re-run in isolation over an existing case.
 _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto",
-               "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole")
+               "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole",
+               "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules", "javascript", "rtf")
 # Modules whose findings feed the consolidated view (includes derived ones).
 _COLLECTABLE = _RERUNNABLE + ("nested",)
 
@@ -409,15 +521,34 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
 
     original = paths.root / manifest["original"]["stored_path"]
     declared_ext = manifest["original"].get("declared_extension", "")
-    family = _family(manifest)
+    family = _family(manifest, original)
     ed = paths.extracted_dir
 
     if module == "ooxml":
         from .parsers import ooxml
         res = ooxml.analyze(original, ed)
     elif module in ("word", "excel", "powerpoint"):
-        from .parsers import office
-        res = office.analyze(original, declared_ext, ed)
+        if declared_ext.lower() == ".xlsb":
+            from .parsers import xlsb
+            res = xlsb.analyze(original)
+        else:
+            from .parsers import office
+            res = office.analyze(original, declared_ext, ed)
+    elif module in ("officerules", "vbatools", "vipermonkey"):
+        from .parsers import office_rules, vba_tools, vipermonkey
+        fam = "ooxml" if family == "ooxml" else "ole"
+        if module == "officerules":
+            res = office_rules.analyze_ooxml(original) if fam == "ooxml" else office_rules.analyze_ole(original)
+        else:
+            olevba = ((read_json(paths.subresult("oletools")) or {}).get("tools") or {}).get("olevba") or {}
+            if module == "vbatools":
+                res = vba_tools.analyze(original, fam, bool(olevba.get("macros")), olevba.get("modules"),
+                                        is_excel_binary=(fam == "ole" and declared_ext.lower() in (".xls", ".xlt", ".xla")))
+            else:
+                res = vipermonkey.analyze(original, ed)
+    elif module == "rtf":
+        from .parsers import rtf
+        res = rtf.analyze(original, declared_ext, ed)
     elif module == "oletools":
         from .parsers import oletools_suite
         res = oletools_suite.analyze(original, ed)
@@ -437,9 +568,19 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
     elif module == "email":
         from .parsers import mail
         res = mail.analyze(original, declared_ext, ed)
+    elif module == "javascript":
+        from .parsers import javascript
+        mods = {m: read_json(paths.subresult(m)) for m in ("pdf", "email", "oletools")}
+        res = javascript.analyze(original, ed, {k: v for k, v in mods.items() if v})
+    elif module == "mailrules":
+        from .parsers import mail_rules
+        res = mail_rules.analyze(original, declared_ext, read_json(paths.subresult("email")) or {}, paths.root)
     elif module == "pdf":
         from .parsers import pdf as pdf_parser
         res = pdf_parser.analyze(original, ed)
+    elif module == "pdftools":
+        from .parsers import pdf_tools
+        res = pdf_tools.analyze(original, read_json(paths.subresult("pdf")) or {})
     elif module == "yara":
         from .parsers import yara_scan
         res = yara_scan.analyze(original, ed)
@@ -510,7 +651,8 @@ def run_analysis(case_root: Path, module: str | None = None) -> None:
         try:
             proc = subprocess.run(
                 cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=600, env=native.subprocess_env(),
+                # Generous: every tool (incl. ViperMonkey emulation) runs per case.
+                timeout=1800, env=native.subprocess_env(),
             )
             if proc.returncode == 0:
                 return

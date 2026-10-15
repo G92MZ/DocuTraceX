@@ -6,8 +6,9 @@ extracts it to ``tools/python/``, installs the app and its dependencies into it
 (so DocuTraceX runs on the bundled interpreter), and on Windows also provisions
 the native libmagic (DLL + magic database) under ``tools/libmagic/``.
 
-Primary version: CPython 3.13 (broadest wheel coverage today; matches the
-roadmap). Add a second version later only if a specific tool needs it.
+Primary version: CPython 3.13 (broadest wheel coverage today). A second,
+separate interpreter — PyPy 2.7 under ``tools/pypy/`` — is provisioned only for
+ViperMonkey (VBA emulation), whose code is Python 2 only.
 
 Usage:
     python scripts/setup_portable_python.py            # 3.13, this platform
@@ -40,7 +41,30 @@ DIDIER_DIR = TOOLS / "didier"
 OMS_DIR = TOOLS / "officemalscanner"
 
 DIDIER_BASE = "https://raw.githubusercontent.com/DidierStevens/DidierStevensSuite/master/"
-DIDIER_FILES = ["oledump.py", "zipdump.py", "pdfid.py", "pdf-parser.py", "emldump.py"]
+DIDIER_FILES = [
+    "oledump.py", "zipdump.py", "pdfid.py", "pdf-parser.py", "emldump.py", "rtfdump.py",
+    "decode-vbe.py",  # decodes Script Encoder (.jse/.vbe) payloads
+    # oledump plugins (loaded with -p): BIFF/XLM records, VBA summary/DCO/routines,
+    # HTTP-looking strings and generic stream object heuristics.
+    "plugin_biff.py", "plugin_vba_summary.py", "plugin_vba_dco.py",
+    "plugin_vba_routines.py", "plugin_http_heuristics.py", "plugin_stream_o.py",
+]
+
+# Second portable interpreter: PyPy 2.7, used only by ViperMonkey (VBA emulation),
+# whose code is Python 2 only. Official builds from pypy.org (MIT).
+PYPY_DIR = TOOLS / "pypy"
+PYPY_VERSION = "7.3.17"
+PYPY_BASE = "https://downloads.python.org/pypy/"
+# ViperMonkey (BSD-like, P. Lagadec / K. Sayre), pinned to a known-good commit.
+VIPERMONKEY_COMMIT = "73547cef7f82dbcb10e22e36b84b558a07f7d21d"
+VIPERMONKEY_URLS = (
+    f"https://github.com/decalage2/ViperMonkey/archive/{VIPERMONKEY_COMMIT}.zip",
+    f"https://codeload.github.com/decalage2/ViperMonkey/zip/{VIPERMONKEY_COMMIT}",
+)
+# Its requirements, minus ``regex`` (needs a C compiler under PyPy and is optional)
+# and ``psutil`` (only used to drive LibreOffice for Excel exports).
+VIPERMONKEY_DEPS = ["oletools>=0.56.1,<=0.60.2", "olefile", "prettytable", "colorlog",
+                    "colorama", "pyparsing==2.2.0", "xlrd2", "xlrd", "unidecode==1.2.0"]
 
 # OfficeMalScanner (Frank Boldewin), freeware. The original site
 # (reconstructer.org) is offline; the author republished it on his GitHub, which
@@ -242,6 +266,108 @@ def _officemalscanner_present() -> bool:
     return (OMS_DIR / OMS_EXE).is_file()
 
 
+# --- PyPy 2.7 + ViperMonkey -------------------------------------------------------
+
+def _pypy_asset() -> str:
+    arch = _arch()
+    if sys.platform.startswith("win"):
+        return f"pypy2.7-v{PYPY_VERSION}-win64.zip"
+    if sys.platform == "darwin":
+        return f"pypy2.7-v{PYPY_VERSION}-macos_{'arm64' if arch == 'aarch64' else 'x86_64'}.tar.bz2"
+    return f"pypy2.7-v{PYPY_VERSION}-{'aarch64' if arch == 'aarch64' else 'linux64'}.tar.bz2"
+
+
+def pypy_executable() -> Path | None:
+    for c in (PYPY_DIR / "pypy.exe", PYPY_DIR / "bin" / "pypy", PYPY_DIR / "bin" / "pypy2"):
+        if c.is_file():
+            return c
+    return None
+
+
+def install_pypy() -> bool:
+    """Download PyPy 2.7 into tools/pypy/ (flattening its top-level folder)."""
+    if pypy_executable():
+        return True
+    name = _pypy_asset()
+    print(f"[>] Provisioning PyPy 2.7 (for ViperMonkey) into tools/pypy/: {name}")
+    try:
+        data = _get(PYPY_BASE + name)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] Could not download PyPy ({exc}); ViperMonkey stays disabled.")
+        return False
+    import io
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        try:
+            if name.endswith(".zip"):
+                with zipfile.ZipFile(io.BytesIO(data)) as z:
+                    z.extractall(tdp)
+            else:
+                with tarfile.open(fileobj=io.BytesIO(data), mode="r:bz2") as t:
+                    try:
+                        t.extractall(tdp, filter="tar")  # keeps the bin/ symlinks
+                    except TypeError:
+                        t.extractall(tdp)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[!] Could not extract PyPy: {exc}")
+            return False
+        tops = [p for p in tdp.iterdir() if p.is_dir()]
+        if len(tops) != 1:
+            print("[!] Unexpected PyPy archive layout.")
+            return False
+        if PYPY_DIR.exists():
+            shutil.rmtree(PYPY_DIR)
+        shutil.move(str(tops[0]), str(PYPY_DIR))
+    exe = pypy_executable()
+    if exe is None:
+        print("[!] PyPy extracted but its executable was not found.")
+        return False
+    subprocess.run([str(exe), "-m", "ensurepip"], check=False, capture_output=True)
+    print(f"[+] PyPy at {exe}")
+    return True
+
+
+def _vipermonkey_ok() -> bool:
+    exe = pypy_executable()
+    if exe is None:
+        return False
+    try:
+        r = subprocess.run([str(exe), "-c", "import vipermonkey.vmonkey"],
+                           capture_output=True, timeout=120)
+        return r.returncode == 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def install_vipermonkey(source: str | None = None) -> bool:
+    """Install ViperMonkey (pinned) and its Python 2 dependencies into PyPy.
+
+    ``source`` (or env DOCUTRACEX_VIPERMONKEY_SRC) may point to a local checkout
+    or archive instead of the GitHub download.
+    """
+    import os
+
+    exe = pypy_executable()
+    if exe is None and not install_pypy():
+        return False
+    exe = pypy_executable()
+    pip = [str(exe), "-m", "pip", "--disable-pip-version-check", "-q"]
+    print("[>] Installing ViperMonkey into PyPy (Python 2.7)")
+    r = subprocess.run(pip + ["install", *VIPERMONKEY_DEPS], capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"[!] ViperMonkey dependencies failed: {r.stderr.strip()[-400:]}")
+        return False
+    sources = [source or os.environ.get("DOCUTRACEX_VIPERMONKEY_SRC") or ""]
+    sources = [x for x in sources if x] or list(VIPERMONKEY_URLS)
+    for src in sources:
+        r = subprocess.run(pip + ["install", "--no-deps", src], capture_output=True, text=True)
+        if r.returncode == 0 and _vipermonkey_ok():
+            print("[+] ViperMonkey installed")
+            return True
+        print(f"[!] Could not install ViperMonkey from {src}: {r.stderr.strip()[-300:]}")
+    return False
+
+
 def verify() -> None:
     py = _portable_python()
     print("[>] Verifying the portable runtime")
@@ -276,6 +402,7 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
         install_libmagic_windows()
     install_didier()
     install_officemalscanner()
+    install_vipermonkey()
     verify()
 
 
@@ -325,7 +452,8 @@ def ensure(version: str = DEFAULT_VERSION) -> bool:
             deps_ok = _tool_deps_ok(py)
             didier_ok = _didier_present()
             oms_ok = _officemalscanner_present()
-            if deps_ok and didier_ok and oms_ok:
+            vm_ok = _vipermonkey_ok()
+            if deps_ok and didier_ok and oms_ok and vm_ok:
                 print(f"[=] Portable Python present with tools OK at {PY_DIR}")
                 return True
             if not deps_ok:
@@ -337,6 +465,8 @@ def ensure(version: str = DEFAULT_VERSION) -> bool:
                 install_didier()
             if not oms_ok:
                 install_officemalscanner()  # retried on each start until present
+            if not vm_ok:
+                install_vipermonkey()  # PyPy 2.7 + ViperMonkey; retried until present
             return _tool_deps_ok(py)
 
         print("[>] Portable Python not found — provisioning it now...")
