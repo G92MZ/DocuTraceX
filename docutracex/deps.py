@@ -39,7 +39,8 @@ out = {"python_version": sys.version.split()[0], "executable": sys.executable, "
 for imp, pip in deps:
     rec = {"installed": True, "version": None, "error": None}
     try:
-        importlib.import_module(imp)
+        if getattr(importlib.import_module(imp), "__file__", None) is None:
+            raise ImportError(imp + " resolved to a folder, not the package")
     except Exception as e:
         rec["installed"] = False
         rec["error"] = str(e)
@@ -161,7 +162,11 @@ def check_dependencies(deps: list[Dependency] | None = None) -> list[DepStatus]:
         installed = True
         error = None
         try:
-            importlib.import_module(dep.import_name)
+            mod = importlib.import_module(dep.import_name)
+            if getattr(mod, "__file__", None) is None:
+                # A bare folder with the same name (e.g. the yara/ rules store)
+                # imports as a namespace package: that is not the dependency.
+                raise ImportError(f"'{dep.import_name}' resolved to a folder, not the package")
         except Exception as exc:  # noqa: BLE001  (ImportError and native-load errors)
             installed = False
             error = str(exc)

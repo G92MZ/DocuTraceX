@@ -10,7 +10,9 @@ becomes a *finding* (and reaches the report) when the analyst has enabled that
 rule. By default nothing YARA produces is a finding.
 
 Compilation is namespaced per source file, so a broken rule file is reported on
-its own without sinking the rest. yara-python (Apache-2.0) runs on the portable.
+its own without sinking the rest. yara-python (Apache-2.0) is used in-process
+when the app's interpreter has it; otherwise rule compilation/listing is
+delegated to the portable Python under ``tools/`` (where the analysis runs).
 """
 
 from __future__ import annotations
@@ -163,16 +165,100 @@ def _iter_rule_files(external_paths: list[str]) -> list[Path]:
 
 # --- compilation + scanning --------------------------------------------------
 
+def _load_yara() -> tuple[Any, str | None]:
+    """Import yara-python. Returns (module, None) or (None, reason).
+
+    The rule store folder is also called ``yara/``; when yara-python is missing,
+    ``import yara`` silently resolves to that folder as a namespace package, so
+    the module is checked for ``compile`` instead of trusting the import.
+    """
+    try:
+        import yara
+    except Exception as exc:  # noqa: BLE001
+        return None, f"yara-python not installed: {exc}"
+    if not hasattr(yara, "compile"):
+        where = ", ".join(str(p) for p in getattr(yara, "__path__", []) or []) or "?"
+        return None, ("yara-python not installed in this interpreter "
+                      f"('import yara' resolved to the folder {where})")
+    return yara, None
+
+
+def _portable_cmd(op: str) -> list[str] | None:
+    """Command to run ``op`` of this module on the portable Python, if usable."""
+    import sys
+
+    portable = settings.portable_python()
+    if not portable:
+        return None
+    try:
+        if portable.resolve() == Path(sys.executable).resolve():
+            return None
+    except OSError:
+        return None
+    return [str(portable), "-m", "docutracex.yara_engine", op]
+
+
+def _run_portable(op: str):
+    """Run ``op`` on the portable, yielding each JSON line it prints."""
+    import subprocess
+
+    from . import native
+
+    cmd = _portable_cmd(op)
+    if cmd is None:
+        return
+    env = native.subprocess_env()
+    env["DOCUTRACEX_YARA_DIR"] = str(settings.yara_dir)  # same rule store as the app
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            encoding="utf-8", errors="replace", env=env,
+                            cwd=str(Path(__file__).resolve().parent.parent))
+    try:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            line = line.strip()
+            if line.startswith("{"):
+                try:
+                    yield json.loads(line)
+                except ValueError:
+                    continue
+    finally:
+        try:
+            proc.wait(timeout=600)
+        except Exception:  # noqa: BLE001
+            proc.kill()
+        if proc.returncode:
+            err = (proc.stderr.read() if proc.stderr else "").strip()[-300:]
+            log.warning("YARA on portable failed (%s): %s", proc.returncode, err)
+
+
+def _delegated(op: str, fallback_error: str) -> list[dict[str, Any]]:
+    events = list(_run_portable(op))
+    if not events or (op == "report" and "fatal" in events[-1]):
+        if _portable_cmd(op) is None:
+            reason = fallback_error
+        else:
+            detail = events[-1]["fatal"] if events else "no output"
+            reason = f"{fallback_error}; the portable Python could not run YARA either ({detail})"
+        return [{"available": False, "error": reason, "errors": [], "rules": [],
+                 "rule_count": 0, "file_count": 0, "fatal": reason}]
+    return events
+
+
 def _namespace(path: Path) -> str:
     return path.stem
 
 
 def compile_rules() -> tuple[Any, dict[str, Any]]:
-    """Compile every rule file (namespaced). Returns (compiled_or_None, report)."""
-    try:
-        import yara
-    except Exception as exc:  # noqa: BLE001
-        return None, {"available": False, "error": f"yara-python not installed: {exc}"}
+    """Compile every rule file (namespaced). Returns (compiled_or_None, report).
+
+    Without yara-python in this interpreter the report comes from the portable
+    and no compiled object is returned (scanning happens on the portable)."""
+    yara, why = _load_yara()
+    if yara is None:
+        report = _delegated("report", why or "")[-1]
+        report.pop("rules", None)
+        report.pop("fatal", None)
+        return None, report
 
     cfg = _read_config()
     files = _iter_rule_files(cfg.get("external_paths", []))
@@ -210,10 +296,10 @@ def compile_rules() -> tuple[Any, dict[str, Any]]:
 
 def compile_stream():
     """Generator yielding compile progress per rule file (for NDJSON streaming)."""
-    try:
-        import yara
-    except Exception as exc:  # noqa: BLE001
-        yield {"fatal": f"yara-python not installed: {exc}"}
+    yara, why = _load_yara()
+    if yara is None:
+        for ev in _delegated("stream", why or ""):
+            yield {"fatal": ev["fatal"]} if "fatal" in ev else ev
         return
     cfg = _read_config()
     files = _iter_rule_files(cfg.get("external_paths", []))
@@ -245,6 +331,14 @@ def compile_stream():
 
 def list_rules() -> dict[str, Any]:
     """List known rules with their source, tags, meta and enabled flag."""
+    if _load_yara()[0] is None:
+        report = _delegated("report", _load_yara()[1] or "")[-1]
+        report.pop("fatal", None)
+        enabled = enabled_rules()
+        for r in report.get("rules", []):
+            r["enabled"] = r["name"] in enabled
+        report["enabled_count"] = len(enabled)
+        return report
     compiled, report = compile_rules()
     enabled = enabled_rules()
     rules: list[dict[str, Any]] = []
@@ -297,3 +391,26 @@ def scan_path(compiled: Any, path: Path, enabled: set[str]) -> list[dict[str, An
         log.warning("YARA scan failed on %s: %s", path, exc)
         return []
     return [_match_to_dict(m, enabled) for m in matches]
+
+
+def _main(argv: list[str]) -> int:
+    """Worker entry point run on the portable: ``-m docutracex.yara_engine OP``.
+
+    ``report`` prints one JSON line (the list_rules report); ``stream`` prints the
+    compile_stream events, one JSON line each."""
+    if _load_yara()[0] is None:
+        print(json.dumps({"fatal": _load_yara()[1]}), flush=True)
+        return 1
+    op = argv[0] if argv else "report"
+    if op == "stream":
+        for ev in compile_stream():
+            print(json.dumps(ev), flush=True)
+    else:
+        print(json.dumps(list_rules(), default=str), flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+
+    raise SystemExit(_main(sys.argv[1:]))

@@ -110,3 +110,44 @@ def test_enabled_persists_in_config(env: Path) -> None:
     assert "Has_VBA" in yara_engine.enabled_rules()
     yara_engine.set_enabled(["Has_VBA"], False)
     assert "Has_VBA" not in yara_engine.enabled_rules()
+
+
+def test_delegates_to_portable_when_app_has_no_yara(client: TestClient, monkeypatch) -> None:
+    """The app's Python may lack yara-python (and 'import yara' may resolve to the
+    yara/ rules folder): compile/list must then run on the portable."""
+    import sys
+
+    client.post("/api/yara/upload", files={"file": ("t.yar", RULE.encode())})
+    monkeypatch.setattr(yara_engine, "_load_yara", lambda: (None, "no yara here"))
+    monkeypatch.setattr(yara_engine, "_portable_cmd",
+                        lambda op: [sys.executable, "-m", "docutracex.yara_engine", op])
+    listing = client.get("/api/yara").json()
+    assert listing["rule_count"] == 1
+    assert [r["name"] for r in listing["rules"]] == ["Has_VBA"]
+    events = list(yara_engine.compile_stream())
+    assert events[-1]["done"] and events[-1]["rule_count"] == 1
+    assert yara_engine.compile_rules()[1]["rule_count"] == 1
+
+
+def test_no_yara_anywhere_reports_clear_error(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr(yara_engine, "_load_yara", lambda: (None, "yara-python not installed"))
+    monkeypatch.setattr(yara_engine, "_portable_cmd", lambda op: None)
+    rep = client.get("/api/yara").json()
+    assert rep["available"] is False and "yara-python not installed" in rep["error"]
+    assert "fatal" in list(yara_engine.compile_stream())[-1]
+
+
+def test_rules_folder_is_not_mistaken_for_yara(tmp_path: Path) -> None:
+    """Without yara-python (-S hides site-packages) 'import yara' resolves to a
+    bare yara/ folder; that must be reported as not installed."""
+    import subprocess
+    import sys
+
+    (tmp_path / "yara").mkdir()
+    root = Path(__file__).resolve().parent.parent
+    code = (f"import sys; sys.path.insert(0, {str(root)!r}); "
+            "from docutracex.yara_engine import _load_yara; m, why = _load_yara(); "
+            "print(m is None, why)")
+    out = subprocess.run([sys.executable, "-S", "-c", code], cwd=tmp_path,
+                         capture_output=True, text=True, check=True).stdout
+    assert out.startswith("True") and "resolved to the folder" in out
