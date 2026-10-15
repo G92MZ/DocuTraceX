@@ -125,6 +125,11 @@ def test_yara_runs_only_on_demand_and_hits_are_markable(client: TestClient, env:
     assert Path(hit["path"]).is_file()                       # local path of the target
     assert m["strings"][0]["text"] == "vbaProject"           # what matched, readable
     assert m["strings"][0]["data"] == b"vbaProject".hex()
+    ctx = m["strings"][0]["context"]                         # bytes around the match
+    raw = bytes.fromhex(ctx["data"])
+    rel = m["strings"][0]["offset"] - ctx["start"]
+    assert raw[rel:rel + 10] == b"vbaProject" and ctx["start"] % 16 == 0
+    assert rel >= min(48, m["strings"][0]["offset"])         # some lines before
     src = ymod["rules_info"][f"{m['namespace']}:Has_VBA"]
     assert src["source"].startswith("rule Has_VBA") and src["file"].endswith("t.yar")
 

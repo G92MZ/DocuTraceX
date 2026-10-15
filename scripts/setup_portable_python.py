@@ -42,9 +42,14 @@ OMS_DIR = TOOLS / "officemalscanner"
 DIDIER_BASE = "https://raw.githubusercontent.com/DidierStevens/DidierStevensSuite/master/"
 DIDIER_FILES = ["oledump.py", "zipdump.py", "pdfid.py", "pdf-parser.py", "emldump.py"]
 
-# OfficeMalScanner (Frank Boldewin) — official source, freeware, no mirror.
-# Windows PE binaries; downloaded at provision time, never redistributed here.
-OMS_URL = "http://www.reconstructer.org/code/OfficeMalScanner.zip"
+# OfficeMalScanner (Frank Boldewin), freeware. The original site
+# (reconstructer.org) is offline; the author republished it on his GitHub, which
+# is tried first. Windows PE binaries, downloaded at provision time, never
+# redistributed here.
+OMS_URLS = (
+    "https://raw.githubusercontent.com/fboldewin/reconstructer.org/master/OfficeMalScanner.zip",
+    "http://www.reconstructer.org/code/OfficeMalScanner.zip",
+)
 OMS_EXE = "OfficeMalScanner.exe"
 
 PBS_API = "https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest"
@@ -197,17 +202,21 @@ def _didier_present() -> bool:
 def install_officemalscanner() -> None:
     """Download and extract the OfficeMalScanner suite into tools/officemalscanner/.
 
-    Best-effort: the official site (http, no mirror) may be down, and the EXE is
-    frequently quarantined by AV. On any failure it prints a note and the module
-    simply degrades (checked by presence, like the Didier scripts). Drop the EXE
-    there manually if the download fails.
+    Best-effort: if every source fails, or the EXE is quarantined by AV, it
+    prints a note and the module simply degrades (checked by presence, like the
+    Didier scripts). Drop the files there manually if the download fails.
     """
     print("[>] Provisioning OfficeMalScanner into tools/officemalscanner/")
-    try:
-        data = _get(OMS_URL)
-    except Exception as exc:  # noqa: BLE001
-        print(f"[!] Could not download OfficeMalScanner ({exc}).")
-        print(f"    Drop {OMS_EXE} into {OMS_DIR} manually (http://www.reconstructer.org).")
+    data = None
+    for url in OMS_URLS:
+        try:
+            data = _get(url)
+            break
+        except Exception as exc:  # noqa: BLE001
+            print(f"[!] Could not download OfficeMalScanner from {url} ({exc}).")
+    if data is None:
+        print(f"    Drop {OMS_EXE} (and its DLLs) into {OMS_DIR} manually "
+              "(https://github.com/fboldewin/reconstructer.org).")
         return
     OMS_DIR.mkdir(parents=True, exist_ok=True)
     got: list[str] = []
@@ -215,7 +224,8 @@ def install_officemalscanner() -> None:
         import io
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             for member in z.namelist():
-                if member.lower().endswith(".exe"):
+                # The EXEs need the bundled DLLs (Unzipper, LZNT1Decompress, ...).
+                if member.lower().endswith((".exe", ".dll")):
                     target = OMS_DIR / Path(member).name
                     with z.open(member) as src, target.open("wb") as dst:
                         shutil.copyfileobj(src, dst)
@@ -314,7 +324,8 @@ def ensure(version: str = DEFAULT_VERSION) -> bool:
             py = _portable_python()
             deps_ok = _tool_deps_ok(py)
             didier_ok = _didier_present()
-            if deps_ok and didier_ok:
+            oms_ok = _officemalscanner_present()
+            if deps_ok and didier_ok and oms_ok:
                 print(f"[=] Portable Python present with tools OK at {PY_DIR}")
                 return True
             if not deps_ok:
@@ -324,8 +335,8 @@ def ensure(version: str = DEFAULT_VERSION) -> bool:
                     install_libmagic_windows()
             if not didier_ok:
                 install_didier()
-            if not _officemalscanner_present():
-                install_officemalscanner()
+            if not oms_ok:
+                install_officemalscanner()  # retried on each start until present
             return _tool_deps_ok(py)
 
         print("[>] Portable Python not found — provisioning it now...")

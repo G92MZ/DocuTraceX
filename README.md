@@ -81,7 +81,7 @@ it just works.
 ## 📝 Notes
 
 - **Static only.** No macro, formula, JavaScript, PDF action, link, media or attachment is ever executed — everything is read, parsed and pattern-matched.
-- **Runs offline.** The only network access is the one-time provisioning of the portable Python and external tools (from PyPI/GitHub/reconstructer.org) on first launch.
+- **Runs offline.** The only network access is the one-time provisioning of the portable Python and external tools (from PyPI and GitHub) on first launch.
 - **Your data lives in** `cases/` (per-case evidence, results, marks, report), `yara/` (your rules) and `tools/` (the portable runtime) — all git-ignored and preserved across updates.
 - **Two interpreters by design:** the web app on your Python, the analysis tools on the portable one, so a messy tool dependency never touches your environment.
 
