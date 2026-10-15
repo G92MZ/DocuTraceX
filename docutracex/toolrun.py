@@ -29,7 +29,8 @@ def env() -> dict[str, str]:
 
 
 def run(cmd: list[str], shown: str, timeout: int = 180, cwd: Path | None = None,
-        bound: int = OUTPUT_BOUND, extra_env: dict[str, str] | None = None) -> dict[str, Any]:
+        bound: int = OUTPUT_BOUND, extra_env: dict[str, str] | None = None,
+        input_text: str | None = None) -> dict[str, Any]:
     """Run ``cmd``; return {command, returncode, output, stderr, duration_s, ...}.
 
     ``shown`` is the human-readable command stored for the UI (tool name and the
@@ -43,7 +44,8 @@ def run(cmd: list[str], shown: str, timeout: int = 180, cwd: Path | None = None,
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=timeout, env=e,
-                              cwd=str(cwd) if cwd else None)
+                              cwd=str(cwd) if cwd else None, input=input_text,
+                              stdin=None if input_text is not None else subprocess.DEVNULL)
         out = proc.stdout or ""
         rec.update(returncode=proc.returncode, output=out[:bound],
                    output_truncated=len(out) > bound,

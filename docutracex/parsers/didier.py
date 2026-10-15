@@ -31,6 +31,7 @@ SCRIPTS = {
     "pdf-parser": "pdf-parser.py",
     "emldump": "emldump.py",
     "rtfdump": "rtfdump.py",
+    "decode-vbe": "decode-vbe.py",
 }
 
 # oledump plugins (run with ``oledump.py -p plugin_x.py``).

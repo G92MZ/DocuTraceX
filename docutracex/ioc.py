@@ -94,9 +94,20 @@ def _is_gateway(domain: str) -> bool:
         domain.endswith(("safelinks.protection.outlook.com", ".mimecast.com"))
 
 
-def _known_tld(domain: str) -> bool:
+# In code (JS/VBA/p-code/formulas) "obj.member" looks like a domain: there,
+# only the most common TLDs count ("a.download", "x.click" are code).
+_CODE_TLDS = {"com", "net", "org", "info", "biz", "io", "co", "gov", "edu", "mil", "int", "xyz",
+              "top", "online", "site", "club", "app", "dev", "example", "test", "onion", "ru", "cn"}
+_CODE_LOCATION = re.compile(r"code|vba|sandbox|decoded|pcode|formula|xlm|macro|script", re.IGNORECASE)
+
+
+def _known_tld(domain: str, strict: bool = False) -> bool:
     tld = domain.rsplit(".", 1)[-1].lower()
-    return len(tld) == 2 or tld in _GENERIC_TLDS or tld.startswith("xn--")
+    if tld.startswith("xn--"):
+        return True
+    if strict:
+        return tld in _CODE_TLDS or (len(tld) == 2 and len(domain.split(".")) >= 3)
+    return len(tld) == 2 or tld in _GENERIC_TLDS
 
 
 def _looks_like_filename(domain: str) -> bool:
@@ -173,7 +184,8 @@ def _scan_text(text: str, module: str, location: str, col: _Collector) -> None:
         if any(s <= m.start() < e for s, e in url_spans):
             continue
         dom = m.group(1).lower()
-        if _looks_like_filename(dom) or not _known_tld(dom) or dom in _NAMESPACE_HOSTS:
+        strict = bool(_CODE_LOCATION.search(location or "")) or module in ("javascript", "vipermonkey")
+        if _looks_like_filename(dom) or not _known_tld(dom, strict) or dom in _NAMESPACE_HOSTS:
             continue
         col.add("domain", dom, module, location, _ctx(text, m.start(), m.end()))
 
@@ -262,6 +274,17 @@ def sources_from_modules(modules: dict[str, dict[str, Any]]) -> list[dict[str, A
             add("pdf", "uri", u)
         for js in pdf.get("javascript", []) or []:
             add("pdf", "javascript", js.get("code"))
+
+    # JavaScript: the code, what decoding revealed and what the sandbox recorded.
+    js = modules.get("javascript")
+    if js:
+        for sc in js.get("scripts", []) or []:
+            loc = sc.get("location", "script")
+            add("javascript", f"{loc}/code", sc.get("code"))
+            for d in sc.get("decoded", []) or []:
+                add("javascript", f"{loc}/decoded", d.get("decoded"))
+            for e in (sc.get("sandbox") or {}).get("log", []) or []:
+                add("javascript", f"{loc}/sandbox", " ".join(e.get("args") or []))
 
     # Email rules: original destinations behind gateway-rewritten links, QR codes.
     mr = modules.get("mailrules")
