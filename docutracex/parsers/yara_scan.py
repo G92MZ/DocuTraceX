@@ -60,6 +60,10 @@ def analyze(original_path: Path, extracted_dir: Path) -> dict[str, Any]:
     result["available"] = report.get("available", False)
     result["rule_count"] = report.get("rule_count", 0)
     result["errors"] = report.get("errors", [])
+    if report.get("error"):
+        result["error"] = report["error"]
+    if report.get("compiled_utc"):
+        result["compiled_utc"] = report["compiled_utc"]
     if compiled is None or result["rule_count"] == 0:
         result["counts"] = {"findings": 0}
         return result
@@ -67,7 +71,7 @@ def analyze(original_path: Path, extracted_dir: Path) -> dict[str, Any]:
     from ..findings import finding_id
 
     ns_path = {src["namespace"]: src["path"] for src in report.get("sources", [])
-               if src.get("status") == "ok"}
+               if src.get("status", "ok") == "ok"}
     rules_info: dict[str, dict[str, str]] = {}
     total_matches = 0
     for rel, path in _iter_targets(original_path, extracted_dir):

@@ -224,6 +224,12 @@ table.cases td.mono { word-break: break-all; }
   border-radius: 6px; color: var(--text); font: inherit; font-size: 13px; padding: 7px 10px;
 }
 .yara-add { margin: 12px 0; }
+.yara-rules-table { table-layout: fixed; }
+.yara-rules-table th:first-child, .yara-rules-table td:first-child { width: 38%; }
+.yara-rules-table td { word-break: break-word; overflow-wrap: anywhere; white-space: normal; }
+.yara-scan { margin: 12px 0; align-items: center; }
+.yara-case-select { max-width: 520px; min-width: 240px; }
+#yara-filter { width: 100%; margin-bottom: 8px; box-sizing: border-box; }
 .yara-hit { margin: 10px 0; padding: 8px 10px; border: 1px solid var(--panel-border); border-radius: 6px; }
 .yara-hit-head { display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 6px; word-break: break-all; }
 .yara-card > summary { gap: 10px; }

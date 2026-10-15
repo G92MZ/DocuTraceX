@@ -994,6 +994,7 @@ function renderRerun(analysisId, d) {
   const el = document.getElementById("comp-actions");
   if (!el) return;
   const ran = ((d.modules && Object.keys(d.modules)) || []).filter((m) => m !== "iocs");
+  if (!ran.includes("yara")) ran.push("yara");  // YARA runs only on demand
   const opts = ['<option value="full">Full case</option>']
     .concat(ran.map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`)).join("");
   el.innerHTML = `<span class="hint-line">Re-run:</span>
@@ -1201,44 +1202,127 @@ function loadReports(analysisId) {
 }
 
 // --- YARA management ---------------------------------------------------------
+// Rules list / compile errors come from the cached last compilation: opening
+// the tab never compiles. Long lists are collapsible, filterable and rendered
+// lazily (a ruleset can hold tens of thousands of rules).
+const _YARA_MAX_ROWS = 500;
+let _yaraRules = [];
+
+function yaraRuleRows(filter) {
+  const q = (filter || "").toLowerCase();
+  const hits = q ? _yaraRules.filter((r) => r.name.toLowerCase().includes(q)
+    || (r.description || "").toLowerCase().includes(q)) : _yaraRules;
+  const rows = hits.slice(0, _YARA_MAX_ROWS).map((r) => `<tr>
+      <td class="mono">${escapeHtml(r.name)}</td>
+      <td class="hint-line">${escapeHtml(r.description || "")}</td>
+    </tr>`).join("");
+  const more = hits.length > _YARA_MAX_ROWS
+    ? `<p class="hint-line">Showing ${_YARA_MAX_ROWS} of ${hits.length}; refine the filter to see others.</p>` : "";
+  return `<table class="cases yara-rules-table"><thead><tr><th>Rule</th><th>Description</th></tr></thead><tbody>${rows}</tbody></table>${more}`;
+}
+
 async function loadYara() {
   const summary = document.getElementById("yara-summary");
   const errors = document.getElementById("yara-errors");
   const body = document.getElementById("yara-body");
+  loadYaraCases();
   try {
     const d = await fetch("/api/yara").then((r) => r.json());
-    if (d.available === false) {
-      summary.textContent = "yara-python not installed";
-      summary.className = "status bad-text";
-      body.innerHTML = `<p class="hint-line">Provision the portable to install yara-python.</p>`;
+    if (!d.compiled) {
+      summary.textContent = "Not compiled yet";
+      summary.className = "status";
+      errors.innerHTML = "";
+      body.innerHTML = `<p class="hint-line">Register a path or upload rules, then press Recompile.</p>`;
       return;
     }
-    const rules = d.rules || [];
-    summary.textContent = `${d.rule_count || 0} rules · ${d.file_count || 0} files`;
-    summary.className = "status ok-text";
+    summary.textContent = `${d.rule_count || 0} rules · ${d.file_count || 0} files · compiled ${d.compiled_utc || ""}`
+      + (d.stale ? " · rules changed, recompile" : "");
+    summary.className = "status " + (d.stale ? "bad-text" : "ok-text");
     const errs = d.errors || [];
     errors.innerHTML = errs.length
-      ? `<h3 class="formats-title">Compile errors (${errs.length})</h3>`
-        + table(["File", "Error"], errs.map((e) =>
-          `<tr><td class="mono">${escapeHtml(e.path)}</td><td class="hint-line">${escapeHtml(e.error)}</td></tr>`).join(""))
+      ? `<details class="disclose"${errs.length <= 10 ? " open" : ""}><summary>Compile errors (${errs.length})</summary>`
+        + `<table class="cases yara-rules-table"><thead><tr><th>File</th><th>Error</th></tr></thead><tbody>`
+        + errs.map((e) => `<tr><td class="mono">${escapeHtml(e.path)}</td><td class="hint-line">${escapeHtml(e.error)}</td></tr>`).join("")
+        + `</tbody></table></details>`
       : "";
-    if (!rules.length) { body.innerHTML = `<p class="hint-line">No rules yet. Upload a file or register a server path.</p>`; return; }
-    const rows = rules.map((r) => {
-      const meta = r.meta || {};
-      const sev = meta.severity || meta.threat_level || "";
-      const tags = (r.tags || []).join(", ");
-      return `<tr>
-        <td class="file">${escapeHtml(r.name)}</td>
-        <td class="mono">${escapeHtml(r.namespace || "")}</td>
-        <td>${escapeHtml(tags)}</td>
-        <td>${escapeHtml(String(sev))}</td>
-        <td class="hint-line">${escapeHtml(meta.description || meta.desc || "")}</td>
-      </tr>`;
-    }).join("");
-    body.innerHTML = `<h3 class="formats-title">Rules (${rules.length})</h3>`
-      + table(["Rule", "Source", "Tags", "Severity", "Description"], rows);
+    _yaraRules = d.rules || [];
+    if (!_yaraRules.length) { body.innerHTML = `<p class="hint-line">No rules compiled.</p>`; return; }
+    body.innerHTML = `<details class="disclose" id="yara-rules-box"${_yaraRules.length <= 20 ? " open" : ""}>
+        <summary>Compiled rules (${_yaraRules.length})</summary>
+        <div style="padding:8px 10px"><input type="text" id="yara-filter" class="yara-path-input" placeholder="Filter by rule name or description…" />
+        <div id="yara-rules-list"></div></div>
+      </details>`;
+    const box = document.getElementById("yara-rules-box");
+    const list = document.getElementById("yara-rules-list");
+    const filter = document.getElementById("yara-filter");
+    const render = () => { list.innerHTML = yaraRuleRows(filter.value); };
+    if (box.open) render();
+    box.addEventListener("toggle", () => { if (box.open && !list.innerHTML) render(); });
+    let t = null;
+    filter.addEventListener("input", () => { clearTimeout(t); t = setTimeout(render, 200); });
   } catch (err) {
     summary.textContent = "Could not load YARA rules.";
+  }
+}
+
+async function loadYaraCases() {
+  const sel = document.getElementById("yara-case");
+  if (!sel) return;
+  try {
+    const cases = await fetch("/api/cases").then((r) => r.json());
+    const current = sel.value || _openCaseId || "";
+    sel.innerHTML = cases.length
+      ? cases.map((c) => `<option value="${escapeHtml(c.analysis_id)}"${c.analysis_id === current ? " selected" : ""}>${escapeHtml(c.filename || "")} · ${escapeHtml(c.analysis_id)}</option>`).join("")
+      : '<option value="">(no cases)</option>';
+  } catch (err) { /* keep previous options */ }
+}
+
+async function showYaraResults(analysisId) {
+  const out = document.getElementById("yara-results");
+  const d = await fetch(`/api/cases/${encodeURIComponent(analysisId)}/components`).then((r) => r.json());
+  const yara = (d.modules || {}).yara;
+  const findings = d.findings || [];
+  out.innerHTML = `<h3 class="formats-title">Results · ${escapeHtml(d.filename || "")}
+      <button class="btn btn-ghost btn-sm" type="button" id="yara-open-case">Open case</button></h3>`
+    + paneYara(yara, findings);
+  document.getElementById("yara-open-case").addEventListener("click", () => {
+    openComponents(analysisId).then(() => {
+      if ((_compState.sections || []).some((x) => x.id === "yara")) { _compState.active = "yara"; renderSubtabs(); }
+    });
+  });
+  wireMarks(out, analysisId, (fid, mark) => {
+    findings.forEach((f) => { if (f.id === fid) f.mark = mark; });
+  });
+  wireFileActions(out, analysisId);
+}
+
+async function scanCaseWithYara() {
+  const sel = document.getElementById("yara-case");
+  const status = document.getElementById("yara-scan-status");
+  const btn = document.getElementById("yara-scan");
+  const cid = sel && sel.value;
+  if (!cid) { status.textContent = "Choose a case first."; return; }
+  btn.disabled = true;
+  status.textContent = "Scanning…";
+  try {
+    const rr = await fetch(`/api/cases/${encodeURIComponent(cid)}/rerun`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ module: "yara" }) }).then((r) => r.json());
+    const tid = rr.task && rr.task.id;
+    startTaskPoller();
+    for (let i = 0; i < 3600 && tid; i++) {
+      const t = (await fetch("/api/tasks").then((r) => r.json())).tasks.find((x) => x.id === tid) || {};
+      if (["completed", "failed", "cancelled"].includes(t.state)) {
+        status.textContent = t.state === "completed" ? "Scan finished." : `Scan ${t.state}.`;
+        break;
+      }
+      status.textContent = `Scanning… (${t.state || "queued"})`;
+      await new Promise((res) => setTimeout(res, 1000));
+    }
+    await showYaraResults(cid);
+  } catch (err) {
+    status.textContent = "Scan failed.";
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -1253,13 +1337,13 @@ function setupYara() {
     e.preventDefault();
     const status = document.getElementById("yara-add-status");
     if (!fileInput.files.length) return;
-    status.textContent = "Uploading & compiling…";
+    status.textContent = "Uploading…";
     const data = new FormData();
     data.append("file", fileInput.files[0]);
     try {
       const resp = await fetch("/api/yara/upload", { method: "POST", body: data });
       const j = await resp.json();
-      status.textContent = resp.ok ? `Added ${j.count} file(s) · ${(j.compile || {}).rule_count || 0} rules` : "Upload failed.";
+      status.textContent = resp.ok ? `Added ${j.count} file(s). Press Recompile to compile them.` : "Upload failed.";
       fileInput.value = ""; fileName.textContent = "No file selected";
       loadYara();
     } catch (err) { status.textContent = "Upload failed."; }
@@ -1291,17 +1375,19 @@ function setupYara() {
       loadYara();
     } catch (err) { status.textContent = "Compile failed."; prog.style.display = "none"; }
   });
+  const scanBtn = document.getElementById("yara-scan");
+  if (scanBtn) scanBtn.addEventListener("click", scanCaseWithYara);
   const pathBtn = document.getElementById("yara-path-btn");
   if (pathBtn) pathBtn.addEventListener("click", async () => {
     const status = document.getElementById("yara-add-status");
     const path = document.getElementById("yara-path").value.trim();
     if (!path) return;
-    status.textContent = "Registering & compiling…";
+    status.textContent = "Registering…";
     try {
       const resp = await fetch("/api/yara/path", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ path }) });
       const j = await resp.json();
-      status.textContent = resp.ok ? `Registered · ${(j.compile || {}).rule_count || 0} rules` : (j.detail || "Failed.");
+      status.textContent = resp.ok ? `Registered · ${j.rule_files || 0} rule file(s). Press Recompile to compile them.` : (j.detail || "Failed.");
       loadYara();
     } catch (err) { status.textContent = "Failed."; }
   });
@@ -1312,7 +1398,7 @@ function setupYara() {
 // report. A card shows the rule source, what matched and the local file path.
 function paneYara(yara, findings) {
   if (!yara) return `<p class="hint-line">YARA did not run for this case.</p>`;
-  if (!yara.rule_count) return `<p class="hint-line">No YARA rules loaded (${yara.available ? "0 rules" : "yara-python unavailable"}). Add rules in the YARA tab.</p>`;
+  if (!yara.rule_count) return `<p class="hint-line">${escapeHtml(yara.error || "No compiled YARA rules.")} Compile rules in the YARA tab, then scan the case.</p>`;
   const scanned = yara.scanned || [];
   let html = `<p class="hint-line">${yara.rule_count} rule(s) · ${yara.files_scanned} file(s) scanned · ${yara.match_count} match(es). Mark each hit (True positive, False positive, …); only True positives reach the report.</p>`;
   if (!scanned.length) return html + `<p class="hint-line">No matches.</p>`;
