@@ -157,6 +157,10 @@ def _scan_text(text: str, module: str, location: str, col: _Collector) -> None:
         dom = _domain_of(url)
         if dom in _NAMESPACE_HOSTS:
             continue
+        tld = (dom or "").rsplit(".", 1)[-1]
+        if dom and "." in dom and ":" not in dom and not _valid_ipv4(dom) \
+                and not (tld.isalpha() or tld.lower().startswith("xn--")):
+            continue  # not a real host: strings glued by a heuristic (example.net2f6669...)
         col.add("url", url, module, location, _ctx(text, m.start(), m.end()))
         if dom and not _looks_like_filename(dom) and not _valid_ipv4(dom) and ":" not in dom \
                 and not _is_gateway(dom):

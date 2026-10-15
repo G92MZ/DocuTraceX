@@ -83,3 +83,9 @@ def test_times_and_macs_are_not_ipv6() -> None:
     res = ioc.extract([{"module": "email", "location": "body", "text": text}])
     v6 = sorted(i["value"] for i in res["iocs"] if i["type"] == "ipv6")
     assert v6 == ["2001:db8::ff00:42:8329", "::1", "fe80::1ff:fe23:4567:890a"]
+
+
+def test_url_with_a_non_alphabetic_tld_is_not_an_ioc() -> None:
+    res = ioc.extract([{"module": "vbatools", "location": "http_heuristics",
+                        "text": "http://cdn.example.net2f66696c65732f7570642e62696e and https://ok.example.org/a"}])
+    assert {i["value"] for i in res["iocs"]} == {"https://ok.example.org/a", "ok.example.org"}
