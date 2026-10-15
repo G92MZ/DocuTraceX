@@ -306,22 +306,13 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         # No parser for this family yet.
         state = "completed"
 
-    # YARA: scan the original + everything extracted. Runs for every family
-    # (even unknown ones). Matches are recorded; only enabled rules add findings.
-    from .parsers import yara_scan
-
-    yara_res = run("yara: ruleset scan (original + extracted)",
-                   lambda: yara_scan.analyze(original, paths.extracted_dir))
-    if yara_res.get("available") and yara_res.get("rule_count"):
-        write_subresult(paths, "yara", yara_res)
+    # YARA runs only on demand (YARA tab / re-run "yara"), never automatically.
+    # A previous on-demand scan of this case is kept across full re-analyses.
+    prev_yara = read_json(paths.subresult("yara"))
+    if prev_yara and prev_yara.get("rule_count"):
         if "yara" not in ran:
             ran.append("yara")
-        findings_total += yara_res.get("counts", {}).get("findings", 0)
-        steps[-1]["note"] = (f"{yara_res.get('rule_count')} rules · "
-                             f"{yara_res.get('files_scanned', 0)} files · "
-                             f"{yara_res.get('match_count', 0)} matches")
-    else:
-        steps[-1]["note"] = "no rules" if yara_res.get("available") else "yara-python unavailable"
+        findings_total += prev_yara.get("counts", {}).get("findings", 0)
 
     overall_counts["findings"] = findings_total
 
