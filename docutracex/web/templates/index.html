@@ -23,6 +23,7 @@
     <button class="tab" type="button" data-view="components">Components</button>
     <button class="tab" type="button" data-view="reports">Reports</button>
     <button class="tab" type="button" data-view="tasks">Tasks</button>
+    <button class="tab" type="button" data-view="yara">YARA</button>
     <button class="tab tab-right" type="button" data-view="diagnostics">
       Diagnostics <span id="diag-dot" class="diag-dot"></span>
     </button>
@@ -114,6 +115,32 @@
         <iframe id="report-frame" class="report-frame" title="Case report"></iframe>
       </section>
     </div>
+    <!-- YARA -->
+    <div class="view" data-view="yara" hidden>
+      <section class="panel">
+        <div class="diag-head">
+          <h2>YARA rules</h2>
+          <span id="yara-summary" class="status"></span>
+        </div>
+        <p class="hint-line">Matches are shown for every case, but a rule only becomes a finding (and reaches the report) once you enable it here. Default: nothing enabled.</p>
+        <div class="yara-add">
+          <form id="yara-upload-form" class="upload">
+            <input type="file" id="yara-file" class="file-native" accept=".yar,.yara,.rule,.rules,.zip,.tar,.gz,.tgz" />
+            <label for="yara-file" class="btn btn-ghost">Choose rules (.yar / .zip / .tar.gz)</label>
+            <span id="yara-file-name" class="file-name">No file selected</span>
+            <button type="submit" class="btn btn-primary">Upload</button>
+          </form>
+          <div class="upload" style="margin-top:8px">
+            <input type="text" id="yara-path" class="yara-path-input" placeholder="/path/to/rules/ on the server (faster for large sets)" />
+            <button id="yara-path-btn" class="btn btn-ghost" type="button">Register path</button>
+            <span id="yara-add-status" class="status"></span>
+          </div>
+        </div>
+        <div id="yara-errors"></div>
+        <div id="yara-body"></div>
+      </section>
+    </div>
+
     <div class="view" data-view="tasks" hidden>
       <section class="panel">
         <div class="diag-head">

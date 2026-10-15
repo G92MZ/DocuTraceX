@@ -112,6 +112,11 @@ TOOL_DEPS: list[Dependency] = [
         required=False,
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
     ),
+    Dependency(
+        "yara", "yara-python", "YARA rule matching engine",
+        required=False,
+        install_hint="run scripts/setup_portable_python.py (installed into the portable)",
+    ),
 ]
 
 # Combined (kept for backward compatibility / generic checks).

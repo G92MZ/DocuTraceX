@@ -75,6 +75,7 @@ Los **hallazgos** los produce código propio (`docutracex/parsers/`, `docutracex
 | **Parser PDF propio** | Escaneo raw robusto de tokens peligrosos (/OpenAction, /JavaScript, /JS, /Launch, /EmbeddedFile, /XFA, /URI, /AA, /AcroForm, /RichMedia, /ObjStm, /JBIG2Decode, /Encrypt), nombres hex-ofuscados, updates incrementales; extracción de URIs, ficheros embebidos (pypdf) y texto (pdfminer) | PDF |
 | **Didier Stevens** · `pdfid` / `pdf-parser` | Recuento de keywords y volcado profundo de objetos (salida cruda) | PDF |
 | **Análisis recursivo (nested)** | Lo que se extrae (adjuntos de correo, objetos OLE embebidos, ficheros embebidos en PDF) se analiza en cadena con las herramientas de su familia, hasta cierta profundidad; los hallazgos del hijo (p. ej. DDE de un `.docm` dentro de un PDF) suben a la vista unificada con su ruta | Todas |
+| **Motor YARA** (yara-python) | Escanea el original y todo lo extraído. Reglas por **subida HTTP** (`.yar`/`.yara` o comprimido `.zip`/`.tar.gz`) o por **ruta de servidor** (reglas grandes sin pasar por HTTP). **Opt-in**: un match se muestra siempre, pero solo se convierte en *finding* (y aparece en el report) cuando marcas esa regla en la pestaña YARA. Progreso/estado en Tasks (reglas · ficheros · matches) | Todas |
 
 Las cosas extraídas (adjuntos, objetos OLE, medios, copias desocultadas) tienen botones **📁 Folder** (abre la carpeta contenedora en el explorador del sistema — herramienta local) y **↓** (descarga), con validación de ruta dentro del caso.
 

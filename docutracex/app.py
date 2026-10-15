@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import __version__
 from .api.cases import router as cases_router
+from .api.yara import router as yara_router
 from .config import settings
 from .deps import log_startup_report, run_checks
 from .errors import DocuTraceXError
@@ -45,6 +46,7 @@ def create_app() -> FastAPI:
         return JSONResponse(status_code=400, content={"error": str(exc)})
 
     app.include_router(cases_router)
+    app.include_router(yara_router)
 
     @app.get("/health", response_class=JSONResponse)
     async def health() -> dict:

@@ -383,6 +383,7 @@ function pivotTarget(source) {
   if (source === "ooxml") return "relationships";
   if (source === "pdf") return "pdf";
   if (source === "nested") return "nested";
+  if (source === "yara") return "yara";
   if (source === "email") return "auth";
   return null;
 }
@@ -874,6 +875,10 @@ async function openComponents(analysisId) {
     if (nested && (nested.tree || []).length) {
       sections.push({ id: "nested", label: `Nested (${(nested.counts || {}).nodes || 0})`, html: paneNested(nested) });
     }
+    const yara = mods.yara;
+    if (yara && yara.rule_count) {
+      sections.push({ id: "yara", label: `YARA (${yara.match_count || 0})`, html: paneYara(yara) });
+    }
     if (ole || crypto || (xlm && xlm.available)) {
       sections.push({ id: "tools", label: "Tools", html: paneTools(ole, crypto, xlm) });
     }
@@ -1109,6 +1114,114 @@ function loadReports(analysisId) {
   if (btn) btn.addEventListener("click", () => { frame.src = url + "?t=" + Date.now(); });
 }
 
+// --- YARA management ---------------------------------------------------------
+async function loadYara() {
+  const summary = document.getElementById("yara-summary");
+  const errors = document.getElementById("yara-errors");
+  const body = document.getElementById("yara-body");
+  try {
+    const d = await fetch("/api/yara").then((r) => r.json());
+    if (d.available === false) {
+      summary.textContent = "yara-python not installed";
+      summary.className = "status bad-text";
+      body.innerHTML = `<p class="hint-line">Provision the portable to install yara-python.</p>`;
+      return;
+    }
+    const rules = d.rules || [];
+    const enabled = rules.filter((r) => r.enabled).length;
+    summary.textContent = `${d.rule_count || 0} rules · ${d.file_count || 0} files · ${enabled} enabled`;
+    summary.className = "status ok-text";
+    const errs = d.errors || [];
+    errors.innerHTML = errs.length
+      ? `<h3 class="formats-title">Compile errors (${errs.length})</h3>`
+        + table(["File", "Error"], errs.map((e) =>
+          `<tr><td class="mono">${escapeHtml(e.path)}</td><td class="hint-line">${escapeHtml(e.error)}</td></tr>`).join(""))
+      : "";
+    if (!rules.length) { body.innerHTML = `<p class="hint-line">No rules yet. Upload a file or register a server path.</p>`; return; }
+    const rows = rules.map((r) => {
+      const meta = r.meta || {};
+      const sev = meta.severity || meta.threat_level || "";
+      const tags = (r.tags || []).join(", ");
+      return `<tr>
+        <td><input type="checkbox" class="yara-enable" data-rule="${escapeHtml(r.name)}"${r.enabled ? " checked" : ""}></td>
+        <td class="file">${escapeHtml(r.name)}${r.enabled ? ' <span class="badge badge-bad">finding</span>' : ""}</td>
+        <td class="mono">${escapeHtml(r.namespace || "")}</td>
+        <td>${escapeHtml(tags)}</td>
+        <td>${escapeHtml(String(sev))}</td>
+        <td class="hint-line">${escapeHtml(meta.description || meta.desc || "")}</td>
+      </tr>`;
+    }).join("");
+    body.innerHTML = `<h3 class="formats-title">Rules (${rules.length}) — tick to make a rule a finding</h3>`
+      + table(["Finding?", "Rule", "Source", "Tags", "Severity", "Description"], rows);
+    body.querySelectorAll(".yara-enable").forEach((cb) => {
+      cb.addEventListener("change", async () => {
+        await fetch("/api/yara/enabled", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rules: [cb.getAttribute("data-rule")], enabled: cb.checked }) });
+        loadYara();
+      });
+    });
+  } catch (err) {
+    summary.textContent = "Could not load YARA rules.";
+  }
+}
+
+function setupYara() {
+  const fileInput = document.getElementById("yara-file");
+  const fileName = document.getElementById("yara-file-name");
+  if (fileInput) fileInput.addEventListener("change", () => {
+    fileName.textContent = fileInput.files.length ? fileInput.files[0].name : "No file selected";
+  });
+  const form = document.getElementById("yara-upload-form");
+  if (form) form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const status = document.getElementById("yara-add-status");
+    if (!fileInput.files.length) return;
+    status.textContent = "Uploading & compiling…";
+    const data = new FormData();
+    data.append("file", fileInput.files[0]);
+    try {
+      const resp = await fetch("/api/yara/upload", { method: "POST", body: data });
+      const j = await resp.json();
+      status.textContent = resp.ok ? `Added ${j.count} file(s) · ${(j.compile || {}).rule_count || 0} rules` : "Upload failed.";
+      fileInput.value = ""; fileName.textContent = "No file selected";
+      loadYara();
+    } catch (err) { status.textContent = "Upload failed."; }
+  });
+  const pathBtn = document.getElementById("yara-path-btn");
+  if (pathBtn) pathBtn.addEventListener("click", async () => {
+    const status = document.getElementById("yara-add-status");
+    const path = document.getElementById("yara-path").value.trim();
+    if (!path) return;
+    status.textContent = "Registering & compiling…";
+    try {
+      const resp = await fetch("/api/yara/path", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }) });
+      const j = await resp.json();
+      status.textContent = resp.ok ? `Registered · ${(j.compile || {}).rule_count || 0} rules` : (j.detail || "Failed.");
+      loadYara();
+    } catch (err) { status.textContent = "Failed."; }
+  });
+}
+
+function paneYara(yara) {
+  if (!yara) return `<p class="hint-line">YARA did not run for this case.</p>`;
+  if (!yara.rule_count) return `<p class="hint-line">No YARA rules loaded (${yara.available ? "0 rules" : "yara-python unavailable"}). Add rules in the YARA tab.</p>`;
+  const scanned = yara.scanned || [];
+  let html = `<p class="hint-line">${yara.rule_count} rule(s) · ${yara.files_scanned} file(s) scanned · ${yara.match_count} match(es). Enable a rule in the YARA tab to turn its matches into findings.</p>`;
+  if (!scanned.length) return html + `<p class="hint-line">No matches.</p>`;
+  scanned.forEach((s) => {
+    html += `<h3 class="formats-title">${escapeHtml(s.file)}</h3>`;
+    const rows = (s.matches || []).map((m) => `<tr>
+      <td class="file">${escapeHtml(m.rule)}${m.enabled ? ' <span class="badge badge-bad">finding</span>' : ' <span class="badge badge-muted">match</span>'}</td>
+      <td class="mono">${escapeHtml(m.namespace || "")}</td>
+      <td>${escapeHtml((m.tags || []).join(", "))}</td>
+      <td class="mono">${escapeHtml((m.strings || []).map((x) => x.id + "@" + x.offset).slice(0, 6).join(", "))}</td>
+    </tr>`).join("");
+    html += table(["Rule", "Source", "Tags", "Matched strings"], rows);
+  });
+  return html;
+}
+
 // --- Tab navigation ----------------------------------------------------------
 function setupTabs() {
   const tabs = document.querySelectorAll(".tab");
@@ -1122,6 +1235,7 @@ function setupTabs() {
       if (target === "marks") loadMarks(_openCaseId);
       if (target === "tasks") loadTasks();
       if (target === "reports") loadReports(_openCaseId);
+      if (target === "yara") loadYara();
     });
   });
 }
@@ -1130,6 +1244,7 @@ const diagRefresh = document.getElementById("diag-refresh");
 if (diagRefresh) diagRefresh.addEventListener("click", loadDiagnostics);
 
 setupTabs();
+setupYara();
 renderFormats();
 loadDiagnostics(); // initial load to set the nav indicator
 loadCases();
