@@ -259,6 +259,14 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             elif mail_res.get("findings"):
                 state = "completed"
 
+        if mail_res is not None:
+            from .parsers import mail_rules
+            mr = run("mailrules: gateway links · HTML phishing · DKIM bh · look-alikes · Received · QR",
+                     lambda: mail_rules.analyze(original, declared_ext, mail_res, paths.root))
+            write_subresult(paths, "mailrules", mr)
+            ran.append("mailrules")
+            findings_total += mr.get("counts", {}).get("findings", 0)
+
         # Third-party tools (olevba/oleid/msodde/…) are NOT run on the email
         # envelope itself: an .eml is RFC 822 text, so oleid just reports noise
         # and olevba rarely reaches the attachments. The real coverage comes from
@@ -411,7 +419,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 # Modules that can be re-run in isolation over an existing case.
 _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto",
                "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole",
-               "officerules", "vbatools", "vipermonkey", "pdftools")
+               "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules")
 # Modules whose findings feed the consolidated view (includes derived ones).
 _COLLECTABLE = _RERUNNABLE + ("nested",)
 
@@ -501,6 +509,9 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
     elif module == "email":
         from .parsers import mail
         res = mail.analyze(original, declared_ext, ed)
+    elif module == "mailrules":
+        from .parsers import mail_rules
+        res = mail_rules.analyze(original, declared_ext, read_json(paths.subresult("email")) or {}, paths.root)
     elif module == "pdf":
         from .parsers import pdf as pdf_parser
         res = pdf_parser.analyze(original, ed)
