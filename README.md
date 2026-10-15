@@ -1,426 +1,111 @@
-# DocuTraceX
+<div align="center">
 
-Aplicación web para el **análisis forense estático** de documentos Microsoft Office, PDF y correo electrónico, ejecutada en local sobre Windows. Mesa de investigación interactiva: árbol de componentes, evidencias vinculadas a su origen, IOC, visor hexadecimal, estados de análisis e informes.
+# 📄🔎 DocuTraceX
 
-> **Estado:** planificación / especificación consolidada. Ninguna fase se considera implementada hasta que existan código, pruebas y criterios de aceptación satisfechos.
+**Static forensic analysis for Microsoft Office, PDF and email — without opening the file.**
 
-## Principios
+Drop in a suspicious `.docx`, `.xlsm`, `.doc`, `.xls`, `.pdf`, `.eml` or `.msg`,
+open the browser, and investigate: the real file type vs. what it claims to be,
+macros and DDE, hidden/very-hidden Excel sheets, PDF JavaScript and launch
+actions, email spoofing and the `Received` chain, embedded payloads **pulled
+apart recursively**, IOCs, your own **YARA** rules, triage marks and a one-click
+report. **Nothing in the sample is ever executed.**
 
-- No ejecutar macros, fórmulas, JavaScript, acciones PDF, controles, enlaces, medios ni adjuntos.
-- No abrir URLs, resolver dominios ni contactar recursos remotos.
-- Original inmutable; trabajar sobre componentes o copias aisladas.
-- Primero los parsers/analizadores aplicables; después un único extractor común de IOC sobre sus resultados.
-- Mostrar errores, límites y análisis parciales; «sin detecciones» ≠ seguro.
-- Herramientas y runtimes en `tools\` con rutas relativas, sin instalaciones globales.
-- No ampliar el alcance de formatos sin decisión expresa.
+![Python](https://img.shields.io/badge/Python-3.11+-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-local-009688)
+![License](https://img.shields.io/badge/license-Apache%202.0-blue)
+![Offline](https://img.shields.io/badge/runs-100%25%20offline-success)
 
-## Interfaz y estilo
-
-La interfaz estará **íntegramente en inglés**, será **visual** y se basará en **paneles/secciones desplegables**. Toma [**WinHound**](https://github.com/G92MZ/winhound) como **referencia directa de estilo**: mismos colores, mismos tipos de menú, misma organización de la navegación y los mismos componentes visuales, para mantener una familia coherente entre las herramientas propias.
-
-- Navegación principal: Overview, Marks, Components/analysis, Reports y Tasks.
-- Overview: resumen conciso y expandible, alineado con el informe.
-- Uso local, sin login ni gestión de usuarios.
-
-## Ejecución (desarrollo)
-
-```bash
-pip install -e ".[dev]"   # instala docutracex + dependencias de desarrollo
-python -m docutracex       # (o python run.py) asegura el portable y levanta el servidor
-pytest -q                  # ejecuta los tests
-```
-
-Tanto `python -m docutracex` como `python run.py` **aseguran el portable al arrancar**: lo crean si falta y, si se añadió una dependencia de herramienta nueva, la instalan en el portable existente. Para saltar ese paso: `DOCUTRACEX_SKIP_SETUP=1`.
-
-Configurable por entorno: `DOCUTRACEX_HOST`, `DOCUTRACEX_PORT`, `DOCUTRACEX_LOG_LEVEL`.
-
-### Arquitectura de ejecución: app vs herramientas
-
-- **La app web corre sobre tu Python** (el que lanza `run.py`). Solo necesita las dependencias web (fastapi, uvicorn, jinja2, python-multipart).
-- **Las herramientas de análisis corren sobre un Python portable** en `tools\python\` (CPython **3.13**, la versión con mejor cobertura de ruedas hoy; preparado para una 2ª versión si algún parser la necesita). Ahí van libmagic (identificación) y los futuros parsers.
-
-`run.py` **asegura el portable al arrancar**: si no existe, ejecuta el provisionador; si existe, sigue. El provisionador también puede ejecutarse a mano:
-
-```bash
-python scripts/setup_portable_python.py            # provisiona (descarga + instala)
-python scripts/setup_portable_python.py --ensure    # solo si falta (lo usa run.py)
-```
-
-Descarga el build de **python-build-standalone** (Astral) para tu plataforma, lo extrae a `tools\python\`, instala las dependencias de herramientas **dentro** de ese intérprete y, en Windows, provisiona además la **libmagic nativa** (`libmagic.dll` + `magic.mgc`) en `tools\libmagic\` extrayéndola del wheel `python-magic-bin` (sin depender de que ese paquete se instale en 3.13/3.14). La identificación invoca libmagic **en el portable** por subproceso; la DLL se localiza con `add_dll_directory` + `MAGIC`.
-
-La pestaña **Diagnostics** (y `GET /api/diagnostics`, y el log al arrancar) muestran por separado el **App interpreter** (tu Python) y el **Tools interpreter** (el portable), con el estado de las dependencias de cada uno.
-
-### Layout de `tools/` (todo relativo, en `.gitignore`)
-
-- `tools/python/` — Python portable (intérprete de las herramientas).
-- `tools/python/Lib/site-packages/` (Windows) — paquetes de herramientas instalados en el portable: `defusedxml`, `oletools`, el binding `python-magic`, etc.
-- `tools/libmagic/` — libmagic nativo en Windows: `libmagic.dll` + `magic.mgc`.
-
-Los **hallazgos** los produce código propio (`docutracex/parsers/`, `docutracex/ioc.py`) más herramientas externas que se ejecutan en el portable. Integradas hasta ahora:
-
-| Herramienta | Qué hace | Aplica a |
-|---|---|---|
-| **libmagic** | Identificación de tipo | todos |
-| **oletools** · `olevba` | Macros VBA (extracción + análisis) | Office OOXML/OLE |
-| **oletools** · `oleid` | Características sospechosas del documento | Office |
-| **oletools** · `mraptor` | Macro probable maliciosa (AutoExec+Write+Execute) | Office con VBA |
-| **oletools** · `msodde` | Enlaces DDE peligrosos | Office |
-| **oletools** · `oleobj` | Extrae objetos OLE incrustados | Office |
-| **msoffcrypto-tool** | Detecta Office cifrado y descifra con password por defecto (`VelvetSweatshop` → evasión) | Office cifrado |
-| **XLMMacroDeobfuscator** | Detecta y desofusca macros Excel 4.0 (XLM) en hojas ocultas; las fórmulas alimentan el extractor de IOC | Excel |
-| **Didier Stevens** · `oledump` / `zipdump` | Volcado de streams OLE / entradas ZIP (salida cruda) | Office/OLE |
-| **OfficeMalScanner** (opcional, Windows) | Shellcode / objetos embebidos (`scan brute`) + estructura VBA/OLE (`info`); en OOXML hace `inflate` y analiza los `vbaProject.bin` | Office OLE y OOXML |
-| **Parser de correo propio** | `.eml`/`.emlx` (stdlib `email`) y `.msg` (MAPI sobre `olefile`, sin GPL); cadena `Received` con Δt, auth SPF/DKIM/DMARC (leído, sin DNS), spoofing (From/Return-Path/Reply-To/display-name), adjuntos (hash + libmagic + extensión peligrosa/doble) | Correo |
-| **Didier Stevens** · `emldump` / `oledump` | Volcado MIME del `.eml` / streams OLE del `.msg` (salida cruda) | Correo |
-| **Parser PDF propio** | Escaneo raw robusto de tokens peligrosos (/OpenAction, /JavaScript, /JS, /Launch, /EmbeddedFile, /XFA, /URI, /AA, /AcroForm, /RichMedia, /ObjStm, /JBIG2Decode, /Encrypt), nombres hex-ofuscados, updates incrementales; extracción de URIs, ficheros embebidos (pypdf) y texto (pdfminer) | PDF |
-| **Didier Stevens** · `pdfid` / `pdf-parser` | Recuento de keywords y volcado profundo de objetos (salida cruda) | PDF |
-| **Análisis recursivo (nested)** | Lo que se extrae (adjuntos de correo, objetos OLE embebidos, ficheros embebidos en PDF) se analiza en cadena con las herramientas de su familia, hasta cierta profundidad; los hallazgos del hijo (p. ej. DDE de un `.docm` dentro de un PDF) suben a la vista unificada con su ruta | Todas |
-| **Motor YARA** (yara-python) | Escanea el original y todo lo extraído. Reglas por **subida HTTP** (`.yar`/`.yara` o comprimido `.zip`/`.tar.gz`) o por **ruta de servidor** (reglas grandes sin pasar por HTTP), con **compilación en streaming con progreso** (estilo Sigma de WinHound). **Opt-in**: un match se muestra siempre (resultados en **tarjetas expandibles por regla**), pero solo se convierte en *finding* cuando marcas esa regla. Progreso en Tasks (reglas · ficheros · matches) | Todas |
-| **OLE/BIFF antiguo** (olefile + oletools + XLMMacroDeobfuscator + OfficeMalScanner + oledump) | `.doc`/`.xls`/`.ppt`: estructura CFB (streams, metadatos SummaryInformation, VBA), más el análisis de macros/DDE (oletools) y **XLM en hojas BIFF** (`.xls`). Objetos OLE embebidos van por la recursión | OLE antiguo |
-
-Las cosas extraídas (adjuntos, objetos OLE, medios, copias desocultadas) tienen botones **📁 Folder** (abre la carpeta contenedora en el explorador del sistema — herramienta local) y **↓** (descarga), con validación de ruta dentro del caso.
-
-OfficeMalScanner es un binario PE de Windows (freeware, Frank Boldewin): se descarga de `reconstructer.org` al provisionar el portable y se extrae a `tools/officemalscanner/`. Si el sitio no responde o el AV lo bloquea, se omite sin romper nada y se ve en Diagnostics → *External scripts* (puedes soltar el `.exe` ahí a mano).
-
-Además, el parser de Excel **desoculta las hojas** `hidden`/`veryHidden`: genera una copia con las hojas visibles en `extracted/unhidden/` y lo registra como *finding* (sin tocar el original).
-
-Las de Didier Stevens (`tools/didier/`) se descargan al provisionar el portable (en tu equipo, con salida a GitHub). Si faltan, se omiten sin romper nada (se ve en Diagnostics → *External scripts*).
-
-**Pensadas para otras familias (cuando lleguen sus parsers):** `pdfid` / `pdf-parser` (Didier) + `pypdf` / `qpdf` / `pypdfium2` / `Tesseract` para **PDF**; `emldump` (Didier) + `extract-msg` para **correo**; `oledump` ya aplica al **Office antiguo (OLE)**; Apache POI + OpenJDK para la interpretación semántica de Office antiguo.
-
-Ficheros de prueba (uno por tipo del alcance) en `samples/` — ver `samples/README.md`; se regeneran con `python scripts/make_samples.py`.
-
-### Arquitectura inicial
-
-- **Backend:** Python + FastAPI (servicio web local), al estilo de WinHound/Longanizer.
-- **Frontend:** servido por el propio backend (plantillas Jinja2 + estático), UI en inglés con paneles.
-- **Persistencia por caso:** JSON partido por tipo de información en `cases/<analysis_id>/`; cada parser escribe su propio subresultado en `results/<módulo>.json` y se consolida en `summary.json`. `marks.json` va aparte y no se sobrescribe al reanalizar.
-- **Licencia:** Apache 2.0.
-
-## Backlog de tareas
-
-Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área; cada formato lleva sus subtareas juntas. El orden refleja dependencias, no fechas. Marca las casillas conforme avances.
-
-### Fase 0 — Cierre de especificación y decisiones abiertas
-
-- [ ] Confirmar extensiones incluidas/excluidas; `.docb` fuera, sin módulo propio
-- [ ] Definir estados normalizados: correcto, hallazgo, discrepancia, error, no compatible, no ejecutado, parcial
-- [ ] Definir modelos de análisis, componente, relación, IOC, hallazgo y evidencia
-- [ ] Política de límites: sin cuotas fijas (tamaño, duración, memoria, componentes, ratio, anidamiento); máx. 100 adjuntos/correo; sin timeout global + cancelación manual
-- [ ] Diseñar salvaguardas: streaming, cancelación, estados parciales, gestión ordenada de procesos
-- [ ] Retención manual de casos; sin limpieza automática por antigüedad
-- [ ] Definir manifiesto versionado y flujo de reapertura desde carpeta
-- [ ] Definir criterios de análisis parcial y de discrepancias
-- [ ] Crear plantilla de ficha de compatibilidad (nada se integra sin ella)
-- [ ] Incorporar decisiones funcionales (ejecución automática, UI inglés en paneles tipo WinHound, Overview, Marks, panel de casos, informe único, local sin auth, un análisis por instancia)
-- [ ] **Decisión abierta — presupuestos de recursos** configurables por caso con alerta/pausa (no abortar), para no colgar la instancia ni perder la muestra
-- [x] **Decidido — reemplazo del Python *embeddable*: python-build-standalone** (Astral), provisionado con `scripts/setup_portable_python.py`
-- [x] **Decidido — identificador primario: libmagic** (motor del comando `file`, licencia BSD, firmas ampliables) en vez de TrID. TrID es *freeware no comercial* y pieza única; libmagic es permisivo y redistribuible para una distribución gratuita. DIE descartado porque identificaba DOCX/XLSX/PPTX como **ZIP** (son contenedores comprimidos); Apache Tika descartado por el peso del runtime Java salvo que se incorpore por Apache POI
-
-*Aceptación: cada formato con alcance mínimo + pruebas; exclusiones documentadas; plantilla de ficha lista; «sin detecciones» ≠ seguro.*
-
-### Infraestructura, repositorio y calidad
-
-- [x] Crear estructura de aplicación y configuración
-- [x] Definir rutas relativas (sin rutas de una máquina concreta)
-- [ ] Configurar pruebas automatizadas, linting y análisis estático — *parcial: pytest (6 tests) y ruff configurados; falta análisis estático de tipos*
-- [ ] Añadir revisión de dependencias/vulnerabilidades (SCA)
-- [ ] Crear documentación base, plantillas de issues y PR — *parcial: README + LICENSE/NOTICE; faltan plantillas de issues/PR*
-- [x] Establecer convenciones de logs, manejo de errores y versionado
-- [ ] Montar CI (tests + lint + análisis en cada PR)
-
-*Aceptación: entorno reproducible; tests básicos y CI operativos; sin rutas específicas de máquina.*
-
-### App base, gestión de casos y ciclo de vida
-
-- [ ] Interfaz web básica en inglés con carga de ficheros y paneles desplegables (ref. WinHound) — *parcial: carga de ficheros y paneles listos; faltan desplegables y estilo WinHound*
-- [x] Navegación: Overview, Marks, Components/analysis, Reports, Tasks, YARA — *todas funcionales; el Overview muestra solo los hallazgos marcados como True positive (de cualquier fuente, YARA incluido)*
-- [ ] Validar nombre, extensión y estructura de entrada (sin máximo fijo de tamaño) — *parcial: nombre saneado y extensión capturada; falta validación estructural real*
-- [x] Guardar original sin modificar + ID único + carpeta aislada `cases\<analysis_id>\`
-- [x] Estructura de caso: `case.json`, `original\`, `extracted\`, `results\`, `reports\` con rutas relativas
-- [x] Manifiesto versionado: esquema, ID, fechas, hashes, metadatos, estado, versiones de herramientas
-- [ ] Pantalla inicial: listado de casos con búsqueda y filtros — *parcial: listado funcionando; faltan búsqueda y filtros*
-- [ ] Acción «Reabrir caso» por selección de carpeta (restaurar sin reejecutar); admitir casos movidos/copiados
-- [ ] Validar manifiesto, esquema, rutas contenidas y hashes al reabrir; abrir como degradado si hay discrepancias
-- [ ] Borrado manual explícito con confirmación (sin borrado automático)
-- [ ] Prevención de traversal, rutas UNC/absolutas inesperadas y sobrescrituras — *parcial: saneado de nombre y contención de rutas en la capa de almacenamiento; falta cubrir reapertura*
-- [ ] Mostrar contenido potencialmente activo como datos escapados
-
-*Aceptación: original verificable por hash; análisis aislados y persistentes; reapertura sin reejecutar (incluso tras mover); manifiestos corruptos y hashes discrepantes detectados.*
-
-### Gestor de tareas y cola (pestaña Tasks)
-
-- [x] Gestor central de tareas (`tasks.py`) + pestaña global «Tasks»
-- [x] Por tarea: tipo/acción, caso y archivo, estado, progreso, fase, inicio/duración, errores
-- [x] Estados: en cola, en ejecución, cancelando, cancelada, completada, parcial, fallida (progreso `null` = desconocido, distinto de 0 %)
-- [x] Un análisis por instancia (worker único, cola FIFO); el resto en cola
-- [x] Cancelación de tareas en cola (la que corre: *cancelling*, best-effort) — *pausa/reanudación: pendiente*
-- [x] Acción «Rerun»: relanzar el caso completo **o un módulo aislado** sin repetir el resto
-- [x] Historial de intentos en `results/tasks.json`; resultados previos versionados en `results/history/<ts>/` sin sobrescribir
-- [x] Al completar un intento: recalcular IOC y findings, **preservar Marks** (ids estables)
-- [x] Aislamiento de errores: una tarea fallida no bloquea las siguientes
-
-*Aceptación: lista unificada visible; cola secuencial por instancia; relanzamiento aislado con historial; Marks preservadas.* ✓
-
-Pendiente del gestor: pausa/reanudación segura y paralelismo entre instancias en puertos distintos.
-
-### Núcleo común (hashes, identificación, modelos)
-
-- [ ] Hashes MD5, SHA-1 y SHA-256 (original y componentes) — *parcial: original hecho (en streaming); componentes al extraerlos*
-- [x] libmagic (motor del comando `file`, BSD) como identificador general primario — registrar versión, salida y errores; en Windows la DLL nativa + `magic.mgc` se provisionan en `tools\libmagic\` (extraídas del wheel `python-magic-bin`) y la app las localiza antes de importar `magic`
-- [ ] Firmas ampliables vía formato `magic(5)` para añadir tipos nuevos; la extensibilidad ambiciosa (reglas complejas) se reserva a la fase YARA
-- [x] DIE y Apache Tika quedan descartados como identificador general (DIE marcaba todo OOXML como ZIP; Tika arrastra Java)
-- [ ] Adaptador de herramientas: versión, argumentos, código de salida, stdout/stderr, duración, resultado normalizado, prueba funcional
-- [ ] Modelos de componente, relación, hallazgo y evidencia (IDs estables, no índices efímeros)
-- [ ] Modelo persistente de Marks por hallazgo: TP/FP/Suspicious/Informational/Unreviewed, comentarios, fecha de revisión; sin tocar la evidencia automática
-- [ ] Pivotado desde cada Mark a su origen (fichero/componente, parser, sección, offset)
-- [ ] Diseñar modelo y motor común de IOC (sin ejecutarlo dentro de cada parser; ejecución en fase posterior)
-- [ ] Comparación extensión / libmagic / validador estructural / parser semántico, con registro de discrepancias — *parcial: extensión vs libmagic (por familia) hecho; faltan validador estructural y parser semántico*
-- [ ] Extracción de cadenas (ASCII/UTF-16) con implementación propia en Python — Sysinternals Strings descartado (su licencia prohíbe redistribuir)
-- [ ] FLOSS descartado
-
-*Aceptación: hashes calculados diferenciados de cadenas con aspecto de hash; discrepancias explícitas; motor IOC diseñado pero no ejecutado aún.*
-
-### Runtimes portables (Python, y Java/POI condicional)
-
-- [ ] Inventariar versiones mínima/máxima de Python por herramienta/biblioteca
-- [ ] Identificar dependencias nativas, runtimes y restricciones de Windows por combinación
-- [ ] Separar dos problemas: aislar *dependencias* (venvs sobre 1 intérprete) vs aislar *intérpretes* (solo si una herramienta no arranca en la versión elegida)
-- [x] Python 3.13 x64 como versión inicial (mejor cobertura de ruedas; 2ª versión más adelante si algún parser la exige)
-- [x] python-build-standalone como distribución portable con pip (en vez del *embeddable*)
-- [ ] Decidir nº de entornos/intérpretes según la matriz (permitir varios si hace falta) — *de momento 1 (3.13); abierto a añadir*
-- [x] Método reproducible para fijar/distribuir dependencias por entorno (`scripts/setup_portable_python.py` + `pip install -e .` en el portable)
-- [ ] Forzar invocación explícita del intérprete/entorno asignado (nunca Python global ni PATH) — *parcial: el check y el provisionado usan el intérprete portable explícito; falta enrutar la ejecución de cada herramienta por él*
-- [ ] Pruebas automatizadas de importación, ejecución y compatibilidad por entorno
-- [ ] Diagnóstico visible de versiones/entornos; probar traslado a otra ruta/máquina — *parcial: pestaña «Diagnostics» con checks por categoría (Runtime: existe Python portable e intérprete en uso; dependencias en ese intérprete) con estado y motivo; indicador en la barra de pestañas; log al arrancar y `/api/diagnostics`. Falta cubrir herramientas externas y traslado*
-- [ ] Java + Apache POI: decidir por pruebas si se incorpora (compatibilidad, licencia, utilidad real); JARs + **OpenJDK** portable (Temurin/Zulu/Liberica, GPLv2+CPE — **nunca Oracle JDK**) en `tools\` con rutas relativas; nunca Java global
-
-*Aceptación: toda herramienta Python con ficha revisada y pruebas en su entorno; sin invocación accidental del Python global; incompatibilidades resueltas o herramienta excluida.*
-
-### Gestor portable de herramientas
-
-- [ ] Inventario de versiones, fuentes, licencias y dependencias
-- [ ] Comprobar actualizaciones desde la interfaz (mostrar instalada/candidata/fuente); instalación como acción explícita, sin actualización silenciosa
-- [ ] Descarga solo desde fuentes aprobadas
-- [ ] Verificación de hashes/firmas cuando existan
-- [ ] Validación y prueba funcional antes de activar
-- [ ] Actualización transaccional con rollback; logs de instalación/actualización
-- [ ] Permisos adecuados; panel de estado
-- [ ] Gestionar Python y, si se aprueba, Java/POI portables; no modificar PATH ni exigir runtimes globales
-
-*Aceptación: descargas corruptas no reemplazan instalaciones válidas; actualización fallida permite rollback; versiones/licencias/estado visibles.*
-
-### Componentes y visor hexadecimal
-
-- [ ] Árbol de componentes y relaciones
-- [ ] Panel de hallazgos con enlace a origen
-- [ ] Visor de texto seguro (datos escapados)
-- [ ] Visor hexadecimal por componente
-- [ ] Búsqueda de bytes, ASCII y UTF-16; salto a offset; selección, copia y exportación
-- [ ] Lectura por rangos para ficheros grandes (sin cargar completos)
-- [ ] Distinguir offsets de original / ZIP comprimido / descomprimido / objeto PDF / parte MIME decodificada / extraído
-- [ ] Mostrar procedencia, versión de herramienta y límites
-
-*Aceptación: navegación hallazgo→evidencia; no se confunden offsets de representaciones distintas; componentes grandes no requieren carga completa.*
-
-### Motor OOXML común
-
-- [x] Inventario ZIP, `[Content_Types].xml`, relaciones *(docProps se inventaría como parte; parseo semántico pendiente)*
-- [x] Parser XML seguro con `defusedxml` (sin entidades externas ni red)
-- [ ] Detectar relaciones externas, destinos rotos, partes huérfanas, duplicados ZIP, tipos incoherentes, XML malformado y rutas peligrosas — *parcial: hecho externas, destinos rotos, duplicados, sin content-type, XML malformado y rutas peligrosas; falta «partes huérfanas»*
-- [x] IDs estables por ruta interna normalizada
-- [x] Extraer medios/objetos a espacio aislado, calcular hashes e identificar con libmagic; registrar metadatos para la fase IOC
-- [ ] Manejar firmas, cifrado, partes desconocidas, `AlternateContent` y límites
-- [x] Detener el análisis profundo automático (apertura como análisis independiente)
-
-*Aceptación: inventario reproducible; componentes trazables; sin extracción fuera del espacio de trabajo; errores y parcial visibles.*
-
-### Office moderno — Word, Excel y PowerPoint
-
-**Word (.docx/.docm/.dotx/.dotm)**
-- [ ] Reconstruir párrafos, tablas, encabezados/pies, enlaces, comentarios, notas, cuadros de texto/formas — *parcial: texto de document + headers/footers; falta estructura (tablas, comentarios, notas)*
-- [ ] Campos, texto oculto y revisiones recuperables; metadatos core/app/personalizados — *parcial: metadatos core/app y campos; falta texto oculto/revisiones*
-- [ ] Plantillas adjuntas y relaciones externas *(relaciones externas vía motor OOXML)*
-- [x] Detección de HYPERLINK, INCLUDETEXT, INCLUDEPICTURE, DDE/DDEAUTO (en field codes)
-- [x] Inventario de `vbaProject.bin`/VBA; extracción de objetos y medios — presencia de VBA (propio) + **extracción/análisis de macros con oletools** (autoexec, keywords sospechosas, IOCs); medios vía motor OOXML
-
-**Excel (.xlsx/.xlsm/.xltx/.xltm/.xlam)**
-- [ ] Inventario de libro, hojas, relaciones y visibilidad; shared strings y estilos — *parcial: hojas + visibilidad hidden/veryHidden; falta shared strings/estilos/relaciones completas*
-- [ ] Celdas con coordenadas: fórmula y valor en caché separados (nunca ejecutar/recalcular) — *pendiente (reconstrucción de celdas)*
-- [ ] Fórmulas compartidas/matriciales, nombres definidos, tablas, filtros, áreas de impresión, comentarios
-- [ ] Gráficos, conexiones, consultas, enlaces externos, cachés de dinámicas, `calcChain` — *parcial: detecta partes de enlaces externos*
-- [x] Patrones estáticos sospechosos (WEBSERVICE, FILTERXML, HYPERLINK), hojas hidden/veryHidden y VBA *(indirección/ofuscación pendientes)*
-
-**PowerPoint (.pptx/.pptm/.potx/.potm/.ppsx/.ppsm/.ppam/.sldx/.sldm)**
-- [ ] Inventario de diapositivas, layouts, masters y relaciones — *parcial: recuento de diapositivas y notas; falta layouts/masters*
-- [ ] Reconstrucción de texto/formas y orden aproximado; notas y comentarios — *parcial: texto de diapositivas; falta orden/formas/comentarios*
-- [ ] Acciones, hipervínculos, medios, gráficos y diagramas; elementos ocultos
-- [ ] Relaciones externas, OLE, ActiveX y VBA; extracción segura con procedencia — *parcial: VBA y relaciones externas vía motor OOXML*
-
-*Aceptación: vistas marcadas como reconstrucción, no clon; texto ligado al XML de origen; sin ejecutar macros/fórmulas, abrir enlaces, activar controles ni reproducir medios; fórmula y valor en caché diferenciados.*
-
-### Office antiguo y OLE/CFB (.doc/.dot, .xls/.xlt/.xla, .ppt/.pot)
-
-- [ ] Validar estructura real OLE/CFB (no fiar de la extensión)
-- [ ] Inventariar directorios y streams; extraer de forma segura con hashes; visor hexadecimal
-- [ ] Recopilar Strings/resultados textuales para el extractor común de IOC
-- [ ] Detectar y extraer VBA
-- [ ] Integrar `oledump.py` y `oletools` según compatibilidad; evaluar `olefile`
-- [ ] Parsers semánticos para Word, Excel/BIFF y PowerPoint
-- [ ] Evaluar Apache POI como complemento (no sustituye OLE/CFB ni análisis VBA)
-
-*Aceptación: la extensión no determina por sí sola la ruta de análisis; infraestructura común y parsers específicos separados.*
-
-### XLSB (.xlsb)
-
-- [ ] Elegir parser(es): comparar `pyxlsb` (LGPL-3.0) y `python-calamine` (MIT) y conservar discrepancias — preferir `python-calamine` si se quiere evitar el copyleft de `pyxlsb`
-- [ ] Validar estructura e inventariar componentes y relaciones
-- [ ] Reconstruir hojas y celdas; fórmulas y valores en caché distinguidos (nunca recalcular)
-- [ ] Hojas ocultas/veryHidden, nombres definidos y enlaces externos
-- [ ] Detectar e inspeccionar VBA (oletools/oledump) cuando exista
-- [ ] Extraer objetos aislados con hash, identificación y procedencia
-- [ ] Corpus de pruebas propio: benignos, con macros, malformados y límite
-
-*Aceptación: elementos no soportados/errores/parciales explícitos; sin prometer paridad con XLSX sin pruebas; sin ejecutar/recalcular fórmulas.*
-
-### PDF (.pdf) — todas las subtareas
-
-- [ ] Modelo de objetos, referencias, xref, trailers, `ObjStm` y catálogo
-- [ ] Inventario de páginas, recursos y flujos; objetos duplicados/no referenciados y ciclos
-- [ ] Texto por página y metadatos (orden aproximado, fuentes, texto oculto/solapado, grupos OCG)
-- [ ] Enlaces y anotaciones; comparar texto visible con destino (sin conectar)
-- [ ] Acciones/JS estático: `/JavaScript`, `/JS`, `/OpenAction`, `/AA`, `/Launch`, `/URI`, `/GoToR`, `/SubmitForm`, `/ImportData` (nunca ejecutar)
-- [ ] Formularios AcroForm/XFA (campos, valores, acciones)
-- [ ] Adjuntos `/EmbeddedFiles`/`/AF`: extraer aislados, hash, libmagic, procedencia; detener análisis profundo automático
-- [ ] Cifrado y permisos (análisis parcial); firmas: presencia vs integridad vs cobertura vs cadena/timestamp
-- [ ] Revisiones incrementales
-- [ ] OCR automático (Tesseract + idiomas) cuando no haya texto nativo suficiente; rasterizador portable **`pypdfium2`** (Apache/BSD) preferido, o Poppler/`pdftoppm` (GPL, como subproceso); evitar PyMuPDF (AGPL) y Ghostscript (AGPL); marcar texto OCR como tal; progreso por página en la web
-- [ ] Visor hexadecimal; informes y regresión
-- [ ] Herramientas candidatas: `pypdf`, `qpdf`, `pdfid.py`, `pdf-parser.py`, `pyHanko`, Pillow, `pypdfium2`, Tesseract
-
-*Aceptación: no ejecutar acciones/JS ni contactar URLs; procedencia de objetos/recursos; cifrado/errores/límites como parcial; firma/JS/adjunto ≠ malware por sí solos.*
-
-### Correo — EML, EMLX y MSG (MBOX/OFT/PST/OST excluidos)
-
-**EML/MIME (módulo `email`)**
-- [ ] Cabeceras originales: remitente/destinatarios, asunto, fecha, Message-ID, Reply-To, Return-Path, Received
-- [ ] Extraer y mostrar `Authentication-Results`, `Received-SPF` como valores declarados (advertir que se falsifican)
-- [ ] Validación DKIM criptográfica offline **solo si viajan los datos necesarios** (sin DNS); marcar «no verificable» cuando falte la clave del selector — será el caso común
-- [ ] Separar resultados declarados de validados (válido/inválido/no concluyente/no verificable)
-- [ ] Multipart, cuerpos texto/HTML, codificaciones y adjuntos; MIME malformado/truncado como parcial
-
-**MSG (`extract-msg`, `olefile`)**
-- [ ] Validación estructural; propiedades MAPI; remitente/destinatarios/asunto/fechas/cuerpos
-- [ ] Cabeceras de transporte solo si están presentes
-
-**EMLX (Apple Mail)**
-- [x] Reconocedor estructural de EMLX (byte-count inicial + cabeceras RFC 822 + `</plist>` final, firma compuesta PRONOM fmt/2055); confirma el tipo aunque libmagic solo vea texto
-- [ ] Extraer cabeceras, cuerpo y adjuntos; truncamiento como parcial
-
-**Adjuntos y pruebas**
-- [ ] Extraer a espacio aislado con nombre seguro, hash, tamaño, libmagic y procedencia; detener análisis profundo automático
-- [ ] Nunca ejecutar adjuntos, abrir enlaces, renderizar HTML activo ni DNS/HTTP
-- [ ] Pruebas: benignos/malformados, texto/HTML/multipart, codificaciones, hasta 100 adjuntos, nombres peligrosos, Received/autenticación falsos, duplicados, truncamiento; verificar ausencia de red
-
-*Aceptación: originales inalterados; lectura de autenticación automática y etiquetada como declarada; validación offline automática sin red; IOC con procedencia tras los parsers; PST/OST no incluidos.*
-
-### Detecciones transversales y extractor común de IOC
-
-- [ ] Ejecutar el extractor común **solo tras finalizar todos los parsers** y reunir sus resultados (texto, metadatos, cabeceras, macros, cadenas)
-- [ ] Detectar IPv4/IPv6, URLs, dominios y cadenas con apariencia de hash; normalizar y deduplicar sin perder ubicaciones/contextos
-- [ ] Mantener diferenciados hashes calculados vs cadenas que parecen hashes
-- [ ] Reglas específicas de documentos (ID, versión, explicación, pruebas)
-- [ ] Correlación interna entre componentes/hallazgos del mismo caso (coincidencias, ubicación, procedencia, contexto)
-- [ ] No comparar contra listas externas/importadas en esta fase
-- [ ] Discrepancias nombre/libmagic/estructura/parser; metadatos anómalos, ofuscación, contenido oculto
-- [ ] Priorización explicable; versionado y regresión de reglas
-
-*Aceptación: cada regla con ID/versión/explicación/pruebas; la correlación enlaza coincidencias sin afirmar malicia; procedencia conservada; indicadores ≠ certezas.*
-
-### Informes y exportación (Overview, Marks, HTML/JSON)
-
-- [ ] Informe HTML único vigente por caso: índice, secciones desplegables, enlaces internos a evidencias; actualizar al cambiar resultados/Marks
-- [ ] Overview como resumen conciso y expandible alineado con el informe
-- [ ] Pestaña Marks: 5 estados (TP/FP/Suspicious/Informational/Unreviewed), comentarios, fecha de revisión, persistencia
-- [ ] Pivotado desde cada Mark a su evidencia (fichero/componente, parser, sección, offset)
-- [ ] Agrupar IOCs repetidos conservando ocurrencias/contextos/procedencia
-- [ ] Exportación JSON para automatización; PDF pospuesto a fase posterior
-- [ ] HTML seguro: datos escapados, sin ejecutar contenido, sin recursos externos, sin abrir enlaces
-- [ ] Relevancia automática vs selección manual separadas; desmarcar no elimina hallazgo/evidencia; persistir selección en el caso
-- [ ] Por hallazgo: procedencia, evidencia, ubicación, herramienta/regla y versión; hashes, estados, errores, límites, discrepancias y partes no analizadas
-- [ ] Opciones para omitir datos sensibles innecesarios
-
-*Aceptación: informes reproducibles con procedencia; distingue automático vs manual; una actualización regenera el informe sin pisar clasificaciones; selección persiste al reabrir; HTML sin contenido activo.*
-
-### Endurecimiento, seguridad y regresión
-
-- [ ] Traversal, nombres peligrosos, ZIP bombs, XML malicioso/entidades externas
-- [ ] PDF con xref malformados, ciclos y flujos enormes
-- [ ] MIME excesivo, MSG/EML/EMLX corruptos, adjuntos peligrosos
-- [ ] Archivos enormes, descompresión extrema, anidamiento profundo, miles de objetos (sin cuotas fijas)
-- [ ] Agotamiento de CPU/memoria/disco, cancelación manual, terminación controlada
-- [ ] Verificar límite de 100 adjuntos/correo
-- [ ] Cola secuencial por instancia y aislamiento de errores entre tareas
-- [ ] Verificar estados/transiciones de Tasks y el relanzamiento aislado (historial, IOC/informe actualizados, Marks conservadas)
-- [ ] Verificar ausencia de red cuando sea viable
-- [ ] Revisar logs, dependencias, licencias y vulnerabilidades; confirmar original inalterado y no ejecución de contenido activo
-- [ ] Mantener corpus benigno/malformado/límite/adversarial por familia
-
-*Aceptación: casos adversariales terminan de forma controlada; sin escape del espacio de trabajo; límites generan parciales explícitos; errores no se convierten en falsos «sin detecciones».*
-
-### Distribución portable Windows y revisión final
-
-- [ ] Resolver rutas relativas; empaquetar/gestionar runtimes y herramientas
-- [ ] Verificar Python portable (y Java si aplica); evitar cambios globales de PATH
-- [ ] Instalar, actualizar, rollback y desinstalar; diagnóstico de herramientas/versiones
-- [ ] Documentar requisitos del sistema y permisos
-- [ ] Probar traslado y ejecución en máquina Windows limpia compatible
-- [ ] Revisión final: pruebas unitarias, integración, regresión, seguridad y portabilidad
-- [ ] Revisar alcance y exclusiones; verificar procedencia, no ejecución y no red
-- [ ] Publicar limitaciones conocidas
-
-*Aceptación: sin rutas absolutas de desarrollo; uso real de los runtimes incluidos; detección de herramientas ausentes/incompatibles; distribución reproducible.*
-
-### Transversal — inventario de herramientas y fichas de compatibilidad
-
-- [ ] Tarea específica de inventario de todas las apps/herramientas/bibliotecas/parsers para todos los formatos del alcance
-- [ ] Plantilla de ficha de compatibilidad: versiones (mín/máx Python), dependencias nativas/runtimes, licencia/redistribución, Windows/portabilidad, formatos/funcionalidades, pruebas, limitaciones, alternativa, fuente y versión fijada
-- [ ] Una ficha revisada **antes** de integrar cada herramienta/biblioteca/parser/runtime
-- [ ] Matriz general de herramientas, versiones, licencias y dependencias (mantenida)
-- [ ] Verificaciones de integridad (hash/firma) por fuente oficial
-- [ ] Candidatos a evaluar (con licencia; todo pensado para redistribución gratuita):
-    - Identificación: **libmagic / `file`** (BSD) — primario; `puremagic` (MIT) como respaldo en Python puro
-    - XML/OOXML: `defusedxml` (PSF), `python-docx` · `openpyxl` · `python-pptx` (MIT), `zipdump.py` (dominio público)
-    - OLE/VBA: `oletools` · `olefile` (BSD), `oledump.py` (dominio público)
-    - XLSB: `python-calamine` (MIT, preferido) o `pyxlsb` (LGPL-3.0)
-    - PDF: `pypdf` (BSD), `qpdf` (Apache-2.0), `pdfid.py` · `pdf-parser.py` (dominio público), `pyHanko` (MIT), `Pillow` (HPND), **`pypdfium2`** (Apache/BSD, rasterizado) o Poppler/`pdftoppm` (GPL), `Tesseract` + idiomas (Apache-2.0)
-    - Correo: `extract-msg` (BSD), módulo `email`/`hashlib` (PSF)
-    - Condicional: Apache POI (Apache-2.0) + OpenJDK (GPLv2+CPE)
-    - Descartados por licencia/encaje: **TrID** (freeware no comercial), **Sysinternals Strings** (prohíbe redistribuir), **DIE** (marca OOXML como ZIP), **PyMuPDF/Ghostscript** (AGPL), **FLOSS**, Oracle JDK
-
-*Aceptación: ninguna dependencia integrada sin ficha completada y revisada; matriz mantenida; el estudio de runtime/Python va en su fase propia.*
-
-### Tarea futura — motor YARA
-
-- [ ] Incorporar un motor YARA a la aplicación (al final de la hoja de ruta)
-- [ ] Definir alcance, selección de motor, gestión de reglas, integración con los análisis y pruebas
-- [ ] Pendiente de concretar por decisión expresa; se detallará al abordar esta tarea
-
-*Nota: fuera del alcance activo; sin diseño detallado por ahora.*
-
-## Alcance de formatos
-
-| Familia | Incluidos | Excluidos |
-|---|---|---|
-| Word moderno | `.docx` `.docm` `.dotx` `.dotm` | — |
-| Excel moderno | `.xlsx` `.xlsm` `.xltx` `.xltm` `.xlam` | — |
-| PowerPoint moderno | `.pptx` `.pptm` `.potx` `.potm` `.ppsx` `.ppsm` `.ppam` `.sldx` `.sldm` | — |
-| Office antiguo | `.doc` `.dot` `.xls` `.xlt` `.xla` `.ppt` `.pot` | — |
-| Excel binario | `.xlsb` (módulo propio) | — |
-| PDF | `.pdf` | — |
-| Correo | `.msg` `.eml` `.emlx` | `.mbox` `.oft` `.pst` `.ost` |
-| Otros | — | `.docb` |
+</div>
 
 ---
 
-Referencia funcional/visual: [WinHound](https://github.com/G92MZ/winhound).
+## 🚀 Quickstart
+
+```bash
+pip install -e .
+python run.py                 # open http://127.0.0.1:8000
+```
+
+```bash
+python run.py --port 8001     # run next to WinHound/Longanizer on another port
+```
+
+> 🧪 **Try it now:** benign booby-trapped samples ship in `samples/` — a `.docm`
+> with DDEAUTO, an `.xlsm` with a very-hidden sheet + `WEBSERVICE`, a `.pdf` that
+> auto-runs JavaScript and carries an embedded macro doc, and `.eml`/`.msg`
+> phishing with a `report.docm` attachment. Upload one and look around.
+
+The web app runs on **your** Python; the analysis tools run on a **portable**
+Python under `tools/`, provisioned automatically on first launch (see
+`scripts/setup_portable_python.py`). On Windows, point it at your FLARE-VM and
+it just works.
+
+## 🧭 How you use it
+
+1. **📥 Upload** — drop a file. The original is copied, hashed and never modified; the analysis is **queued** (one per instance) and runs in the background.
+2. **🔬 Identify** — libmagic + structural recognizers decide the *real* family and flag extension/type **discrepancies** (that `.pdf` that is really an OLE container).
+3. **🧩 Inspect** — the **Components** view: a tab per analysis — Findings (with the exact **evidence** that triggered each one and a ↗ pivot to where it lives), IOCs, the semantic content, external-tool output, the recursive **Nested** tree, and more.
+4. **🧷 Hunt** — load your **YARA** rules (upload or a server path) and match them over the file and everything extracted from it.
+5. **🏷️ Triage** — mark each finding **TP / FP / Suspicious / Informational** with a comment; marks survive re-analysis.
+6. **📝 Report** — a self-contained HTML report of the **confirmed (True positive)** findings, ready to print to PDF or attach to a ticket.
+
+## ✨ What's inside
+
+| | |
+|---|---|
+| 🔍 **Type truth** | libmagic + structural recognizers (OPC/OOXML, EMLX, CFB) → family and extension/type **discrepancy** |
+| 📝 **Office (OOXML)** | Word/Excel/PowerPoint: metadata, VBA, DDE & field codes, `WEBSERVICE`/`FILTERXML`, **hidden/very-hidden sheets** (and an **unhidden copy** as evidence), external links |
+| 🗂️ **Office (OLE/BIFF)** | legacy `.doc`/`.xls`/`.ppt`: CFB structure, SummaryInformation, VBA, and **Excel 4.0 (XLM)** macros in hidden BIFF sheets |
+| 📄 **PDF** | robust raw-token scan (`/OpenAction`, `/JS`, `/Launch`, `/EmbeddedFile`, `/XFA`, `/URI`, hex-obfuscated names…), **extracted JavaScript**, every object browsable, embedded-file extraction, text & URIs |
+| ✉️ **Email** | `.eml`/`.emlx`/`.msg`: the **`Received` hop chain** with Δt, SPF/DKIM/DMARC, From/Return-Path/Reply-To & display-name **spoofing**, attachments hashed & typed |
+| 🧰 **Real tools** | oletools (olevba · oleid · mraptor · msodde · oleobj), msoffcrypto-tool, XLMMacroDeobfuscator, OfficeMalScanner, Didier Stevens Suite (oledump/zipdump/pdfid/pdf-parser/emldump) |
+| 🪆 **Recursion** | attachments, embedded OLE objects and PDF-embedded files are analyzed **in turn** with their family's tools — the DDE inside a `.docm` inside a `.pdf` surfaces with its full path |
+| 🛡️ **YARA** | your rules by upload (`.yar`/`.yara`/`.zip`/`.tar.gz`) or **server path**, compiled with streaming progress; matches shown as cards — **opt-in**: a rule becomes a finding only when you tick it |
+| 🧷 **IOC extractor** | URLs, domains, IPv4/IPv6 and hash-like strings across every parser's output, with provenance |
+| 🏷️ **Marks** | per-finding TP/FP/Suspicious/Informational + comment, kept separate from the evidence and **preserved across re-analysis** (stable finding IDs) |
+| 🧵 **Tasks** | a sequential queue with per-file **sub-step log** — every tool that ran, its status, timing and findings — plus isolated **re-run** of a single module |
+| 📊 **Report** | one self-contained HTML report of the confirmed findings, with evidence, IOCs and the nested tree |
+| 🩺 **Diagnostics** | app vs. tool interpreter, every dependency and external tool checked in one place |
+
+## 📦 Supported formats
+
+| Family | Extensions |
+|---|---|
+| **Word** | `.doc` `.dot` `.docx` `.docm` `.dotx` `.dotm` |
+| **Excel** | `.xls` `.xlt` `.xla` `.xlsx` `.xlsm` `.xltx` `.xltm` `.xlam` `.xlsb` |
+| **PowerPoint** | `.ppt` `.pot` `.pptx` `.pptm` `.potx` `.potm` `.ppsx` `.ppsm` `.ppam` `.sldx` `.sldm` |
+| **PDF** | `.pdf` |
+| **Email** | `.eml` `.emlx` `.msg` |
+
+## 📝 Notes
+
+- **Static only.** No macro, formula, JavaScript, PDF action, link, media or attachment is ever executed — everything is read, parsed and pattern-matched.
+- **Runs offline.** The only network access is the one-time provisioning of the portable Python and external tools (from PyPI/GitHub/reconstructer.org) on first launch.
+- **Your data lives in** `cases/` (per-case evidence, results, marks, report), `yara/` (your rules) and `tools/` (the portable runtime) — all git-ignored and preserved across updates.
+- **Two interpreters by design:** the web app on your Python, the analysis tools on the portable one, so a messy tool dependency never touches your environment.
+
+## 🔄 Updating
+
+Grab the latest version without git — the updater checks GitHub and updates the
+app in place, **keeping your cases, rules and tools** (`cases/`, `yara/`, `tools/`):
+
+```bash
+python update.py            # check for a new version and update (asks first)
+python update.py --check    # only check, change nothing
+python update.py --yes      # update without asking
+```
+
+(Cloned with git? `git pull` works too.)
+
+## 🧭 Roadmap
+
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full design notes and the task breakdown.
+
+## 📜 License
+
+Licensed under the **Apache License 2.0** — free to use, modify and distribute
+(including commercially); just keep the copyright and `NOTICE`, and state your
+changes. See [`LICENSE`](LICENSE).
+
+© 2026 Gregorio Moreno (**gmzpt**)
