@@ -6,7 +6,9 @@ All static, no network and nothing executed:
 - .msg         : minimal MAPI-over-OLE reader built on ``olefile`` (BSD; already
   present via oletools) — no GPL ``extract-msg`` dependency. The Outlook message
   carries the full RFC 822 headers in the transport-headers MAPI stream, so the
-  same header/auth/spoofing analysis runs for both families.
+  same header/auth/spoofing analysis runs for both families. The HTML body comes
+  from PR_HTML or, failing that, is de-encapsulated from the compressed RTF
+  (see ``msg_rtf``).
 
 Surfaces: the Received hop chain (origin -> destination, with inter-hop Δt),
 authentication results (SPF/DKIM/DMARC as stated in the headers — not re-checked
@@ -41,6 +43,8 @@ _MAPI = {
     "subject": ("0037001F", "0037001E"),
     "transport_headers": ("007D001F", "007D001E"),
     "body": ("1000001F", "1000001E"),
+    "html": ("10130102", "1013001F", "1013001E"),
+    "rtf_compressed": ("10090102",),
     "sender_name": ("0C1A001F", "0C1A001E"),
     "sender_email": ("5D01001F", "5D01001E", "0C1F001F", "0C1F001E"),
     "display_to": ("0E04001F", "0E04001E"),
@@ -265,10 +269,15 @@ def _analyze_eml_body(msg: Message, extracted_dir: Path | None, result: dict[str
     text = "\n".join(texts)
     result["body_sample"] = text[:_BODY_SAMPLE]
     result["body_length"] = len(text)
-    result["has_html"] = bool(html)
-    html_text = "\n".join(html)
-    rendered = _html_to_text(html_text)
-    result["html_text_sample"] = rendered[:_BODY_SAMPLE]
+    _set_html_body("\n".join(html), result)
+
+
+def _set_html_body(html_text: str, result: dict[str, Any]) -> None:
+    """Store the HTML body interpreted as text, its links and a source sample."""
+    result["has_html"] = bool(html_text.strip())
+    if not result["has_html"]:
+        return
+    result["html_text_sample"] = _html_to_text(html_text)[:_BODY_SAMPLE]
     result["html_source_sample"] = html_text[:_BODY_SAMPLE]
     result["html_links"] = list(dict.fromkeys(_RE_HREF.findall(html_text)))[:_MAX_LINKS]
     _html_link_mismatch(html_text, result)
@@ -376,6 +385,25 @@ def _mapi_text(ole, prefix: str, suffixes) -> str:
         return raw.decode("latin-1", "replace")
 
 
+def _msg_html(ole) -> str:
+    """HTML body of a .msg: PR_HTML, else HTML encapsulated in the compressed RTF."""
+    from . import msg_rtf
+
+    for suf in _MAPI["html"]:
+        raw = _mapi_stream(ole, "", (suf,))
+        if raw:
+            if suf.endswith("0102"):
+                return msg_rtf.decode_html_bytes(raw)
+            return _mapi_text(ole, "", (suf,))
+    raw = _mapi_stream(ole, "", _MAPI["rtf_compressed"])
+    if raw:
+        try:
+            return msg_rtf.html_from_rtf(msg_rtf.decompress_rtf(raw))
+        except Exception:  # noqa: BLE001
+            return ""
+    return ""
+
+
 def _parse_msg(path: Path, extracted_dir: Path | None, result: dict[str, Any]) -> None:
     import olefile
 
@@ -411,6 +439,7 @@ def _parse_msg(path: Path, extracted_dir: Path | None, result: dict[str, Any]) -
         result["mime_structure"] = ["message/rfc822 (MAPI)"]
         result["body_sample"] = body[:_BODY_SAMPLE]
         result["body_length"] = len(body)
+        _set_html_body(_msg_html(ole), result)
 
         # Recipients and attachments live in __recip_*/__attach_* storages.
         for entry in ole.listdir(streams=False, storages=True):
