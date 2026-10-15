@@ -382,9 +382,14 @@ _RE_ANCHOR = re.compile(r'<a\s[^>]*href=["\']?(https?://[^"\'>\s]+)["\']?[^>]*>(
 def _html_link_mismatch(html: str, result: dict[str, Any]) -> None:
     if not html:
         return
+    from .. import urlwrap
+
     for href, text in _RE_ANCHOR.findall(html)[:200]:
         shown = re.search(r"https?://([\w.-]+)", re.sub(r"<[^>]+>", "", text or ""))
         if shown:
+            chain = urlwrap.unwrap_all(href)   # compare with the real destination,
+            if chain:                          # not the mail gateway's wrapper
+                href = chain[-1][1]
             href_host = re.search(r"https?://([\w.-]+)", href)
             if href_host and shown.group(1).lower() != href_host.group(1).lower():
                 result["findings"].append(_finding("url_display_mismatch", "medium",

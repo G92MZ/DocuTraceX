@@ -87,7 +87,7 @@ def test_register_missing_path_404(client: TestClient) -> None:
 
 
 def _wait_case(client: TestClient, cid: str) -> None:
-    for _ in range(200):
+    for _ in range(1200):  # real VBA: ViperMonkey emulation takes a few seconds
         if client.get(f"/api/cases/{cid}").json().get("state") in ("completed", "error"):
             return
         time.sleep(0.05)

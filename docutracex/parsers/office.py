@@ -128,9 +128,10 @@ def _analyze_word(zf: zipfile.ZipFile) -> dict[str, Any]:
         except Exception:  # noqa: BLE001
             findings.append(_finding("malformed_xml", "medium", f"Malformed XML in {name}", name))
             continue
-        for t in root.iter(f"{W}t"):
-            if t.text:
-                texts.append(t.text)
+        for para in root.iter(f"{W}p"):
+            ptext = "".join(t.text or "" for t in para.iter(f"{W}t"))
+            if ptext:
+                texts.append(ptext + "\n")
         # Field codes: w:instrText and w:fldSimple/@w:instr
         for instr in root.iter(f"{W}instrText"):
             if instr.text:

@@ -10,6 +10,7 @@ const FORMATS = [
     exts: [".ppt", ".pot", ".pptx", ".pptm", ".potx", ".potm", ".ppsx", ".ppsm", ".ppam", ".sldx", ".sldm"] },
   { name: "PDF", color: "#c0392b", glyph: "PDF", exts: [".pdf"] },
   { name: "Email", color: "#7f93ad", glyph: "mail", exts: [".eml", ".emlx", ".msg"] },
+  { name: "RTF", color: "#6c5ce7", glyph: "RTF", exts: [".rtf"] },
 ];
 
 // Playful document "character": page + eyes + smile, colored band + letter.
@@ -326,6 +327,12 @@ function showTab(view) {
     { v.hidden = v.getAttribute("data-view") !== view; });
 }
 
+// "Findings (12)" -> name + count badge.
+function subtabLabel(label) {
+  const m = /^(.*?) \((.+)\)$/.exec(label || "");
+  return m ? `${escapeHtml(m[1])}<span class="subtab-count">${escapeHtml(m[2])}</span>` : escapeHtml(label || "");
+}
+
 function table(headers, rowsHtml) {
   const head = headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("");
   return `<table class="cases"><thead><tr>${head}</tr></thead><tbody>${rowsHtml}</tbody></table>`;
@@ -392,9 +399,35 @@ function pivotTarget(f, ids) {
   }
   if (["olevba", "oleid", "mraptor", "msodde", "oleobj", "oletools", "msoffcrypto"].includes(src)) return has("tools") ? "tools" : null;
   if (src === "officemalscanner") return has("oms") ? "oms" : null;
+  if (src === "vipermonkey" || src === "vbatools") {
+    if (/xlm_very_hidden/.test(rule)) return has("tools") ? "tools" : null;
+    return has("vba") ? "vba" : null;
+  }
+  if (src === "officerules") {
+    if (/author_local_path|custom_property|remote_template_name/.test(rule)) return has("metadata") ? "metadata" : null;
+    if (/xlm_/.test(rule)) return has("content") ? "content" : null;
+    if (/remote_template|external_ole|mshtml|follina|subdocument|remote_image|search_ms|protocol_handler|unc_file/.test(rule)
+        && !/field/.test(loc)) return has("relationships") ? "relationships" : null;
+    return null;
+  }
   if (src === "yara") return has("yara") ? "yara" : null;
   if (src === "ole") return has("ole") ? "ole" : null;
   if (src === "pdf") return has("pdf") ? "pdf" : null;
+  if (src === "pdftools") return has("pdftools") ? "pdftools" : null;
+  if (src === "javascript") return has("javascript") ? "javascript" : null;
+  if (src === "rtf") {
+    if (loc.startsWith("object")) return has("rtfobjects") ? "rtfobjects" : null;
+    if (loc.startsWith("field") || loc.includes("template") || loc.includes("docvar")) return has("rtftext") ? "rtftext" : null;
+    if (loc.includes("info") || loc.includes("userprops")) return has("rtfmeta") ? "rtfmeta" : null;
+    return has("rtfstructure") ? "rtfstructure" : null;
+  }
+  if (src === "mailrules") {
+    if (loc.startsWith("attachment")) return has("attachments") ? "attachments" : null;
+    if (/dkim|lookalike|idn_domain|homoglyph|mass_mailer|messageid|missing_message/.test(rule)) return has("auth") ? "auth" : null;
+    if (/received|date_header/.test(rule)) return has("headers") ? "headers" : null;
+    if (/^qr_code/.test(rule)) return has("body") ? "body" : null;
+    return has("body") ? "body" : null;
+  }
   if (src === "xlmdeobf") return has("content") ? "content" : null;
   // excel formulas / word field codes are shown in Content; hidden-sheet info in Metadata.
   if (src === "excel") {
@@ -514,7 +547,7 @@ function paneIocs(iocs) {
     table(["Type", "Value", "Count", "Provenance", "Mark"], rows);
 }
 
-function paneMetadata(sem, ole) {
+function paneMetadata(sem, ole, rules) {
   let html = "";
   const meta = (sem && sem.metadata) || {};
   const keys = Object.keys(meta);
@@ -523,6 +556,22 @@ function paneMetadata(sem, ole) {
       `<tr><td class="file">${escapeHtml(k)}</td><td>${escapeHtml(String(meta[k]))}</td>
        <td>${addMarkCell("metadata", `${k}: ${meta[k]}`, "metadata", "")}</td></tr>`).join("");
     html += table(["Property", "Value", "Mark"], rows);
+  }
+  // Attribution extras from the own Office rules (what the table above lacks).
+  const att = (rules && rules.attribution) || {};
+  const seen = new Set(keys.map((k) => k.toLowerCase()));
+  const attRows = Object.entries(att)
+    .filter(([k]) => !["custom_properties", "local_paths"].includes(k) && !seen.has(k.toLowerCase()))
+    .map(([k, v]) => `<tr><td class="file">${escapeHtml(k)}</td><td class="mono">${escapeHtml(String(v))}</td>
+      <td>${addMarkCell("metadata", `${k}: ${v}`, "attribution", "")}</td></tr>`).join("");
+  if (attRows) html += `<h3 class="formats-title">Attribution</h3>` + table(["Field", "Value", "Mark"], attRows);
+  if ((att.local_paths || []).length) {
+    html += `<p class="hint-line">Local paths of the author's machine</p><pre class="text-sample">${escapeHtml(att.local_paths.join("\n"))}</pre>`;
+  }
+  const cp = att.custom_properties || {};
+  if (Object.keys(cp).length) {
+    html += `<p class="hint-line">Custom document properties</p>` + table(["Name", "Value"],
+      Object.entries(cp).map(([k, v]) => `<tr><td class="file">${escapeHtml(k)}</td><td class="mono">${escapeHtml(v)}</td></tr>`).join(""));
   }
   const bits = [];
   if (sem && sem.format === "excel") {
@@ -561,15 +610,7 @@ function paneContent(sem, ole, xlm) {
   }
   const olevba = ole && ole.tools && ole.tools.olevba;
   if (olevba && olevba.macros) {
-    const modules = olevba.modules || [];
-    html += `<p class="hint-line">VBA source — ${modules.length} module(s)</p>`;
-    modules.forEach((m) => {
-      const name = m.vba_filename || m.stream || "module";
-      const trunc = m.code_truncated ? ` — truncated at ${(m.code || "").length} of ${m.code_length} chars` : "";
-      const code = m.code != null ? m.code : "";
-      html += `<p class="hint-line mono">${escapeHtml(name)} (${m.code_length} chars)${escapeHtml(trunc)}</p>
-        <pre class="text-sample">${escapeHtml(code)}</pre>`;
-    });
+    html += `<p class="hint-line">VBA source: see the <strong>VBA</strong> tab (${(olevba.modules || []).length} module(s)).</p>`;
   }
   if (xlm && xlm.xlm_macros) {
     const formulas = xlm.formulas || [];
@@ -579,7 +620,76 @@ function paneContent(sem, ole, xlm) {
   return html || `<p class="hint-line">No reconstructed content.</p>`;
 }
 
-function paneTools(ole, crypto, xlm) {
+// Collapsible raw output of one external tool run (command, rc, output).
+function toolOutputBlock(name, o, open) {
+  if (!o || (!o.output && !o.error)) return "";
+  const rc = o.returncode != null ? ` · rc ${o.returncode}` : "";
+  const cmd = o.command ? ` · <span class="mono">${escapeHtml(o.command)}</span>` : "";
+  const dur = o.duration_s != null ? ` · ${o.duration_s}s` : "";
+  const trunc = o.output_truncated ? '<p class="hint-line">(output truncated)</p>' : "";
+  return `<details class="disclose"${open ? " open" : ""}><summary>${escapeHtml(name)}${cmd}${rc}${dur}</summary>
+    <pre class="text-sample">${escapeHtml(o.output || o.error || "")}</pre>${trunc}</details>`;
+}
+
+// VBA: source modules, project status (hidden modules / locked), ViperMonkey
+// emulation, code rebuilt from p-code and the oledump VBA plugins.
+function paneVba(ole, vt, vm) {
+  const olevba = (ole && ole.tools && ole.tools.olevba) || {};
+  const modules = olevba.modules || [];
+  const proj = (vt && vt.project) || {};
+  const tools = (vt && vt.tools) || {};
+  const chips = [`${modules.length} module(s)`];
+  if ((proj.hidden_modules || []).length) chips.push(`<span class="bad-text">hidden: ${escapeHtml(proj.hidden_modules.join(", "))}</span>`);
+  if (proj.locked) chips.push('<span class="bad-text">project locked</span>');
+  const stomp = (olevba.analysis || []).some((a) => /stomping/i.test(a.keyword || ""));
+  if (stomp) chips.push('<span class="bad-text">VBA stomping</span>');
+  let html = `<p class="hint-line">${chips.join(" · ")}</p>`;
+
+  if (vm) {
+    const acts = vm.actions || [];
+    html += `<h3 class="formats-title">Emulation (ViperMonkey) — ${acts.length} action(s)</h3>`;
+    if (vm.error) html += `<p class="hint-line">${escapeHtml(vm.error)}</p>`;
+    if (acts.length) {
+      const danger = /execute|shell|run|download|http|write|powershell|cmd|createobject|registry/i;
+      html += table(["Action", "Parameters", "Description"], acts.map((a) => `<tr>
+        <td${danger.test(a.action + " " + a.parameters) ? ' class="bad-text"' : ""}>${escapeHtml(a.action)}</td>
+        <td class="mono">${escapeHtml(a.parameters)}</td><td>${escapeHtml(a.description || "")}</td></tr>`).join(""));
+    }
+    if ((vm.potential_iocs || []).length) {
+      html += `<p class="hint-line">Values assembled in VBA variables during emulation</p>
+        <pre class="text-sample">${escapeHtml(vm.potential_iocs.join("\n"))}</pre>`;
+    }
+    if ((vm.artifacts || []).length) {
+      html += `<p class="hint-line">Files the emulated macro dropped</p>` + table(["File", "Actions"],
+        vm.artifacts.map((a) => `<tr><td class="mono">${escapeHtml(a)}</td><td>${fileActions(a)}</td></tr>`).join(""));
+    }
+    html += toolOutputBlock("ViperMonkey output", vm.tool, false);
+  }
+
+  html += `<h3 class="formats-title">VBA source (olevba)</h3>`;
+  modules.forEach((m) => {
+    const name = m.vba_filename || m.stream || "module";
+    const hidden = (proj.hidden_modules || []).some((h) => (m.stream || "").endsWith("/" + h));
+    const trunc = m.code_truncated ? ` — truncated at ${(m.code || "").length} of ${m.code_length} chars` : "";
+    html += `<details class="disclose" open><summary><span class="mono">${escapeHtml(name)}</span>
+        <span class="hint-line">${escapeHtml(m.stream || "")} · ${m.code_length} chars${escapeHtml(trunc)}</span>
+        ${hidden ? '<span class="badge badge-bad">hidden from the VBA editor</span>' : ""}</summary>
+      <pre class="text-sample">${escapeHtml(m.code || "")}</pre></details>`;
+  });
+  if (!modules.length) html += `<p class="hint-line">No VBA source extracted.</p>`;
+
+  html += `<h3 class="formats-title">Compiled p-code</h3>`;
+  html += toolOutputBlock("VBA rebuilt from p-code (pcode2code)", tools.pcode2code, false);
+  html += toolOutputBlock("p-code disassembly (pcodedmp)", tools.pcodedmp, false);
+  const plugins = Object.keys(tools).filter((k) => k.startsWith("oledump plugin_vba") || k.includes("http_heuristics"));
+  if (plugins.length) {
+    html += `<h3 class="formats-title">oledump plugins</h3>`;
+    plugins.forEach((k) => { html += toolOutputBlock(k, tools[k], false); });
+  }
+  return html;
+}
+
+function paneTools(ole, crypto, xlm, vt) {
   const rows = [];
   const add = (name, status, detail) => rows.push(`<tr>
     <td class="file">${escapeHtml(name)}</td>
@@ -626,6 +736,9 @@ function paneTools(ole, crypto, xlm) {
   ["olevba", "oleid", "mraptor", "msodde", "oleobj"].forEach((n) => { if (t[n]) outs.push([n, t[n]]); });
   if (crypto && crypto.available) outs.push(["msoffcrypto", crypto]);
   if (xlm && xlm.available) outs.push(["XLMMacroDeobfuscator", xlm]);
+  // OLE structure tools (timeline, metadata, directory, BIFF records).
+  const vtools = (vt && vt.tools) || {};
+  ["oletimes", "olemeta", "oledir", "oledump plugin_biff -x"].forEach((n) => { if (vtools[n]) outs.push([n, vtools[n]]); });
   let html = table(["Tool", "Status", "Detail"], rows.join(""));
   outs.forEach(([name, o]) => {
     if (!o.output && !o.error) return;
@@ -750,7 +863,37 @@ function paneEmailHeaders(email) {
   return table(["Header", "Value", "Mark"], rows);
 }
 
-function paneAuth(email) {
+// Offline DKIM check, look-alike domains and the sender fingerprint.
+function emailRulesAuth(mr) {
+  if (!mr) return "";
+  let html = "";
+  const dk = mr.dkim || [];
+  if (dk.length) {
+    html += `<h3 class="formats-title">DKIM (offline check)</h3>` + table(
+      ["Domain", "Selector", "Algorithm", "Canonicalization", "Body hash", "Signed headers"], dk.map((d) => {
+        const bh = d.body_hash_ok === true ? '<span class="badge badge-ok">matches</span>'
+          : d.body_hash_ok === false ? '<span class="badge badge-bad">MISMATCH</span>' : '<span class="badge badge-muted">n/a</span>';
+        return `<tr><td class="mono">${escapeHtml(d.domain)}</td><td class="mono">${escapeHtml(d.selector)}</td>
+          <td>${escapeHtml(d.algorithm)}</td><td>${escapeHtml(d.canonicalization)}</td><td>${bh}</td>
+          <td class="mono">${escapeHtml((d.signed_headers || []).join(":"))}</td></tr>`;
+      }).join("")) + `<p class="hint-line">Without DNS the signature itself cannot be verified; the body hash can — a mismatch means the body changed after signing.</p>`;
+  }
+  const la = mr.lookalikes || [];
+  if (la.length) {
+    html += `<h3 class="formats-title">Look-alike domains (${la.length})</h3>` + table(
+      ["Where", "Domain", "Why"], la.map((x) => `<tr><td>${escapeHtml(x.where)}</td>
+        <td class="mono bad-text">${escapeHtml(x.domain)}</td><td>${escapeHtml(x.why)}</td></tr>`).join(""));
+  }
+  const fp = mr.fingerprint || {};
+  if (fp.mailer || fp.message_id_domain) {
+    html += `<h3 class="formats-title">Sender fingerprint</h3>` + table(["Field", "Value"],
+      [["Mailer / User-Agent", fp.mailer], ["Message-ID domain", fp.message_id_domain]].filter(([, v]) => v)
+        .map(([k, v]) => `<tr><td class="file">${escapeHtml(k)}</td><td class="mono">${escapeHtml(v)}</td></tr>`).join(""));
+  }
+  return html;
+}
+
+function paneAuth(email, mr) {
   const a = (email && email.authentication) || {};
   const addr = (email && email.addresses) || {};
   const verdict = (v) => {
@@ -770,6 +913,7 @@ function paneAuth(email) {
     `<tr><td class="file">${escapeHtml(k)}</td><td class="mono">${escapeHtml(String(v))}</td>
      <td>${addMarkCell("sender", `${k}: ${v}`, "authentication", "")}</td></tr>`).join("");
   if (rows) html += `<h3 class="formats-title">Sender / routing</h3>` + table(["Field", "Value", "Mark"], rows);
+  html += emailRulesAuth(mr);
   return html;
 }
 
@@ -797,7 +941,7 @@ function paneAttachments(email, nestedMod) {
   return table(["Filename", "Size", "Detected", "SHA-256", "Tool scan", "Actions", "Mark"], rows);
 }
 
-function paneEmailBody(email) {
+function paneEmailBody(email, mr) {
   let html = "";
   if (email && email.mime_structure && email.mime_structure.length) {
     html += `<p class="hint-line">MIME structure: ${escapeHtml(email.mime_structure.join(" · "))}${email.has_html ? " · HTML present" : ""}</p>`;
@@ -822,6 +966,34 @@ function paneEmailBody(email) {
     if (htmlSrc) {
       html += `<details class="disclose"><summary>HTML source</summary><pre class="text-sample">${escapeHtml(htmlSrc.slice(0, 20000))}</pre></details>`;
     }
+  }
+  html += emailRulesBody(mr);
+  return html;
+}
+
+// Email rules shown with the body: decoded gateway links, QR codes, emldump parts.
+function emailRulesBody(mr) {
+  if (!mr) return "";
+  let html = "";
+  const dec = mr.decoded_urls || [];
+  if (dec.length) {
+    html += `<h3 class="formats-title">Links rewritten by a mail gateway (${dec.length})</h3>` + table(
+      ["Original destination", "Gateway", "Mark"], dec.map((d) => `<tr>
+        <td class="mono">${escapeHtml(d.original)}</td><td>${escapeHtml((d.services || []).join(" → "))}</td>
+        <td>${addMarkCell("link", `Link to ${d.original}`, "body", d.wrapped)}</td></tr>`).join(""));
+  }
+  const qr = mr.qr || [];
+  if (qr.length) {
+    html += `<h3 class="formats-title">QR codes in images (${qr.length})</h3>` + table(
+      ["Image", "Content", "Mark"], qr.map((c) => `<tr><td class="file">${escapeHtml(c.image || "")}</td>
+        <td class="mono">${escapeHtml(c.text || "")}</td>
+        <td>${addMarkCell("qr", `QR in ${c.image}: ${c.text}`, "attachments", c.format || "")}</td></tr>`).join(""));
+  }
+  const tools = mr.tools || {};
+  const names = Object.keys(tools);
+  if (names.length) {
+    html += `<h3 class="formats-title">emldump (MIME parts)</h3>`;
+    names.forEach((n) => { html += toolOutputBlock(n, tools[n], false); });
   }
   return html;
 }
@@ -869,6 +1041,200 @@ function panePdf(pdf) {
       html += `<details class="disclose pdf-obj"${bad ? " open" : ""}><summary><span class="mono">${escapeHtml(o.id)}</span> ${type} ${tags}${o.has_stream ? ' <span class="badge badge-muted">stream</span>' : ""}</summary>
         <pre class="text-sample">${escapeHtml(o.snippet || "")}</pre>${trunc}</details>`;
     });
+  }
+  return html;
+}
+
+// PDF tools: QR codes, signatures, revisions (incremental updates), peepdf and
+// the raw output of every tool run on the PDF.
+function panePdfTools(pt) {
+  let html = "";
+  const qr = pt.qr || [];
+  html += `<h3 class="formats-title">QR / barcodes (${qr.length})</h3>`;
+  html += qr.length ? table(["Page", "Format", "Content", "Mark"], qr.map((c) => `<tr>
+      <td>${escapeHtml(String(c.page))}</td><td>${escapeHtml(c.format || "")}</td>
+      <td class="mono">${escapeHtml(c.text || "")}</td>
+      <td>${addMarkCell("qr", `QR on page ${c.page}: ${c.text}`, "pdf qr", c.format || "")}</td></tr>`).join(""))
+    : `<p class="hint-line">${escapeHtml(pt.qr_error || "No QR codes or barcodes found on the rendered pages.")}</p>`;
+
+  const sigs = pt.signatures || [];
+  if (sigs.length) {
+    html += `<h3 class="formats-title">Digital signatures (${sigs.length})</h3>` + table(
+      ["Field", "Signer", "Issuer", "Signing time", "Coverage"], sigs.map((g) => `<tr>
+        <td class="mono">${escapeHtml(g.field || "")}</td><td>${escapeHtml(g.signer || "")}</td>
+        <td>${escapeHtml(g.issuer || "")}</td><td class="mono">${escapeHtml(g.signing_time || "")}</td>
+        <td class="${/ENTIRE_FILE/.test(g.coverage || "") ? "" : "bad-text"}">${escapeHtml(g.coverage || "")}</td></tr>`).join(""));
+  }
+  const revs = pt.revisions || [];
+  if (revs.length) {
+    html += `<h3 class="formats-title">Revisions (${revs.length})</h3>` + table(
+      ["Revision", "Objects", "Active content", "Signed"], revs.map((r) => `<tr>
+        <td>${r.revision === 0 ? "original" : "update #" + r.revision}</td><td>${r.objects}</td>
+        <td class="${r.active.length && r.revision ? "bad-text" : ""}">${escapeHtml(r.active.join(", "))}</td>
+        <td>${r.signed ? "yes" : ""}</td></tr>`).join(""));
+  }
+  const pp = pt.peepdf || {};
+  if ((pp.versions || []).length) {
+    html += `<h3 class="formats-title">peepdf</h3>`;
+    if ((pp.cves || []).length) html += `<p class="bad-text">Known CVEs: ${escapeHtml(pp.cves.join(", "))}</p>`;
+    html += table(["Version", "Objects", "Triggers", "Actions", "Elements", "JS objects"], pp.versions.map((v) => {
+      const fmt = (o) => Object.entries(o || {}).map(([k, ids]) => `${k} (${ids.join(",")})`).join(" · ");
+      return `<tr><td>${escapeHtml(String(v.version))} ${escapeHtml(v.type || "")}</td><td>${v.objects}</td>
+        <td class="mono">${escapeHtml(fmt(v.triggers))}</td><td class="mono">${escapeHtml(fmt(v.actions))}</td>
+        <td class="mono">${escapeHtml((v.elements || []).join(", "))}</td><td>${escapeHtml((v.js_objects || []).join(", "))}</td></tr>`;
+    }).join(""));
+  }
+  const tools = pt.tools || {};
+  const names = Object.keys(tools);
+  if (names.length) {
+    html += `<h3 class="formats-title">Tool output (${names.length})</h3>`;
+    names.forEach((n) => { html += toolOutputBlock(n, tools[n], false); });
+  }
+  return html;
+}
+
+// JavaScript: every script found in the case — origin, suspicious lines
+// (highlighted), what the STPyV8 sandbox recorded, decoded strings, code.
+function paneJavascript(js) {
+  const scripts = js.scripts || [];
+  if (!scripts.length) return `<p class="hint-line">No JavaScript found.</p>`;
+  let html = `<p class="hint-line">${scripts.length} script(s). Analysed statically and run in an isolated V8 sandbox (no file system, network or processes; only recording stubs).</p>`;
+  html += '<div class="row" style="margin:4px 0 10px"><button class="btn btn-ghost btn-sm" type="button" onclick="this.closest(\'.subpane\').querySelectorAll(\'details.js-card\').forEach(e=>e.open=true)">Expand all</button> <button class="btn btn-ghost btn-sm" type="button" onclick="this.closest(\'.subpane\').querySelectorAll(\'details.js-card\').forEach(e=>e.open=false)">Collapse all</button></div>';
+  scripts.forEach((sc) => {
+    const hits = sc.hits || [];
+    const sev = hits.some((h) => h.severity === "high") ? "bad" : (hits.length ? "warn" : "ok");
+    const rules = [...new Set(hits.map((h) => h.label))];
+    const m = sc.metrics || {};
+    const sb = sc.sandbox || {};
+    const logs = sb.log || [];
+    const hitLines = new Set(hits.map((h) => h.line_no));
+    const codeHtml = (sc.code || "").split("\n").map((ln, i) => {
+      const t = escapeHtml(ln);
+      return hitLines.has(i + 1) ? `<mark>${t}</mark>` : t;
+    }).join("\n");
+    let body = "";
+    if (sc.note) body += `<p class="hint-line">${escapeHtml(sc.note)}</p>`;
+    body += `<p class="hint-line">${m.lines || 0} lines · ${sc.size} chars · longest line ${m.longest_line || 0} · entropy ${m.entropy || 0} · obfuscation score ${m.obfuscation_score || 0}</p>`;
+    if (hits.length) {
+      body += table(["Line", "Why", "Code"], hits.map((h) => `<tr><td>${h.line_no}</td>
+        <td class="${h.severity === "high" ? "bad-text" : ""}">${escapeHtml(h.label)}</td>
+        <td class="mono">${escapeHtml(h.line)}</td></tr>`).join(""));
+    }
+    if (logs.length || sb.error) {
+      body += `<p class="hint-line"><strong>Sandbox</strong>${sb.timed_out ? " — stopped by the time limit" : ""}${sb.error && !sb.timed_out ? " — " + escapeHtml(sb.error) : ""}</p>`;
+      if (logs.length) {
+        body += table(["Event", "Name", "Arguments"], logs.slice(0, 200).map((e) => `<tr>
+          <td>${escapeHtml(e.kind)}</td><td class="mono">${escapeHtml(e.name)}</td>
+          <td class="mono">${escapeHtml((e.args || []).join(" | ").slice(0, 1500))}</td></tr>`).join(""));
+      }
+    }
+    if ((sc.decoded || []).length) {
+      body += `<p class="hint-line"><strong>Decoded strings</strong></p>` + table(["Method", "Decoded"],
+        sc.decoded.map((d) => `<tr><td>${escapeHtml(d.method)}</td><td class="mono">${escapeHtml(d.decoded)}</td></tr>`).join(""));
+    }
+    body += `<details class="disclose"${hits.length ? " open" : ""}><summary>Code${sc.code_truncated ? " (truncated)" : ""}</summary><pre class="text-sample js-code">${codeHtml}</pre></details>`;
+    if (sc.pretty) body += `<details class="disclose"><summary>Pretty-printed</summary><pre class="text-sample">${escapeHtml(sc.pretty)}</pre></details>`;
+    html += `<details class="disclose js-card"${sev === "bad" ? " open" : ""}>
+      <summary><span class="badge badge-${sev}">${hits.length} hit(s)</span>
+        <span class="mono">${escapeHtml(sc.origin)}</span>
+        <span class="badge badge-muted">${escapeHtml(sc.kind)}</span>
+        <span class="hint-line">${escapeHtml(rules.slice(0, 4).join(" · "))}</span></summary>
+      <div style="padding:8px 10px">${body}</div></details>`;
+  });
+  return html;
+}
+
+// RTF: embedded objects (rtfobj + the \\object group flags), structure,
+// text/fields and the \\info attribution data.
+function paneRtfObjects(rtf) {
+  const objs = rtf.objects || [];
+  const groups = rtf.object_groups || [];
+  if (!objs.length && !groups.length) return `<p class="hint-line">No \\object / \\objdata found.</p>`;
+  const groupFor = (o) => groups.filter((g) => g.offset <= (o.offset || 0)).sort((a, b) => b.offset - a.offset)[0] || {};
+  let html = `<p class="hint-line">Objects decoded by rtfobj from \\objdata (OLE 1.0). Extracted to <span class="mono">extracted/rtfobj</span> and scanned recursively (see Nested).</p>`;
+  html += table(["#", "Offset", "Class", "Group flags", "CLSID", "Size", "Package / extracted", "SHA-256"], objs.map((o) => {
+    const g = groupFor(o);
+    const pkg = o.is_package ? `<strong>${escapeHtml(o.filename || "")}</strong><br><span class="hint-line">${escapeHtml(o.source_path || "")}</span>` : "";
+    const cve = /CVE/.test(o.clsid_desc || "");
+    return `<tr><td>${o.index}</td><td class="mono">0x${(o.offset || 0).toString(16).toUpperCase()}</td>
+      <td class="mono">${escapeHtml(o.class_name || g.class || "")}</td>
+      <td class="mono">${escapeHtml((g.flags || []).join(" "))}</td>
+      <td class="mono${cve ? " bad-text" : ""}">${escapeHtml(o.clsid || "")}${o.clsid_desc ? "<br>" + escapeHtml(o.clsid_desc) : ""}</td>
+      <td>${o.ole_size != null ? o.ole_size : o.raw_size}</td>
+      <td>${pkg}${o.stored_path ? `<div class="mono">${escapeHtml(o.stored_path)}</div>` : ""}</td>
+      <td class="mono">${escapeHtml((o.sha256 || "").slice(0, 16))}…</td></tr>`;
+  }).join(""));
+  const orphan = groups.filter((g) => !objs.some((o) => groupFor(o) === g));
+  if (orphan.length) {
+    html += `<h3 class="formats-title">\\object groups without decodable data (${orphan.length})</h3>` + table(["Offset", "Class", "Flags"],
+      orphan.map((g) => `<tr><td class="mono">0x${g.offset.toString(16).toUpperCase()}</td><td class="mono">${escapeHtml(g.class || "")}</td><td class="mono">${escapeHtml(g.flags.join(" "))}</td></tr>`).join(""));
+  }
+  return html;
+}
+
+function paneRtfStructure(rtf) {
+  const st = rtf.structure || {};
+  const rows = [
+    ["Header", rtf.header || ""], ["Size", `${st.size || 0} bytes`], ["Groups", st.groups],
+    ["Max nesting depth", st.max_depth], ["Control words", st.control_words],
+    ["Fonts in \\fonttbl", `${st.font_count} (max index ${st.font_max_index})`],
+    ["\\bin blocks", `${st.bin_count} (${st.bin_bytes} bytes; ${st.bin_in_objdata} inside \\objdata)`],
+    ["\\objdata junk", `${st.objdata_junk} non-hex chars · ${st.objdata_groups} groups · ${st.objdata_cwords} control words`],
+    ["End of document", st.end_offset != null ? `offset 0x${st.end_offset.toString(16).toUpperCase()}` : "never closed"],
+    ["Data after the end", `${st.trailing_bytes || 0} bytes`], ["Unbalanced braces", st.unbalanced ? "yes" : "no"],
+  ];
+  let html = table(["Property", "Value"], rows.map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td class="mono">${escapeHtml(String(v))}</td></tr>`).join(""));
+  const dest = Object.entries(rtf.destinations || {});
+  if (dest.length) {
+    html += `<h3 class="formats-title">Destinations</h3>` + table(["Destination", "Count"],
+      dest.map(([k, v]) => `<tr><td class="mono">\\${escapeHtml(k)}</td><td>${v}</td></tr>`).join(""));
+  }
+  const tools = rtf.tools || {};
+  const blocks = [];
+  if (tools.rtfobj) blocks.push(toolOutputBlock("rtfobj", tools.rtfobj, false));
+  const rd = tools.rtfdump || {};
+  if (rd.objects) blocks.push(toolOutputBlock("rtfdump -O", rd.objects, false));
+  if (rd.groups) blocks.push(toolOutputBlock("rtfdump", rd.groups, false));
+  if (tools.rtfscan) blocks.push(toolOutputBlock("RTFScan", tools.rtfscan, false));
+  if (rd.available === false) blocks.push(`<p class="hint-line">rtfdump: ${escapeHtml(rd.error || "not provisioned")}</p>`);
+  if (blocks.length) html += `<h3 class="formats-title">Tool output</h3>` + blocks.join("");
+  return html;
+}
+
+function paneRtfText(rtf) {
+  let html = "";
+  const fields = rtf.fields || [];
+  if (rtf.template) html += `<h3 class="formats-title">Attached template</h3><p class="mono">${escapeHtml(rtf.template)}</p>`;
+  html += `<h3 class="formats-title">Fields (${fields.length})</h3>`;
+  html += fields.length ? table(["#", "Instruction", "Displayed result", "Mark"], fields.map((f, i) => `<tr><td>${i + 1}</td>
+      <td class="mono">${escapeHtml(f.instr)}</td><td>${escapeHtml(f.result || "")}</td>
+      <td>${addMarkCell("rtf_field", `Field: ${f.instr}`.slice(0, 300), `field#${i + 1}`, f.result || "")}</td></tr>`).join(""))
+    : `<p class="hint-line">No fields.</p>`;
+  const dv = rtf.docvars || [];
+  if (dv.length) {
+    html += `<h3 class="formats-title">Document variables (${dv.length})</h3>` + table(["Name", "Value"],
+      dv.map(([n, v]) => `<tr><td class="mono">${escapeHtml(n)}</td><td class="mono">${escapeHtml((v || "").slice(0, 2000))}</td></tr>`).join(""));
+  }
+  html += `<h3 class="formats-title">Visible text</h3><pre class="text-sample">${escapeHtml((rtf.text || "").slice(0, 12000)) || "(no text)"}</pre>`;
+  return html;
+}
+
+function paneRtfMeta(rtf) {
+  const att = Object.assign({}, rtf.attribution || {});
+  const rsids = att.rsids || [];
+  delete att.rsids;
+  const up = att.user_properties || {};
+  delete att.user_properties;
+  const label = { creatim: "created", revtim: "revised", printim: "printed", buptim: "backed up", operator: "last saved by (operator)" };
+  let html = Object.keys(att).length ? table(["Field", "Value"], Object.entries(att).map(([k, v]) =>
+    `<tr><td>${escapeHtml(label[k] || k)}</td><td class="mono">${escapeHtml(String(v))}</td></tr>`).join(""))
+    : `<p class="hint-line">No \\info group (builders and hand-crafted RTF often omit it).</p>`;
+  if (Object.keys(up).length) {
+    html += `<h3 class="formats-title">User properties</h3>` + table(["Name", "Value"],
+      Object.entries(up).map(([k, v]) => `<tr><td class="mono">${escapeHtml(k)}</td><td class="mono">${escapeHtml(v)}</td></tr>`).join(""));
+  }
+  if (rsids.length) {
+    html += `<h3 class="formats-title">Revision save ids (${att.rsid_count})</h3><p class="hint-line">Each \\rsid is one editing session; shared rsids link documents edited from the same source.</p><p class="mono">${escapeHtml(rsids.join(" "))}</p>`;
   }
   return html;
 }
@@ -953,7 +1319,7 @@ let _compState = { sections: [], active: null, header: "" };
 
 function renderSubtabs() {
   const bar = _compState.sections.map((s) =>
-    `<button class="subtab${s.id === _compState.active ? " is-active" : ""}" data-sub="${s.id}">${escapeHtml(s.label)}</button>`
+    `<button class="subtab${s.id === _compState.active ? " is-active" : ""}" data-sub="${s.id}">${subtabLabel(s.label)}</button>`
   ).join("");
   const sec = _compState.sections.find((s) => s.id === _compState.active) || {};
   const pane = (sec.render ? sec.render() : sec.html) || "";
@@ -1001,7 +1367,8 @@ async function openComponents(analysisId, keepTab) {
     const oleLegacy = mods.ole;
     const nested = mods.nested;
     const iocs = d.iocs;
-    if (!ooxml && !sem && !ole && !email && !pdf && !oleLegacy) {
+    const rtf = mods.rtf;
+    if (!ooxml && !sem && !ole && !email && !pdf && !oleLegacy && !mods.javascript && !rtf) {
       bodyEl.innerHTML = `<p class="hint-line">No component analysis for this case yet.</p>`;
       return;
     }
@@ -1016,7 +1383,9 @@ async function openComponents(analysisId, keepTab) {
     let compLabel;
     if (email) compLabel = `${email.hop_count || 0} hops · ${email.attachment_count || 0} attachments`;
     else if (pdf) compLabel = `${pdf.page_count || 0} pages · ${(pdf.embedded || []).length} embedded`;
+    else if (rtf) compLabel = `RTF · ${(rtf.objects || []).length} objects · ${(rtf.fields || []).length} fields`;
     else if (oleLegacy) compLabel = `${oleLegacy.kind || "ole"} · ${(oleLegacy.streams || []).length} streams`;
+    else if (!ooxml && mods.javascript) compLabel = `${(mods.javascript.scripts || []).length} script(s)`;
     else compLabel = `${(ooxml && ooxml.counts && ooxml.counts.components) || 0} parts`;
     summary.textContent = `${compLabel} · ${findings.length} findings · ${ni} IOCs`;
     summary.className = "status " + (findings.length ? "bad-text" : "ok-text");
@@ -1027,16 +1396,26 @@ async function openComponents(analysisId, keepTab) {
     sections.push({ id: "findings", label: `Findings (${findings.length})`, render: () => paneFindings(findings) });
     sections.push({ id: "iocs", label: `IOCs (${ni})`, html: paneIocs(iocs) });
     if (email) {
-      sections.push({ id: "auth", label: "Authentication", html: paneAuth(email) });
+      sections.push({ id: "auth", label: "Authentication", html: paneAuth(email, mods.mailrules) });
       sections.push({ id: "headers", label: `Headers (${(email.headers || []).length})`, html: paneEmailHeaders(email) });
       sections.push({ id: "attachments", label: `Attachments (${email.attachment_count || 0})`, html: paneAttachments(email, nested) });
-      sections.push({ id: "body", label: "Body", html: paneEmailBody(email) });
+      sections.push({ id: "body", label: "Body", html: paneEmailBody(email, mods.mailrules) });
     }
     if (oleLegacy) {
       sections.push({ id: "ole", label: "OLE", html: paneOle(oleLegacy) });
     }
+    if (rtf) {
+      sections.push({ id: "rtfobjects", label: `Objects (${(rtf.objects || []).length})`, html: paneRtfObjects(rtf) });
+      sections.push({ id: "rtfstructure", label: "Structure", html: paneRtfStructure(rtf) });
+      sections.push({ id: "rtftext", label: `Text & fields (${(rtf.fields || []).length})`, html: paneRtfText(rtf) });
+      sections.push({ id: "rtfmeta", label: "Metadata", html: paneRtfMeta(rtf) });
+    }
     if (pdf) {
       sections.push({ id: "pdf", label: "PDF", html: panePdf(pdf) });
+      if (mods.pdftools) {
+        const nqr = (mods.pdftools.qr || []).length;
+        sections.push({ id: "pdftools", label: nqr ? `PDF tools (${nqr} QR)` : "PDF tools", html: panePdfTools(mods.pdftools) });
+      }
       sections.push({ id: "pdfmeta", label: "Metadata", html: panePdfMeta(pdf) });
       sections.push({ id: "embedded", label: `Embedded (${(pdf.embedded || []).length})`, html: panePdfEmbedded(pdf) });
       sections.push({ id: "pdftext", label: "Text", html: `<pre class="text-sample">${escapeHtml((pdf.text_sample || "").slice(0, 8000)) || "(no text)"}</pre>` });
@@ -1048,13 +1427,23 @@ async function openComponents(analysisId, keepTab) {
     if (yara && yara.rule_count) {
       sections.push({ id: "yara", label: `YARA (${yara.match_count || 0})`, render: () => paneYara(yara, findings) });
     }
-    if (ole || crypto || (xlm && xlm.available)) {
-      sections.push({ id: "tools", label: "Tools", html: paneTools(ole, crypto, xlm) });
+    const jsm = mods.javascript;
+    if (jsm && (jsm.scripts || []).length) {
+      sections.push({ id: "javascript", label: `JavaScript (${jsm.scripts.length})`, html: paneJavascript(jsm) });
+    }
+    const vbat = mods.vbatools;
+    const vmon = mods.vipermonkey;
+    if ((ole && ole.tools && ole.tools.olevba && ole.tools.olevba.macros) || vmon) {
+      const nAct = vmon ? (vmon.actions || []).length : 0;
+      sections.push({ id: "vba", label: vmon ? `VBA (${nAct} emulated)` : "VBA", html: paneVba(ole, vbat, vmon) });
+    }
+    if (ole || crypto || (xlm && xlm.available) || vbat) {
+      sections.push({ id: "tools", label: "Tools", html: paneTools(ole, crypto, xlm, vbat) });
     }
     if (didier && didier.available) sections.push({ id: "didier", label: "Didier", html: paneDidier(didier) });
     if (oms && oms.available) sections.push({ id: "oms", label: "OfficeMalScanner", html: paneOms(oms) });
-    if (sem || (ole && ole.available) || (xlm && xlm.xlm_macros)) {
-      sections.push({ id: "metadata", label: "Metadata", html: paneMetadata(sem, ole) });
+    if (!rtf && (sem || (ole && ole.available) || (xlm && xlm.xlm_macros))) {
+      sections.push({ id: "metadata", label: "Metadata", html: paneMetadata(sem, ole, mods.officerules) });
       sections.push({ id: "content", label: "Content", html: paneContent(sem, ole, xlm) });
     }
     if (ooxml) {
@@ -1289,7 +1678,7 @@ async function loadMarks(analysisId) {
       MARK_STATES.map((s) => ({ id: s.id, label: `${s.label} (${c[s.id] || 0})` })));
     if ((d.orphans || []).length) chips.push({ id: "orphans", label: `Needs review (${d.orphans.length})` });
     filters.innerHTML = chips.map((ch) =>
-      `<button class="subtab${ch.id === _marksFilter ? " is-active" : ""}" data-filter="${ch.id}">${escapeHtml(ch.label)}</button>`).join("");
+      `<button class="subtab${ch.id === _marksFilter ? " is-active" : ""}" data-filter="${ch.id}">${subtabLabel(ch.label)}</button>`).join("");
     filters.querySelectorAll(".subtab").forEach((btn) => {
       btn.addEventListener("click", () => { _marksFilter = btn.getAttribute("data-filter"); loadMarks(analysisId); });
     });

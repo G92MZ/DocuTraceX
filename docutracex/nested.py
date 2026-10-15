@@ -40,6 +40,12 @@ def _ext(name: str) -> str:
 def _kind(path: Path, name: str) -> str:
     """Decide how to analyze a child: by extension, then by content sniff."""
     ext = _ext(name)
+    try:
+        with path.open("rb") as fh:
+            if fh.read(8).lstrip(b"\xef\xbb\xbf")[:4] == b"{\\rt":
+                return "rtf"  # Word opens RTF whatever the extension (.doc that is RTF)
+    except OSError:
+        pass
     if ext in _OOXML_EXT:
         return "ooxml"
     if ext in _OLE_EXT:
@@ -116,15 +122,39 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
                     kids.append((paths.root / sp, Path(sp).name))
             if kind == "ooxml":
                 from .parsers import office, xlm
-                sem = office.analyze(abs_path, _ext(name), work)
+                if _ext(name) == ".xlsb":
+                    from .parsers import xlsb
+                    sem = xlsb.analyze(abs_path)
+                else:
+                    sem = office.analyze(abs_path, _ext(name), work)
                 if sem:
                     add_findings(sem.get("findings"), kind)
                 xres = xlm.analyze(abs_path)
                 add_findings(xres.get("findings"), "xlmdeobf")
+            # Own Office rules and, when there are macros, VBA emulation.
+            from .parsers import office_rules, vipermonkey
+            rules = (office_rules.analyze_ooxml(abs_path) if kind == "ooxml"
+                     else office_rules.analyze_ole(abs_path))
+            add_findings(rules.get("findings"), "officerules")
+            if ((res.get("tools") or {}).get("olevba") or {}).get("macros"):
+                vm = vipermonkey.analyze(abs_path, work)
+                add_findings(vm.get("findings"), "vipermonkey")
+        elif kind == "rtf":
+            from .parsers import oletools_suite, rtf
+            r = rtf.analyze(abs_path, _ext(name), work)
+            add_findings(r.get("findings"), "rtf")
+            res = oletools_suite.analyze(abs_path, work)
+            add_findings([f for f in res.get("findings") or [] if f.get("tool") == "msodde"], "oletools")
+            for obj in r.get("objects") or []:
+                sp = obj.get("stored_path")
+                if sp:
+                    kids.append((paths.root / sp, Path(sp).name))
         elif kind == "pdf":
             from .parsers import pdf
             res = pdf.analyze(abs_path, work)
             add_findings(res.get("findings"), "pdf")
+            from .parsers import pdf_tools
+            add_findings(pdf_tools.analyze(abs_path, res).get("findings"), "pdftools")
             for emb in res.get("embedded", []) or []:
                 sp = emb.get("stored_path")
                 if sp:
@@ -133,6 +163,9 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
             from .parsers import mail
             res = mail.analyze(abs_path, _ext(name), work)
             add_findings(res.get("findings"), "email")
+            from .parsers import mail_rules
+            add_findings(mail_rules.analyze(abs_path, _ext(name), res, paths.root).get("findings"),
+                         "mailrules")
             for att in res.get("attachments", []) or []:
                 sp = att.get("stored_path")
                 if sp:
@@ -142,6 +175,14 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
 
     if depth < MAX_DEPTH:
         for cpath, cname in kids[:MAX_CHILDREN]:
+            if not cpath.is_file():
+                # Tools store paths relative to the parent of their output dir
+                # (here extracted/), not to the case root.
+                try:
+                    alt = work.parent / cpath.relative_to(paths.root)
+                except ValueError:
+                    alt = cpath
+                cpath = alt
             if cpath.is_file():
                 node["children"].append(_scan_one(cpath, cname, paths, depth + 1, this_chain))
     elif kids:

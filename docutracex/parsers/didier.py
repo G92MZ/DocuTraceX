@@ -30,7 +30,13 @@ SCRIPTS = {
     "pdfid": "pdfid.py",
     "pdf-parser": "pdf-parser.py",
     "emldump": "emldump.py",
+    "rtfdump": "rtfdump.py",
+    "decode-vbe": "decode-vbe.py",
 }
+
+# oledump plugins (run with ``oledump.py -p plugin_x.py``).
+PLUGINS = ["plugin_biff.py", "plugin_vba_summary.py", "plugin_vba_dco.py",
+           "plugin_vba_routines.py", "plugin_http_heuristics.py", "plugin_stream_o.py"]
 
 # Which scripts apply to which family (by default invocation).
 FAMILY_SCRIPTS = {
@@ -38,6 +44,7 @@ FAMILY_SCRIPTS = {
     "ole": ["oledump"],
     "pdf": ["pdfid", "pdf-parser"],
     "email": ["emldump"],
+    "rtf": ["rtfdump"],
 }
 
 _OUTPUT_BOUND = 60000
