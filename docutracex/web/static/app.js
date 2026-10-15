@@ -872,7 +872,8 @@ function renderSubtabs() {
   const bar = _compState.sections.map((s) =>
     `<button class="subtab${s.id === _compState.active ? " is-active" : ""}" data-sub="${s.id}">${escapeHtml(s.label)}</button>`
   ).join("");
-  const pane = (_compState.sections.find((s) => s.id === _compState.active) || {}).html || "";
+  const sec = _compState.sections.find((s) => s.id === _compState.active) || {};
+  const pane = (sec.render ? sec.render() : sec.html) || "";
   const bodyEl = document.getElementById("comp-body");
   const header = _compState.header ? `<div class="comp-header">${_compState.header}</div>` : "";
   bodyEl.innerHTML = `${header}<div class="subtabs">${bar}</div><div class="subpane">${pane}</div>`;
@@ -882,11 +883,13 @@ function renderSubtabs() {
       renderSubtabs();
     });
   });
-  // Wire the mark controls present in the active pane (Findings).
-  wireMarks(bodyEl, _openCaseId);
+  // Wire the mark controls present in the active pane (Findings / YARA) and
+  // keep the in-memory findings in sync so other panes show the new mark.
+  wireMarks(bodyEl, _openCaseId, (fid, mark) => {
+    (_compState.findings || []).forEach((f) => { if (f.id === fid) f.mark = mark; });
+  });
   wireFileActions(bodyEl, _openCaseId);
   wirePivots(bodyEl);
-  wireYaraCards(bodyEl, _openCaseId);
 }
 
 async function openComponents(analysisId) {
@@ -933,7 +936,7 @@ async function openComponents(analysisId) {
     // Build only the sub-tabs that have content.
     const sections = [];
     const headerHtml = email ? hopsTable(email) : "";
-    sections.push({ id: "findings", label: `Findings (${findings.length})`, html: paneFindings(findings) });
+    sections.push({ id: "findings", label: `Findings (${findings.length})`, render: () => paneFindings(findings) });
     sections.push({ id: "iocs", label: `IOCs (${ni})`, html: paneIocs(iocs) });
     if (email) {
       sections.push({ id: "auth", label: "Authentication", html: paneAuth(email) });
@@ -955,7 +958,7 @@ async function openComponents(analysisId) {
     }
     const yara = mods.yara;
     if (yara && yara.rule_count) {
-      sections.push({ id: "yara", label: `YARA (${yara.match_count || 0})`, html: paneYara(yara) });
+      sections.push({ id: "yara", label: `YARA (${yara.match_count || 0})`, render: () => paneYara(yara, findings) });
     }
     if (ole || crypto || (xlm && xlm.available)) {
       sections.push({ id: "tools", label: "Tools", html: paneTools(ole, crypto, xlm) });
@@ -977,8 +980,8 @@ async function openComponents(analysisId) {
     // pivot points at a tab that is actually present for this case.
     const ids = sections.map((s) => s.id);
     const fIdx = sections.findIndex((s) => s.id === "findings");
-    if (fIdx >= 0) sections[fIdx].html = paneFindings(findings, ids);
-    _compState = { sections, active: sections[0].id, header: headerHtml };
+    if (fIdx >= 0) sections[fIdx].render = () => paneFindings(findings, ids);
+    _compState = { sections, active: sections[0].id, header: headerHtml, findings };
     renderSubtabs();
     renderRerun(analysisId, d);
   } catch (err) {
@@ -1211,8 +1214,7 @@ async function loadYara() {
       return;
     }
     const rules = d.rules || [];
-    const enabled = rules.filter((r) => r.enabled).length;
-    summary.textContent = `${d.rule_count || 0} rules · ${d.file_count || 0} files · ${enabled} enabled`;
+    summary.textContent = `${d.rule_count || 0} rules · ${d.file_count || 0} files`;
     summary.className = "status ok-text";
     const errs = d.errors || [];
     errors.innerHTML = errs.length
@@ -1226,23 +1228,15 @@ async function loadYara() {
       const sev = meta.severity || meta.threat_level || "";
       const tags = (r.tags || []).join(", ");
       return `<tr>
-        <td><input type="checkbox" class="yara-enable" data-rule="${escapeHtml(r.name)}"${r.enabled ? " checked" : ""}></td>
-        <td class="file">${escapeHtml(r.name)}${r.enabled ? ' <span class="badge badge-bad">finding</span>' : ""}</td>
+        <td class="file">${escapeHtml(r.name)}</td>
         <td class="mono">${escapeHtml(r.namespace || "")}</td>
         <td>${escapeHtml(tags)}</td>
         <td>${escapeHtml(String(sev))}</td>
         <td class="hint-line">${escapeHtml(meta.description || meta.desc || "")}</td>
       </tr>`;
     }).join("");
-    body.innerHTML = `<h3 class="formats-title">Rules (${rules.length}) — tick to make a rule a finding</h3>`
-      + table(["Finding?", "Rule", "Source", "Tags", "Severity", "Description"], rows);
-    body.querySelectorAll(".yara-enable").forEach((cb) => {
-      cb.addEventListener("change", async () => {
-        await fetch("/api/yara/enabled", { method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ rules: [cb.getAttribute("data-rule")], enabled: cb.checked }) });
-        loadYara();
-      });
-    });
+    body.innerHTML = `<h3 class="formats-title">Rules (${rules.length})</h3>`
+      + table(["Rule", "Source", "Tags", "Severity", "Description"], rows);
   } catch (err) {
     summary.textContent = "Could not load YARA rules.";
   }
@@ -1313,55 +1307,64 @@ function setupYara() {
   });
 }
 
-// YARA results as collapsible per-rule cards (WinHound/Sigma style). Each card
-// has an "is finding?" toggle — ticking it enables the rule and re-runs YARA so
-// its matches become findings (and reach the report / overview when marked TP).
-function paneYara(yara) {
+// YARA results as collapsible per-rule cards. Each hit (rule x file) is a
+// finding triaged right here with a mark (TP / FP / ...); only TP reaches the
+// report. A card shows the rule source, what matched and the local file path.
+function paneYara(yara, findings) {
   if (!yara) return `<p class="hint-line">YARA did not run for this case.</p>`;
   if (!yara.rule_count) return `<p class="hint-line">No YARA rules loaded (${yara.available ? "0 rules" : "yara-python unavailable"}). Add rules in the YARA tab.</p>`;
   const scanned = yara.scanned || [];
-  let html = `<p class="hint-line">${yara.rule_count} rule(s) · ${yara.files_scanned} file(s) scanned · ${yara.match_count} match(es). Tick a rule to make its matches findings; then mark them True positive to reach the overview.</p>`;
+  let html = `<p class="hint-line">${yara.rule_count} rule(s) · ${yara.files_scanned} file(s) scanned · ${yara.match_count} match(es). Mark each hit (True positive, False positive, …); only True positives reach the report.</p>`;
   if (!scanned.length) return html + `<p class="hint-line">No matches.</p>`;
+  const byId = {};
+  (findings || []).forEach((f) => { byId[f.id] = f; });
+  const info = yara.rules_info || {};
   const byRule = {};
   scanned.forEach((s) => (s.matches || []).forEach((m) => {
-    const g = (byRule[m.rule] ||= { rule: m.rule, enabled: m.enabled, namespace: m.namespace, tags: m.tags || [], hits: [] });
-    g.hits.push({ file: s.file, strings: m.strings || [] });
+    const key = `${m.namespace || ""}:${m.rule}`;
+    const g = (byRule[key] ||= { rule: m.rule, namespace: m.namespace, tags: m.tags || [],
+      meta: m.meta || {}, info: info[key] || {}, hits: [] });
+    g.hits.push({ file: s.file, path: s.path || "", stored: s.stored_path || "",
+      strings: m.strings || [], finding: byId[m.finding_id] });
   }));
   html += '<div class="row" style="margin:4px 0 10px"><button class="btn btn-ghost btn-sm" onclick="document.querySelectorAll(\'#comp-body .yara-card\').forEach(e=>e.open=true)">Expand all</button> <button class="btn btn-ghost btn-sm" onclick="document.querySelectorAll(\'#comp-body .yara-card\').forEach(e=>e.open=false)">Collapse all</button></div>';
   Object.values(byRule).forEach((g) => {
     const tags = g.tags.length ? ` · ${escapeHtml(g.tags.join(" "))}` : "";
-    const rows = g.hits.map((h) => `<tr>
-      <td class="mono">${escapeHtml(h.file)}</td>
-      <td class="mono">${escapeHtml(h.strings.map((x) => x.id + "@" + x.offset).slice(0, 8).join(", "))}</td>
-    </tr>`).join("");
+    const states = g.hits.map((h) => (h.finding && h.finding.mark && h.finding.mark.state) || "unreviewed");
+    const marked = states.filter((x) => x !== "unreviewed").length;
+    const desc = g.meta.description || g.meta.desc || "";
+    const src = g.info.source
+      ? `<details class="disclose"><summary>Rule source · <span class="mono">${escapeHtml(g.info.file || "")}</span></summary><pre class="text-sample">${escapeHtml(g.info.source)}</pre></details>`
+      : `<p class="hint-line">Rule file: <span class="mono">${escapeHtml(g.info.file || "unknown")}</span> (source not available)</p>`;
+    const hits = g.hits.map((h) => {
+      const rows = h.strings.map((x) => `<tr>
+        <td class="mono">${escapeHtml(x.id || "")}</td>
+        <td class="mono">${x.offset != null ? "0x" + Number(x.offset).toString(16) + " (" + x.offset + ")" : ""}</td>
+        <td>${x.length != null ? x.length : ""}</td>
+        <td class="mono">${escapeHtml(x.text || "")}</td>
+        <td class="mono">${escapeHtml((x.data || "").replace(/(..)/g, "$1 ").trim())}</td>
+      </tr>`).join("");
+      const mark = h.finding ? markControlsHtml(h.finding) : '<span class="hint-line">re-run YARA to mark</span>';
+      return `<div class="yara-hit">
+        <div class="yara-hit-head">
+          <span><strong>${escapeHtml(h.file)}</strong> · <span class="mono">${escapeHtml(h.path)}</span></span>
+          ${fileActions(h.stored)}
+        </div>
+        ${mark}
+        ${rows ? table(["String", "Offset", "Length", "Matched (text)", "Matched (hex)"], rows)
+               : '<p class="hint-line">Condition-only match (no strings).</p>'}
+      </div>`;
+    }).join("");
     html += `<details class="disclose yara-card">
       <summary>
-        <label class="yara-finding-toggle" onclick="event.stopPropagation()"><input type="checkbox" class="yara-card-enable" data-rule="${escapeHtml(g.rule)}"${g.enabled ? " checked" : ""}> finding</label>
         <span class="mono">${escapeHtml(g.rule)}</span>
-        ${g.enabled ? '<span class="badge badge-bad">finding</span>' : '<span class="badge badge-muted">match</span>'}
-        <span class="hint-line">${escapeHtml(g.namespace || "")} · ×${g.hits.length}${tags}</span>
+        <span class="badge badge-muted">${marked}/${g.hits.length} marked</span>
+        <span class="hint-line">${escapeHtml(g.namespace || "")} · ×${g.hits.length}${tags}${desc ? " · " + escapeHtml(desc) : ""}</span>
       </summary>
-      <div style="padding:8px 10px">${table(["File", "Matched strings"], rows)}</div>
+      <div style="padding:8px 10px">${src}${hits}</div>
     </details>`;
   });
   return html;
-}
-
-function wireYaraCards(root, analysisId) {
-  root.querySelectorAll(".yara-card-enable").forEach((cb) => {
-    cb.addEventListener("change", async () => {
-      cb.disabled = true;
-      await fetch("/api/yara/enabled", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rules: [cb.getAttribute("data-rule")], enabled: cb.checked }) });
-      // Re-run the YARA module so matches of the now-enabled rule become findings.
-      if (analysisId) {
-        await fetch(`/api/cases/${encodeURIComponent(analysisId)}/rerun`,
-          { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ module: "yara" }) });
-        startTaskPoller();
-        setTimeout(() => openComponents(analysisId), 1200);
-      }
-    });
-  });
 }
 
 // --- Tab navigation ----------------------------------------------------------
