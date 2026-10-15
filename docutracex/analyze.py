@@ -217,22 +217,11 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             elif mail_res.get("findings"):
                 state = "completed"
 
-        # Third-party tools on the message itself: olevba extracts macros from
-        # Office attachments inside the .eml/.msg, msodde flags DDE, oleid/mraptor
-        # rate them. These produce real findings (not just raw output).
-        from .parsers import oletools_suite
-
-        ole_res = run("oletools: olevba · oleid · msodde (message + attachments)",
-                      lambda: oletools_suite.analyze(original, paths.extracted_dir))
-        if ole_res.get("available"):
-            write_subresult(paths, "oletools", ole_res)
-            ran.append("oletools")
-            findings_total += ole_res.get("counts", {}).get("findings", 0)
-            if ole_res.get("findings") and state == "completed":
-                state = "completed"
-
-        # Recursive deep scan of each attachment (and their children) with the
-        # family-appropriate third-party tools.
+        # Third-party tools (olevba/oleid/msodde/…) are NOT run on the email
+        # envelope itself: an .eml is RFC 822 text, so oleid just reports noise
+        # and olevba rarely reaches the attachments. The real coverage comes from
+        # the recursive scan below, which runs the full suite on each extracted
+        # attachment (where macros/DDE actually live), tagged with its path.
         from . import nested
 
         items = [{"path": str(paths.root / a["stored_path"]), "filename": a.get("filename")}
