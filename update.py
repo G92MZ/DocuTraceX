@@ -60,11 +60,14 @@ def local_version() -> str:
 
 
 def remote_version() -> str:
-    if TOKEN:
-        url = f"https://api.github.com/repos/{OWNER}/{REPO}/contents/VERSION?ref={BRANCH}"
-        return _get(url, accept="application/vnd.github.raw").decode("utf-8", "replace").strip()
-    url = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/VERSION"
-    return _get(url).decode("utf-8", "replace").strip()
+    # Prefer the GitHub API: it reflects a fresh push immediately, whereas
+    # raw.githubusercontent.com serves a CDN-cached copy for a few minutes.
+    api = f"https://api.github.com/repos/{OWNER}/{REPO}/contents/VERSION?ref={BRANCH}"
+    try:
+        return _get(api, accept="application/vnd.github.raw").decode("utf-8", "replace").strip()
+    except Exception:  # noqa: BLE001  (rate limit / offline -> fall back to raw)
+        raw = f"https://raw.githubusercontent.com/{OWNER}/{REPO}/{BRANCH}/VERSION"
+        return _get(raw).decode("utf-8", "replace").strip()
 
 
 def _vtuple(v: str) -> tuple:
