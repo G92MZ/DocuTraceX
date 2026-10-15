@@ -54,10 +54,11 @@ it just works.
 
 | | |
 |---|---|
-| 🔍 **Type truth** | libmagic + structural recognizers (OPC/OOXML, EMLX, CFB) → family and extension/type **discrepancy** |
+| 🔍 **Type truth** | libmagic + structural recognizers (OPC/OOXML, EMLX, CFB, RTF) → family and extension/type **discrepancy** |
 | 📝 **Office (OOXML)** | Word/Excel/PowerPoint: metadata, VBA, DDE & field codes, `WEBSERVICE`/`FILTERXML`, **hidden/very-hidden sheets** (and an **unhidden copy** as evidence), external links |
 | 🗂️ **Office (OLE/BIFF)** | legacy `.doc`/`.xls`/`.ppt`: CFB structure, SummaryInformation, VBA, and **Excel 4.0 (XLM)** macros in hidden BIFF sheets |
 | 📄 **PDF** | robust raw-token scan (`/OpenAction`, `/JS`, `/Launch`, `/EmbeddedFile`, `/XFA`, `/URI`, hex-obfuscated names…), **extracted JavaScript**, every object browsable, embedded-file extraction, text & URIs |
+| 📃 **RTF** | recognised by content (a `.doc` that is really RTF too): `\objdata` objects via rtfobj (Equation Editor, OLE2Link + `\objupdate`, Package, ActiveX/MSCOMCTL) extracted and scanned recursively, remote `\*\template` and fields, font-table overflow, pFragments, deep nesting, `\objdata` obfuscation, data after the end, `\info`/generator/rsid attribution, rtfdump · RTFScan |
 | ✉️ **Email** | `.eml`/`.emlx`/`.msg`: the **`Received` hop chain** with Δt, SPF/DKIM/DMARC, From/Return-Path/Reply-To & display-name **spoofing**, attachments hashed & typed |
 | 🧰 **Real tools** | oletools (olevba · oleid · mraptor · msodde · oleobj), msoffcrypto-tool, XLMMacroDeobfuscator, OfficeMalScanner, Didier Stevens Suite (oledump/zipdump/pdfid/pdf-parser/emldump) |
 | 🪆 **Recursion** | attachments, embedded OLE objects and PDF-embedded files are analyzed **in turn** with their family's tools — the DDE inside a `.docm` inside a `.pdf` surfaces with its full path |
@@ -77,6 +78,7 @@ it just works.
 | **PowerPoint** | `.ppt` `.pot` `.pptx` `.pptm` `.potx` `.potm` `.ppsx` `.ppsm` `.ppam` `.sldx` `.sldm` |
 | **PDF** | `.pdf` |
 | **Email** | `.eml` `.emlx` `.msg` |
+| **RTF** | `.rtf` (and any extension whose content is RTF) |
 
 ## 📝 Notes
 

@@ -36,7 +36,7 @@ _FILE_TLDS = {
     "docx", "docm", "dotx", "dotm", "xlsx", "xlsm", "xltx", "xltm", "xlam", "xlsb",
     "pptx", "pptm", "potx", "potm", "ppsx", "ppsm", "ppam", "sldx", "sldm",
     "doc", "dot", "xls", "xlt", "xla", "ppt", "pot", "pdf", "eml", "emlx", "msg",
-    "txt", "json", "html", "htm", "css", "js", "exe", "dll", "zip", "jar", "mgc",
+    "rtf", "txt", "json", "html", "htm", "css", "js", "exe", "dll", "zip", "jar", "mgc",
 }
 _CONTEXT = 32
 
@@ -293,6 +293,18 @@ def sources_from_modules(modules: dict[str, dict[str, Any]]) -> list[dict[str, A
             add("mailrules", "decoded_link", d.get("original"))
         for c in mr.get("qr", []) or []:
             add("mailrules", f"qr/{c.get('image')}", c.get("text"))
+
+    # RTF: visible text, field instructions (INCLUDEPICTURE/HYPERLINK...), the
+    # attached template and the targets the object rules recovered (OLE2Link).
+    rtf = modules.get("rtf")
+    if rtf:
+        add("rtf", "text", rtf.get("text"))
+        for i, fl in enumerate(rtf.get("fields", []) or [], 1):
+            add("rtf", f"field#{i}", fl.get("instr"))
+        add("rtf", "template", rtf.get("template"))
+        for f in rtf.get("findings", []) or []:
+            if f.get("rule") in ("ole2link", "remote_template", "unc_file_target"):
+                add("rtf", f.get("rule"), f.get("evidence"))
 
     # PDF tools: decoded QR codes and the targets of the own PDF rules.
     pt = modules.get("pdftools")

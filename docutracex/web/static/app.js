@@ -10,6 +10,7 @@ const FORMATS = [
     exts: [".ppt", ".pot", ".pptx", ".pptm", ".potx", ".potm", ".ppsx", ".ppsm", ".ppam", ".sldx", ".sldm"] },
   { name: "PDF", color: "#c0392b", glyph: "PDF", exts: [".pdf"] },
   { name: "Email", color: "#7f93ad", glyph: "mail", exts: [".eml", ".emlx", ".msg"] },
+  { name: "RTF", color: "#6c5ce7", glyph: "RTF", exts: [".rtf"] },
 ];
 
 // Playful document "character": page + eyes + smile, colored band + letter.
@@ -408,6 +409,12 @@ function pivotTarget(f, ids) {
   if (src === "pdf") return has("pdf") ? "pdf" : null;
   if (src === "pdftools") return has("pdftools") ? "pdftools" : null;
   if (src === "javascript") return has("javascript") ? "javascript" : null;
+  if (src === "rtf") {
+    if (loc.startsWith("object")) return has("rtfobjects") ? "rtfobjects" : null;
+    if (loc.startsWith("field") || loc.includes("template") || loc.includes("docvar")) return has("rtftext") ? "rtftext" : null;
+    if (loc.includes("info") || loc.includes("userprops")) return has("rtfmeta") ? "rtfmeta" : null;
+    return has("rtfstructure") ? "rtfstructure" : null;
+  }
   if (src === "mailrules") {
     if (loc.startsWith("attachment")) return has("attachments") ? "attachments" : null;
     if (/dkim|lookalike|idn_domain|homoglyph|mass_mailer|messageid|missing_message/.test(rule)) return has("auth") ? "auth" : null;
@@ -1131,6 +1138,101 @@ function paneJavascript(js) {
   return html;
 }
 
+// RTF: embedded objects (rtfobj + the \\object group flags), structure,
+// text/fields and the \\info attribution data.
+function paneRtfObjects(rtf) {
+  const objs = rtf.objects || [];
+  const groups = rtf.object_groups || [];
+  if (!objs.length && !groups.length) return `<p class="hint-line">No \\object / \\objdata found.</p>`;
+  const groupFor = (o) => groups.filter((g) => g.offset <= (o.offset || 0)).sort((a, b) => b.offset - a.offset)[0] || {};
+  let html = `<p class="hint-line">Objects decoded by rtfobj from \\objdata (OLE 1.0). Extracted to <span class="mono">extracted/rtfobj</span> and scanned recursively (see Nested).</p>`;
+  html += table(["#", "Offset", "Class", "Group flags", "CLSID", "Size", "Package / extracted", "SHA-256"], objs.map((o) => {
+    const g = groupFor(o);
+    const pkg = o.is_package ? `<strong>${escapeHtml(o.filename || "")}</strong><br><span class="hint-line">${escapeHtml(o.source_path || "")}</span>` : "";
+    const cve = /CVE/.test(o.clsid_desc || "");
+    return `<tr><td>${o.index}</td><td class="mono">0x${(o.offset || 0).toString(16).toUpperCase()}</td>
+      <td class="mono">${escapeHtml(o.class_name || g.class || "")}</td>
+      <td class="mono">${escapeHtml((g.flags || []).join(" "))}</td>
+      <td class="mono${cve ? " bad-text" : ""}">${escapeHtml(o.clsid || "")}${o.clsid_desc ? "<br>" + escapeHtml(o.clsid_desc) : ""}</td>
+      <td>${o.ole_size != null ? o.ole_size : o.raw_size}</td>
+      <td>${pkg}${o.stored_path ? `<div class="mono">${escapeHtml(o.stored_path)}</div>` : ""}</td>
+      <td class="mono">${escapeHtml((o.sha256 || "").slice(0, 16))}…</td></tr>`;
+  }).join(""));
+  const orphan = groups.filter((g) => !objs.some((o) => groupFor(o) === g));
+  if (orphan.length) {
+    html += `<h3 class="formats-title">\\object groups without decodable data (${orphan.length})</h3>` + table(["Offset", "Class", "Flags"],
+      orphan.map((g) => `<tr><td class="mono">0x${g.offset.toString(16).toUpperCase()}</td><td class="mono">${escapeHtml(g.class || "")}</td><td class="mono">${escapeHtml(g.flags.join(" "))}</td></tr>`).join(""));
+  }
+  return html;
+}
+
+function paneRtfStructure(rtf) {
+  const st = rtf.structure || {};
+  const rows = [
+    ["Header", rtf.header || ""], ["Size", `${st.size || 0} bytes`], ["Groups", st.groups],
+    ["Max nesting depth", st.max_depth], ["Control words", st.control_words],
+    ["Fonts in \\fonttbl", `${st.font_count} (max index ${st.font_max_index})`],
+    ["\\bin blocks", `${st.bin_count} (${st.bin_bytes} bytes; ${st.bin_in_objdata} inside \\objdata)`],
+    ["\\objdata junk", `${st.objdata_junk} non-hex chars · ${st.objdata_groups} groups · ${st.objdata_cwords} control words`],
+    ["End of document", st.end_offset != null ? `offset 0x${st.end_offset.toString(16).toUpperCase()}` : "never closed"],
+    ["Data after the end", `${st.trailing_bytes || 0} bytes`], ["Unbalanced braces", st.unbalanced ? "yes" : "no"],
+  ];
+  let html = table(["Property", "Value"], rows.map(([k, v]) => `<tr><td>${escapeHtml(k)}</td><td class="mono">${escapeHtml(String(v))}</td></tr>`).join(""));
+  const dest = Object.entries(rtf.destinations || {});
+  if (dest.length) {
+    html += `<h3 class="formats-title">Destinations</h3>` + table(["Destination", "Count"],
+      dest.map(([k, v]) => `<tr><td class="mono">\\${escapeHtml(k)}</td><td>${v}</td></tr>`).join(""));
+  }
+  const tools = rtf.tools || {};
+  const blocks = [];
+  if (tools.rtfobj) blocks.push(toolOutputBlock("rtfobj", tools.rtfobj, false));
+  const rd = tools.rtfdump || {};
+  if (rd.objects) blocks.push(toolOutputBlock("rtfdump -O", rd.objects, false));
+  if (rd.groups) blocks.push(toolOutputBlock("rtfdump", rd.groups, false));
+  if (tools.rtfscan) blocks.push(toolOutputBlock("RTFScan", tools.rtfscan, false));
+  if (rd.available === false) blocks.push(`<p class="hint-line">rtfdump: ${escapeHtml(rd.error || "not provisioned")}</p>`);
+  if (blocks.length) html += `<h3 class="formats-title">Tool output</h3>` + blocks.join("");
+  return html;
+}
+
+function paneRtfText(rtf) {
+  let html = "";
+  const fields = rtf.fields || [];
+  if (rtf.template) html += `<h3 class="formats-title">Attached template</h3><p class="mono">${escapeHtml(rtf.template)}</p>`;
+  html += `<h3 class="formats-title">Fields (${fields.length})</h3>`;
+  html += fields.length ? table(["#", "Instruction", "Displayed result", "Mark"], fields.map((f, i) => `<tr><td>${i + 1}</td>
+      <td class="mono">${escapeHtml(f.instr)}</td><td>${escapeHtml(f.result || "")}</td>
+      <td>${addMarkCell("rtf_field", `Field: ${f.instr}`.slice(0, 300), `field#${i + 1}`, f.result || "")}</td></tr>`).join(""))
+    : `<p class="hint-line">No fields.</p>`;
+  const dv = rtf.docvars || [];
+  if (dv.length) {
+    html += `<h3 class="formats-title">Document variables (${dv.length})</h3>` + table(["Name", "Value"],
+      dv.map(([n, v]) => `<tr><td class="mono">${escapeHtml(n)}</td><td class="mono">${escapeHtml((v || "").slice(0, 2000))}</td></tr>`).join(""));
+  }
+  html += `<h3 class="formats-title">Visible text</h3><pre class="text-sample">${escapeHtml((rtf.text || "").slice(0, 12000)) || "(no text)"}</pre>`;
+  return html;
+}
+
+function paneRtfMeta(rtf) {
+  const att = Object.assign({}, rtf.attribution || {});
+  const rsids = att.rsids || [];
+  delete att.rsids;
+  const up = att.user_properties || {};
+  delete att.user_properties;
+  const label = { creatim: "created", revtim: "revised", printim: "printed", buptim: "backed up", operator: "last saved by (operator)" };
+  let html = Object.keys(att).length ? table(["Field", "Value"], Object.entries(att).map(([k, v]) =>
+    `<tr><td>${escapeHtml(label[k] || k)}</td><td class="mono">${escapeHtml(String(v))}</td></tr>`).join(""))
+    : `<p class="hint-line">No \\info group (builders and hand-crafted RTF often omit it).</p>`;
+  if (Object.keys(up).length) {
+    html += `<h3 class="formats-title">User properties</h3>` + table(["Name", "Value"],
+      Object.entries(up).map(([k, v]) => `<tr><td class="mono">${escapeHtml(k)}</td><td class="mono">${escapeHtml(v)}</td></tr>`).join(""));
+  }
+  if (rsids.length) {
+    html += `<h3 class="formats-title">Revision save ids (${att.rsid_count})</h3><p class="hint-line">Each \\rsid is one editing session; shared rsids link documents edited from the same source.</p><p class="mono">${escapeHtml(rsids.join(" "))}</p>`;
+  }
+  return html;
+}
+
 function panePdfMeta(pdf) {
   const md = pdf.metadata || {};
   const keys = Object.keys(md);
@@ -1259,7 +1361,8 @@ async function openComponents(analysisId, keepTab) {
     const oleLegacy = mods.ole;
     const nested = mods.nested;
     const iocs = d.iocs;
-    if (!ooxml && !sem && !ole && !email && !pdf && !oleLegacy && !mods.javascript) {
+    const rtf = mods.rtf;
+    if (!ooxml && !sem && !ole && !email && !pdf && !oleLegacy && !mods.javascript && !rtf) {
       bodyEl.innerHTML = `<p class="hint-line">No component analysis for this case yet.</p>`;
       return;
     }
@@ -1274,6 +1377,7 @@ async function openComponents(analysisId, keepTab) {
     let compLabel;
     if (email) compLabel = `${email.hop_count || 0} hops · ${email.attachment_count || 0} attachments`;
     else if (pdf) compLabel = `${pdf.page_count || 0} pages · ${(pdf.embedded || []).length} embedded`;
+    else if (rtf) compLabel = `RTF · ${(rtf.objects || []).length} objects · ${(rtf.fields || []).length} fields`;
     else if (oleLegacy) compLabel = `${oleLegacy.kind || "ole"} · ${(oleLegacy.streams || []).length} streams`;
     else if (!ooxml && mods.javascript) compLabel = `${(mods.javascript.scripts || []).length} script(s)`;
     else compLabel = `${(ooxml && ooxml.counts && ooxml.counts.components) || 0} parts`;
@@ -1293,6 +1397,12 @@ async function openComponents(analysisId, keepTab) {
     }
     if (oleLegacy) {
       sections.push({ id: "ole", label: "OLE", html: paneOle(oleLegacy) });
+    }
+    if (rtf) {
+      sections.push({ id: "rtfobjects", label: `Objects (${(rtf.objects || []).length})`, html: paneRtfObjects(rtf) });
+      sections.push({ id: "rtfstructure", label: "Structure", html: paneRtfStructure(rtf) });
+      sections.push({ id: "rtftext", label: `Text & fields (${(rtf.fields || []).length})`, html: paneRtfText(rtf) });
+      sections.push({ id: "rtfmeta", label: "Metadata", html: paneRtfMeta(rtf) });
     }
     if (pdf) {
       sections.push({ id: "pdf", label: "PDF", html: panePdf(pdf) });
@@ -1326,7 +1436,7 @@ async function openComponents(analysisId, keepTab) {
     }
     if (didier && didier.available) sections.push({ id: "didier", label: "Didier", html: paneDidier(didier) });
     if (oms && oms.available) sections.push({ id: "oms", label: "OfficeMalScanner", html: paneOms(oms) });
-    if (sem || (ole && ole.available) || (xlm && xlm.xlm_macros)) {
+    if (!rtf && (sem || (ole && ole.available) || (xlm && xlm.xlm_macros))) {
       sections.push({ id: "metadata", label: "Metadata", html: paneMetadata(sem, ole, mods.officerules) });
       sections.push({ id: "content", label: "Content", html: paneContent(sem, ole, xlm) });
     }

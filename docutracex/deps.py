@@ -445,7 +445,9 @@ def run_checks() -> dict[str, Any]:
                    else "not provisioned (optional; skipped until present)",
             remedy="" if present
                    else f"run scripts/setup_portable_python.py, or drop {EXE_NAME} into {oms_dir()}",
-            purpose="Shellcode/embedded-object scan + VBA/OLE info (legacy OLE and OOXML)",
+            purpose="Shellcode/embedded-object scan + VBA/OLE info (legacy OLE and OOXML); "
+                    "RTFScan.exe for RTF"
+                    + ("" if (oms_dir() / "RTFScan.exe").is_file() or not present else " (RTFScan.exe missing)"),
         ))
     except Exception:  # noqa: BLE001
         pass
