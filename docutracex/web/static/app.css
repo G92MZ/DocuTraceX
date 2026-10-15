@@ -250,6 +250,17 @@ table.cases td.mono { word-break: break-all; }
 .yara-scan { margin: 12px 0; align-items: center; }
 .yara-case-select { max-width: 520px; min-width: 240px; }
 #yara-filter { width: 100%; margin-bottom: 8px; box-sizing: border-box; }
+.note-box { margin: 10px 0 14px; }
+.note-box > summary { color: var(--accent); }
+.note-form { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
+.note-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-dim); }
+.note-form input, .note-form textarea, .note-form select {
+  background: #0b0e12; border: 1px solid var(--panel-border); border-radius: 6px;
+  color: var(--text); font: inherit; font-size: 13px; padding: 7px 9px;
+}
+.note-form textarea { resize: vertical; min-height: 64px; }
+.note-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+.note-row .note-where { flex: 1; min-width: 220px; }
 .add-mark > summary { cursor: pointer; color: var(--accent); font-size: 12px; white-space: nowrap; list-style: none; }
 .add-mark > summary::-webkit-details-marker { display: none; }
 .add-mark-form { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 6px; min-width: 260px; }

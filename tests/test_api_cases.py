@@ -93,3 +93,23 @@ def test_manual_finding_marked_tp_reaches_report_and_survives_rerun(client: Test
     assert client.delete(f"/api/cases/{cid}/manual-findings/{fid}").status_code == 200
     assert not any(x["id"] == fid for x in client.get(f"/api/cases/{cid}/marks").json()["findings"])
     assert client.post(f"/api/cases/{cid}/manual-findings", json={"kind": "ioc", "detail": ""}).status_code == 400
+
+
+def test_free_text_note_with_justification_reaches_report(client: TestClient) -> None:
+    import time
+
+    cid = client.post("/api/cases", files={"file": ("note.txt", b"hello")}).json()["analysis_id"]
+    for _ in range(100):
+        if client.get(f"/api/cases/{cid}").json().get("state") not in ("queued", "running", "received"):
+            break
+        time.sleep(0.05)
+    r = client.post(f"/api/cases/{cid}/manual-findings", json={
+        "kind": "note", "detail": "Sender domain registered 2 days before the email",
+        "location": "headers / From", "severity": "high", "state": "true_positive",
+        "comment": "WHOIS checked manually"})
+    assert r.status_code == 200 and r.json()["finding"]["rule"] == "manual:note"
+    f = next(x for x in client.get(f"/api/cases/{cid}/marks").json()["findings"]
+             if x["rule"] == "manual:note")
+    assert f["mark"] == {**f["mark"], "state": "true_positive", "comment": "WHOIS checked manually"}
+    report = client.get(f"/api/cases/{cid}/report").text
+    assert "registered 2 days" in report and "WHOIS checked manually" in report
