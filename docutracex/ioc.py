@@ -88,6 +88,12 @@ def _domain_of(url: str) -> str | None:
         return None
 
 
+def _is_gateway(domain: str) -> bool:
+    """Link-rewriting hosts of mail gateways: their URL is kept, the domain is noise."""
+    return domain in ("urldefense.com", "urldefense.proofpoint.com", "linkprotect.cudasvc.com") or \
+        domain.endswith(("safelinks.protection.outlook.com", ".mimecast.com"))
+
+
 def _known_tld(domain: str) -> bool:
     tld = domain.rsplit(".", 1)[-1].lower()
     return len(tld) == 2 or tld in _GENERIC_TLDS or tld.startswith("xn--")
@@ -141,7 +147,8 @@ def _scan_text(text: str, module: str, location: str, col: _Collector) -> None:
         if dom in _NAMESPACE_HOSTS:
             continue
         col.add("url", url, module, location, _ctx(text, m.start(), m.end()))
-        if dom and not _looks_like_filename(dom) and not _valid_ipv4(dom) and ":" not in dom:
+        if dom and not _looks_like_filename(dom) and not _valid_ipv4(dom) and ":" not in dom \
+                and not _is_gateway(dom):
             col.add("domain", dom, module, location, _ctx(text, m.start(), m.end()))
 
     for m in _IPV4_RE.finditer(text):
@@ -255,6 +262,14 @@ def sources_from_modules(modules: dict[str, dict[str, Any]]) -> list[dict[str, A
             add("pdf", "uri", u)
         for js in pdf.get("javascript", []) or []:
             add("pdf", "javascript", js.get("code"))
+
+    # Email rules: original destinations behind gateway-rewritten links, QR codes.
+    mr = modules.get("mailrules")
+    if mr:
+        for d in mr.get("decoded_urls", []) or []:
+            add("mailrules", "decoded_link", d.get("original"))
+        for c in mr.get("qr", []) or []:
+            add("mailrules", f"qr/{c.get('image')}", c.get("text"))
 
     # PDF tools: decoded QR codes and the targets of the own PDF rules.
     pt = modules.get("pdftools")

@@ -147,6 +147,9 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
             from .parsers import mail
             res = mail.analyze(abs_path, _ext(name), work)
             add_findings(res.get("findings"), "email")
+            from .parsers import mail_rules
+            add_findings(mail_rules.analyze(abs_path, _ext(name), res, paths.root).get("findings"),
+                         "mailrules")
             for att in res.get("attachments", []) or []:
                 sp = att.get("stored_path")
                 if sp:

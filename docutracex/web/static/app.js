@@ -407,6 +407,13 @@ function pivotTarget(f, ids) {
   if (src === "ole") return has("ole") ? "ole" : null;
   if (src === "pdf") return has("pdf") ? "pdf" : null;
   if (src === "pdftools") return has("pdftools") ? "pdftools" : null;
+  if (src === "mailrules") {
+    if (loc.startsWith("attachment")) return has("attachments") ? "attachments" : null;
+    if (/dkim|lookalike|idn_domain|homoglyph|mass_mailer|messageid|missing_message/.test(rule)) return has("auth") ? "auth" : null;
+    if (/received|date_header/.test(rule)) return has("headers") ? "headers" : null;
+    if (/^qr_code/.test(rule)) return has("body") ? "body" : null;
+    return has("body") ? "body" : null;
+  }
   if (src === "xlmdeobf") return has("content") ? "content" : null;
   // excel formulas / word field codes are shown in Content; hidden-sheet info in Metadata.
   if (src === "excel") {
@@ -842,7 +849,37 @@ function paneEmailHeaders(email) {
   return table(["Header", "Value", "Mark"], rows);
 }
 
-function paneAuth(email) {
+// Offline DKIM check, look-alike domains and the sender fingerprint.
+function emailRulesAuth(mr) {
+  if (!mr) return "";
+  let html = "";
+  const dk = mr.dkim || [];
+  if (dk.length) {
+    html += `<h3 class="formats-title">DKIM (offline check)</h3>` + table(
+      ["Domain", "Selector", "Algorithm", "Canonicalization", "Body hash", "Signed headers"], dk.map((d) => {
+        const bh = d.body_hash_ok === true ? '<span class="badge badge-ok">matches</span>'
+          : d.body_hash_ok === false ? '<span class="badge badge-bad">MISMATCH</span>' : '<span class="badge badge-muted">n/a</span>';
+        return `<tr><td class="mono">${escapeHtml(d.domain)}</td><td class="mono">${escapeHtml(d.selector)}</td>
+          <td>${escapeHtml(d.algorithm)}</td><td>${escapeHtml(d.canonicalization)}</td><td>${bh}</td>
+          <td class="mono">${escapeHtml((d.signed_headers || []).join(":"))}</td></tr>`;
+      }).join("")) + `<p class="hint-line">Without DNS the signature itself cannot be verified; the body hash can — a mismatch means the body changed after signing.</p>`;
+  }
+  const la = mr.lookalikes || [];
+  if (la.length) {
+    html += `<h3 class="formats-title">Look-alike domains (${la.length})</h3>` + table(
+      ["Where", "Domain", "Why"], la.map((x) => `<tr><td>${escapeHtml(x.where)}</td>
+        <td class="mono bad-text">${escapeHtml(x.domain)}</td><td>${escapeHtml(x.why)}</td></tr>`).join(""));
+  }
+  const fp = mr.fingerprint || {};
+  if (fp.mailer || fp.message_id_domain) {
+    html += `<h3 class="formats-title">Sender fingerprint</h3>` + table(["Field", "Value"],
+      [["Mailer / User-Agent", fp.mailer], ["Message-ID domain", fp.message_id_domain]].filter(([, v]) => v)
+        .map(([k, v]) => `<tr><td class="file">${escapeHtml(k)}</td><td class="mono">${escapeHtml(v)}</td></tr>`).join(""));
+  }
+  return html;
+}
+
+function paneAuth(email, mr) {
   const a = (email && email.authentication) || {};
   const addr = (email && email.addresses) || {};
   const verdict = (v) => {
@@ -862,6 +899,7 @@ function paneAuth(email) {
     `<tr><td class="file">${escapeHtml(k)}</td><td class="mono">${escapeHtml(String(v))}</td>
      <td>${addMarkCell("sender", `${k}: ${v}`, "authentication", "")}</td></tr>`).join("");
   if (rows) html += `<h3 class="formats-title">Sender / routing</h3>` + table(["Field", "Value", "Mark"], rows);
+  html += emailRulesAuth(mr);
   return html;
 }
 
@@ -889,7 +927,7 @@ function paneAttachments(email, nestedMod) {
   return table(["Filename", "Size", "Detected", "SHA-256", "Tool scan", "Actions", "Mark"], rows);
 }
 
-function paneEmailBody(email) {
+function paneEmailBody(email, mr) {
   let html = "";
   if (email && email.mime_structure && email.mime_structure.length) {
     html += `<p class="hint-line">MIME structure: ${escapeHtml(email.mime_structure.join(" · "))}${email.has_html ? " · HTML present" : ""}</p>`;
@@ -914,6 +952,34 @@ function paneEmailBody(email) {
     if (htmlSrc) {
       html += `<details class="disclose"><summary>HTML source</summary><pre class="text-sample">${escapeHtml(htmlSrc.slice(0, 20000))}</pre></details>`;
     }
+  }
+  html += emailRulesBody(mr);
+  return html;
+}
+
+// Email rules shown with the body: decoded gateway links, QR codes, emldump parts.
+function emailRulesBody(mr) {
+  if (!mr) return "";
+  let html = "";
+  const dec = mr.decoded_urls || [];
+  if (dec.length) {
+    html += `<h3 class="formats-title">Links rewritten by a mail gateway (${dec.length})</h3>` + table(
+      ["Original destination", "Gateway", "Mark"], dec.map((d) => `<tr>
+        <td class="mono">${escapeHtml(d.original)}</td><td>${escapeHtml((d.services || []).join(" → "))}</td>
+        <td>${addMarkCell("link", `Link to ${d.original}`, "body", d.wrapped)}</td></tr>`).join(""));
+  }
+  const qr = mr.qr || [];
+  if (qr.length) {
+    html += `<h3 class="formats-title">QR codes in images (${qr.length})</h3>` + table(
+      ["Image", "Content", "Mark"], qr.map((c) => `<tr><td class="file">${escapeHtml(c.image || "")}</td>
+        <td class="mono">${escapeHtml(c.text || "")}</td>
+        <td>${addMarkCell("qr", `QR in ${c.image}: ${c.text}`, "attachments", c.format || "")}</td></tr>`).join(""));
+  }
+  const tools = mr.tools || {};
+  const names = Object.keys(tools);
+  if (names.length) {
+    html += `<h3 class="formats-title">emldump (MIME parts)</h3>`;
+    names.forEach((n) => { html += toolOutputBlock(n, tools[n], false); });
   }
   return html;
 }
@@ -1167,10 +1233,10 @@ async function openComponents(analysisId, keepTab) {
     sections.push({ id: "findings", label: `Findings (${findings.length})`, render: () => paneFindings(findings) });
     sections.push({ id: "iocs", label: `IOCs (${ni})`, html: paneIocs(iocs) });
     if (email) {
-      sections.push({ id: "auth", label: "Authentication", html: paneAuth(email) });
+      sections.push({ id: "auth", label: "Authentication", html: paneAuth(email, mods.mailrules) });
       sections.push({ id: "headers", label: `Headers (${(email.headers || []).length})`, html: paneEmailHeaders(email) });
       sections.push({ id: "attachments", label: `Attachments (${email.attachment_count || 0})`, html: paneAttachments(email, nested) });
-      sections.push({ id: "body", label: "Body", html: paneEmailBody(email) });
+      sections.push({ id: "body", label: "Body", html: paneEmailBody(email, mods.mailrules) });
     }
     if (oleLegacy) {
       sections.push({ id: "ole", label: "OLE", html: paneOle(oleLegacy) });
