@@ -27,7 +27,17 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _family(manifest: dict[str, Any]) -> str | None:
+def _family(manifest: dict[str, Any], original: Path | None = None) -> str | None:
+    """Family to analyse as: the declared one, except RTF, recognised by content
+    (Word opens RTF whatever the extension, e.g. a ``.doc`` that is really RTF)."""
+    if original is not None:
+        from .parsers import rtf
+        try:
+            with original.open("rb") as fh:
+                if rtf.is_rtf(fh.read(8)):
+                    return "rtf"
+        except OSError:
+            pass
     disc = manifest.get("format", {}).get("discrepancy") or {}
     return disc.get("declared_family")
 
@@ -67,8 +77,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     if manifest is None:
         raise FileNotFoundError(f"No case.json in {case_root}")
 
-    family = _family(manifest)
     original = paths.root / manifest["original"]["stored_path"]
+    family = _family(manifest, original)
     ran: list[str] = []
     overall_counts: dict[str, int] = {"components": 0, "findings": 0, "iocs": 0}
     state = "completed"
@@ -200,6 +210,39 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                  if o.get("stored_path")]
         if items:
             nested_res = run("nested: recursive scan of embedded OLE objects",
+                             lambda: nested.scan_children(items, paths))
+            if nested_res.get("tree"):
+                write_subresult(paths, "nested", nested_res)
+                ran.append("nested")
+                findings_total += nested_res.get("counts", {}).get("findings", 0)
+    elif family == "rtf":
+        # RTF (also a .doc/.dot... that is really RTF): own structure/object rules,
+        # rtfobj, rtfdump and RTFScan; oleid/msodde from oletools; recursion
+        # into the extracted objects.
+        from . import nested
+        from .parsers import oletools_suite, rtf
+
+        declared_ext = manifest["original"].get("declared_extension", "")
+        rtf_res = run("rtf: structure · objects (rtfobj) · fields · template · rtfdump · RTFScan · own rules",
+                      lambda: rtf.analyze(original, declared_ext, paths.extracted_dir))
+        write_subresult(paths, "rtf", rtf_res)
+        ran.append("rtf")
+        overall_counts["components"] = len(rtf_res.get("objects") or [])
+        findings_total += rtf_res.get("counts", {}).get("findings", 0)
+        if rtf_res.get("status") == "error":
+            state = "error"
+
+        ole_res = run("oletools: oleid · msodde · olevba",
+                      lambda: oletools_suite.analyze(original, paths.extracted_dir))
+        write_subresult(paths, "oletools", ole_res)
+        ran.append("oletools")
+        findings_total += ole_res.get("counts", {}).get("findings", 0)
+
+        items = [{"path": str(paths.extracted_dir.parent / o["stored_path"]),
+                  "filename": o.get("filename") or Path(o["stored_path"]).name}
+                 for o in rtf_res.get("objects") or [] if o.get("stored_path")]
+        if items:
+            nested_res = run("nested: recursive scan of embedded RTF objects",
                              lambda: nested.scan_children(items, paths))
             if nested_res.get("tree"):
                 write_subresult(paths, "nested", nested_res)
@@ -432,7 +475,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 # Modules that can be re-run in isolation over an existing case.
 _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto",
                "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole",
-               "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules", "javascript")
+               "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules", "javascript", "rtf")
 # Modules whose findings feed the consolidated view (includes derived ones).
 _COLLECTABLE = _RERUNNABLE + ("nested",)
 
@@ -478,7 +521,7 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
 
     original = paths.root / manifest["original"]["stored_path"]
     declared_ext = manifest["original"].get("declared_extension", "")
-    family = _family(manifest)
+    family = _family(manifest, original)
     ed = paths.extracted_dir
 
     if module == "ooxml":
@@ -503,6 +546,9 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
                                         is_excel_binary=(fam == "ole" and declared_ext.lower() in (".xls", ".xlt", ".xla")))
             else:
                 res = vipermonkey.analyze(original, ed)
+    elif module == "rtf":
+        from .parsers import rtf
+        res = rtf.analyze(original, declared_ext, ed)
     elif module == "oletools":
         from .parsers import oletools_suite
         res = oletools_suite.analyze(original, ed)

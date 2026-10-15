@@ -4,7 +4,8 @@ These complement libmagic for types it cannot identify by a byte signature at
 offset 0. They read only bounded regions of the file (head + tail), never load
 it whole, and never execute content.
 
-Currently: EMLX (Apple Mail), whose composite signature (PRONOM fmt/2055) is a
+Currently: RTF (Word accepts any ``{\\rt`` header, which libmagic may miss),
+EMLX (Apple Mail), whose composite signature (PRONOM fmt/2055) is a
 leading byte-count line, RFC 822 headers near the start, and a trailing
 ``</plist>``.
 """
@@ -72,6 +73,11 @@ def recognize(path: Path, declared_ext: str = "") -> dict[str, Any] | None:
     except OSError as exc:
         log.warning("Structural read failed for %s: %s", path, exc)
         return None
+
+    if head.lstrip(b"\xef\xbb\xbf")[:4] == b"{\\rt":
+        std = head.lstrip(b"\xef\xbb\xbf")[:6] == b"{\\rtf1"
+        return {"format": "rtf", "family": "rtf", "method": "structure",
+                "detail": "RTF header {\\rtf1" if std else "Non-standard RTF header (Word accepts '{\\rt')"}
 
     matched, detail = looks_like_emlx(head, tail)
     if matched:

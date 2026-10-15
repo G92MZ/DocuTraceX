@@ -40,6 +40,7 @@ _EXT_FAMILY: dict[str, str] = {
     ".pdf": "pdf",
     ".eml": "email",
     ".emlx": "email",
+    ".rtf": "rtf",
 }
 
 # --- detected mime/description -> family -------------------------------------
@@ -60,6 +61,8 @@ _MIME_FAMILY: dict[str, str] = {
     "application/pdf": "pdf",
     "message/rfc822": "email",
     "text/x-mail": "email",
+    "text/rtf": "rtf",
+    "application/rtf": "rtf",
 }
 
 # Generic container mimes: structurally correct but not type-specific. For an
@@ -157,6 +160,8 @@ def detected_family(mime: str, description: str) -> str | None:
     desc = (description or "").lower()
     if "composite document" in desc or "cdf" in desc:
         return "ole"
+    if "rich text format" in desc:
+        return "rtf"
     if "pdf document" in desc:
         return "pdf"
     if "zip archive" in desc:

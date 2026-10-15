@@ -40,6 +40,12 @@ def _ext(name: str) -> str:
 def _kind(path: Path, name: str) -> str:
     """Decide how to analyze a child: by extension, then by content sniff."""
     ext = _ext(name)
+    try:
+        with path.open("rb") as fh:
+            if fh.read(8).lstrip(b"\xef\xbb\xbf")[:4] == b"{\\rt":
+                return "rtf"  # Word opens RTF whatever the extension (.doc that is RTF)
+    except OSError:
+        pass
     if ext in _OOXML_EXT:
         return "ooxml"
     if ext in _OLE_EXT:
@@ -133,6 +139,16 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
             if ((res.get("tools") or {}).get("olevba") or {}).get("macros"):
                 vm = vipermonkey.analyze(abs_path, work)
                 add_findings(vm.get("findings"), "vipermonkey")
+        elif kind == "rtf":
+            from .parsers import oletools_suite, rtf
+            r = rtf.analyze(abs_path, _ext(name), work)
+            add_findings(r.get("findings"), "rtf")
+            res = oletools_suite.analyze(abs_path, work)
+            add_findings([f for f in res.get("findings") or [] if f.get("tool") == "msodde"], "oletools")
+            for obj in r.get("objects") or []:
+                sp = obj.get("stored_path")
+                if sp:
+                    kids.append((paths.root / sp, Path(sp).name))
         elif kind == "pdf":
             from .parsers import pdf
             res = pdf.analyze(abs_path, work)
@@ -159,6 +175,14 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
 
     if depth < MAX_DEPTH:
         for cpath, cname in kids[:MAX_CHILDREN]:
+            if not cpath.is_file():
+                # Tools store paths relative to the parent of their output dir
+                # (here extracted/), not to the case root.
+                try:
+                    alt = work.parent / cpath.relative_to(paths.root)
+                except ValueError:
+                    alt = cpath
+                cpath = alt
             if cpath.is_file():
                 node["children"].append(_scan_one(cpath, cname, paths, depth + 1, this_chain))
     elif kids:

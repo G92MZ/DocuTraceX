@@ -44,6 +44,7 @@ FAMILY_SCRIPTS = {
     "ole": ["oledump"],
     "pdf": ["pdfid", "pdf-parser"],
     "email": ["emldump"],
+    "rtf": ["rtfdump"],
 }
 
 _OUTPUT_BOUND = 60000

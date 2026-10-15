@@ -91,7 +91,7 @@ def consolidate(modules: dict[str, Any]) -> list[dict[str, Any]]:
                              ("ole", "ole"), ("officerules", "officerules"),
                              ("vbatools", "vbatools"), ("vipermonkey", "vipermonkey"),
                              ("pdftools", "pdftools"), ("mailrules", "mailrules"),
-                             ("javascript", "javascript")):
+                             ("javascript", "javascript"), ("rtf", "rtf")):
         mod = modules.get(mod_name)
         if not mod:
             continue
