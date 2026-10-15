@@ -10,9 +10,10 @@ becomes a *finding* (and reaches the report) when the analyst has enabled that
 rule. By default nothing YARA produces is a finding.
 
 Compilation is namespaced per source file, so a broken rule file is reported on
-its own without sinking the rest. yara-python (Apache-2.0) is used in-process
-when the app's interpreter has it; otherwise rule compilation/listing is
-delegated to the portable Python under ``tools/`` (where the analysis runs).
+its own without sinking the rest. yara-python (Apache-2.0) always runs on the
+portable Python under ``tools/`` (where the analysis runs): when this module is
+used from another interpreter (the web app), compilation and listing are
+delegated to the portable, so rules are validated by the same YARA that scans.
 """
 
 from __future__ import annotations
@@ -32,7 +33,8 @@ log = get_logger(__name__)
 
 _RULE_EXT = (".yar", ".yara", ".rule", ".rules")
 _MAX_STRINGS = 50          # matched strings kept per rule hit
-_MAX_MATCH_DATA = 120      # bytes of matched data kept, hex
+_MAX_MATCH_DATA = 120      # bytes of matched data kept (hex + printable)
+_MAX_INSTANCES = 10        # occurrences kept per matched string
 _SCAN_TIMEOUT = 60         # seconds per file
 
 
@@ -184,9 +186,13 @@ def _load_yara() -> tuple[Any, str | None]:
 
 
 def _portable_cmd(op: str) -> list[str] | None:
-    """Command to run ``op`` of this module on the portable Python, if usable."""
+    """Command to run ``op`` of this module on the portable Python, or None when
+    this process already is the portable (or a worker) or there is no portable."""
+    import os
     import sys
 
+    if os.environ.get("DOCUTRACEX_YARA_WORKER") == "1":
+        return None
     portable = settings.portable_python()
     if not portable:
         return None
@@ -209,6 +215,7 @@ def _run_portable(op: str):
         return
     env = native.subprocess_env()
     env["DOCUTRACEX_YARA_DIR"] = str(settings.yara_dir)  # same rule store as the app
+    env["DOCUTRACEX_YARA_WORKER"] = "1"
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                             encoding="utf-8", errors="replace", env=env,
                             cwd=str(Path(__file__).resolve().parent.parent))
@@ -251,10 +258,10 @@ def _namespace(path: Path) -> str:
 def compile_rules() -> tuple[Any, dict[str, Any]]:
     """Compile every rule file (namespaced). Returns (compiled_or_None, report).
 
-    Without yara-python in this interpreter the report comes from the portable
-    and no compiled object is returned (scanning happens on the portable)."""
+    Outside the portable the report comes from the portable and no compiled
+    object is returned (scanning happens on the portable)."""
     yara, why = _load_yara()
-    if yara is None:
+    if _portable_cmd("report") is not None or yara is None:
         report = _delegated("report", why or "")[-1]
         report.pop("rules", None)
         report.pop("fatal", None)
@@ -297,7 +304,7 @@ def compile_rules() -> tuple[Any, dict[str, Any]]:
 def compile_stream():
     """Generator yielding compile progress per rule file (for NDJSON streaming)."""
     yara, why = _load_yara()
-    if yara is None:
+    if _portable_cmd("stream") is not None or yara is None:
         for ev in _delegated("stream", why or ""):
             yield {"fatal": ev["fatal"]} if "fatal" in ev else ev
         return
@@ -331,8 +338,9 @@ def compile_stream():
 
 def list_rules() -> dict[str, Any]:
     """List known rules with their source, tags, meta and enabled flag."""
-    if _load_yara()[0] is None:
-        report = _delegated("report", _load_yara()[1] or "")[-1]
+    yara, why = _load_yara()
+    if _portable_cmd("report") is not None or yara is None:
+        report = _delegated("report", why or "")[-1]
         report.pop("fatal", None)
         enabled = enabled_rules()
         for r in report.get("rules", []):
@@ -356,20 +364,88 @@ def list_rules() -> dict[str, Any]:
     return report
 
 
+def _rule_end(text: str, start: int) -> int:
+    """Index just past the closing brace of the rule body starting at ``start``
+    (the first ``{``), skipping strings, regexes and comments."""
+    depth, i, n = 0, start, len(text)
+    prev = ""  # last significant char, to tell a /regex/ from a division
+    while i < n:
+        c = text[i]
+        if text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j == -1 else j
+            continue
+        if text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            i = n if j == -1 else j + 2
+            continue
+        if c == '"' or (c == "/" and (prev == "=" or text[max(0, i - 12):i].rstrip().endswith("matches"))):
+            i += 1
+            while i < n and text[i] != c:
+                i += 2 if text[i] == "\\" else 1
+            i += 1
+            prev = c
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        if not c.isspace():
+            prev = c
+        i += 1
+    return n
+
+
+def rule_source(path: str | Path, name: str) -> str:
+    """Return the source text of rule ``name`` in the file at ``path`` ("" if not found)."""
+    try:
+        text = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    m = re.search(r"^[ \t]*(?:(?:private|global)\s+)*rule\s+" + re.escape(name) + r"\b",
+                  text, re.MULTILINE)
+    if not m:
+        return ""
+    brace = text.find("{", m.end())
+    if brace == -1:
+        return ""
+    return text[m.start():_rule_end(text, brace)].strip()
+
+
+def _printable(data: bytes) -> str:
+    """Readable form of matched bytes: UTF-16LE text when it looks like it,
+    else ASCII with non-printable bytes as dots."""
+    if len(data) >= 4 and data[1::2].count(0) >= len(data) // 2 - 1:
+        try:
+            txt = data.decode("utf-16-le", "replace")
+            if all(ch.isprintable() or ch in "\r\n\t" for ch in txt):
+                return txt
+        except Exception:  # noqa: BLE001
+            pass
+    return "".join(chr(b) if 32 <= b < 127 else "." for b in data)
+
+
 def _match_to_dict(m: Any, enabled: set[str]) -> dict[str, Any]:
     strings = []
     try:
         for s in (m.strings or [])[:_MAX_STRINGS]:
             insts = getattr(s, "instances", None)
             if insts is not None:  # yara-python >= 4.3
-                for inst in insts[:3]:
+                for inst in insts[:_MAX_INSTANCES]:
+                    data = bytes(inst.matched_data)
                     strings.append({"id": getattr(s, "identifier", ""),
                                     "offset": inst.offset,
-                                    "data": inst.matched_data[:_MAX_MATCH_DATA].hex()})
+                                    "length": getattr(inst, "matched_length", len(data)),
+                                    "data": data[:_MAX_MATCH_DATA].hex(),
+                                    "text": _printable(data[:_MAX_MATCH_DATA])})
             else:  # older tuple form (offset, identifier, data)
                 off, ident, data = s
-                strings.append({"id": ident, "offset": off,
-                                "data": bytes(data)[:_MAX_MATCH_DATA].hex()})
+                data = bytes(data)
+                strings.append({"id": ident, "offset": off, "length": len(data),
+                                "data": data[:_MAX_MATCH_DATA].hex(),
+                                "text": _printable(data[:_MAX_MATCH_DATA])})
     except Exception:  # noqa: BLE001
         pass
     return {

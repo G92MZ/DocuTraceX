@@ -1,4 +1,4 @@
-"""Tests for the YARA engine: store, compile, opt-in findings, API."""
+"""Tests for the YARA engine: store, compile, markable findings, API."""
 
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ def test_register_missing_path_404(client: TestClient) -> None:
 
 
 @has_samples
-def test_matches_recorded_but_not_findings_until_enabled(client: TestClient, env: Path) -> None:
+def test_every_hit_is_a_markable_finding_with_details(client: TestClient, env: Path) -> None:
     client.post("/api/yara/upload", files={"file": ("t.yar", RULE.encode())})
     with (SAMPLES / "sample.xlsm").open("rb") as fh:
         cid = client.post("/api/cases", files={"file": ("sample.xlsm", fh.read())}).json()["analysis_id"]
@@ -83,24 +83,23 @@ def test_matches_recorded_but_not_findings_until_enabled(client: TestClient, env
         time.sleep(0.05)
     comp = client.get(f"/api/cases/{cid}/components").json()
     ymod = comp["modules"]["yara"]
-    assert ymod["match_count"] >= 1               # the rule matched
-    assert not [f for f in comp["findings"] if f["source"] == "yara"]  # but no findings yet
-
-    # Enable the rule and re-run just the YARA module.
-    client.post("/api/yara/enabled", json={"rules": ["Has_VBA"], "enabled": True})
-    rr = client.post(f"/api/cases/{cid}/rerun", json={"module": "yara"}).json()
-    tid = rr["task"]["id"]
-    for _ in range(100):
-        t = next((x for x in client.get("/api/tasks").json()["tasks"] if x["id"] == tid), {})
-        if t.get("state") in ("completed", "failed"):
-            break
-        time.sleep(0.05)
-    comp2 = client.get(f"/api/cases/{cid}/components").json()
-    yf = [f for f in comp2["findings"] if f["source"] == "yara"]
+    assert ymod["match_count"] >= 1
+    # No opt-in needed: the hit is a finding right away, ready to be marked.
+    yf = [f for f in comp["findings"] if f["source"] == "yara"]
     assert yf and yf[0]["rule"] == "yara:Has_VBA"
+
+    hit = ymod["scanned"][0]
+    m = hit["matches"][0]
+    assert m["finding_id"] in {f["id"] for f in yf}
+    assert Path(hit["path"]).is_file()                       # local path of the target
+    assert m["strings"][0]["text"] == "vbaProject"           # what matched, readable
+    assert m["strings"][0]["data"] == b"vbaProject".hex()
+    src = ymod["rules_info"][f"{m['namespace']}:Has_VBA"]
+    assert src["source"].startswith("rule Has_VBA") and src["file"].endswith("t.yar")
+
     # The report lists only confirmed (TP) findings, so mark it, then it appears.
     assert "yara:Has_VBA" not in client.get(f"/api/cases/{cid}/report").text
-    client.put(f"/api/cases/{cid}/marks/{yf[0]['id']}", json={"state": "true_positive"})
+    client.put(f"/api/cases/{cid}/marks/{m['finding_id']}", json={"state": "true_positive"})
     assert "yara:Has_VBA" in client.get(f"/api/cases/{cid}/report").text
 
 
@@ -151,3 +150,35 @@ def test_rules_folder_is_not_mistaken_for_yara(tmp_path: Path) -> None:
     out = subprocess.run([sys.executable, "-S", "-c", code], cwd=tmp_path,
                          capture_output=True, text=True, check=True).stdout
     assert out.startswith("True") and "resolved to the folder" in out
+
+
+def test_always_uses_portable_even_if_app_has_yara(client: TestClient, monkeypatch) -> None:
+    import sys
+
+    client.post("/api/yara/upload", files={"file": ("t.yar", RULE.encode())})
+    calls = []
+
+    def cmd(op):
+        calls.append(op)
+        return [sys.executable, "-m", "docutracex.yara_engine", op]
+
+    monkeypatch.setattr(yara_engine, "_portable_cmd", cmd)
+    assert client.get("/api/yara").json()["rule_count"] == 1
+    assert calls  # went to the portable although yara-python is importable here
+
+
+def test_rule_source_extraction(tmp_path: Path) -> None:
+    text = (
+        'import "pe"\n// rule Fake { }\n'
+        'rule A : t { meta: d="}{" strings: $h = { 4D 5A [2-4] ( 90 | 91 ) } '
+        '$r = /ab\\/c{2}}/ condition: $h and $r }\n'
+        'private rule B { condition: pe.sections[0].name matches /\\.te{1}xt/ }\n'
+        'rule C { condition: true }\n'
+    )
+    f = tmp_path / "r.yar"
+    f.write_text(text)
+    assert yara_engine.rule_source(f, "A").endswith("condition: $h and $r }")
+    assert yara_engine.rule_source(f, "B").startswith("private rule B")
+    assert yara_engine.rule_source(f, "B").endswith("/\\.te{1}xt/ }")
+    assert yara_engine.rule_source(f, "C") == "rule C { condition: true }"
+    assert yara_engine.rule_source(f, "Fake") == ""

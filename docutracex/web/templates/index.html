@@ -122,7 +122,7 @@
           <h2>YARA rules</h2>
           <span id="yara-summary" class="status"></span>
         </div>
-        <p class="hint-line">Matches are shown for every case, but a rule only becomes a finding (and reaches the report) once you enable it here. Default: nothing enabled.</p>
+        <p class="hint-line">Rules are compiled and run with the portable Python. Every hit becomes a finding you mark in the case (True positive, False positive, …); only True positives reach the report.</p>
         <div class="yara-add">
           <form id="yara-upload-form" class="upload">
             <input type="file" id="yara-file" class="file-native" accept=".yar,.yara,.rule,.rules,.zip,.tar,.gz,.tgz" />
