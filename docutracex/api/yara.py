@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Body, File, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from .. import yara_engine
 
@@ -14,6 +16,15 @@ router = APIRouter(prefix="/api/yara", tags=["yara"])
 async def list_yara() -> dict:
     """List known rules with source, tags, meta, compile status and enabled flag."""
     return yara_engine.list_rules()
+
+
+@router.post("/compile/stream")
+async def compile_stream() -> StreamingResponse:
+    """Compile the ruleset file-by-file, streaming progress as NDJSON."""
+    def gen():
+        for ev in yara_engine.compile_stream():
+            yield json.dumps(ev, default=str) + "\n"
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
 
 
 @router.post("/upload")

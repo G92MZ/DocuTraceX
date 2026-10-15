@@ -174,7 +174,10 @@ def build_report_html(analysis_id: str, cases_dir=None) -> str:
   <span class="chip">{mk.get('reviewed', 0)}/{mk.get('total', 0)} reviewed</span></div>
 <h2>Case</h2>
 <table><tbody>{header_rows}</tbody></table>
-<h2>Findings ({len(findings)})</h2>
+<h2>Overview — confirmed findings (True positive)</h2>
+<p class="muted">Only findings marked True positive, from any source (YARA included). Mark findings in the app to populate this.</p>
+{_findings_section([f for f in findings if (f.get('mark') or {}).get('state') == 'true_positive'])}
+<h2>All findings ({len(findings)})</h2>
 {_findings_section(findings)}
 <h2>Indicators of compromise ({ioc_total})</h2>
 {_iocs_section(iocs)}

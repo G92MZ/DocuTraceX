@@ -48,7 +48,8 @@ def test_report_contains_findings_iocs_and_evidence(client: TestClient, tmp_path
     assert r.status_code == 200
     assert "text/html" in r.headers.get("content-type", "")
     body = r.text
-    assert "<h2>Findings" in body
+    assert "<h2>All findings" in body
+    assert "confirmed findings (True positive)" in body
     assert "Indicators of compromise" in body
     assert "WEBSERVICE" in body  # evidence rendered
     # Persisted copy exists.
