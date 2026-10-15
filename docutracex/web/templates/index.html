@@ -122,7 +122,7 @@
           <h2>YARA rules</h2>
           <span id="yara-summary" class="status"></span>
         </div>
-        <p class="hint-line">Rules are compiled and run with the portable Python. Every hit becomes a finding you mark in the case (True positive, False positive, …); only True positives reach the report.</p>
+        <p class="hint-line">Nothing runs automatically: register a path or upload rules, press Recompile, then scan a case. Compilation and scans use the portable Python. Every hit is a finding you mark (True positive, False positive, …); only True positives reach the report.</p>
         <div class="yara-add">
           <form id="yara-upload-form" class="upload">
             <input type="file" id="yara-file" class="file-native" accept=".yar,.yara,.rule,.rules,.zip,.tar,.gz,.tgz" />
@@ -138,6 +138,13 @@
             <span id="yara-add-status" class="status"></span>
           </div>
         </div>
+        <div class="upload yara-scan">
+          <span class="hint-line">Scan a case with the compiled rules:</span>
+          <select id="yara-case" class="yara-case-select"></select>
+          <button id="yara-scan" class="btn btn-primary" type="button">Scan case</button>
+          <span id="yara-scan-status" class="status"></span>
+        </div>
+        <div id="yara-results"></div>
         <div id="yara-errors"></div>
         <div id="yara-body"></div>
       </section>

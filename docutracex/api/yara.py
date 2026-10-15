@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/yara", tags=["yara"])
 
 @router.get("")
 async def list_yara() -> dict:
-    """List known rules with source, tags, meta, compile status and enabled flag."""
+    """The last compilation (cached): rules, errors, stale flag. Compiles nothing."""
     return yara_engine.list_rules()
 
 
@@ -35,8 +35,7 @@ async def upload_yara(file: UploadFile = File(...)) -> JSONResponse:
         added = yara_engine.add_upload(file.filename or "rules.yar", data)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Could not add rules: {exc}") from exc
-    report = yara_engine.compile_rules()[1]
-    return JSONResponse(status_code=201, content={**added, "compile": report})
+    return JSONResponse(status_code=201, content=added)  # compiled on demand (Recompile)
 
 
 @router.post("/path")
@@ -49,7 +48,7 @@ async def register_yara_path(payload: dict = Body(...)) -> dict:
         res = yara_engine.register_path(path)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {**res, "compile": yara_engine.compile_rules()[1]}
+    return res  # compiled on demand (Recompile)
 
 
 @router.delete("/path")
