@@ -5,9 +5,9 @@ file, an HTTP upload of an archive (``.zip``/``.tar.gz``) of rule files, or the
 registration of a path already on the server (a directory or file, indexed in
 place so a large rule repo need not travel over HTTP).
 
-Matching is opt-in for findings: a YARA hit is recorded and shown, but it only
-becomes a *finding* (and reaches the report) when the analyst has enabled that
-rule. By default nothing YARA produces is a finding.
+Nothing runs automatically: rules are compiled only when the analyst presses
+Recompile (the compiled ruleset and a report are cached in the rule store) and
+a case is scanned only on demand. Every hit becomes a finding the analyst marks.
 
 Compilation is namespaced per source file, so a broken rule file is reported on
 its own without sinking the rest. yara-python (Apache-2.0) always runs on the
@@ -238,76 +238,54 @@ def _run_portable(op: str):
             log.warning("YARA on portable failed (%s): %s", proc.returncode, err)
 
 
-def _delegated(op: str, fallback_error: str) -> list[dict[str, Any]]:
-    events = list(_run_portable(op))
-    if not events or (op == "report" and "fatal" in events[-1]):
-        if _portable_cmd(op) is None:
-            reason = fallback_error
-        else:
-            detail = events[-1]["fatal"] if events else "no output"
-            reason = f"{fallback_error}; the portable Python could not run YARA either ({detail})"
-        return [{"available": False, "error": reason, "errors": [], "rules": [],
-                 "rule_count": 0, "file_count": 0, "fatal": reason}]
-    return events
-
-
 def _namespace(path: Path) -> str:
     return path.stem
 
 
-def compile_rules() -> tuple[Any, dict[str, Any]]:
-    """Compile every rule file (namespaced). Returns (compiled_or_None, report).
+# Compilation happens ONLY when the analyst asks for it (Recompile). The result
+# is cached: the compiled ruleset (loaded by scans) and a JSON report (shown by
+# the YARA tab without compiling anything).
 
-    Outside the portable the report comes from the portable and no compiled
-    object is returned (scanning happens on the portable)."""
-    yara, why = _load_yara()
-    if _portable_cmd("report") is not None or yara is None:
-        report = _delegated("report", why or "")[-1]
-        report.pop("rules", None)
-        report.pop("fatal", None)
-        return None, report
+def _compiled_path() -> Path:
+    return _base() / "compiled.yarc"
 
-    cfg = _read_config()
-    files = _iter_rule_files(cfg.get("external_paths", []))
-    report: dict[str, Any] = {"available": True, "sources": [], "rule_count": 0,
-                              "errors": [], "file_count": len(files)}
-    ok_files: dict[str, str] = {}
-    for f in files:
-        ns = _namespace(f)
-        try:
-            yara.compile(filepath=str(f))  # validate individually first
-            # ensure unique namespace
-            base_ns, i = ns, 1
-            while ns in ok_files:
-                ns = f"{base_ns}_{i}"; i += 1
-            ok_files[ns] = str(f)
-            report["sources"].append({"namespace": ns, "path": str(f), "status": "ok"})
-        except Exception as exc:  # noqa: BLE001
-            report["errors"].append({"path": str(f), "error": str(exc)})
-            report["sources"].append({"namespace": ns, "path": str(f), "status": "error",
-                                      "error": str(exc)})
-    if not ok_files:
-        return None, report
+
+def _report_path() -> Path:
+    return _base() / "compiled.json"
+
+
+def _sources_snapshot() -> dict[str, Any]:
+    """What the ruleset is made of, to tell whether the cache is stale."""
+    uploaded = sorted(p.name for p in rules_dir().iterdir()) if rules_dir().is_dir() else []
+    return {"external_paths": sorted(_read_config().get("external_paths", [])),
+            "uploaded": uploaded}
+
+
+def _read_report() -> dict[str, Any] | None:
     try:
-        compiled = yara.compile(filepaths=ok_files)
-    except Exception as exc:  # noqa: BLE001
-        report["errors"].append({"path": "<combined>", "error": str(exc)})
-        return None, report
-    # Count rules.
-    try:
-        report["rule_count"] = sum(1 for _ in compiled)
-    except Exception:  # noqa: BLE001
-        report["rule_count"] = len(ok_files)
-    return compiled, report
+        data = json.loads(_report_path().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else None
+    except (OSError, ValueError):
+        return None
 
 
 def compile_stream():
-    """Generator yielding compile progress per rule file (for NDJSON streaming)."""
+    """Compile the ruleset file by file, yielding progress events, and cache the
+    result. Always runs on the portable (delegated when called from the app)."""
     yara, why = _load_yara()
-    if _portable_cmd("stream") is not None or yara is None:
-        for ev in _delegated("stream", why or ""):
-            yield {"fatal": ev["fatal"]} if "fatal" in ev else ev
+    if _portable_cmd("stream") is not None:
+        got = False
+        for ev in _run_portable("stream"):
+            got = True
+            yield ev
+        if not got:
+            yield {"fatal": f"Could not run YARA on the portable Python. {why or ''}".strip()}
         return
+    if yara is None:
+        yield {"fatal": why}
+        return
+    from datetime import datetime, timezone
+
     cfg = _read_config()
     files = _iter_rule_files(cfg.get("external_paths", []))
     yield {"total": len(files)}
@@ -316,7 +294,7 @@ def compile_stream():
     for i, f in enumerate(files, 1):
         ns = _namespace(f)
         try:
-            yara.compile(filepath=str(f))
+            yara.compile(filepath=str(f))  # validate individually first
             base, k = ns, 1
             while ns in ok_files:
                 ns = f"{base}_{k}"; k += 1
@@ -325,43 +303,57 @@ def compile_stream():
             errors.append({"path": str(f), "error": str(exc)})
         yield {"i": i, "total": len(files), "file": f.name,
                "ok": len(ok_files), "errors": len(errors)}
-    rule_count = 0
+    rules: list[dict[str, Any]] = []
+    _compiled_path().unlink(missing_ok=True)
     if ok_files:
         try:
             compiled = yara.compile(filepaths=ok_files)
-            rule_count = sum(1 for _ in compiled)
+            compiled.save(str(_compiled_path()))
+            for r in compiled:
+                meta = dict(getattr(r, "meta", {}) or {})
+                rules.append({"name": r.identifier, "namespace": getattr(r, "namespace", ""),
+                              "description": str(meta.get("description") or meta.get("desc") or "")})
         except Exception as exc:  # noqa: BLE001
             errors.append({"path": "<combined>", "error": str(exc)})
-    yield {"done": True, "rule_count": rule_count, "file_count": len(files),
-           "errors": errors, "enabled_count": len(enabled_rules())}
+    report = {
+        "compiled_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "rule_count": len(rules), "file_count": len(files), "errors": errors,
+        "sources": [{"namespace": ns, "path": p} for ns, p in ok_files.items()],
+        "snapshot": _sources_snapshot(), "rules": rules,
+    }
+    _report_path().write_text(json.dumps(report), encoding="utf-8")
+    yield {"done": True, "rule_count": len(rules), "file_count": len(files), "errors": errors}
 
 
 def list_rules() -> dict[str, Any]:
-    """List known rules with their source, tags, meta and enabled flag."""
+    """The last compilation (from cache; nothing is compiled here)."""
+    report = _read_report()
+    if report is None:
+        return {"compiled": False, "rule_count": 0, "file_count": 0, "errors": [], "rules": [],
+                "stale": bool(_sources_snapshot()["external_paths"] or _sources_snapshot()["uploaded"])}
+    stale = report.get("snapshot") != _sources_snapshot()
+    report = {k: v for k, v in report.items() if k != "snapshot"}
+    return {**report, "compiled": True, "stale": stale}
+
+
+def compile_rules() -> tuple[Any, dict[str, Any]]:
+    """Load the compiled ruleset for scanning. Returns (compiled_or_None, report).
+
+    Never compiles: it uses what the last Recompile produced."""
     yara, why = _load_yara()
-    if _portable_cmd("report") is not None or yara is None:
-        report = _delegated("report", why or "")[-1]
-        report.pop("fatal", None)
-        enabled = enabled_rules()
-        for r in report.get("rules", []):
-            r["enabled"] = r["name"] in enabled
-        report["enabled_count"] = len(enabled)
-        return report
-    compiled, report = compile_rules()
-    enabled = enabled_rules()
-    rules: list[dict[str, Any]] = []
-    if compiled is not None:
-        for r in compiled:
-            rules.append({
-                "name": r.identifier,
-                "namespace": getattr(r, "namespace", ""),
-                "tags": list(getattr(r, "tags", []) or []),
-                "meta": dict(getattr(r, "meta", {}) or {}),
-                "enabled": r.identifier in enabled,
-            })
-    report["rules"] = rules
-    report["enabled_count"] = len(enabled)
-    return report
+    if yara is None:
+        return None, {"available": False, "error": why, "rule_count": 0, "errors": []}
+    report = _read_report()
+    if report is None or not _compiled_path().is_file():
+        return None, {"available": True, "rule_count": 0, "errors": [],
+                      "error": "Rules not compiled yet: compile them in the YARA tab."}
+    try:
+        compiled = yara.load(str(_compiled_path()))
+    except Exception as exc:  # noqa: BLE001
+        return None, {"available": True, "rule_count": 0, "errors": [],
+                      "error": f"Compiled rules could not be loaded ({exc}); recompile them."}
+    meta = {k: v for k, v in report.items() if k not in ("rules", "snapshot")}
+    return compiled, {"available": True, **meta}
 
 
 def _rule_end(text: str, start: int) -> int:
@@ -470,19 +462,10 @@ def scan_path(compiled: Any, path: Path, enabled: set[str]) -> list[dict[str, An
 
 
 def _main(argv: list[str]) -> int:
-    """Worker entry point run on the portable: ``-m docutracex.yara_engine OP``.
-
-    ``report`` prints one JSON line (the list_rules report); ``stream`` prints the
-    compile_stream events, one JSON line each."""
-    if _load_yara()[0] is None:
-        print(json.dumps({"fatal": _load_yara()[1]}), flush=True)
-        return 1
-    op = argv[0] if argv else "report"
-    if op == "stream":
-        for ev in compile_stream():
-            print(json.dumps(ev), flush=True)
-    else:
-        print(json.dumps(list_rules(), default=str), flush=True)
+    """Worker entry point run on the portable: ``-m docutracex.yara_engine stream``
+    prints the compile_stream events, one JSON line each."""
+    for ev in compile_stream():
+        print(json.dumps(ev, default=str), flush=True)
     return 0
 
 
