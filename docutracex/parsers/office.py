@@ -40,8 +40,10 @@ EXT_TO_APP: dict[str, str] = {
 }
 
 
-def _finding(rule: str, severity: str, detail: str, location: str = "") -> dict[str, Any]:
-    return {"rule": rule, "severity": severity, "detail": detail, "location": location}
+def _finding(rule: str, severity: str, detail: str, location: str = "",
+             evidence: str = "") -> dict[str, Any]:
+    return {"rule": rule, "severity": severity, "detail": detail,
+            "location": location, "evidence": evidence}
 
 
 def _read(zf: zipfile.ZipFile, name: str) -> bytes | None:
@@ -144,7 +146,9 @@ def _analyze_word(zf: zipfile.ZipFile) -> dict[str, Any]:
         if kw == "DDE" and "DDEAUTO" in joined:
             continue
         if kw in joined:
-            findings.append(_finding(rule, sev, f"Field code contains {kw}", "word/document.xml"))
+            hit = next((i for i in field_instrs if kw in i.upper()), "")
+            findings.append(_finding(rule, sev, f"Field code contains {kw}",
+                                     "word/document.xml", evidence=hit.strip()))
 
     sample, full, trunc = _bounded("".join(texts))
     return {
@@ -240,7 +244,8 @@ def _analyze_excel(zf: zipfile.ZipFile) -> dict[str, Any]:
             txt = raw.upper()
             for kw, (rule, sev) in _EXCEL_FUNC_KEYWORDS.items():
                 if kw in txt:
-                    findings.append(_finding(rule, sev, f"Formula uses {kw}", name))
+                    findings.append(_finding(rule, sev, f"Formula uses {kw}", name,
+                                             evidence=f"={raw}"))
 
     return {
         "format": "excel",

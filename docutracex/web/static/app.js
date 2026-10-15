@@ -374,17 +374,50 @@ function collectFindings(mods, ooxml) {
   return out;
 }
 
+// Which Components sub-tab holds the fuller evidence for a finding's source.
+function pivotTarget(source) {
+  if (["olevba", "oleid", "mraptor", "msodde", "oleobj", "oletools", "msoffcrypto"].includes(source)) return "tools";
+  if (source === "xlmdeobf") return "content";
+  if (source === "officemalscanner") return "oms";
+  if (["word", "excel", "powerpoint"].includes(source)) return "content";
+  if (source === "ooxml") return "relationships";
+  if (source === "pdf") return "pdf";
+  if (source === "nested") return "nested";
+  if (source === "email") return "auth";
+  return null;
+}
+
 function paneFindings(findings) {
   if (!findings.length) return `<p class="hint-line">No findings.</p>`;
-  const rows = findings.map((f) => `<tr>
-    <td><span class="badge badge-${SEV_CLASS[f.severity] || "warn"}">${escapeHtml(f.severity)}</span></td>
-    <td>${escapeHtml(f.source)}</td>
-    <td class="mono">${escapeHtml(f.rule)}</td>
-    <td>${escapeHtml(f.detail)}</td>
-    <td class="mono">${escapeHtml(f.location)}</td>
-    <td>${markControlsHtml(f)}</td>
-  </tr>`).join("");
+  const rows = findings.map((f) => {
+    const ev = f.evidence
+      ? `<div class="evidence mono" title="Matched content that produced this finding">${escapeHtml(f.evidence)}</div>` : "";
+    const target = pivotTarget(f.source);
+    const avail = (_compState.sections || []).some((s) => s.id === target);
+    const pivot = (target && avail)
+      ? `<button class="btn btn-ghost btn-sm" data-pivot="${target}" title="Go to the ${target} evidence">↗ view</button>` : "";
+    return `<tr>
+      <td><span class="badge badge-${SEV_CLASS[f.severity] || "warn"}">${escapeHtml(f.severity)}</span></td>
+      <td>${escapeHtml(f.source)}</td>
+      <td class="mono">${escapeHtml(f.rule)}</td>
+      <td>${escapeHtml(f.detail)}${ev}</td>
+      <td class="mono">${escapeHtml(f.location)}<div>${pivot}</div></td>
+      <td>${markControlsHtml(f)}</td>
+    </tr>`;
+  }).join("");
   return table(["Severity", "Source", "Rule", "Detail", "Location", "Mark"], rows);
+}
+
+function wirePivots(root) {
+  root.querySelectorAll("[data-pivot]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const target = btn.getAttribute("data-pivot");
+      if ((_compState.sections || []).some((s) => s.id === target)) {
+        _compState.active = target;
+        renderSubtabs();
+      }
+    });
+  });
 }
 
 function paneIocs(iocs) {
@@ -759,6 +792,7 @@ function renderSubtabs() {
   // Wire the mark controls present in the active pane (Findings).
   wireMarks(bodyEl, _openCaseId);
   wireFileActions(bodyEl, _openCaseId);
+  wirePivots(bodyEl);
 }
 
 async function openComponents(analysisId) {
@@ -1003,6 +1037,32 @@ async function loadMarks(analysisId) {
   }
 }
 
+// --- Reports view ------------------------------------------------------------
+function loadReports(analysisId) {
+  const summary = document.getElementById("reports-summary");
+  const caseLine = document.getElementById("reports-case");
+  const actions = document.getElementById("reports-actions");
+  const frame = document.getElementById("report-frame");
+  if (!analysisId) {
+    caseLine.textContent = "";
+    summary.textContent = "";
+    actions.innerHTML = "";
+    frame.removeAttribute("src");
+    frame.srcdoc = `<p style="font:14px sans-serif;color:#8a98ab;padding:16px">Select a case in Overview to generate its report.</p>`;
+    return;
+  }
+  const url = `/api/cases/${encodeURIComponent(analysisId)}/report`;
+  caseLine.innerHTML = `Case <span class="mono">${escapeHtml(analysisId)}</span>`;
+  summary.textContent = "";
+  actions.innerHTML = `<button id="report-refresh" class="btn btn-ghost btn-sm" type="button">Regenerate</button>
+    <a class="btn btn-ghost btn-sm" href="${url}" target="_blank" rel="noopener">Open in new tab</a>
+    <span class="hint-line">Use your browser's Print → Save as PDF to export.</span>`;
+  frame.removeAttribute("srcdoc");
+  frame.src = url + "?t=" + Date.now();
+  const btn = document.getElementById("report-refresh");
+  if (btn) btn.addEventListener("click", () => { frame.src = url + "?t=" + Date.now(); });
+}
+
 // --- Tab navigation ----------------------------------------------------------
 function setupTabs() {
   const tabs = document.querySelectorAll(".tab");
@@ -1015,6 +1075,7 @@ function setupTabs() {
       if (target === "diagnostics") loadDiagnostics();
       if (target === "marks") loadMarks(_openCaseId);
       if (target === "tasks") loadTasks();
+      if (target === "reports") loadReports(_openCaseId);
     });
   });
 }

@@ -42,7 +42,7 @@ def finding_id(source: str, rule: str, location: str, detail: str) -> str:
 
 
 def _add(out: list[dict[str, Any]], severity: str, source: str, rule: str,
-         detail: str, location: str) -> None:
+         detail: str, location: str, evidence: str = "") -> None:
     out.append({
         "id": finding_id(source, rule, location, detail),
         "severity": severity or "info",
@@ -50,6 +50,7 @@ def _add(out: list[dict[str, Any]], severity: str, source: str, rule: str,
         "rule": rule,
         "detail": detail or "",
         "location": location or "",
+        "evidence": evidence or "",
     })
 
 
@@ -74,14 +75,15 @@ def consolidate(modules: dict[str, Any]) -> list[dict[str, Any]]:
             continue
         for f in mod.get("findings", []) or []:
             _add(out, f.get("severity"), name, f.get("rule", ""),
-                 f.get("detail", ""), f.get("location", ""))
+                 f.get("detail", ""), f.get("location", ""), f.get("evidence", ""))
 
     # Tool modules whose findings carry their own `tool` (olevba, oleid, ...).
     ole = modules.get("oletools")
     if ole:
         for f in ole.get("findings", []) or []:
             _add(out, f.get("severity"), f.get("tool") or "oletools",
-                 f.get("rule", ""), f.get("detail", ""), f.get("location", ""))
+                 f.get("rule", ""), f.get("detail", ""), f.get("location", ""),
+                 f.get("evidence", ""))
 
     for mod_name, source in (("msoffcrypto", "msoffcrypto"), ("xlmdeobf", "xlmdeobf"),
                              ("officemalscanner", "officemalscanner"),
@@ -92,7 +94,7 @@ def consolidate(modules: dict[str, Any]) -> list[dict[str, Any]]:
         for f in mod.get("findings", []) or []:
             _add(out, f.get("severity"), f.get("tool") or source,
                  f.get("rule", ""), f.get("detail", ""),
-                 f.get("location", "") or source)
+                 f.get("location", "") or source, f.get("evidence", ""))
 
     # Collapse exact duplicates (same id), keep first occurrence.
     seen: set[str] = set()

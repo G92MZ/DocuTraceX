@@ -83,6 +83,29 @@ async def get_components(analysis_id: str) -> dict:
     }
 
 
+@router.get("/{analysis_id}/report")
+async def case_report(analysis_id: str):
+    """Render a self-contained HTML report for the case (printable to PDF)."""
+    from fastapi.responses import HTMLResponse
+
+    from .. import report as report_mod
+
+    try:
+        case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    html = report_mod.build_report_html(analysis_id, cases_dir=settings.cases_dir)
+    # Persist a copy under reports/ as the single current report for the case.
+    try:
+        from ..storage import CasePaths
+        paths = CasePaths(analysis_id)
+        paths.reports_dir.mkdir(parents=True, exist_ok=True)
+        (paths.reports_dir / "report.html").write_text(html, encoding="utf-8")
+    except OSError:
+        pass
+    return HTMLResponse(content=html)
+
+
 @router.get("/{analysis_id}/marks")
 async def get_marks(analysis_id: str) -> dict:
     """Return the case's findings each enriched with its mark, plus counts."""
