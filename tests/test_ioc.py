@@ -57,3 +57,21 @@ def test_sources_from_modules() -> None:
     texts = " ".join(s["text"] for s in srcs)
     assert "evil.example" in texts and "feed.example" in texts
     assert "word/document.xml" not in texts  # internal rels not included
+
+
+def test_email_only_content_scanned() -> None:
+    modules = {"email": {
+        "body_sample": "Download from http://payload.example/a.exe",
+        "html_links": ["https://phish.example/login"],
+        "headers": [{"name": "Received", "value": "from mx.header.example ([198.51.100.7])"},
+                    {"name": "From", "value": "bob@sender.example"}],
+        "received_chain": [{"from": "relay.header.example", "by": "mx.header.example",
+                            "ip": "198.51.100.7"}],
+        "attachments": [{"filename": "invoice.attach.example"}],
+    }}
+    srcs = ioc.sources_from_modules(modules)
+    assert {s["location"] for s in srcs} == {"body", "body_html_link"}
+    vals = {i["value"] for i in ioc.extract(srcs)["iocs"]}
+    assert "payload.example" in vals and "phish.example" in vals
+    assert not any("header.example" in v or "sender.example" in v for v in vals)
+    assert "198.51.100.7" not in vals
