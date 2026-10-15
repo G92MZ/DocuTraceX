@@ -327,6 +327,12 @@ function showTab(view) {
     { v.hidden = v.getAttribute("data-view") !== view; });
 }
 
+// "Findings (12)" -> name + count badge.
+function subtabLabel(label) {
+  const m = /^(.*?) \((.+)\)$/.exec(label || "");
+  return m ? `${escapeHtml(m[1])}<span class="subtab-count">${escapeHtml(m[2])}</span>` : escapeHtml(label || "");
+}
+
 function table(headers, rowsHtml) {
   const head = headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("");
   return `<table class="cases"><thead><tr>${head}</tr></thead><tbody>${rowsHtml}</tbody></table>`;
@@ -1313,7 +1319,7 @@ let _compState = { sections: [], active: null, header: "" };
 
 function renderSubtabs() {
   const bar = _compState.sections.map((s) =>
-    `<button class="subtab${s.id === _compState.active ? " is-active" : ""}" data-sub="${s.id}">${escapeHtml(s.label)}</button>`
+    `<button class="subtab${s.id === _compState.active ? " is-active" : ""}" data-sub="${s.id}">${subtabLabel(s.label)}</button>`
   ).join("");
   const sec = _compState.sections.find((s) => s.id === _compState.active) || {};
   const pane = (sec.render ? sec.render() : sec.html) || "";
@@ -1672,7 +1678,7 @@ async function loadMarks(analysisId) {
       MARK_STATES.map((s) => ({ id: s.id, label: `${s.label} (${c[s.id] || 0})` })));
     if ((d.orphans || []).length) chips.push({ id: "orphans", label: `Needs review (${d.orphans.length})` });
     filters.innerHTML = chips.map((ch) =>
-      `<button class="subtab${ch.id === _marksFilter ? " is-active" : ""}" data-filter="${ch.id}">${escapeHtml(ch.label)}</button>`).join("");
+      `<button class="subtab${ch.id === _marksFilter ? " is-active" : ""}" data-filter="${ch.id}">${subtabLabel(ch.label)}</button>`).join("");
     filters.querySelectorAll(".subtab").forEach((btn) => {
       btn.addEventListener("click", () => { _marksFilter = btn.getAttribute("data-filter"); loadMarks(analysisId); });
     });
