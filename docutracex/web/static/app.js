@@ -392,6 +392,17 @@ function pivotTarget(f, ids) {
   }
   if (["olevba", "oleid", "mraptor", "msodde", "oleobj", "oletools", "msoffcrypto"].includes(src)) return has("tools") ? "tools" : null;
   if (src === "officemalscanner") return has("oms") ? "oms" : null;
+  if (src === "vipermonkey" || src === "vbatools") {
+    if (/xlm_very_hidden/.test(rule)) return has("tools") ? "tools" : null;
+    return has("vba") ? "vba" : null;
+  }
+  if (src === "officerules") {
+    if (/author_local_path|custom_property|remote_template_name/.test(rule)) return has("metadata") ? "metadata" : null;
+    if (/xlm_/.test(rule)) return has("content") ? "content" : null;
+    if (/remote_template|external_ole|mshtml|follina|subdocument|remote_image|search_ms|protocol_handler|unc_file/.test(rule)
+        && !/field/.test(loc)) return has("relationships") ? "relationships" : null;
+    return null;
+  }
   if (src === "yara") return has("yara") ? "yara" : null;
   if (src === "ole") return has("ole") ? "ole" : null;
   if (src === "pdf") return has("pdf") ? "pdf" : null;
@@ -514,7 +525,7 @@ function paneIocs(iocs) {
     table(["Type", "Value", "Count", "Provenance", "Mark"], rows);
 }
 
-function paneMetadata(sem, ole) {
+function paneMetadata(sem, ole, rules) {
   let html = "";
   const meta = (sem && sem.metadata) || {};
   const keys = Object.keys(meta);
@@ -523,6 +534,22 @@ function paneMetadata(sem, ole) {
       `<tr><td class="file">${escapeHtml(k)}</td><td>${escapeHtml(String(meta[k]))}</td>
        <td>${addMarkCell("metadata", `${k}: ${meta[k]}`, "metadata", "")}</td></tr>`).join("");
     html += table(["Property", "Value", "Mark"], rows);
+  }
+  // Attribution extras from the own Office rules (what the table above lacks).
+  const att = (rules && rules.attribution) || {};
+  const seen = new Set(keys.map((k) => k.toLowerCase()));
+  const attRows = Object.entries(att)
+    .filter(([k]) => !["custom_properties", "local_paths"].includes(k) && !seen.has(k.toLowerCase()))
+    .map(([k, v]) => `<tr><td class="file">${escapeHtml(k)}</td><td class="mono">${escapeHtml(String(v))}</td>
+      <td>${addMarkCell("metadata", `${k}: ${v}`, "attribution", "")}</td></tr>`).join("");
+  if (attRows) html += `<h3 class="formats-title">Attribution</h3>` + table(["Field", "Value", "Mark"], attRows);
+  if ((att.local_paths || []).length) {
+    html += `<p class="hint-line">Local paths of the author's machine</p><pre class="text-sample">${escapeHtml(att.local_paths.join("\n"))}</pre>`;
+  }
+  const cp = att.custom_properties || {};
+  if (Object.keys(cp).length) {
+    html += `<p class="hint-line">Custom document properties</p>` + table(["Name", "Value"],
+      Object.entries(cp).map(([k, v]) => `<tr><td class="file">${escapeHtml(k)}</td><td class="mono">${escapeHtml(v)}</td></tr>`).join(""));
   }
   const bits = [];
   if (sem && sem.format === "excel") {
@@ -561,15 +588,7 @@ function paneContent(sem, ole, xlm) {
   }
   const olevba = ole && ole.tools && ole.tools.olevba;
   if (olevba && olevba.macros) {
-    const modules = olevba.modules || [];
-    html += `<p class="hint-line">VBA source — ${modules.length} module(s)</p>`;
-    modules.forEach((m) => {
-      const name = m.vba_filename || m.stream || "module";
-      const trunc = m.code_truncated ? ` — truncated at ${(m.code || "").length} of ${m.code_length} chars` : "";
-      const code = m.code != null ? m.code : "";
-      html += `<p class="hint-line mono">${escapeHtml(name)} (${m.code_length} chars)${escapeHtml(trunc)}</p>
-        <pre class="text-sample">${escapeHtml(code)}</pre>`;
-    });
+    html += `<p class="hint-line">VBA source: see the <strong>VBA</strong> tab (${(olevba.modules || []).length} module(s)).</p>`;
   }
   if (xlm && xlm.xlm_macros) {
     const formulas = xlm.formulas || [];
@@ -579,7 +598,76 @@ function paneContent(sem, ole, xlm) {
   return html || `<p class="hint-line">No reconstructed content.</p>`;
 }
 
-function paneTools(ole, crypto, xlm) {
+// Collapsible raw output of one external tool run (command, rc, output).
+function toolOutputBlock(name, o, open) {
+  if (!o || (!o.output && !o.error)) return "";
+  const rc = o.returncode != null ? ` · rc ${o.returncode}` : "";
+  const cmd = o.command ? ` · <span class="mono">${escapeHtml(o.command)}</span>` : "";
+  const dur = o.duration_s != null ? ` · ${o.duration_s}s` : "";
+  const trunc = o.output_truncated ? '<p class="hint-line">(output truncated)</p>' : "";
+  return `<details class="disclose"${open ? " open" : ""}><summary>${escapeHtml(name)}${cmd}${rc}${dur}</summary>
+    <pre class="text-sample">${escapeHtml(o.output || o.error || "")}</pre>${trunc}</details>`;
+}
+
+// VBA: source modules, project status (hidden modules / locked), ViperMonkey
+// emulation, code rebuilt from p-code and the oledump VBA plugins.
+function paneVba(ole, vt, vm) {
+  const olevba = (ole && ole.tools && ole.tools.olevba) || {};
+  const modules = olevba.modules || [];
+  const proj = (vt && vt.project) || {};
+  const tools = (vt && vt.tools) || {};
+  const chips = [`${modules.length} module(s)`];
+  if ((proj.hidden_modules || []).length) chips.push(`<span class="bad-text">hidden: ${escapeHtml(proj.hidden_modules.join(", "))}</span>`);
+  if (proj.locked) chips.push('<span class="bad-text">project locked</span>');
+  const stomp = (olevba.analysis || []).some((a) => /stomping/i.test(a.keyword || ""));
+  if (stomp) chips.push('<span class="bad-text">VBA stomping</span>');
+  let html = `<p class="hint-line">${chips.join(" · ")}</p>`;
+
+  if (vm) {
+    const acts = vm.actions || [];
+    html += `<h3 class="formats-title">Emulation (ViperMonkey) — ${acts.length} action(s)</h3>`;
+    if (vm.error) html += `<p class="hint-line">${escapeHtml(vm.error)}</p>`;
+    if (acts.length) {
+      const danger = /execute|shell|run|download|http|write|powershell|cmd|createobject|registry/i;
+      html += table(["Action", "Parameters", "Description"], acts.map((a) => `<tr>
+        <td${danger.test(a.action + " " + a.parameters) ? ' class="bad-text"' : ""}>${escapeHtml(a.action)}</td>
+        <td class="mono">${escapeHtml(a.parameters)}</td><td>${escapeHtml(a.description || "")}</td></tr>`).join(""));
+    }
+    if ((vm.potential_iocs || []).length) {
+      html += `<p class="hint-line">Values assembled in VBA variables during emulation</p>
+        <pre class="text-sample">${escapeHtml(vm.potential_iocs.join("\n"))}</pre>`;
+    }
+    if ((vm.artifacts || []).length) {
+      html += `<p class="hint-line">Files the emulated macro dropped</p>` + table(["File", "Actions"],
+        vm.artifacts.map((a) => `<tr><td class="mono">${escapeHtml(a)}</td><td>${fileActions(a)}</td></tr>`).join(""));
+    }
+    html += toolOutputBlock("ViperMonkey output", vm.tool, false);
+  }
+
+  html += `<h3 class="formats-title">VBA source (olevba)</h3>`;
+  modules.forEach((m) => {
+    const name = m.vba_filename || m.stream || "module";
+    const hidden = (proj.hidden_modules || []).some((h) => (m.stream || "").endsWith("/" + h));
+    const trunc = m.code_truncated ? ` — truncated at ${(m.code || "").length} of ${m.code_length} chars` : "";
+    html += `<details class="disclose" open><summary><span class="mono">${escapeHtml(name)}</span>
+        <span class="hint-line">${escapeHtml(m.stream || "")} · ${m.code_length} chars${escapeHtml(trunc)}</span>
+        ${hidden ? '<span class="badge badge-bad">hidden from the VBA editor</span>' : ""}</summary>
+      <pre class="text-sample">${escapeHtml(m.code || "")}</pre></details>`;
+  });
+  if (!modules.length) html += `<p class="hint-line">No VBA source extracted.</p>`;
+
+  html += `<h3 class="formats-title">Compiled p-code</h3>`;
+  html += toolOutputBlock("VBA rebuilt from p-code (pcode2code)", tools.pcode2code, false);
+  html += toolOutputBlock("p-code disassembly (pcodedmp)", tools.pcodedmp, false);
+  const plugins = Object.keys(tools).filter((k) => k.startsWith("oledump plugin_vba") || k.includes("http_heuristics"));
+  if (plugins.length) {
+    html += `<h3 class="formats-title">oledump plugins</h3>`;
+    plugins.forEach((k) => { html += toolOutputBlock(k, tools[k], false); });
+  }
+  return html;
+}
+
+function paneTools(ole, crypto, xlm, vt) {
   const rows = [];
   const add = (name, status, detail) => rows.push(`<tr>
     <td class="file">${escapeHtml(name)}</td>
@@ -626,6 +714,9 @@ function paneTools(ole, crypto, xlm) {
   ["olevba", "oleid", "mraptor", "msodde", "oleobj"].forEach((n) => { if (t[n]) outs.push([n, t[n]]); });
   if (crypto && crypto.available) outs.push(["msoffcrypto", crypto]);
   if (xlm && xlm.available) outs.push(["XLMMacroDeobfuscator", xlm]);
+  // OLE structure tools (timeline, metadata, directory, BIFF records).
+  const vtools = (vt && vt.tools) || {};
+  ["oletimes", "olemeta", "oledir", "oledump plugin_biff -x"].forEach((n) => { if (vtools[n]) outs.push([n, vtools[n]]); });
   let html = table(["Tool", "Status", "Detail"], rows.join(""));
   outs.forEach(([name, o]) => {
     if (!o.output && !o.error) return;
@@ -1048,13 +1139,19 @@ async function openComponents(analysisId, keepTab) {
     if (yara && yara.rule_count) {
       sections.push({ id: "yara", label: `YARA (${yara.match_count || 0})`, render: () => paneYara(yara, findings) });
     }
-    if (ole || crypto || (xlm && xlm.available)) {
-      sections.push({ id: "tools", label: "Tools", html: paneTools(ole, crypto, xlm) });
+    const vbat = mods.vbatools;
+    const vmon = mods.vipermonkey;
+    if ((ole && ole.tools && ole.tools.olevba && ole.tools.olevba.macros) || vmon) {
+      const nAct = vmon ? (vmon.actions || []).length : 0;
+      sections.push({ id: "vba", label: vmon ? `VBA (${nAct} emulated)` : "VBA", html: paneVba(ole, vbat, vmon) });
+    }
+    if (ole || crypto || (xlm && xlm.available) || vbat) {
+      sections.push({ id: "tools", label: "Tools", html: paneTools(ole, crypto, xlm, vbat) });
     }
     if (didier && didier.available) sections.push({ id: "didier", label: "Didier", html: paneDidier(didier) });
     if (oms && oms.available) sections.push({ id: "oms", label: "OfficeMalScanner", html: paneOms(oms) });
     if (sem || (ole && ole.available) || (xlm && xlm.xlm_macros)) {
-      sections.push({ id: "metadata", label: "Metadata", html: paneMetadata(sem, ole) });
+      sections.push({ id: "metadata", label: "Metadata", html: paneMetadata(sem, ole, mods.officerules) });
       sections.push({ id: "content", label: "Content", html: paneContent(sem, ole, xlm) });
     }
     if (ooxml) {

@@ -40,6 +40,26 @@ _FILE_TLDS = {
 }
 _CONTEXT = 32
 
+# Standalone "label.tld" matches must end in a real TLD: any two-letter ccTLD or
+# one of these generic ones. Keeps code (``x.Open``, ``MSXML2.XMLHTTP``) and
+# text joins (``invoice.Loading``) out of the domain list. URLs are always kept.
+_GENERIC_TLDS = set("""
+com net org info biz edu gov mil int arpa name pro aero coop museum mobi asia tel travel jobs cat
+xyz top online site club app dev cloud store shop live life world today tech space website fun
+icu vip work link click download zip mov win bid loan date racing review stream trade party
+science cricket faith accountant men gdn kim ooo rest host press email news blog page one
+digital network center company solutions services agency group media studio design support
+systems software email services finance financial bank money pay cash credit capital fund
+academy education school college university global international ltd llc inc gmbh
+microsoft google apple amazon office windows live azure aws
+example test invalid localhost local onion
+""".split())
+
+# XML namespace / schema hosts: never indicators.
+_NAMESPACE_HOSTS = {"schemas.microsoft.com", "schemas.openxmlformats.org", "www.w3.org", "w3.org",
+                    "purl.org", "ns.adobe.com", "schemas.xmlsoap.org", "www.microsoft.com/office"}
+_VERSION_BEFORE = re.compile(r"(?i)(?:version|ver|v)\s*[=:]?\s*[\"']?$")
+
 
 def _valid_ipv4(value: str) -> bool:
     parts = value.split(".")
@@ -66,6 +86,11 @@ def _domain_of(url: str) -> str | None:
         return host.lower() if host else None
     except ValueError:
         return None
+
+
+def _known_tld(domain: str) -> bool:
+    tld = domain.rsplit(".", 1)[-1].lower()
+    return len(tld) == 2 or tld in _GENERIC_TLDS or tld.startswith("xn--")
 
 
 def _looks_like_filename(domain: str) -> bool:
@@ -112,14 +137,21 @@ def _scan_text(text: str, module: str, location: str, col: _Collector) -> None:
     for m in _URL_RE.finditer(text):
         url = _clean_url(m.group(0))
         url_spans.append((m.start(), m.start() + len(url)))
-        col.add("url", url, module, location, _ctx(text, m.start(), m.end()))
         dom = _domain_of(url)
-        if dom and not _looks_like_filename(dom):
+        if dom in _NAMESPACE_HOSTS:
+            continue
+        col.add("url", url, module, location, _ctx(text, m.start(), m.end()))
+        if dom and not _looks_like_filename(dom) and not _valid_ipv4(dom) and ":" not in dom:
             col.add("domain", dom, module, location, _ctx(text, m.start(), m.end()))
 
     for m in _IPV4_RE.finditer(text):
-        if _valid_ipv4(m.group(0)):
-            col.add("ipv4", m.group(0), module, location, _ctx(text, m.start(), m.end()))
+        if not _valid_ipv4(m.group(0)):
+            continue
+        before = text[max(0, m.start() - 14):m.start()]
+        if _VERSION_BEFORE.search(before) or text[m.end():m.end() + 2][:1] == "." and \
+                text[m.end() + 1:m.end() + 2].isdigit():
+            continue  # a version number (version="1.0.0.0", 10.0.19041.1), not an address
+        col.add("ipv4", m.group(0), module, location, _ctx(text, m.start(), m.end()))
 
     for m in _IPV6_RE.finditer(text):
         addr = _valid_ipv6(m.group(0))
@@ -134,7 +166,7 @@ def _scan_text(text: str, module: str, location: str, col: _Collector) -> None:
         if any(s <= m.start() < e for s, e in url_spans):
             continue
         dom = m.group(1).lower()
-        if _looks_like_filename(dom):
+        if _looks_like_filename(dom) or not _known_tld(dom) or dom in _NAMESPACE_HOSTS:
             continue
         col.add("domain", dom, module, location, _ctx(text, m.start(), m.end()))
 
@@ -186,6 +218,29 @@ def sources_from_modules(modules: dict[str, dict[str, Any]]) -> list[dict[str, A
             add("oletools", "vba_code", ole["code_text"])
         for link in ole.get("dde_links", []) or []:
             add("oletools", "dde_link", link)
+
+    # ViperMonkey: what the emulated macro did (deobfuscated URLs, commands...).
+    vm = modules.get("vipermonkey")
+    if vm:
+        for a in vm.get("actions", []) or []:
+            add("vipermonkey", f"action/{a.get('action', '')}", a.get("parameters"))
+        for x in vm.get("potential_iocs", []) or []:
+            add("vipermonkey", "potential_ioc", x)
+
+    # VBA rebuilt from p-code (may differ from the visible source) and URLs that
+    # oledump's HTTP heuristics recovered from obfuscated strings.
+    vt = modules.get("vbatools")
+    if vt:
+        tools = vt.get("tools") or {}
+        add("vbatools", "pcode2code", (tools.get("pcode2code") or {}).get("output"))
+        add("vbatools", "http_heuristics", (tools.get("oledump plugin_http_heuristics") or {}).get("output"))
+
+    # Own Office rules: external targets (templates, OLE objects, fields, add-ins).
+    rules = modules.get("officerules")
+    if rules:
+        for f in rules.get("findings", []) or []:
+            if f.get("rule") not in ("author_local_path", "vba_project_locked"):
+                add("officerules", f"{f.get('rule')}", f.get("evidence"))
 
     # XLMMacroDeobfuscator: deobfuscated Excel 4.0 (XLM) formulas.
     xlm = modules.get("xlmdeobf")

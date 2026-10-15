@@ -29,9 +29,23 @@ def silence() -> None:
         pass
 
 
-# Run an oletools CLI module with the same silencing, e.g.
-#   python -c CLI_WRAPPER oletools.olevba --decode file
+# Run a Python tool with the same silencing:
+#   python -c CLI_WRAPPER oletools.olevba --decode file      (a module)
+#   python -c CLI_WRAPPER --script path/to/tool.py args...   (a script file)
 CLI_WRAPPER = (
     "import sys, runpy; from docutracex.quiet import silence; silence(); "
-    "mod = sys.argv.pop(1); runpy.run_module(mod, run_name='__main__', alter_sys=True)"
+    "target = sys.argv.pop(1)\n"
+    "if target == '--script':\n"
+    "    path = sys.argv.pop(1); sys.argv[0] = path; runpy.run_path(path, run_name='__main__')\n"
+    "else:\n"
+    "    runpy.run_module(target, run_name='__main__', alter_sys=True)\n"
 )
+
+
+def python_tool_cmd(target: str, args: list[str], script: bool = False) -> list[str]:
+    """Command running a Python tool (module name, or script path when
+    ``script``) on the current interpreter, silenced."""
+    import sys
+
+    head = [sys.executable, "-c", CLI_WRAPPER]
+    return head + (["--script", target] if script else [target]) + list(args)
