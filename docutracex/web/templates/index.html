@@ -104,7 +104,15 @@
       </section>
     </div>
     <div class="view" data-view="reports" hidden>
-      <section class="panel"><h2>Reports</h2><p>Not implemented yet.</p></section>
+      <section class="panel">
+        <div class="diag-head">
+          <h2>Reports</h2>
+          <span id="reports-summary" class="status"></span>
+        </div>
+        <div id="reports-case" class="hint-line"></div>
+        <div id="reports-actions" class="comp-actions"></div>
+        <iframe id="report-frame" class="report-frame" title="Case report"></iframe>
+      </section>
     </div>
     <div class="view" data-view="tasks" hidden>
       <section class="panel">

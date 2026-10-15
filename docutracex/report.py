@@ -1,0 +1,184 @@
+"""Self-contained HTML report for a case.
+
+Renders the consolidated findings (with their evidence and manual marks), IOCs,
+the recursive child tree, document metadata and the case/identification header
+into one standalone HTML page. It is printable (Ctrl+P → PDF) and carries no
+external resources, so it can be archived or attached to a ticket as-is.
+"""
+
+from __future__ import annotations
+
+import html
+from datetime import datetime, timezone
+from typing import Any
+
+from . import marks as marks_service
+from .storage import CasePaths, read_json
+
+_SEV_ORDER = ["high", "medium", "low", "info"]
+_SEV_COLOR = {"high": "#e8795a", "medium": "#e0b65a", "low": "#9bb0c9", "info": "#5fd38b"}
+_MARK_LABEL = {
+    "true_positive": "True positive", "false_positive": "False positive",
+    "suspicious": "Suspicious", "informational": "Informational", "unreviewed": "Unreviewed",
+}
+
+
+def _e(v: Any) -> str:
+    return html.escape(str(v if v is not None else ""))
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
+
+
+def _row(cells: list[str]) -> str:
+    return "<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>"
+
+
+def _findings_section(findings: list[dict[str, Any]]) -> str:
+    if not findings:
+        return "<p class='muted'>No findings.</p>"
+    rows = []
+    for f in findings:
+        sev = f.get("severity", "info")
+        chip = f"<span class='chip' style='border-color:{_SEV_COLOR.get(sev, '#888')};color:{_SEV_COLOR.get(sev, '#888')}'>{_e(sev)}</span>"
+        ev = f"<div class='evidence'>{_e(f.get('evidence'))}</div>" if f.get("evidence") else ""
+        mark = (f.get("mark") or {}).get("state", "unreviewed")
+        comment = (f.get("mark") or {}).get("comment", "")
+        mcell = _MARK_LABEL.get(mark, mark) + (f"<div class='muted'>{_e(comment)}</div>" if comment else "")
+        rows.append(_row([
+            chip, _e(f.get("source")), f"<code>{_e(f.get('rule'))}</code>",
+            _e(f.get("detail")) + ev, f"<code>{_e(f.get('location'))}</code>", mcell,
+        ]))
+    return ("<table><thead><tr><th>Severity</th><th>Source</th><th>Rule</th>"
+            "<th>Detail / evidence</th><th>Location</th><th>Mark</th></tr></thead><tbody>"
+            + "".join(rows) + "</tbody></table>")
+
+
+def _iocs_section(iocs: dict[str, Any] | None) -> str:
+    items = (iocs or {}).get("iocs", [])
+    if not items:
+        return "<p class='muted'>No IOCs.</p>"
+    rows = []
+    for i in items:
+        where = ", ".join(sorted({f"{o.get('module')}/{o.get('location')}"
+                                  for o in i.get("occurrences", [])}))
+        rows.append(_row([_e(i.get("type")), f"<code>{_e(i.get('value'))}</code>",
+                          _e(i.get("count")), _e(where)]))
+    return ("<table><thead><tr><th>Type</th><th>Value</th><th>Count</th><th>Provenance</th>"
+            "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
+
+
+def _nested_section(nested: dict[str, Any] | None) -> str:
+    tree = (nested or {}).get("tree", [])
+    if not tree:
+        return ""
+
+    def node(n: dict[str, Any]) -> str:
+        fnd = n.get("findings", [])
+        head = (f"<div class='nnode'><b>{_e(n.get('filename'))}</b> "
+                f"<span class='chip'>{_e(n.get('kind'))}</span> "
+                f"<span class='muted'>{len(fnd)} finding(s)</span>")
+        inner = "".join(
+            f"<div class='nfind'><span class='chip' style='border-color:{_SEV_COLOR.get(f.get('severity'), '#888')};"
+            f"color:{_SEV_COLOR.get(f.get('severity'), '#888')}'>{_e(f.get('severity'))}</span> "
+            f"<code>{_e(f.get('tool'))}/{_e(f.get('rule'))}</code> {_e(f.get('detail'))}</div>"
+            for f in fnd)
+        children = "".join(node(c) for c in n.get("children", []))
+        return head + inner + (f"<div class='nchildren'>{children}</div>" if children else "") + "</div>"
+
+    return "<h2>Nested (recursive) analysis</h2>" + "".join(node(n) for n in tree)
+
+
+def _metadata_section(modules: dict[str, Any]) -> str:
+    md: dict[str, Any] = {}
+    for key in ("word", "excel", "powerpoint"):
+        m = modules.get(key)
+        if m and m.get("metadata"):
+            md = m["metadata"]
+            break
+    if not md and modules.get("pdf", {}).get("metadata"):
+        md = modules["pdf"]["metadata"]
+    if not md:
+        return ""
+    rows = "".join(_row([_e(k), _e(v)]) for k, v in md.items())
+    return "<h2>Document metadata</h2><table><tbody>" + rows + "</tbody></table>"
+
+
+def build_report_html(analysis_id: str, cases_dir=None) -> str:
+    paths = CasePaths(analysis_id, cases_dir=cases_dir)
+    manifest = read_json(paths.manifest) or {}
+    summary = read_json(paths.summary) or {}
+    stored = read_json(paths.subresult("findings")) or {}
+    findings = stored.get("findings", []) if isinstance(stored, dict) else []
+    marked = marks_service.apply(findings, marks_service.read_marks(paths))
+    findings = marked["findings"]
+    iocs = read_json(paths.subresult("iocs"))
+
+    from .analyze import _COLLECTABLE
+    modules = {m: read_json(paths.subresult(m)) for m in _COLLECTABLE
+               if read_json(paths.subresult(m)) is not None}
+
+    orig = manifest.get("original", {})
+    fmt = manifest.get("format", {})
+    disc = fmt.get("discrepancy", {})
+    det = fmt.get("detected", {})
+
+    sev_counts = {s: 0 for s in _SEV_ORDER}
+    for f in findings:
+        sev_counts[f.get("severity", "info")] = sev_counts.get(f.get("severity", "info"), 0) + 1
+    mk = marked["counts"]
+
+    header_rows = "".join(_row([k, v]) for k, v in [
+        ("Analysis ID", _e(analysis_id)),
+        ("File", _e(orig.get("filename"))),
+        ("Declared extension", _e(orig.get("declared_extension"))),
+        ("Detected type", f"{_e(det.get('mime'))} <span class='muted'>{_e(det.get('name'))}</span>"),
+        ("Type match", _e(disc.get("status"))),
+        ("Size", _e(orig.get("size_bytes")) + " bytes"),
+        ("SHA-256", f"<code>{_e(orig.get('sha256'))}</code>"),
+        ("State", _e(manifest.get("state"))),
+        ("Modules run", _e(", ".join(summary.get("modules_run", [])))),
+    ])
+
+    sev_chips = " ".join(
+        f"<span class='chip' style='border-color:{_SEV_COLOR[s]};color:{_SEV_COLOR[s]}'>{sev_counts[s]} {s}</span>"
+        for s in _SEV_ORDER if sev_counts[s])
+    ioc_total = (iocs or {}).get("counts", {}).get("total", 0)
+
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DocuTraceX report — {_e(orig.get('filename'))}</title>
+<style>
+  :root {{ color-scheme: dark; }}
+  body {{ background:#0d1016; color:#e6edf3; font:14px/1.5 "Segoe UI",system-ui,sans-serif; margin:0; padding:32px; }}
+  h1 {{ font-size:22px; margin:0 0 4px; }} h2 {{ font-size:17px; margin:28px 0 10px; border-bottom:1px solid #263040; padding-bottom:6px; }}
+  .muted {{ color:#8a98ab; font-size:12px; }}
+  table {{ width:100%; border-collapse:collapse; margin:8px 0; font-size:13px; }}
+  th,td {{ text-align:left; padding:7px 10px; border-bottom:1px solid #1c2430; vertical-align:top; }}
+  th {{ color:#8a98ab; font-weight:600; }}
+  code {{ font-family:"Cascadia Code",Consolas,monospace; color:#b9c6d6; word-break:break-all; }}
+  .chip {{ display:inline-block; border:1px solid #3a4658; border-radius:10px; padding:1px 9px; font-size:12px; color:#9bb0c9; }}
+  .evidence {{ margin-top:5px; padding:5px 8px; background:#0b0e12; border:1px solid #1c2430; border-radius:6px; font-family:"Cascadia Code",Consolas,monospace; font-size:12px; white-space:pre-wrap; word-break:break-all; }}
+  .summary-chips {{ display:flex; gap:8px; flex-wrap:wrap; margin:10px 0; }}
+  .nnode {{ margin:8px 0; }} .nfind {{ margin:3px 0 3px 16px; font-size:12px; color:#b9c6d6; }}
+  .nchildren {{ margin-left:16px; padding-left:10px; border-left:2px solid #263040; }}
+  @media print {{ body {{ background:#fff; color:#000; }} .evidence,code {{ color:#111; }} }}
+</style></head><body>
+<h1>DocuTraceX — static forensic report</h1>
+<div class="muted">Generated {_now()} · analysis {_e(analysis_id)}</div>
+<div class="summary-chips">{sev_chips or "<span class='chip'>no findings</span>"}
+  <span class="chip">{len(findings)} findings</span>
+  <span class="chip">{ioc_total} IOCs</span>
+  <span class="chip">{mk.get('reviewed', 0)}/{mk.get('total', 0)} reviewed</span></div>
+<h2>Case</h2>
+<table><tbody>{header_rows}</tbody></table>
+<h2>Findings ({len(findings)})</h2>
+{_findings_section(findings)}
+<h2>Indicators of compromise ({ioc_total})</h2>
+{_iocs_section(iocs)}
+{_nested_section(modules.get('nested'))}
+{_metadata_section(modules)}
+<div class="muted" style="margin-top:32px">DocuTraceX · static analysis only — nothing in the sample was executed.</div>
+</body></html>"""

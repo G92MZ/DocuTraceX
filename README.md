@@ -132,7 +132,7 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 ### App base, gestión de casos y ciclo de vida
 
 - [ ] Interfaz web básica en inglés con carga de ficheros y paneles desplegables (ref. WinHound) — *parcial: carga de ficheros y paneles listos; faltan desplegables y estilo WinHound*
-- [ ] Navegación: Overview, Marks, Components/analysis, Reports, Tasks — *parcial: Marks, Components y Tasks funcionales; faltan Overview (panel de resumen) y Reports*
+- [ ] Navegación: Overview, Marks, Components/analysis, Reports, Tasks — *parcial: Marks, Components, Tasks y Reports funcionales; falta Overview (panel de resumen)*
 - [ ] Validar nombre, extensión y estructura de entrada (sin máximo fijo de tamaño) — *parcial: nombre saneado y extensión capturada; falta validación estructural real*
 - [x] Guardar original sin modificar + ID único + carpeta aislada `cases\<analysis_id>\`
 - [x] Estructura de caso: `case.json`, `original\`, `extracted\`, `results\`, `reports\` con rutas relativas
