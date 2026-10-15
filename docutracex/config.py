@@ -63,5 +63,17 @@ class Settings:
                     return p
         return None
 
+    def pypy_python(self) -> Path | None:
+        """The PyPy 2.7 interpreter under ``tools/pypy/`` (only for ViperMonkey,
+        whose code is Python 2). ``DOCUTRACEX_PYPY`` overrides the location."""
+        env = os.environ.get("DOCUTRACEX_PYPY")
+        if env and Path(env).is_file():
+            return Path(env)
+        base = self.tools_dir / "pypy"
+        for c in (base / "pypy.exe", base / "bin" / "pypy", base / "bin" / "pypy2"):
+            if c.is_file():
+                return c
+        return None
+
 
 settings = Settings()

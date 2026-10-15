@@ -118,6 +118,23 @@ TOOL_DEPS: list[Dependency] = [
         required=False,
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
     ),
+    *[Dependency(imp, pip, purpose, required=False,
+                 install_hint="restart the app (missing tool dependencies are installed "
+                              "into the portable on start) or run scripts/setup_portable_python.py")
+      for imp, pip, purpose in (
+          ("pcodedmp", "pcodedmp", "VBA p-code disassembly (VBA stomping)"),
+          ("pcode2code", "pcode2code", "VBA decompiled from p-code"),
+          ("pyxlsb2", "pyxlsb2", "Excel binary workbooks (.xlsb)"),
+          ("peepdf", "peepdf-3", "PDF analysis (objects, JS, versions, CVEs)"),
+          ("pyhanko.pdf_utils.reader", "pyhanko", "PDF digital signatures"),
+          ("pypdfium2", "pypdfium2", "PDF page rendering (QR codes)"),
+          ("zxingcpp", "zxing-cpp", "QR / barcode reading"),
+          ("PIL", "Pillow", "Image handling (QR codes)"),
+          ("dkim", "dkimpy", "Offline DKIM checks"),
+          ("confusable_homoglyphs", "confusable_homoglyphs", "Look-alike characters"),
+          ("STPyV8", "stpyv8", "V8 sandbox for JavaScript deobfuscation"),
+          ("jsbeautifier", "jsbeautifier", "JavaScript pretty-printing"),
+      )],
 ]
 
 # Combined (kept for backward compatibility / generic checks).
@@ -429,6 +446,37 @@ def run_checks() -> dict[str, Any]:
             remedy="" if present
                    else f"run scripts/setup_portable_python.py, or drop {EXE_NAME} into {oms_dir()}",
             purpose="Shellcode/embedded-object scan + VBA/OLE info (legacy OLE and OOXML)",
+        ))
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Second interpreter: PyPy 2.7 running ViperMonkey (VBA emulation).
+    try:
+        from .parsers.vipermonkey import vipermonkey_status
+        vm = vipermonkey_status()
+        checks.append(Check(
+            category="External tools",
+            name="ViperMonkey (PyPy 2.7)",
+            status="ok" if vm["available"] else "warn",
+            detail=vm["detail"],
+            remedy="" if vm["available"] else
+                   "restart the app (it is provisioned on start) or run scripts/setup_portable_python.py",
+            purpose="VBA emulation: commands, downloads and files the macros would produce",
+        ))
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Didier Stevens oledump plugins (presence).
+    try:
+        from .parsers.didier import PLUGINS, didier_dir
+        d = didier_dir()
+        present = sum(1 for fn in PLUGINS if (d / fn).is_file())
+        checks.append(Check(
+            category="External scripts", name="oledump plugins",
+            status="ok" if present == len(PLUGINS) else "warn",
+            detail=f"{present}/{len(PLUGINS)} plugins in tools/didier/",
+            remedy="" if present == len(PLUGINS) else "restart the app to download them",
+            purpose="BIFF/XLM records, VBA summary/DCO/routines, HTTP heuristics",
         ))
     except Exception:  # noqa: BLE001
         pass

@@ -510,7 +510,8 @@ def run_analysis(case_root: Path, module: str | None = None) -> None:
         try:
             proc = subprocess.run(
                 cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=600, env=native.subprocess_env(),
+                # Generous: every tool (incl. ViperMonkey emulation) runs per case.
+                timeout=1800, env=native.subprocess_env(),
             )
             if proc.returncode == 0:
                 return
