@@ -165,3 +165,23 @@ def test_recursive_attachment_scan(tmp_path: Path, name: str) -> None:
     # The nested third-party finding is in the consolidated findings.
     consolidated = read_json(paths.subresult("findings"))["findings"]
     assert any(f["source"] == "msodde" for f in consolidated)
+
+
+def test_html_only_body_interpreted_as_text(tmp_path: Path) -> None:
+    msg = EmailMessage()
+    msg["From"] = "a@x.example"
+    msg["To"] = "b@y.example"
+    msg["Subject"] = "html"
+    msg.set_content(
+        "<html><head><style>p{color:red}</style><script>alert(1)</script></head>"
+        "<body><p>Hola&nbsp;mundo</p><a href='https://evil.example/login'>Pulse aqu&iacute;</a>"
+        "</body></html>", subtype="html")
+    p = tmp_path / "h.eml"
+    p.write_bytes(bytes(msg))
+    res = mail.analyze(p, ".eml")
+    assert res["body_sample"] == ""
+    text = res["html_text_sample"]
+    assert "Hola mundo" in text and "Pulse aquí <https://evil.example/login>" in text
+    assert "alert" not in text and "color" not in text
+    assert res["html_links"] == ["https://evil.example/login"]
+    assert "<script>" in res["html_source_sample"]
