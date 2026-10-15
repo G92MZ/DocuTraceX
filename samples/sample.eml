@@ -7,25 +7,25 @@ To: Bob <bob@corp.example>
 Reply-To: billing@evil.example
 Return-Path: <bounce@evil.example>
 Subject: DocuTraceX sample =?utf-8?b?4oCU?= please review invoice
-Date: Wed, 14 Oct 2026 22:26:02 -0000
+Date: Thu, 15 Oct 2026 01:46:52 -0000
 Message-ID: <sample-0001@evil.example>
 Authentication-Results: mx.corp.example; spf=fail; dkim=none; dmarc=fail
 X-Mailer: SuspiciousMailer 1.0
 MIME-Version: 1.0
-Content-Type: multipart/mixed; boundary="===============6742441644903817194=="
+Content-Type: multipart/mixed; boundary="===============3748532289815861916=="
 
---===============6742441644903817194==
+--===============3748532289815861916==
 Content-Type: multipart/alternative;
- boundary="===============5478349747167421231=="
+ boundary="===============8880120346023379860=="
 
---===============5478349747167421231==
+--===============8880120346023379860==
 Content-Type: text/plain; charset="utf-8"
 Content-Transfer-Encoding: quoted-printable
 
 Benign-looking body. Reference: http://malware.example.com/payload.bin and 20=
 3.0.113.10.
 
---===============5478349747167421231==
+--===============8880120346023379860==
 Content-Type: text/html; charset="utf-8"
 Content-Transfer-Encoding: quoted-printable
 MIME-Version: 1.0
@@ -33,9 +33,9 @@ MIME-Version: 1.0
 <html><body><p>Click <a href=3D"http://evil.example/pay">https://corp.example=
 /invoice</a> to review.</p></body></html>
 
---===============5478349747167421231==--
+--===============8880120346023379860==--
 
---===============6742441644903817194==
+--===============3748532289815861916==
 Content-Type: application/octet-stream
 Content-Transfer-Encoding: base64
 Content-Disposition: attachment; filename="invoice.pdf.exe"
@@ -43,47 +43,47 @@ MIME-Version: 1.0
 
 TVogZmFrZSBwYXlsb2FkIChiZW5pZ24gc2FtcGxlKQ==
 
---===============6742441644903817194==
+--===============3748532289815861916==
 Content-Type: application/vnd.ms-word.document.macroEnabled.12
 Content-Transfer-Encoding: base64
 Content-Disposition: attachment; filename="report.docm"
 MIME-Version: 1.0
 
-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
+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
-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
+SwMEFAAAAAgA2h1PXditJgbdAAAAUwIAAAsAAABfcmVscy8ucmVsc62Sy0pDQQxAf2XIvnduWxCR
 TrsRoTuR+gFhJvdB7zzIpNr+vUFUrJTiosu8Tg4hq80xTuaNuI45OZg3LRhKPocx9Q5ed0+zezBV
 MAWcciIHJ6qwWa9eaELRkTqMpRplpOpgECkP1lY/UMTa5EJJK13miKIh97ag32NPdtG2d5Z/M+Cc
 abbBAW/DHMzuVOg/7Nx1o6fH7A+RklxY8adDycg9iYP3zMGGr3SjWLCXbRa3tIkkGFDQ+sw0K6wQ
-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
+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
-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
+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
-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
+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
-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
+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
-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
+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
 
---===============6742441644903817194==--
+--===============3748532289815861916==--

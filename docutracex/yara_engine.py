@@ -208,6 +208,41 @@ def compile_rules() -> tuple[Any, dict[str, Any]]:
     return compiled, report
 
 
+def compile_stream():
+    """Generator yielding compile progress per rule file (for NDJSON streaming)."""
+    try:
+        import yara
+    except Exception as exc:  # noqa: BLE001
+        yield {"fatal": f"yara-python not installed: {exc}"}
+        return
+    cfg = _read_config()
+    files = _iter_rule_files(cfg.get("external_paths", []))
+    yield {"total": len(files)}
+    ok_files: dict[str, str] = {}
+    errors: list[dict[str, Any]] = []
+    for i, f in enumerate(files, 1):
+        ns = _namespace(f)
+        try:
+            yara.compile(filepath=str(f))
+            base, k = ns, 1
+            while ns in ok_files:
+                ns = f"{base}_{k}"; k += 1
+            ok_files[ns] = str(f)
+        except Exception as exc:  # noqa: BLE001
+            errors.append({"path": str(f), "error": str(exc)})
+        yield {"i": i, "total": len(files), "file": f.name,
+               "ok": len(ok_files), "errors": len(errors)}
+    rule_count = 0
+    if ok_files:
+        try:
+            compiled = yara.compile(filepaths=ok_files)
+            rule_count = sum(1 for _ in compiled)
+        except Exception as exc:  # noqa: BLE001
+            errors.append({"path": "<combined>", "error": str(exc)})
+    yield {"done": True, "rule_count": rule_count, "file_count": len(files),
+           "errors": errors, "enabled_count": len(enabled_rules())}
+
+
 def list_rules() -> dict[str, Any]:
     """List known rules with their source, tags, meta and enabled flag."""
     compiled, report = compile_rules()

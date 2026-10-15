@@ -224,6 +224,8 @@ table.cases td.mono { word-break: break-all; }
   border-radius: 6px; color: var(--text); font: inherit; font-size: 13px; padding: 7px 10px;
 }
 .yara-add { margin: 12px 0; }
+.yara-finding-toggle { font-size: 12px; color: var(--text-dim); display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+.yara-card > summary { gap: 10px; }
 .evidence {
   margin-top: 5px; padding: 5px 8px; font-size: 12px;
   background: #0b0e12; border: 1px solid var(--panel-border); border-radius: 6px;

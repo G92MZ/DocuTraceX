@@ -252,6 +252,67 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         if didier_res.get("available"):
             write_subresult(paths, "didier", didier_res)
             ran.append("didier")
+    elif family == "ole":
+        # Legacy OLE / BIFF: .doc / .xls / .ppt (Compound File). (.msg already
+        # handled by the email branch above.)
+        from . import nested
+        from .parsers import (crypto, didier, ole_legacy, officemalscanner,
+                              oletools_suite, xlm)
+
+        declared_ext = manifest["original"].get("declared_extension", "")
+        res = run("ole: CFB structure (streams, metadata, VBA)",
+                  lambda: ole_legacy.analyze(original, paths.extracted_dir))
+        write_subresult(paths, "ole", res)
+        ran.append("ole")
+        findings_total += res.get("counts", {}).get("findings", 0)
+        if res.get("status") == "error":
+            state = "error"
+
+        ole_res = run("oletools: olevba · oleid · mraptor · msodde · oleobj",
+                      lambda: oletools_suite.analyze(original, paths.extracted_dir))
+        write_subresult(paths, "oletools", ole_res)
+        ran.append("oletools")
+        findings_total += ole_res.get("counts", {}).get("findings", 0)
+
+        crypto_res = run("msoffcrypto: encryption / default-password decrypt",
+                         lambda: crypto.analyze(original, paths.extracted_dir))
+        write_subresult(paths, "msoffcrypto", crypto_res)
+        ran.append("msoffcrypto")
+        findings_total += crypto_res.get("counts", {}).get("findings", 0)
+
+        # Excel 4.0 (XLM) macros in legacy BIFF .xls (hidden/very-hidden sheets).
+        if declared_ext.lower() in (".xls", ".xlt", ".xla", ".xlm"):
+            xlm_res = run("xlmdeobf: XLMMacroDeobfuscator (BIFF XLM macros)",
+                          lambda: xlm.analyze(original))
+            write_subresult(paths, "xlmdeobf", xlm_res)
+            ran.append("xlmdeobf")
+            findings_total += xlm_res.get("counts", {}).get("findings", 0)
+
+        oms_res = run("officemalscanner: scan · info",
+                      lambda: officemalscanner.analyze(original, "ole", paths.extracted_dir),
+                      note="not provisioned")
+        if oms_res.get("available"):
+            write_subresult(paths, "officemalscanner", oms_res)
+            ran.append("officemalscanner")
+            findings_total += oms_res.get("counts", {}).get("findings", 0)
+
+        didier_res = run("didier: oledump",
+                         lambda: didier.analyze(original, "ole"), note="not provisioned")
+        if didier_res.get("available"):
+            write_subresult(paths, "didier", didier_res)
+            ran.append("didier")
+
+        items = [{"path": str(paths.root / o["stored_path"]),
+                  "filename": Path(o["stored_path"]).name}
+                 for o in ole_res.get("tools", {}).get("oleobj", {}).get("objects", []) or []
+                 if o.get("stored_path")]
+        if items:
+            nested_res = run("nested: recursive scan of embedded OLE objects",
+                             lambda: nested.scan_children(items, paths))
+            if nested_res.get("tree"):
+                write_subresult(paths, "nested", nested_res)
+                ran.append("nested")
+                findings_total += nested_res.get("counts", {}).get("findings", 0)
     else:
         # No parser for this family yet.
         state = "completed"
@@ -322,7 +383,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 
 # Modules that can be re-run in isolation over an existing case.
 _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto",
-               "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara")
+               "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole")
 # Modules whose findings feed the consolidated view (includes derived ones).
 _COLLECTABLE = _RERUNNABLE + ("nested",)
 
@@ -402,6 +463,9 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
     elif module == "yara":
         from .parsers import yara_scan
         res = yara_scan.analyze(original, ed)
+    elif module == "ole":
+        from .parsers import ole_legacy
+        res = ole_legacy.analyze(original, ed)
     else:  # pragma: no cover
         raise ValueError(module)
 

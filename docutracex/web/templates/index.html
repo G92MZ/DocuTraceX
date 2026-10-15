@@ -32,6 +32,16 @@
   <main class="content">
     <!-- Overview -->
     <div class="view" data-view="overview">
+      <section class="panel" id="overview-summary" hidden>
+        <div class="diag-head">
+          <h2>Case overview</h2>
+          <span id="ov-verdict" class="status"></span>
+        </div>
+        <div id="ov-case" class="hint-line"></div>
+        <p class="hint-line">Only findings you mark as <b>True positive</b> appear here and in the report's overview — confirmed verdicts, from any source (YARA included).</p>
+        <div id="ov-body"></div>
+      </section>
+
       <section class="panel">
         <h1>New analysis</h1>
         <p>Upload a file to open a case. The original is stored unmodified and hashed; no content is executed.</p>
@@ -133,6 +143,8 @@
           <div class="upload" style="margin-top:8px">
             <input type="text" id="yara-path" class="yara-path-input" placeholder="/path/to/rules/ on the server (faster for large sets)" />
             <button id="yara-path-btn" class="btn btn-ghost" type="button">Register path</button>
+            <button id="yara-recompile" class="btn btn-ghost" type="button">Recompile (progress)</button>
+            <progress id="yara-prog" max="100" value="0" style="display:none;width:180px;vertical-align:middle"></progress>
             <span id="yara-add-status" class="status"></span>
           </div>
         </div>

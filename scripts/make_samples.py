@@ -278,6 +278,32 @@ def make_cfb(path: Path) -> None:
     path.write_bytes(bytes(header) + bytes(fat) + bytes(directory))
 
 
+def make_legacy_ole(path: Path, ext: str) -> None:
+    """A legacy OLE/CFB doc (.doc/.xls/.ppt) with the right main stream + a VBA
+    storage, so the OLE-family pipeline has real structure to parse."""
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from mkmsg import build_cfb
+
+    main = {".doc": ("WordDocument", b"\xec\xa5 Word BIFF placeholder"),
+            ".dot": ("WordDocument", b"\xec\xa5 Word template"),
+            ".xls": ("Workbook", b"\x09\x08\x08\x00 BIFF8 workbook placeholder"),
+            ".xlt": ("Workbook", b"\x09\x08 BIFF template"),
+            ".xla": ("Workbook", b"\x09\x08 BIFF add-in"),
+            ".ppt": ("PowerPoint Document", b"\x0f\x00 PPT placeholder"),
+            ".pot": ("PowerPoint Document", b"\x0f\x00 PPT template")}.get(ext,
+            ("Workbook", b"placeholder"))
+    build = build_cfb([
+        main,
+        ("\x05SummaryInformation", b"\xfe\xff summary stream"),
+        ("\x05DocumentSummaryInformation", b"\xfe\xff docsummary"),
+        # A VBA project storage (olevba will try to parse it).
+        ("Macros", [("VBA", b"\x00VBA placeholder project"),
+                     ("dir", b"\x00dir stream")]),
+    ])
+    path.write_bytes(build)
+
+
 def make_pdf(path: Path) -> None:
     """A deliberately suspicious (benign) PDF: auto-run JavaScript, a Launch
     action, a /URI, and a real embedded file (the macro .docm) so the recursive
@@ -407,7 +433,10 @@ def main() -> None:
         if ext == ".msg":
             continue  # real MAPI fixture, not a bare CFB
         p = SAMPLES / f"sample{ext}"
-        make_cfb(p)
+        if ext in (".doc", ".dot", ".xls", ".xlt", ".xla", ".ppt", ".pot"):
+            make_legacy_ole(p, ext)
+        else:
+            make_cfb(p)
         made.append(p.name)
     make_pdf(SAMPLES / "sample.pdf"); made.append("sample.pdf")
     make_eml(SAMPLES / "sample.eml"); made.append("sample.eml")

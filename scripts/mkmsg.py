@@ -62,6 +62,26 @@ def build_msg(headers: str, subject: str, body: str, sender: str,
             _Entry("__substg1.0_37010102", 2, data),
         ]
         top.append(st)
+    return _pack(root, top)
+
+
+def build_cfb(top_spec: list) -> bytes:
+    """Generic CFB writer. *top_spec* is a list of top-level entries, each either
+    ``(name, bytes)`` for a stream or ``(name, [children...])`` for a storage
+    whose children follow the same shape (one level of nesting supported)."""
+    root = _Entry("Root Entry", 5)
+    top: list[_Entry] = []
+    for name, payload in top_spec:
+        if isinstance(payload, (bytes, bytearray)):
+            top.append(_Entry(name, 2, bytes(payload)))
+        else:
+            st = _Entry(name, 1)
+            st.children = [_Entry(cn, 2, bytes(cd)) for cn, cd in payload]
+            top.append(st)
+    return _pack(root, top)
+
+
+def _pack(root: "_Entry", top: list["_Entry"]) -> bytes:
     root.children = top
 
     # Flatten entries depth-first: root first, then all descendants.

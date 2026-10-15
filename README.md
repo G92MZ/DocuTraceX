@@ -75,7 +75,8 @@ Los **hallazgos** los produce código propio (`docutracex/parsers/`, `docutracex
 | **Parser PDF propio** | Escaneo raw robusto de tokens peligrosos (/OpenAction, /JavaScript, /JS, /Launch, /EmbeddedFile, /XFA, /URI, /AA, /AcroForm, /RichMedia, /ObjStm, /JBIG2Decode, /Encrypt), nombres hex-ofuscados, updates incrementales; extracción de URIs, ficheros embebidos (pypdf) y texto (pdfminer) | PDF |
 | **Didier Stevens** · `pdfid` / `pdf-parser` | Recuento de keywords y volcado profundo de objetos (salida cruda) | PDF |
 | **Análisis recursivo (nested)** | Lo que se extrae (adjuntos de correo, objetos OLE embebidos, ficheros embebidos en PDF) se analiza en cadena con las herramientas de su familia, hasta cierta profundidad; los hallazgos del hijo (p. ej. DDE de un `.docm` dentro de un PDF) suben a la vista unificada con su ruta | Todas |
-| **Motor YARA** (yara-python) | Escanea el original y todo lo extraído. Reglas por **subida HTTP** (`.yar`/`.yara` o comprimido `.zip`/`.tar.gz`) o por **ruta de servidor** (reglas grandes sin pasar por HTTP). **Opt-in**: un match se muestra siempre, pero solo se convierte en *finding* (y aparece en el report) cuando marcas esa regla en la pestaña YARA. Progreso/estado en Tasks (reglas · ficheros · matches) | Todas |
+| **Motor YARA** (yara-python) | Escanea el original y todo lo extraído. Reglas por **subida HTTP** (`.yar`/`.yara` o comprimido `.zip`/`.tar.gz`) o por **ruta de servidor** (reglas grandes sin pasar por HTTP), con **compilación en streaming con progreso** (estilo Sigma de WinHound). **Opt-in**: un match se muestra siempre (resultados en **tarjetas expandibles por regla**), pero solo se convierte en *finding* cuando marcas esa regla. Progreso en Tasks (reglas · ficheros · matches) | Todas |
+| **OLE/BIFF antiguo** (olefile + oletools + XLMMacroDeobfuscator + OfficeMalScanner + oledump) | `.doc`/`.xls`/`.ppt`: estructura CFB (streams, metadatos SummaryInformation, VBA), más el análisis de macros/DDE (oletools) y **XLM en hojas BIFF** (`.xls`). Objetos OLE embebidos van por la recursión | OLE antiguo |
 
 Las cosas extraídas (adjuntos, objetos OLE, medios, copias desocultadas) tienen botones **📁 Folder** (abre la carpeta contenedora en el explorador del sistema — herramienta local) y **↓** (descarga), con validación de ruta dentro del caso.
 
@@ -133,7 +134,7 @@ Lista de trabajo derivada del mega resumen y la hoja de ruta. Agrupada por área
 ### App base, gestión de casos y ciclo de vida
 
 - [ ] Interfaz web básica en inglés con carga de ficheros y paneles desplegables (ref. WinHound) — *parcial: carga de ficheros y paneles listos; faltan desplegables y estilo WinHound*
-- [ ] Navegación: Overview, Marks, Components/analysis, Reports, Tasks — *parcial: Marks, Components, Tasks y Reports funcionales; falta Overview (panel de resumen)*
+- [x] Navegación: Overview, Marks, Components/analysis, Reports, Tasks, YARA — *todas funcionales; el Overview muestra solo los hallazgos marcados como True positive (de cualquier fuente, YARA incluido)*
 - [ ] Validar nombre, extensión y estructura de entrada (sin máximo fijo de tamaño) — *parcial: nombre saneado y extensión capturada; falta validación estructural real*
 - [x] Guardar original sin modificar + ID único + carpeta aislada `cases\<analysis_id>\`
 - [x] Estructura de caso: `case.json`, `original\`, `extracted\`, `results\`, `reports\` con rutas relativas

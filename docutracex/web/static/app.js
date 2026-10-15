@@ -268,6 +268,7 @@ async function saveMark(cell, analysisId, onSaved) {
     if (date) date.textContent = txt;
     else if (txt) cell.insertAdjacentHTML("beforeend", `<span class="hint-line mark-date">${escapeHtml(txt)}</span>`);
     if (onSaved) onSaved(fid, data.mark);
+    loadOverview(analysisId);  // keep the TP-only overview in sync
   } catch (err) {
     const badge = cell.querySelector(".mark-badge");
     if (badge) badge.insertAdjacentHTML("afterend", ' <span class="bad-text">save failed</span>');
@@ -381,6 +382,7 @@ function pivotTarget(source) {
   if (source === "officemalscanner") return "oms";
   if (["word", "excel", "powerpoint"].includes(source)) return "content";
   if (source === "ooxml") return "relationships";
+  if (source === "ole") return "ole";
   if (source === "pdf") return "pdf";
   if (source === "nested") return "nested";
   if (source === "yara") return "yara";
@@ -794,6 +796,25 @@ function paneNested(nested) {
     + tree.map(nestedNode).join("");
 }
 
+function paneOle(ole) {
+  const bits = [];
+  if (ole.kind) bits.push(`kind: ${ole.kind}`);
+  bits.push(ole.vba ? "VBA project present" : "no VBA storage");
+  let html = `<p class="hint-line">${escapeHtml(bits.join(" · "))}</p>`;
+  const md = ole.metadata || {};
+  if (Object.keys(md).length) {
+    html += `<h3 class="formats-title">Summary information</h3>`
+      + table(["Property", "Value"], Object.entries(md).map(([k, v]) =>
+        `<tr><td class="file">${escapeHtml(k)}</td><td>${escapeHtml(String(v))}</td></tr>`).join(""));
+  }
+  const streams = ole.streams || [];
+  if (streams.length) {
+    html += `<h3 class="formats-title">Streams / storages (${streams.length})</h3>`
+      + table(["Path"], streams.map((s) => `<tr><td class="mono">${escapeHtml(s)}</td></tr>`).join(""));
+  }
+  return html;
+}
+
 let _compState = { sections: [], active: null, header: "" };
 
 function renderSubtabs() {
@@ -814,6 +835,7 @@ function renderSubtabs() {
   wireMarks(bodyEl, _openCaseId);
   wireFileActions(bodyEl, _openCaseId);
   wirePivots(bodyEl);
+  wireYaraCards(bodyEl, _openCaseId);
 }
 
 async function openComponents(analysisId) {
@@ -838,9 +860,10 @@ async function openComponents(analysisId) {
     const oms = mods.officemalscanner;
     const email = mods.email;
     const pdf = mods.pdf;
+    const oleLegacy = mods.ole;
     const nested = mods.nested;
     const iocs = d.iocs;
-    if (!ooxml && !sem && !ole && !email && !pdf) {
+    if (!ooxml && !sem && !ole && !email && !pdf && !oleLegacy) {
       bodyEl.innerHTML = `<p class="hint-line">No component analysis for this case yet.</p>`;
       return;
     }
@@ -851,6 +874,7 @@ async function openComponents(analysisId) {
     let compLabel;
     if (email) compLabel = `${email.hop_count || 0} hops · ${email.attachment_count || 0} attachments`;
     else if (pdf) compLabel = `${pdf.page_count || 0} pages · ${(pdf.embedded || []).length} embedded`;
+    else if (oleLegacy) compLabel = `${oleLegacy.kind || "ole"} · ${(oleLegacy.streams || []).length} streams`;
     else compLabel = `${(ooxml && ooxml.counts && ooxml.counts.components) || 0} parts`;
     summary.textContent = `${compLabel} · ${findings.length} findings · ${ni} IOCs`;
     summary.className = "status " + (findings.length ? "bad-text" : "ok-text");
@@ -865,6 +889,9 @@ async function openComponents(analysisId) {
       sections.push({ id: "headers", label: `Headers (${(email.headers || []).length})`, html: paneEmailHeaders(email) });
       sections.push({ id: "attachments", label: `Attachments (${email.attachment_count || 0})`, html: paneAttachments(email, nested) });
       sections.push({ id: "body", label: "Body", html: paneEmailBody(email) });
+    }
+    if (oleLegacy) {
+      sections.push({ id: "ole", label: "OLE", html: paneOle(oleLegacy) });
     }
     if (pdf) {
       sections.push({ id: "pdf", label: "PDF", html: panePdf(pdf) });
@@ -1114,6 +1141,51 @@ function loadReports(analysisId) {
   if (btn) btn.addEventListener("click", () => { frame.src = url + "?t=" + Date.now(); });
 }
 
+// --- Overview (confirmed TP findings only) -----------------------------------
+async function loadOverview(analysisId) {
+  const panel = document.getElementById("overview-summary");
+  if (!panel) return;
+  if (!analysisId) { panel.hidden = true; return; }
+  panel.hidden = false;
+  const verdict = document.getElementById("ov-verdict");
+  const caseLine = document.getElementById("ov-case");
+  const body = document.getElementById("ov-body");
+  caseLine.textContent = "Loading…";
+  try {
+    const [mk, manifest] = await Promise.all([
+      fetch(`/api/cases/${encodeURIComponent(analysisId)}/marks`).then((r) => r.json()),
+      fetch(`/api/cases/${encodeURIComponent(analysisId)}`).then((r) => r.json()),
+    ]);
+    const det = (manifest.format || {}).detected || {};
+    caseLine.innerHTML = `Case <span class="mono">${escapeHtml(analysisId)}</span> · ${escapeHtml((manifest.original || {}).filename || "")} · ${escapeHtml(det.mime || "")} · state: ${escapeHtml(manifest.state || "")}`;
+    const tp = (mk.findings || []).filter((f) => (f.mark && f.mark.state) === "true_positive");
+    const c = mk.counts || {};
+    verdict.textContent = tp.length
+      ? `${tp.length} confirmed (TP) · ${c.total || 0} total findings`
+      : `0 confirmed · ${c.total || 0} total findings`;
+    verdict.className = "status " + (tp.length ? "bad-text" : "ok-text");
+    if (!tp.length) {
+      body.innerHTML = `<p class="hint-line">No findings marked as True positive yet. Open the case in Components or Marks and mark the real ones.</p>`;
+      return;
+    }
+    tp.sort((a, b) => (SEV_RANK[a.severity] ?? 9) - (SEV_RANK[b.severity] ?? 9));
+    const rows = tp.map((f) => {
+      const ev = f.evidence ? `<div class="evidence mono">${escapeHtml(f.evidence)}</div>` : "";
+      const comment = (f.mark || {}).comment ? `<div class="hint-line">${escapeHtml(f.mark.comment)}</div>` : "";
+      return `<tr>
+        <td><span class="badge badge-${SEV_CLASS[f.severity] || "warn"}">${escapeHtml(f.severity)}</span></td>
+        <td>${escapeHtml(f.source)}</td>
+        <td class="mono">${escapeHtml(f.rule)}</td>
+        <td>${escapeHtml(f.detail)}${ev}${comment}</td>
+        <td class="mono">${escapeHtml(f.location)}</td>
+      </tr>`;
+    }).join("");
+    body.innerHTML = table(["Severity", "Source", "Rule", "Confirmed finding", "Location"], rows);
+  } catch (err) {
+    body.innerHTML = `<p class="hint-line">Could not load the case overview.</p>`;
+  }
+}
+
 // --- YARA management ---------------------------------------------------------
 async function loadYara() {
   const summary = document.getElementById("yara-summary");
@@ -1187,6 +1259,33 @@ function setupYara() {
       loadYara();
     } catch (err) { status.textContent = "Upload failed."; }
   });
+  const recompile = document.getElementById("yara-recompile");
+  if (recompile) recompile.addEventListener("click", async () => {
+    const status = document.getElementById("yara-add-status");
+    const prog = document.getElementById("yara-prog");
+    prog.style.display = ""; prog.value = 0;
+    status.textContent = "Compiling…";
+    try {
+      const r = await fetch("/api/yara/compile/stream", { method: "POST" });
+      const reader = r.body.getReader(); const dec = new TextDecoder(); let buf = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let nl;
+        while ((nl = buf.indexOf("\n")) >= 0) {
+          const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+          if (!line) continue;
+          let x; try { x = JSON.parse(line); } catch (_) { continue; }
+          if (x.fatal) { status.textContent = x.fatal; prog.style.display = "none"; return; }
+          if (x.done) { status.textContent = `Compiled ${x.rule_count} rules from ${x.file_count} files · ${(x.errors || []).length} error(s)`; prog.value = 100; }
+          else if (x.total > 0 && x.i) { prog.value = Math.round(x.i / x.total * 100); status.textContent = `Compiling ${x.i}/${x.total} · ${x.file || ""}`; }
+        }
+      }
+      setTimeout(() => { prog.style.display = "none"; }, 800);
+      loadYara();
+    } catch (err) { status.textContent = "Compile failed."; prog.style.display = "none"; }
+  });
   const pathBtn = document.getElementById("yara-path-btn");
   if (pathBtn) pathBtn.addEventListener("click", async () => {
     const status = document.getElementById("yara-add-status");
@@ -1203,23 +1302,55 @@ function setupYara() {
   });
 }
 
+// YARA results as collapsible per-rule cards (WinHound/Sigma style). Each card
+// has an "is finding?" toggle — ticking it enables the rule and re-runs YARA so
+// its matches become findings (and reach the report / overview when marked TP).
 function paneYara(yara) {
   if (!yara) return `<p class="hint-line">YARA did not run for this case.</p>`;
   if (!yara.rule_count) return `<p class="hint-line">No YARA rules loaded (${yara.available ? "0 rules" : "yara-python unavailable"}). Add rules in the YARA tab.</p>`;
   const scanned = yara.scanned || [];
-  let html = `<p class="hint-line">${yara.rule_count} rule(s) · ${yara.files_scanned} file(s) scanned · ${yara.match_count} match(es). Enable a rule in the YARA tab to turn its matches into findings.</p>`;
+  let html = `<p class="hint-line">${yara.rule_count} rule(s) · ${yara.files_scanned} file(s) scanned · ${yara.match_count} match(es). Tick a rule to make its matches findings; then mark them True positive to reach the overview.</p>`;
   if (!scanned.length) return html + `<p class="hint-line">No matches.</p>`;
-  scanned.forEach((s) => {
-    html += `<h3 class="formats-title">${escapeHtml(s.file)}</h3>`;
-    const rows = (s.matches || []).map((m) => `<tr>
-      <td class="file">${escapeHtml(m.rule)}${m.enabled ? ' <span class="badge badge-bad">finding</span>' : ' <span class="badge badge-muted">match</span>'}</td>
-      <td class="mono">${escapeHtml(m.namespace || "")}</td>
-      <td>${escapeHtml((m.tags || []).join(", "))}</td>
-      <td class="mono">${escapeHtml((m.strings || []).map((x) => x.id + "@" + x.offset).slice(0, 6).join(", "))}</td>
+  const byRule = {};
+  scanned.forEach((s) => (s.matches || []).forEach((m) => {
+    const g = (byRule[m.rule] ||= { rule: m.rule, enabled: m.enabled, namespace: m.namespace, tags: m.tags || [], hits: [] });
+    g.hits.push({ file: s.file, strings: m.strings || [] });
+  }));
+  html += '<div class="row" style="margin:4px 0 10px"><button class="btn btn-ghost btn-sm" onclick="document.querySelectorAll(\'#comp-body .yara-card\').forEach(e=>e.open=true)">Expand all</button> <button class="btn btn-ghost btn-sm" onclick="document.querySelectorAll(\'#comp-body .yara-card\').forEach(e=>e.open=false)">Collapse all</button></div>';
+  Object.values(byRule).forEach((g) => {
+    const tags = g.tags.length ? ` · ${escapeHtml(g.tags.join(" "))}` : "";
+    const rows = g.hits.map((h) => `<tr>
+      <td class="mono">${escapeHtml(h.file)}</td>
+      <td class="mono">${escapeHtml(h.strings.map((x) => x.id + "@" + x.offset).slice(0, 8).join(", "))}</td>
     </tr>`).join("");
-    html += table(["Rule", "Source", "Tags", "Matched strings"], rows);
+    html += `<details class="disclose yara-card">
+      <summary>
+        <label class="yara-finding-toggle" onclick="event.stopPropagation()"><input type="checkbox" class="yara-card-enable" data-rule="${escapeHtml(g.rule)}"${g.enabled ? " checked" : ""}> finding</label>
+        <span class="mono">${escapeHtml(g.rule)}</span>
+        ${g.enabled ? '<span class="badge badge-bad">finding</span>' : '<span class="badge badge-muted">match</span>'}
+        <span class="hint-line">${escapeHtml(g.namespace || "")} · ×${g.hits.length}${tags}</span>
+      </summary>
+      <div style="padding:8px 10px">${table(["File", "Matched strings"], rows)}</div>
+    </details>`;
   });
   return html;
+}
+
+function wireYaraCards(root, analysisId) {
+  root.querySelectorAll(".yara-card-enable").forEach((cb) => {
+    cb.addEventListener("change", async () => {
+      cb.disabled = true;
+      await fetch("/api/yara/enabled", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rules: [cb.getAttribute("data-rule")], enabled: cb.checked }) });
+      // Re-run the YARA module so matches of the now-enabled rule become findings.
+      if (analysisId) {
+        await fetch(`/api/cases/${encodeURIComponent(analysisId)}/rerun`,
+          { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ module: "yara" }) });
+        startTaskPoller();
+        setTimeout(() => openComponents(analysisId), 1200);
+      }
+    });
+  });
 }
 
 // --- Tab navigation ----------------------------------------------------------
@@ -1236,6 +1367,7 @@ function setupTabs() {
       if (target === "tasks") loadTasks();
       if (target === "reports") loadReports(_openCaseId);
       if (target === "yara") loadYara();
+      if (target === "overview") loadOverview(_openCaseId);
     });
   });
 }
