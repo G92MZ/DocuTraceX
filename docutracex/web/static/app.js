@@ -406,6 +406,7 @@ function pivotTarget(f, ids) {
   if (src === "yara") return has("yara") ? "yara" : null;
   if (src === "ole") return has("ole") ? "ole" : null;
   if (src === "pdf") return has("pdf") ? "pdf" : null;
+  if (src === "pdftools") return has("pdftools") ? "pdftools" : null;
   if (src === "xlmdeobf") return has("content") ? "content" : null;
   // excel formulas / word field codes are shown in Content; hidden-sheet info in Metadata.
   if (src === "excel") {
@@ -964,6 +965,54 @@ function panePdf(pdf) {
   return html;
 }
 
+// PDF tools: QR codes, signatures, revisions (incremental updates), peepdf and
+// the raw output of every tool run on the PDF.
+function panePdfTools(pt) {
+  let html = "";
+  const qr = pt.qr || [];
+  html += `<h3 class="formats-title">QR / barcodes (${qr.length})</h3>`;
+  html += qr.length ? table(["Page", "Format", "Content", "Mark"], qr.map((c) => `<tr>
+      <td>${escapeHtml(String(c.page))}</td><td>${escapeHtml(c.format || "")}</td>
+      <td class="mono">${escapeHtml(c.text || "")}</td>
+      <td>${addMarkCell("qr", `QR on page ${c.page}: ${c.text}`, "pdf qr", c.format || "")}</td></tr>`).join(""))
+    : `<p class="hint-line">${escapeHtml(pt.qr_error || "No QR codes or barcodes found on the rendered pages.")}</p>`;
+
+  const sigs = pt.signatures || [];
+  if (sigs.length) {
+    html += `<h3 class="formats-title">Digital signatures (${sigs.length})</h3>` + table(
+      ["Field", "Signer", "Issuer", "Signing time", "Coverage"], sigs.map((g) => `<tr>
+        <td class="mono">${escapeHtml(g.field || "")}</td><td>${escapeHtml(g.signer || "")}</td>
+        <td>${escapeHtml(g.issuer || "")}</td><td class="mono">${escapeHtml(g.signing_time || "")}</td>
+        <td class="${/ENTIRE_FILE/.test(g.coverage || "") ? "" : "bad-text"}">${escapeHtml(g.coverage || "")}</td></tr>`).join(""));
+  }
+  const revs = pt.revisions || [];
+  if (revs.length) {
+    html += `<h3 class="formats-title">Revisions (${revs.length})</h3>` + table(
+      ["Revision", "Objects", "Active content", "Signed"], revs.map((r) => `<tr>
+        <td>${r.revision === 0 ? "original" : "update #" + r.revision}</td><td>${r.objects}</td>
+        <td class="${r.active.length && r.revision ? "bad-text" : ""}">${escapeHtml(r.active.join(", "))}</td>
+        <td>${r.signed ? "yes" : ""}</td></tr>`).join(""));
+  }
+  const pp = pt.peepdf || {};
+  if ((pp.versions || []).length) {
+    html += `<h3 class="formats-title">peepdf</h3>`;
+    if ((pp.cves || []).length) html += `<p class="bad-text">Known CVEs: ${escapeHtml(pp.cves.join(", "))}</p>`;
+    html += table(["Version", "Objects", "Triggers", "Actions", "Elements", "JS objects"], pp.versions.map((v) => {
+      const fmt = (o) => Object.entries(o || {}).map(([k, ids]) => `${k} (${ids.join(",")})`).join(" · ");
+      return `<tr><td>${escapeHtml(String(v.version))} ${escapeHtml(v.type || "")}</td><td>${v.objects}</td>
+        <td class="mono">${escapeHtml(fmt(v.triggers))}</td><td class="mono">${escapeHtml(fmt(v.actions))}</td>
+        <td class="mono">${escapeHtml((v.elements || []).join(", "))}</td><td>${escapeHtml((v.js_objects || []).join(", "))}</td></tr>`;
+    }).join(""));
+  }
+  const tools = pt.tools || {};
+  const names = Object.keys(tools);
+  if (names.length) {
+    html += `<h3 class="formats-title">Tool output (${names.length})</h3>`;
+    names.forEach((n) => { html += toolOutputBlock(n, tools[n], false); });
+  }
+  return html;
+}
+
 function panePdfMeta(pdf) {
   const md = pdf.metadata || {};
   const keys = Object.keys(md);
@@ -1128,6 +1177,10 @@ async function openComponents(analysisId, keepTab) {
     }
     if (pdf) {
       sections.push({ id: "pdf", label: "PDF", html: panePdf(pdf) });
+      if (mods.pdftools) {
+        const nqr = (mods.pdftools.qr || []).length;
+        sections.push({ id: "pdftools", label: nqr ? `PDF tools (${nqr} QR)` : "PDF tools", html: panePdfTools(mods.pdftools) });
+      }
       sections.push({ id: "pdfmeta", label: "Metadata", html: panePdfMeta(pdf) });
       sections.push({ id: "embedded", label: `Embedded (${(pdf.embedded || []).length})`, html: panePdfEmbedded(pdf) });
       sections.push({ id: "pdftext", label: "Text", html: `<pre class="text-sample">${escapeHtml((pdf.text_sample || "").slice(0, 8000)) || "(no text)"}</pre>` });

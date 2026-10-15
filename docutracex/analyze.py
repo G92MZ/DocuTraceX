@@ -220,6 +220,13 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         if pdf_res.get("status") == "error":
             state = "error"
 
+        from .parsers import pdf_tools
+        pt_res = run("pdftools: peepdf · pdf-parser (targeted) · pdfid -e · signatures · QR · own rules",
+                     lambda: pdf_tools.analyze(original, pdf_res))
+        write_subresult(paths, "pdftools", pt_res)
+        ran.append("pdftools")
+        findings_total += pt_res.get("counts", {}).get("findings", 0)
+
         didier_res = run("didier: pdfid · pdf-parser",
                          lambda: didier.analyze(original, "pdf"), note="not provisioned")
         if didier_res.get("available"):
@@ -404,7 +411,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 # Modules that can be re-run in isolation over an existing case.
 _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto",
                "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole",
-               "officerules", "vbatools", "vipermonkey")
+               "officerules", "vbatools", "vipermonkey", "pdftools")
 # Modules whose findings feed the consolidated view (includes derived ones).
 _COLLECTABLE = _RERUNNABLE + ("nested",)
 
@@ -497,6 +504,9 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
     elif module == "pdf":
         from .parsers import pdf as pdf_parser
         res = pdf_parser.analyze(original, ed)
+    elif module == "pdftools":
+        from .parsers import pdf_tools
+        res = pdf_tools.analyze(original, read_json(paths.subresult("pdf")) or {})
     elif module == "yara":
         from .parsers import yara_scan
         res = yara_scan.analyze(original, ed)
