@@ -375,29 +375,46 @@ function collectFindings(mods, ooxml) {
   return out;
 }
 
-// Which Components sub-tab holds the fuller evidence for a finding's source.
-function pivotTarget(source) {
-  if (["olevba", "oleid", "mraptor", "msodde", "oleobj", "oletools", "msoffcrypto"].includes(source)) return "tools";
-  if (source === "xlmdeobf") return "content";
-  if (source === "officemalscanner") return "oms";
-  if (["word", "excel", "powerpoint"].includes(source)) return "content";
-  if (source === "ooxml") return "relationships";
-  if (source === "ole") return "ole";
-  if (source === "pdf") return "pdf";
-  if (source === "nested") return "nested";
-  if (source === "yara") return "yara";
-  if (source === "email") return "auth";
+// Which Components sub-tab holds the fuller evidence for a finding. Uses the
+// finding's location + rule + source, and only returns a tab that actually
+// exists for this case (ids), so "view" never lands on an empty/absent pane.
+function pivotTarget(f, ids) {
+  const has = (id) => ids.includes(id);
+  const src = f.source || "";
+  const loc = (f.location || "").toLowerCase();
+  const rule = f.rule || "";
+  // A child-scan finding (attachment / embedded) lives in the Nested tree.
+  if (loc.startsWith("nested")) return has("nested") ? "nested" : null;
+  // Email: route by what the finding is about, not just the source.
+  if (src === "email") {
+    if (loc.startsWith("attachment") || /attachment|double_extension/.test(rule)) return has("attachments") ? "attachments" : null;
+    if (loc === "body" || rule === "url_display_mismatch") return has("body") ? "body" : null;
+    return has("auth") ? "auth" : null;
+  }
+  if (["olevba", "oleid", "mraptor", "msodde", "oleobj", "oletools", "msoffcrypto"].includes(src)) return has("tools") ? "tools" : null;
+  if (src === "officemalscanner") return has("oms") ? "oms" : null;
+  if (src === "yara") return has("yara") ? "yara" : null;
+  if (src === "ole") return has("ole") ? "ole" : null;
+  if (src === "pdf") return has("pdf") ? "pdf" : null;
+  if (src === "xlmdeobf") return has("content") ? "content" : null;
+  // excel formulas / word field codes are shown in Content; hidden-sheet info in Metadata.
+  if (src === "excel") {
+    if (/hidden_sheet|external_workbook|unhidden/.test(rule)) return has("metadata") ? "metadata" : null;
+    return has("content") ? "content" : (has("metadata") ? "metadata" : null);
+  }
+  if (src === "word" || src === "powerpoint") return has("content") ? "content" : null;
+  if (src === "ooxml") return has("relationships") ? "relationships" : (has("parts") ? "parts" : null);
   return null;
 }
 
-function paneFindings(findings) {
+function paneFindings(findings, ids) {
   if (!findings.length) return `<p class="hint-line">No findings.</p>`;
+  ids = ids || (_compState.sections || []).map((s) => s.id);
   const rows = findings.map((f) => {
     const ev = f.evidence
       ? `<div class="evidence mono" title="Matched content that produced this finding">${escapeHtml(f.evidence)}</div>` : "";
-    const target = pivotTarget(f.source);
-    const avail = (_compState.sections || []).some((s) => s.id === target);
-    const pivot = (target && avail)
+    const target = pivotTarget(f, ids);
+    const pivot = target
       ? `<button class="btn btn-ghost btn-sm" data-pivot="${target}" title="Go to the ${target} evidence">↗ view</button>` : "";
     return `<tr>
       <td><span class="badge badge-${SEV_CLASS[f.severity] || "warn"}">${escapeHtml(f.severity)}</span></td>
@@ -470,6 +487,20 @@ function paneContent(sem, ole, xlm) {
   if (sem && sem.text_sample) {
     html += `<p class="hint-line">Reconstructed text (sample)</p>
       <pre class="text-sample">${escapeHtml(sem.text_sample.slice(0, 8000))}</pre>`;
+  }
+  // Excel: show the formulas (the evidence behind WEBSERVICE/FILTERXML/… findings).
+  if (sem && sem.format === "excel" && (sem.formulas || []).length) {
+    const SUS = /WEBSERVICE|FILTERXML|HYPERLINK/i;
+    const rows = sem.formulas.map((f) => {
+      const sus = SUS.test(f);
+      return `<tr><td class="mono"${sus ? ' style="color:#e8795a"' : ""}>=${escapeHtml(f)}</td></tr>`;
+    }).join("");
+    html += `<p class="hint-line">Formulas (${sem.formulas.length}${sem.formula_count > sem.formulas.length ? " of " + sem.formula_count : ""})</p>`
+      + table(["Formula"], rows);
+  }
+  if (sem && (sem.field_codes || []).length) {
+    html += `<p class="hint-line">Field codes (${sem.field_codes.length})</p>`
+      + table(["Field code"], sem.field_codes.map((f) => `<tr><td class="mono">${escapeHtml(f)}</td></tr>`).join(""));
   }
   const olevba = ole && ole.tools && ole.tools.olevba;
   if (olevba && olevba.macros) {
@@ -922,6 +953,11 @@ async function openComponents(analysisId) {
         sections.push({ id: "extracted", label: `Extracted (${ooxml.extracted.length})`, html: paneExtracted(ooxml.extracted) });
       }
     }
+    // Rebuild the Findings pane now that all sub-tabs exist, so each "↗ view"
+    // pivot points at a tab that is actually present for this case.
+    const ids = sections.map((s) => s.id);
+    const fIdx = sections.findIndex((s) => s.id === "findings");
+    if (fIdx >= 0) sections[fIdx].html = paneFindings(findings, ids);
     _compState = { sections, active: sections[0].id, header: headerHtml };
     renderSubtabs();
     renderRerun(analysisId, d);
