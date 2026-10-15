@@ -1396,6 +1396,32 @@ function setupYara() {
 // YARA results as collapsible per-rule cards. Each hit (rule x file) is a
 // finding triaged right here with a mark (TP / FP / ...); only TP reaches the
 // report. A card shows the rule source, what matched and the local file path.
+// Hexdump of the bytes around a match (16 per line: offset, hex, ASCII), with
+// the matched bytes highlighted, to judge true vs false positive.
+function hexContext(x) {
+  const c = x.context || {};
+  const hex = c.data || "";
+  const start = c.start || 0;
+  const mFrom = x.offset, mTo = x.offset + Math.max(1, x.length || 1);
+  const lines = [];
+  for (let i = 0; i < hex.length / 2; i += 16) {
+    const off = start + i;
+    let h = "", a = "";
+    for (let j = 0; j < 16; j++) {
+      const k = i + j;
+      if (k * 2 >= hex.length) { h += "   "; continue; }
+      const byte = parseInt(hex.substr(k * 2, 2), 16);
+      const ch = byte >= 32 && byte < 127 ? String.fromCharCode(byte) : ".";
+      const inMatch = off + j >= mFrom && off + j < mTo;
+      const hb = hex.substr(k * 2, 2) + " ";
+      h += inMatch ? `<mark>${hb}</mark>` : hb;
+      a += inMatch ? `<mark>${escapeHtml(ch)}</mark>` : escapeHtml(ch);
+    }
+    lines.push(`${off.toString(16).padStart(8, "0")}  ${h} ${a}`);
+  }
+  return `<pre class="hexdump">${lines.join("\n")}</pre>`;
+}
+
 function paneYara(yara, findings) {
   if (!yara) return `<p class="hint-line">YARA did not run for this case.</p>`;
   if (!yara.rule_count) return `<p class="hint-line">${escapeHtml(yara.error || "No compiled YARA rules.")} Compile rules in the YARA tab, then scan the case.</p>`;
@@ -1429,6 +1455,7 @@ function paneYara(yara, findings) {
         <td>${x.length != null ? x.length : ""}</td>
         <td class="mono">${escapeHtml(x.text || "")}</td>
         <td class="mono">${escapeHtml((x.data || "").replace(/(..)/g, "$1 ").trim())}</td>
+        <td>${x.context ? `<details class="yara-ctx"><summary>context</summary>${hexContext(x)}</details>` : ""}</td>
       </tr>`).join("");
       const mark = h.finding ? markControlsHtml(h.finding) : '<span class="hint-line">re-run YARA to mark</span>';
       return `<div class="yara-hit">
@@ -1437,7 +1464,7 @@ function paneYara(yara, findings) {
           ${fileActions(h.stored)}
         </div>
         ${mark}
-        ${rows ? table(["String", "Offset", "Length", "Matched (text)", "Matched (hex)"], rows)
+        ${rows ? table(["String", "Offset", "Length", "Matched (text)", "Matched (hex)", "Context"], rows)
                : '<p class="hint-line">Condition-only match (no strings).</p>'}
       </div>`;
     }).join("");

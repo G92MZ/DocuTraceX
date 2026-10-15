@@ -80,7 +80,7 @@ Los **hallazgos** los produce código propio (`docutracex/parsers/`, `docutracex
 
 Las cosas extraídas (adjuntos, objetos OLE, medios, copias desocultadas) tienen botones **📁 Folder** (abre la carpeta contenedora en el explorador del sistema — herramienta local) y **↓** (descarga), con validación de ruta dentro del caso.
 
-OfficeMalScanner es un binario PE de Windows (freeware, Frank Boldewin): se descarga de `reconstructer.org` al provisionar el portable y se extrae a `tools/officemalscanner/`. Si el sitio no responde o el AV lo bloquea, se omite sin romper nada y se ve en Diagnostics → *External scripts* (puedes soltar el `.exe` ahí a mano).
+OfficeMalScanner es un binario PE de Windows (freeware, Frank Boldewin): se descarga del GitHub de su autor (`fboldewin/reconstructer.org`; el sitio original `reconstructer.org` queda como respaldo) al provisionar el portable y se extrae a `tools/officemalscanner/`. Si el sitio no responde o el AV lo bloquea, se omite sin romper nada y se ve en Diagnostics → *External scripts* (puedes soltar el `.exe` ahí a mano).
 
 Además, el parser de Excel **desoculta las hojas** `hidden`/`veryHidden`: genera una copia con las hojas visibles en `extracted/unhidden/` y lo registra como *finding* (sin tocar el original).
 
