@@ -165,3 +165,104 @@ def test_recursive_attachment_scan(tmp_path: Path, name: str) -> None:
     # The nested third-party finding is in the consolidated findings.
     consolidated = read_json(paths.subresult("findings"))["findings"]
     assert any(f["source"] == "msodde" for f in consolidated)
+
+
+def test_html_only_body_interpreted_as_text(tmp_path: Path) -> None:
+    msg = EmailMessage()
+    msg["From"] = "a@x.example"
+    msg["To"] = "b@y.example"
+    msg["Subject"] = "html"
+    msg.set_content(
+        "<html><head><style>p{color:red}</style><script>alert(1)</script></head>"
+        "<body><p>Hola&nbsp;mundo</p><a href='https://evil.example/login'>Pulse aqu&iacute;</a>"
+        "</body></html>", subtype="html")
+    p = tmp_path / "h.eml"
+    p.write_bytes(bytes(msg))
+    res = mail.analyze(p, ".eml")
+    assert res["body_sample"] == ""
+    text = res["html_text_sample"]
+    assert "Hola mundo" in text and "Pulse aquí <https://evil.example/login>" in text
+    assert "alert" not in text and "color" not in text
+    assert res["html_links"] == ["https://evil.example/login"]
+    assert "<script>" in res["html_source_sample"]
+
+
+def _lzfu(data: bytes, refs: dict[int, tuple[int, int]] | None = None) -> bytes:
+    """Minimal LZFu encoder for tests: literals, optional back-references keyed by
+    input position (pos -> (dict_offset, length)) and the end marker."""
+    import struct
+
+    refs = refs or {}
+    tokens: list[bytes] = []
+    flags: list[int] = []
+    wpos, i = 207, 0
+    while i < len(data):
+        if i in refs:
+            off, ln = refs[i]
+            tokens.append(bytes([((off << 4) | (ln - 2)) >> 8, ((off << 4) | (ln - 2)) & 0xFF]))
+            flags.append(1)
+            i += ln
+            wpos += ln
+        else:
+            tokens.append(data[i:i + 1])
+            flags.append(0)
+            i += 1
+            wpos += 1
+    ref = ((wpos % 4096) << 4)
+    tokens.append(bytes([ref >> 8, ref & 0xFF]))
+    flags.append(1)
+    body = b""
+    for k in range(0, len(tokens), 8):
+        chunk = flags[k:k + 8]
+        body += bytes([sum(f << b for b, f in enumerate(chunk))]) + b"".join(tokens[k:k + 8])
+    return struct.pack("<IIII", len(body) + 12, len(data), 0x75465A4C, 0) + body
+
+
+def test_lzfu_decompress_literals_and_reference() -> None:
+    from docutracex.parsers import msg_rtf
+
+    # "abc" written at dictionary offset 207, then a 3-byte back-reference to it.
+    assert msg_rtf.decompress_rtf(_lzfu(b"abcabc", {3: (207, 3)})) == b"abcabc"
+
+
+_ENCAPSULATED = (
+    rb"{\rtf1\ansi\ansicpg1252\fromhtml1 \deff0{\fonttbl{\f0\fswiss Arial;}}"
+    rb"{\*\htmltag19 <html>}{\*\htmltag34 <body>}\htmlrtf {\htmlrtf0 "
+    rb"{\*\htmltag64 <p>}Hola\~mundo \'e1{\*\htmltag72 </p>}"
+    b'{\\*\\htmltag84 <a href="https://evil.example/login">}\\htmlrtf {\\htmlrtf0 Pulse}'
+    rb"{\*\htmltag92 </a>}\htmlrtf }\htmlrtf0 {\*\htmltag58 </body></html>}}"
+)
+
+
+def test_html_from_encapsulated_rtf() -> None:
+    from docutracex.parsers import msg_rtf
+
+    html = msg_rtf.html_from_rtf(_ENCAPSULATED)
+    assert '<a href="https://evil.example/login">Pulse</a>' in html
+    assert "<p>Hola\xa0mundo á</p>" in html
+    assert "Arial" not in html
+    assert msg_rtf.html_from_rtf(rb"{\rtf1\ansi plain}") == ""
+
+
+@pytest.mark.parametrize("html_stream", ["pr_html", "rtf"])
+def test_msg_html_body(tmp_path: Path, html_stream: str) -> None:
+    from mkmsg import build_cfb
+
+    def u(s: str) -> bytes:
+        return s.encode("utf-16-le")
+
+    if html_stream == "pr_html":
+        extra = ("__substg1.0_10130102",
+                 b'<html><body><p>Hola</p><a href="https://evil.example/login">Pulse</a></body></html>')
+    else:
+        extra = ("__substg1.0_10090102", _lzfu(_ENCAPSULATED))
+    p = tmp_path / "h.msg"
+    p.write_bytes(build_cfb([
+        ("__substg1.0_0037001F", u("subject")),
+        ("__substg1.0_5D01001F", u("a@x.example")),
+        extra,
+    ]))
+    res = mail.analyze(p, ".msg")
+    assert res["has_html"]
+    assert "Pulse <https://evil.example/login>" in res["html_text_sample"]
+    assert res["html_links"] == ["https://evil.example/login"]
