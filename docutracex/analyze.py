@@ -256,6 +256,23 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         # No parser for this family yet.
         state = "completed"
 
+    # YARA: scan the original + everything extracted. Runs for every family
+    # (even unknown ones). Matches are recorded; only enabled rules add findings.
+    from .parsers import yara_scan
+
+    yara_res = run("yara: ruleset scan (original + extracted)",
+                   lambda: yara_scan.analyze(original, paths.extracted_dir))
+    if yara_res.get("available") and yara_res.get("rule_count"):
+        write_subresult(paths, "yara", yara_res)
+        if "yara" not in ran:
+            ran.append("yara")
+        findings_total += yara_res.get("counts", {}).get("findings", 0)
+        steps[-1]["note"] = (f"{yara_res.get('rule_count')} rules · "
+                             f"{yara_res.get('files_scanned', 0)} files · "
+                             f"{yara_res.get('match_count', 0)} matches")
+    else:
+        steps[-1]["note"] = "no rules" if yara_res.get("available") else "yara-python unavailable"
+
     overall_counts["findings"] = findings_total
 
     # Common IOC extraction: a single phase AFTER all parsers, over their outputs.
@@ -305,7 +322,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 
 # Modules that can be re-run in isolation over an existing case.
 _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto",
-               "xlmdeobf", "officemalscanner", "didier", "email", "pdf")
+               "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara")
 # Modules whose findings feed the consolidated view (includes derived ones).
 _COLLECTABLE = _RERUNNABLE + ("nested",)
 
@@ -382,6 +399,9 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
     elif module == "pdf":
         from .parsers import pdf as pdf_parser
         res = pdf_parser.analyze(original, ed)
+    elif module == "yara":
+        from .parsers import yara_scan
+        res = yara_scan.analyze(original, ed)
     else:  # pragma: no cover
         raise ValueError(module)
 

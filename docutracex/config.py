@@ -22,6 +22,7 @@ class Settings:
     app_root: Path = APP_ROOT
     tools_dir: Path = APP_ROOT / "tools"
     cases_dir: Path = APP_ROOT / "cases"
+    yara_dir: Path = APP_ROOT / "yara"  # uploaded/registered YARA rules + config
     host: str = os.environ.get("DOCUTRACEX_HOST", "127.0.0.1")
     port: int = int(os.environ.get("DOCUTRACEX_PORT", "8000"))
     log_level: str = os.environ.get("DOCUTRACEX_LOG_LEVEL", "INFO")
@@ -30,6 +31,7 @@ class Settings:
         """Create the writable working directories if they do not exist yet."""
         self.cases_dir.mkdir(parents=True, exist_ok=True)
         self.tools_dir.mkdir(parents=True, exist_ok=True)
+        self.yara_dir.mkdir(parents=True, exist_ok=True)
 
     def portable_python(self) -> Path | None:
         """Locate the bundled portable Python interpreter under ``tools/``.
