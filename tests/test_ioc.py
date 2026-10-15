@@ -75,3 +75,11 @@ def test_email_only_content_scanned() -> None:
     assert "payload.example" in vals and "phish.example" in vals
     assert not any("header.example" in v or "sender.example" in v for v in vals)
     assert "198.51.100.7" not in vals
+
+
+def test_times_and_macs_are_not_ipv6() -> None:
+    text = ("Received at 15:56:42 and 17:56:47.272, MAC 00:11:22:33:44:55, "
+            "real ones fe80::1ff:fe23:4567:890a and 2001:0db8:0000:0000:0000:ff00:0042:8329 and ::1")
+    res = ioc.extract([{"module": "email", "location": "body", "text": text}])
+    v6 = sorted(i["value"] for i in res["iocs"] if i["type"] == "ipv6")
+    assert v6 == ["2001:db8::ff00:42:8329", "::1", "fe80::1ff:fe23:4567:890a"]

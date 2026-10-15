@@ -96,3 +96,70 @@ def apply(findings: list[dict[str, Any]],
     counts["total"] = len(findings)
     counts["reviewed"] = len(findings) - counts.get(DEFAULT_STATE, 0)
     return {"findings": enriched, "counts": counts, "orphans": orphans}
+
+
+# --- Manual findings ----------------------------------------------------------
+# Anything the analyst spots in the components (an IOC, an attachment, a header,
+# a hop, a relationship, ...) can be added as a finding by hand and marked like
+# the automatic ones. Kept in results/manual_findings.json, separate from the
+# parser outputs, so re-analysis never drops them.
+
+SEVERITIES = ("high", "medium", "low", "info")
+_FIELD_MAX = 4000
+
+
+def _manual_path(paths: CasePaths):
+    return paths.results_dir / "manual_findings.json"
+
+
+def read_manual(paths: CasePaths) -> list[dict[str, Any]]:
+    data = read_json(_manual_path(paths))
+    items = data.get("findings") if isinstance(data, dict) else None
+    return items if isinstance(items, list) else []
+
+
+def add_manual(paths: CasePaths, kind: str, detail: str, location: str = "",
+               evidence: str = "", severity: str = "medium") -> dict[str, Any]:
+    """Add (or return the existing) manual finding for a component item."""
+    from .findings import finding_id
+
+    kind = "".join(c for c in (kind or "item").lower() if c.isalnum() or c in "_-")[:40] or "item"
+    detail = (detail or "").strip()[:_FIELD_MAX]
+    if not detail:
+        raise MarkError("A manual finding needs a detail")
+    if severity not in SEVERITIES:
+        raise MarkError(f"Unknown severity: {severity!r}")
+    location = (location or "").strip()[:_FIELD_MAX]
+    rule = f"manual:{kind}"
+    fid = finding_id("manual", rule, location, detail)
+    items = read_manual(paths)
+    for f in items:
+        if f["id"] == fid:
+            return f
+    f = {"id": fid, "severity": severity, "source": "manual", "rule": rule,
+         "detail": detail, "location": location,
+         "evidence": (evidence or "").strip()[:_FIELD_MAX], "manual": True,
+         "created_utc": _now()}
+    items.append(f)
+    write_json(_manual_path(paths), {"findings": items, "updated_utc": _now()})
+    return f
+
+
+def remove_manual(paths: CasePaths, finding_id: str) -> bool:
+    items = read_manual(paths)
+    kept = [f for f in items if f.get("id") != finding_id]
+    if len(kept) == len(items):
+        return False
+    write_json(_manual_path(paths), {"findings": kept, "updated_utc": _now()})
+    marks = read_marks(paths)
+    if marks.pop(finding_id, None) is not None:
+        _write(paths, marks)
+    return True
+
+
+def case_findings(paths: CasePaths) -> list[dict[str, Any]]:
+    """Automatic (consolidated) findings plus the analyst's manual ones."""
+    stored = read_json(paths.subresult("findings")) or {}
+    findings = stored.get("findings", []) if isinstance(stored, dict) else []
+    seen = {f.get("id") for f in findings}
+    return list(findings) + [f for f in read_manual(paths) if f.get("id") not in seen]

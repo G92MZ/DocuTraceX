@@ -109,8 +109,7 @@ def build_report_html(analysis_id: str, cases_dir=None) -> str:
     paths = CasePaths(analysis_id, cases_dir=cases_dir)
     manifest = read_json(paths.manifest) or {}
     summary = read_json(paths.summary) or {}
-    stored = read_json(paths.subresult("findings")) or {}
-    findings = stored.get("findings", []) if isinstance(stored, dict) else []
+    findings = marks_service.case_findings(paths)  # automatic + manual
     marked = marks_service.apply(findings, marks_service.read_marks(paths))
     findings = marked["findings"]
     iocs = read_json(paths.subresult("iocs"))

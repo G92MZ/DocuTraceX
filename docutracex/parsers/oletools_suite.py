@@ -18,6 +18,8 @@ oletools is BSD-licensed and runs on the portable Python.
 from __future__ import annotations
 
 import hashlib
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +29,8 @@ log = get_logger(__name__)
 
 _CODE_BOUND = 400000       # total VBA source kept for the IOC phase
 _MODULE_BOUND = 200000     # per-module source kept for display
+_OUTPUT_BOUND = 60000      # raw CLI output kept per tool
+_EVIDENCE_LINES = 8        # evidence lines kept per finding
 
 # olevba analyze_macros result type -> severity
 _OLEVBA_SEV = {
@@ -36,8 +40,67 @@ _OLEVBA_SEV = {
 }
 
 
-def _finding(tool: str, rule: str, severity: str, detail: str, location: str = "vba") -> dict:
-    return {"tool": tool, "rule": rule, "severity": severity, "detail": detail, "location": location}
+def _finding(tool: str, rule: str, severity: str, detail: str, location: str = "vba",
+             evidence: str = "") -> dict:
+    return {"tool": tool, "rule": rule, "severity": severity, "detail": detail,
+            "location": location, "evidence": evidence}
+
+
+def _cli(module: str, args: list[str], path: Path) -> dict[str, Any]:
+    """Run an oletools command-line tool and keep its raw output, so the analyst
+    sees exactly what the tool reported (stored alongside the parsed result)."""
+    from .. import native
+
+    cmd = [sys.executable, "-m", f"oletools.{module}", *args, str(path)]
+    shown = " ".join([module, *args, path.name])
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=180, env=native.subprocess_env())
+        out = (proc.stdout or "") + (("\n[stderr]\n" + proc.stderr) if proc.stderr.strip() else "")
+        return {"command": shown, "returncode": proc.returncode,
+                "output": out[:_OUTPUT_BOUND], "output_truncated": len(out) > _OUTPUT_BOUND}
+    except Exception as exc:  # noqa: BLE001
+        return {"command": shown, "error": str(exc)}
+
+
+def _short(text: str, n: int = 200) -> str:
+    text = " ".join(str(text).split())
+    return text if len(text) <= n else text[:n] + "…"
+
+
+def _code_lines(modules: list[dict[str, Any]], keyword: str) -> list[str]:
+    """Lines of VBA source containing ``keyword``, with module and line number."""
+    kw = keyword.lower()
+    out: list[str] = []
+    for mod in modules:
+        for no, line in enumerate((mod.get("code") or "").splitlines(), 1):
+            if kw in line.lower():
+                out.append(f"{mod.get('vba_filename') or mod.get('stream')} line {no}: {_short(line)}")
+                if len(out) >= _EVIDENCE_LINES:
+                    return out
+    return out
+
+
+def _olevba_evidence(kind: str, keyword: str, desc: str, modules: list[dict[str, Any]],
+                     decoded: dict[str, list[tuple[str, str]]]) -> str:
+    """Where olevba saw it: the decoded strings for 'Hex/Base64/Dridex Strings',
+    otherwise the VBA lines that contain the keyword."""
+    for label, key in (("Hex Strings", "hex"), ("Base64 Strings", "base64"),
+                       ("Dridex Strings", "dridex")):
+        if keyword == label:
+            pairs = decoded.get(key, [])
+            lines = [f"{_short(enc, 80)} → {_short(dec, 160)}" for enc, dec in pairs[:_EVIDENCE_LINES]]
+            if len(pairs) > _EVIDENCE_LINES:
+                lines.append(f"… {len(pairs) - _EVIDENCE_LINES} more (see olevba output)")
+            return "\n".join(lines)
+    if kind in ("Hex String", "Base64 String", "Dridex string", "VBA string"):
+        return f"{_short(desc, 120)} → {_short(keyword, 200)}"
+    lines = _code_lines(modules, keyword)
+    if "obfuscation:" in desc:
+        hits = [f"decoded: {_short(dec, 200)}" for pairs in decoded.values()
+                for _enc, dec in pairs if keyword.lower() in dec.lower()]
+        lines = hits[:_EVIDENCE_LINES] + lines
+    return "\n".join(lines[:_EVIDENCE_LINES])
 
 
 def _run_olevba(path: Path, result: dict[str, Any]) -> str:
@@ -63,10 +126,28 @@ def _run_olevba(path: Path, result: dict[str, Any]) -> str:
                     if c:
                         parts.append(c)
                 code = "\n".join(parts)
+                decoded: dict[str, list[tuple[str, str]]] = {}
+                try:
+                    from oletools.olevba import VBA_Scanner
+                    sc = VBA_Scanner(code)
+                    sc.scan()
+                    decoded = {"hex": list(sc.hex_strings or []),
+                               "base64": list(sc.base64_strings or []),
+                               "dridex": list(sc.dridex_strings or [])}
+                except Exception:  # noqa: BLE001
+                    pass
+                info["decoded_strings"] = {k: [[e[:500], d[:500]] for e, d in v[:200]]
+                                           for k, v in decoded.items()}
+                info["analysis"] = []
                 for (kind, keyword, desc) in vp.analyze_macros():
+                    info["analysis"].append({"type": kind, "keyword": keyword, "description": desc})
                     sev = _OLEVBA_SEV.get(kind, "info")
                     rule = "olevba_" + str(kind).lower().replace(" ", "_")
-                    result["findings"].append(_finding("olevba", rule, sev, f"{keyword}: {desc}"))
+                    result["findings"].append(_finding(
+                        "olevba", rule, sev, f"{keyword}: {desc}",
+                        evidence=_olevba_evidence(kind, str(keyword), str(desc),
+                                                  info["modules"], decoded)))
+            info.update(_cli("olevba", ["--decode"], path))
             result["tools"]["olevba"] = info
         finally:
             vp.close()
@@ -84,17 +165,26 @@ def _run_oleid(path: Path, result: dict[str, Any]) -> None:
             risk = str(getattr(ind, "risk", "") or "").lower()
             name = getattr(ind, "name", getattr(ind, "id", ""))
             value = getattr(ind, "value", "")
-            recs.append({"name": name, "value": str(value), "risk": risk})
+            desc = str(getattr(ind, "description", "") or "")
+            recs.append({"id": str(getattr(ind, "id", "")), "name": name, "value": str(value),
+                         "risk": risk, "description": desc})
             if risk in ("low", "medium", "high"):
+                ev = desc
+                if getattr(ind, "id", "") == "vba":
+                    mods = (result["tools"].get("olevba") or {}).get("modules", [])
+                    if mods:
+                        ev += ("\n" if ev else "") + "VBA modules found by olevba: " + ", ".join(
+                            f"{m.get('vba_filename')} ({m.get('stream')}, {m.get('code_length')} chars)"
+                            for m in mods[:_EVIDENCE_LINES])
                 result["findings"].append(
                     _finding("oleid", "oleid_" + str(getattr(ind, "id", "indicator")),
-                             risk, f"{name}: {value}", "document"))
-        result["tools"]["oleid"] = {"indicators": recs}
+                             risk, f"{name}: {value}", "document", ev))
+        result["tools"]["oleid"] = {"indicators": recs, **_cli("oleid", [], path)}
     except Exception as exc:  # noqa: BLE001
         result["tools"]["oleid"] = {"error": str(exc)}
 
 
-def _run_mraptor(code: str, result: dict[str, Any]) -> None:
+def _run_mraptor(code: str, path: Path, result: dict[str, Any]) -> None:
     if not code:
         return
     try:
@@ -102,16 +192,22 @@ def _run_mraptor(code: str, result: dict[str, Any]) -> None:
         mr = mraptor.MacroRaptor(code)
         mr.scan()
         flags = mr.get_flags()
+        matches = [str(m) for m in (getattr(mr, "matches", []) or [])]
         result["tools"]["mraptor"] = {
             "suspicious": bool(mr.suspicious),
             "flags": flags,
-            "matches": list(getattr(mr, "matches", []) or []),
+            "matches": matches,
+            "legend": "A=AutoExec, W=Write, X=Execute; suspicious = A and (W or X)",
+            **_cli("mraptor", ["-m"], path),
         }
         if mr.suspicious:
+            mods = (result["tools"].get("olevba") or {}).get("modules", [])
+            ev = [line for kw in matches for line in _code_lines(mods, kw)[:2]]
             result["findings"].append(
                 _finding("mraptor", "mraptor_suspicious", "high",
                          f"Likely malicious macro (flags {flags}): "
-                         f"{', '.join(getattr(mr, 'matches', []) or [])}"))
+                         f"{', '.join(matches)}",
+                         evidence="\n".join(ev[:_EVIDENCE_LINES])))
     except Exception as exc:  # noqa: BLE001
         result["tools"]["mraptor"] = {"error": str(exc)}
 
@@ -121,7 +217,7 @@ def _run_msodde(path: Path, result: dict[str, Any]) -> None:
         from oletools import msodde
         out = msodde.process_file(str(path), field_filter_mode=getattr(msodde, "FIELD_FILTER_DDE", None))
         links = [ln.strip() for ln in (out or "").splitlines() if ln.strip()]
-        result["tools"]["msodde"] = {"dde_links": links}
+        result["tools"]["msodde"] = {"dde_links": links, **_cli("msodde", [], path)}
         for link in links:
             result["findings"].append(
                 _finding("msodde", "dde_link", "high", link, "dde"))
@@ -148,7 +244,12 @@ def _run_oleobj(path: Path, extracted_dir: Path | None, result: dict[str, Any]) 
                         "size_bytes": len(raw),
                         "sha256": hashlib.sha256(raw).hexdigest(),
                     })
-        result["tools"]["oleobj"] = {"objects": objects}
+        result["tools"]["oleobj"] = {
+            "objects": objects,
+            "command": f"oleobj (python API) {path.name}",
+            "output": "\n".join(f"{o['stored_path']}  {o['size_bytes']} bytes  sha256 {o['sha256']}"
+                                for o in objects) or "No embedded OLE objects found.",
+        }
         if objects:
             result["findings"].append(
                 _finding("oleobj", "embedded_ole_object", "medium",
@@ -183,7 +284,7 @@ def analyze(original_path: Path, extracted_dir: Path | None = None) -> dict[str,
     code = _run_olevba(original_path, result)
     result["code_text"] = code
     _run_oleid(original_path, result)
-    _run_mraptor(code, result)
+    _run_mraptor(code, original_path, result)
     _run_msodde(original_path, result)
     _run_oleobj(original_path, extracted_dir, result)
 
