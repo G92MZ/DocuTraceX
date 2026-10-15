@@ -27,6 +27,15 @@ _WEB_DIR = Path(__file__).resolve().parent / "web"
 _TEMPLATES = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
 
 
+def _asset_version(static_dir: Path) -> str:
+    """Cache-busting token for /static assets: changes whenever a file changes,
+    so browsers never keep running a stale app.js/app.css after an update."""
+    try:
+        return str(max(int(f.stat().st_mtime) for f in static_dir.iterdir() if f.is_file()))
+    except (OSError, ValueError):
+        return __version__
+
+
 def create_app() -> FastAPI:
     configure_logging(settings.log_level)
     settings.ensure_dirs()
@@ -75,7 +84,8 @@ def create_app() -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
         return _TEMPLATES.TemplateResponse(
-            request, "index.html", {"version": __version__}
+            request, "index.html",
+            {"version": __version__, "asset_version": _asset_version(static_dir)},
         )
 
     log.info("DocuTraceX %s ready", __version__)
