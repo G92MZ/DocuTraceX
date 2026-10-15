@@ -32,6 +32,8 @@ def analyze(original_path: Path) -> dict[str, Any]:
         "status": "ok",
     }
     try:
+        from .. import quiet
+        quiet.silence()  # hide the harmless "pywin32 is not installed" banner
         from XLMMacroDeobfuscator import deobfuscator
         import importlib.metadata as md
         result["tool_version"] = md.version("XLMMacroDeobfuscator")

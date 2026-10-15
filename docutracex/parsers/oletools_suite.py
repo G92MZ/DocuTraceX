@@ -18,6 +18,7 @@ oletools is BSD-licensed and runs on the portable Python.
 from __future__ import annotations
 
 import hashlib
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -51,11 +52,18 @@ def _cli(module: str, args: list[str], path: Path) -> dict[str, Any]:
     sees exactly what the tool reported (stored alongside the parsed result)."""
     from .. import native
 
-    cmd = [sys.executable, "-m", f"oletools.{module}", *args, str(path)]
+    from .. import quiet
+
+    cmd = [sys.executable, "-c", quiet.CLI_WRAPPER, f"oletools.{module}", *args, str(path)]
     shown = " ".join([module, *args, path.name])
+    env = native.subprocess_env()
+    env["PYTHONWARNINGS"] = quiet.WARNINGS_FILTER
+    # The wrapper imports docutracex.quiet: make the package importable.
+    root = str(Path(__file__).resolve().parents[2])
+    env["PYTHONPATH"] = root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=180, env=native.subprocess_env())
+                              errors="replace", timeout=180, env=env)
         out = (proc.stdout or "") + (("\n[stderr]\n" + proc.stderr) if proc.stderr.strip() else "")
         return {"command": shown, "returncode": proc.returncode,
                 "output": out[:_OUTPUT_BOUND], "output_truncated": len(out) > _OUTPUT_BOUND}
@@ -271,6 +279,8 @@ def analyze(original_path: Path, extracted_dir: Path | None = None) -> dict[str,
         "error": None,
         "status": "ok",
     }
+    from .. import quiet
+    quiet.silence()  # before oletools.olevba pulls in XLMMacroDeobfuscator
     try:
         import oletools
         from oletools.olevba import __version__ as olevba_version
