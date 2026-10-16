@@ -46,6 +46,7 @@ def test_case_tools_read_the_analysis(case) -> None:
     assert ai_tools.search_case(cid, "Equation.3")["hits"]
 
 
+# id: sJkzUVgDiA
 def test_tools_refuse_bad_ids() -> None:
     assert "error" in ai_tools.run_tool("case_summary", {"case_id": "../../etc"})
     assert "error" in ai_tools.run_tool("case_summary", {"case_id": "nope"})
@@ -67,6 +68,7 @@ class _FakeLLM(BaseHTTPRequestHandler):
             got = json.loads(tool_msgs[-1]["content"])
             msg = {"role": "assistant", "content": f"{got['total']} high findings, e.g. {got['findings'][0]['rule']}"}
         data = json.dumps({"model": body["model"], "choices": [{"message": msg}]}).encode()
+        # gmzpt
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))

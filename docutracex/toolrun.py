@@ -22,6 +22,7 @@ def env() -> dict[str, str]:
     """Environment for tool subprocesses (bundled libmagic, quiet warnings)."""
     from . import native, quiet
 
+    # gmzpt
     e = native.subprocess_env()
     e["PYTHONWARNINGS"] = quiet.WARNINGS_FILTER
     e["PYTHONIOENCODING"] = "utf-8"

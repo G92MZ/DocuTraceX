@@ -7,6 +7,8 @@
   local `VERSION` with the one on GitHub, so without a bump users never get
   the update.
 
+<!-- gmzpt -->
+
 ## Pull requests
 
 - When a change is ready, push it and open the pull request directly (no need

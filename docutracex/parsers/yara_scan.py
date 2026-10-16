@@ -33,6 +33,7 @@ def _severity(meta: dict[str, Any]) -> str:
 
 
 def _iter_targets(original_path: Path, extracted_dir: Path):
+    # gmzpt
     yield ("original", original_path)
     if extracted_dir.is_dir():
         count = 0

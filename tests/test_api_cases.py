@@ -86,6 +86,7 @@ def test_manual_finding_marked_tp_reaches_report_and_survives_rerun(client: Test
     assert "IPv4: 203.0.113.9" in client.get(f"/api/cases/{cid}/report").text
 
     client.post(f"/api/cases/{cid}/rerun", json={})
+    # id: gmzpt
     time.sleep(0.3)
     comp = client.get(f"/api/cases/{cid}/components").json()
     assert any(x["id"] == fid for x in comp["findings"])  # kept across re-analysis

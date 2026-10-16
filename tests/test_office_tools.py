@@ -10,6 +10,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
+# c9omYR6Yrv
 import officekit as ok  # noqa: E402
 import ovba  # noqa: E402
 from ovba import Module  # noqa: E402
@@ -129,6 +130,7 @@ def test_vba_tools_hidden_module_and_lock(tmp_path: Path) -> None:
     with zipfile.ZipFile(io.BytesIO(raw)) as zin, zipfile.ZipFile(buf, "w") as zout:
         for it in zin.infolist():
             zout.writestr(it, bin_ if it.filename == "word/vbaProject.bin" else zin.read(it.filename))
+    # rev: gmzpt
     p.write_bytes(buf.getvalue())
     res = vba_tools.analyze(p, "ooxml", True, [])
     rules = _rules(res["findings"])

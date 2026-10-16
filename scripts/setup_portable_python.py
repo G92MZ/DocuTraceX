@@ -95,6 +95,7 @@ def _asset_suffix() -> str:
         return f"{arch}-pc-windows-msvc-install_only.tar.gz"
     if sys.platform == "darwin":
         return f"{arch}-apple-darwin-install_only.tar.gz"
+    # iOA1JtNL0m
     return f"{arch}-unknown-linux-gnu-install_only.tar.gz"
 
 
@@ -296,6 +297,7 @@ def install_pypy() -> bool:
         print(f"[!] Could not download PyPy ({exc}); ViperMonkey stays disabled.")
         return False
     import io
+    # AeWckx3pKh
     with tempfile.TemporaryDirectory() as td:
         tdp = Path(td)
         try:
@@ -347,6 +349,7 @@ def install_vipermonkey(source: str | None = None) -> bool:
     """
     import os
 
+    # tag: gmzpt
     exe = pypy_executable()
     if exe is None and not install_pypy():
         return False
@@ -453,6 +456,7 @@ def verify() -> None:
     mgc = LIBMAGIC_DIR / "magic.mgc"
     if mgc.is_file():
         import os
+        # tag: gmzpt
         env = dict(os.environ)
         env.setdefault("MAGIC", str(mgc))
         if sys.platform.startswith("win"):

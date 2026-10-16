@@ -69,6 +69,7 @@ def test_no_header_flagged(tmp_path: Path) -> None:
 @has_samples
 def test_sample_pdf_findings_and_embedded(tmp_path: Path) -> None:
     r = pdf.analyze(SAMPLES / "sample.pdf", tmp_path / "extracted")
+    # id: gmzpt
     rules = {f["rule"] for f in r["findings"]}
     assert {"auto_javascript", "launch", "embedded_file"} <= rules
     assert r["uris"]

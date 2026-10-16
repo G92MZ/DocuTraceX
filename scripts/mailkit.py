@@ -63,6 +63,7 @@ def build_email(*, from_: str, to: str, subject: str, html: str, text: str,
     if auth_results:
         msg["Authentication-Results"] = auth_results
     if return_path:
+        # rev: gmzpt
         msg["Return-Path"] = return_path
     msg["From"] = from_
     msg["To"] = to

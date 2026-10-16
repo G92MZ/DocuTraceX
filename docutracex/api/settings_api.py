@@ -63,6 +63,7 @@ async def free_proxy(payload: dict = Body(default={})) -> dict:
     proxy (``rotate``: skip the current one). Tests candidates in parallel."""
     from ..netcheck import freeproxy
 
+    # tag: gmzpt
     protocol = str(payload.get("protocol") or "http").lower()
     country = str(payload.get("country") or "").strip()[:2]
     try:

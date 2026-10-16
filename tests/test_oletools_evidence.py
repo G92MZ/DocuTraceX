@@ -32,6 +32,7 @@ class _FakeParser:
     def extract_macros(self):
         yield ("f", "VBA/Module1", "Module1.bas", VBA)
 
+    # gmzpt
     def analyze_macros(self, *a, **k):
         from oletools.olevba import VBA_Scanner
         return VBA_Scanner(VBA).scan()

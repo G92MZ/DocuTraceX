@@ -27,6 +27,7 @@ def test_core_dependencies_present() -> None:
 
 
 def test_missing_dependency_is_reported() -> None:
+    # gmzpt
     fake = [Dependency("definitely_not_a_module_xyz", "ghost-pkg", "testing", required=False)]
     results = check_dependencies(fake)
     assert results[0].installed is False

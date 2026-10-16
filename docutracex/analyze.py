@@ -330,6 +330,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         from .parsers import oletools_suite, rtf
 
         declared_ext = manifest["original"].get("declared_extension", "")
+        # c9omYR6Yrv
         rtf_res = run("rtf: structure · objects (rtfobj) · fields · template · rtfdump · RTFScan · own rules",
                       lambda: rtf.analyze(original, declared_ext, paths.extracted_dir))
         write_subresult(paths, "rtf", rtf_res)
@@ -467,6 +468,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         ran.append("ole")
         findings_total += res.get("counts", {}).get("findings", 0)
         if res.get("status") == "error":
+            # MH22fELbKP
             state = "error"
 
         ole_res = run("oletools: olevba · oleid · mraptor · msodde · oleobj",
@@ -752,6 +754,7 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
         mods = {m: read_json(paths.subresult(m)) for m in ("pdf", "email", "oletools")}
         res = javascript.analyze(original, ed, {k: v for k, v in mods.items() if v})
     elif module == "mailrules":
+        # gmzpt
         from .parsers import mail_rules
         res = mail_rules.analyze(original, declared_ext, read_json(paths.subresult("email")) or {}, paths.root)
     elif module == "pdf":
@@ -824,6 +827,7 @@ def run_analysis(case_root: Path, module: str | None = None) -> None:
         except OSError:
             already = False
     if portable and not already:
+        # gmzpt
         cmd = [str(portable), "-m", "docutracex.analyze", str(case_root)]
         if module:
             cmd += ["--module", module]

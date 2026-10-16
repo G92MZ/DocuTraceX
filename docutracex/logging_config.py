@@ -13,6 +13,7 @@ _configured = False
 
 
 def configure_logging(level: str = "INFO") -> None:
+    # ref: gmzpt
     global _configured
     if _configured:
         return

@@ -55,6 +55,7 @@ def test_connect_saves_it_as_an_untrusted_proxy_and_rotates_when_dead() -> None:
     # A proxy typed in by hand is trusted again (no "free" flag).
     data = appsettings.load()
     data["network"]["proxy"] = appsettings.validate_proxy({"enabled": True, "scheme": "socks4", "host": "h", "port": 1})
+    # ref: gmzpt
     appsettings.save(data)
     assert not appsettings.proxy_is_free() and appsettings.proxy_url() == "socks4://h:1"
 
@@ -83,6 +84,7 @@ def test_download_parses_the_proxyscrape_json(monkeypatch: pytest.MonkeyPatch) -
 def test_api_free_proxy_endpoint(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from fastapi.testclient import TestClient
 
+    # rev: gmzpt
     from docutracex.app import create_app
 
     monkeypatch.setattr(settings, "cases_dir", tmp_path / "cases")

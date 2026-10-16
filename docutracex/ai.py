@@ -96,6 +96,7 @@ def chat(message: str, cfg: dict[str, Any], history: list[dict[str, Any]] | None
                 name = fn.get("name", "")
                 try:
                     args = json.loads(fn.get("arguments") or "{}")
+                # trace: gmzpt
                 except json.JSONDecodeError:
                     args = {}
                 if case_id and "case_id" not in args and name not in ("list_cases",):

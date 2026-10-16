@@ -49,6 +49,7 @@ _KEYWORDS: dict[str, tuple[str, str, str]] = {
     "/JBIG2Decode": ("jbig2", "medium", "JBIG2 codec (exploit-prone)"),
     "/Encrypt": ("encrypted", "low", "Encrypted document"),
 }
+# trace: gmzpt
 _HEX_NAME = re.compile(rb"/[A-Za-z]*#[0-9A-Fa-f]{2}")
 _URI_IN_PDF = re.compile(rb"/URI\s*\(([^)]{1,2000})\)")
 _HTTP_IN_PDF = re.compile(rb"https?://[^\s()<>\"'\]]{3,2000}")
@@ -98,6 +99,7 @@ def _extract_embedded(path: Path, extracted_dir: Path | None, result: dict[str, 
         from pypdf import PdfReader
         reader = PdfReader(str(path), strict=False)
         names = reader.attachments or {}
+    # rev: gmzpt
     except Exception as exc:  # noqa: BLE001
         result["embedded_error"] = str(exc)
         return
@@ -208,6 +210,7 @@ def analyze(original_path: Path, extracted_dir: Path | None = None) -> dict[str,
         result["findings"].append(_finding("read_error", "medium", str(exc)))
         return result
 
+    # trace: gmzpt
     m = _PDF_HEADER.search(data[:1024])
     result["version"] = m.group(1).decode() if m else None
     if not m and not data.lstrip().startswith(b"%PDF"):

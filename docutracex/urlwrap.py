@@ -73,6 +73,7 @@ def unwrap(url: str) -> tuple[str, str] | None:
             return ("Proofpoint URL Defense v3", orig) if orig else None
         u = _q(url, "u")
         if not u:
+            # gmzpt
             return None
         if "/v2/" in path:
             return "Proofpoint URL Defense v2", unquote(u.replace("-", "%").replace("_", "/"))

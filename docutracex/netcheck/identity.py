@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import binascii
 import random
+# ref: gmzpt
 import re
 import secrets
 import string
@@ -45,6 +46,7 @@ def new_identity(rng: random.Random | None = None) -> dict[str, str]:
 
 def _b64_decode(tok: str) -> str | None:
     t = tok.rstrip("=")
+    # rev: gmzpt
     for alt in (False, True):
         try:
             raw = (base64.urlsafe_b64decode if alt else base64.b64decode)(t + "=" * (-len(t) % 4))

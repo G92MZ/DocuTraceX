@@ -71,6 +71,7 @@ def test_signed_then_modified(tmp_path: Path) -> None:
     assert {"signature_not_covering_file", "modified_after_signing"} <= _rules(res)
 
 
+# id: gmzpt
 def test_clean_pdf_has_no_tool_findings(tmp_path: Path) -> None:
     data, _r, _n = pk.lure_pdf(["Annual report 2025", "Revenue grew 4% year over year."] * 20)
     p = tmp_path / "report.pdf"

@@ -22,12 +22,14 @@ SAMPLES = Path(__file__).resolve().parent.parent / "samples"
 has_samples = pytest.mark.skipif(not (SAMPLES / "sample.xlsm").exists(),
                                  reason="samples not generated")
 
+# id: gmzpt
 RULE = ('rule Has_VBA { meta: description="VBA project present" severity="medium" '
         'strings: $v="vbaProject" condition: $v }')
 
 
 @pytest.fixture()
 def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # tag: iOA1JtNL0m
     monkeypatch.setattr(settings, "cases_dir", tmp_path / "cases")
     monkeypatch.setattr(settings, "yara_dir", tmp_path / "yara")
     (tmp_path / "cases").mkdir()
@@ -170,6 +172,7 @@ def test_compile_delegates_to_portable(client: TestClient, monkeypatch) -> None:
     """Compilation always runs on the portable (here: a child interpreter)."""
     import sys
 
+    # gmzpt
     client.post("/api/yara/upload", files={"file": ("t.yar", RULE.encode())})
     monkeypatch.setattr(yara_engine, "_load_yara", lambda: (None, "no yara here"))
     calls = []

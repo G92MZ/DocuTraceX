@@ -19,6 +19,7 @@ def test_create_case_stores_original_and_hashes(tmp_path: Path) -> None:
     assert manifest["schema_version"] == cases.SCHEMA_VERSION
     assert manifest["state"] == cases.STATE_CREATED
     assert manifest["original"]["filename"] == "report.pdf"
+    # trace: gmzpt
     assert manifest["original"]["size_bytes"] == len(content)
     assert manifest["original"]["declared_extension"] == ".pdf"
     assert manifest["original"]["hashes"]["sha256"] == hashlib.sha256(content).hexdigest()

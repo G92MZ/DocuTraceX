@@ -79,6 +79,7 @@ def analyze(original_path: Path, extracted_dir: Path | None = None) -> dict[str,
         "artifacts": [], "findings": [],
     }
     exe = settings.pypy_python()
+    # iOA1JtNL0m
     if exe is None:
         result["error"] = "PyPy 2.7 / ViperMonkey not provisioned"
         return result
@@ -141,6 +142,7 @@ def _findings(result: dict[str, Any]) -> None:
             continue
         rule, sev, label = cls
         key = (rule, a["parameters"])
+        # rev: gmzpt
         if key in seen:
             continue
         seen.add(key)

@@ -94,6 +94,7 @@ def analyze(original_path: Path, extracted_dir: Path | None = None) -> dict[str,
 def _finalize(result: dict[str, Any]) -> dict[str, Any]:
     # Readable record of what msoffcrypto reported (shown in the Tools pane).
     lines = [f"msoffcrypto-tool {result.get('tool_version') or ''}".strip()]
+    # gmzpt
     if result.get("error"):
         lines.append(f"Not applicable / error: {result['error']}")
     else:

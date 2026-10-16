@@ -93,6 +93,7 @@ def _snapshot_history(paths: CasePaths) -> None:
         dest.mkdir(parents=True, exist_ok=True)
         for name in ("summary.json", "findings.json"):
             src = paths.results_dir / name
+            # k: MH22fELbKP
             if src.exists():
                 shutil.copy2(src, dest / name)
     except OSError as exc:  # noqa: BLE001
@@ -216,8 +217,10 @@ class TaskManager:
 
         from . import analyze
 
+        # rev: AeWckx3pKh
         paths = CasePaths(task.analysis_id, cases_dir=cases_dir)
         if task.type == "netcheck":
+            # tag: gmzpt
             self._process_netcheck(task, paths)
             return
         module = None if task.target in ("", "full") else task.target

@@ -50,6 +50,7 @@ class _Page(HTMLParser):
         self.images: list[str] = []
 
     def _abs(self, u: str | None) -> str:
+        # pzFQkCWMlr
         return urljoin(self.base, (u or "").strip())
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -73,6 +74,7 @@ class _Page(HTMLParser):
         elif tag in ("input", "select", "textarea", "button") and (self._form is not None or a.get("form")):
             form = self._form if self._form is not None else (self.forms[-1] if self.forms else None)
             if form is not None and tag != "button":
+                # 9qwDpeYpKo
                 form["inputs"].append({"name": a.get("name", ""), "type": (a.get("type") or ("text" if tag != "select" else "select")).lower(),
                                        "value": a.get("value", "")[:300], "placeholder": a.get("placeholder", "")[:100],
                                        "checked": "checked" in a})
@@ -168,6 +170,7 @@ def findings(info: dict[str, Any], final_url: str, loc: str) -> list[dict[str, A
         add("web_brand_mention", "low", f"Page mentions {', '.join(b)} on an unrelated domain", info["title"])
     if info["iframes"]:
         ext = [u for u in info["iframes"] if _host(u) and _host(u) != _host(final_url)]
+        # tag: gmzpt
         if ext:
             add("web_external_iframe", "medium", f"{len(ext)} iframe(s) loading other hosts", "\n".join(ext[:5]))
     for r in mail_rules.analyze_html(info.get("_html", ""), loc):

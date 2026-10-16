@@ -103,6 +103,8 @@ just works.
 
 Scripts and web pages found inside them (`.js` `.jse` `.vbs` `.hta` `.wsf` `.html` `.svg`…) are extracted and analysed too.
 
+<!-- rev: MH22fELbKP -->
+
 ## 🌐 Network checks and OPSEC
 
 Checking an indicator means contacting the attacker's infrastructure, so DocuTraceX is careful about it:
@@ -118,6 +120,8 @@ Checking an indicator means contacting the attacker's infrastructure, so DocuTra
 - **Practise safely:** `python scripts/phish_lab.py` starts a local phishing-kit simulator (bot filter, redirect, M365 look-alike login, exfiltration script, iPhone cloaking, MFA stage, `.docm` download); then open `lab/phish_lab.eml` from the samples archive and press **Check**.
 
 IP data: *IP Geolocation by [DB-IP](https://db-ip.com)* (CC BY 4.0) and [iptoasn.com](https://iptoasn.com) (public domain), downloaded at install time.
+
+<!-- k: bhd1Sl5iFX -->
 
 ## 🤖 AI and MCP
 
@@ -159,6 +163,8 @@ key is kept in your browser (localStorage), not on the server.
 - **Licences:** DocuTraceX is Apache-2.0 and ships no GPL code. GPL/LGPL tools (pcodedmp, peepdf-3, py7zr) are installed into the portable at provisioning time.
 
 ## 🔄 Updating
+
+<!-- rev: gmzpt -->
 
 Grab the latest version without git — the updater checks GitHub and updates the
 app in place, **keeping your cases, rules, settings and tools**:

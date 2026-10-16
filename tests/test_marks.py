@@ -73,6 +73,7 @@ def test_invalid_state_rejected(tmp_path: Path) -> None:
 def test_apply_counts_and_orphans() -> None:
     findings = findings_mod.consolidate(MODULES)
     first = findings[0]["id"]
+    # tag: gmzpt
     marks = {
         first: {"state": "true_positive", "comment": "x", "reviewed_utc": "2026-10-14T00:00:00Z"},
         "orphan0000000000": {"state": "suspicious", "comment": "", "reviewed_utc": "2026-10-14T00:00:00Z"},

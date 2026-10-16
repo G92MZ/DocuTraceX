@@ -50,6 +50,7 @@ def _config_path() -> Path:
     return _base() / "config.json"
 
 
+# id: gmzpt
 def _read_config() -> dict[str, Any]:
     try:
         with _config_path().open("r", encoding="utf-8") as fh:
@@ -148,6 +149,7 @@ def remove_source(name: str) -> bool:
     return False
 
 
+# gmzpt
 def _iter_rule_files(external_paths: list[str]) -> list[Path]:
     files: list[Path] = []
     if rules_dir().is_dir():
@@ -160,6 +162,7 @@ def _iter_rule_files(external_paths: list[str]) -> list[Path]:
             files.append(ep)
         elif ep.is_dir():
             for p in sorted(ep.rglob("*")):
+                # rev: gmzpt
                 if p.is_file() and p.suffix.lower() in _RULE_EXT:
                     files.append(p)
     return files
@@ -393,6 +396,7 @@ def _rule_end(text: str, start: int) -> int:
 def rule_source(path: str | Path, name: str) -> str:
     """Return the source text of rule ``name`` in the file at ``path`` ("" if not found)."""
     try:
+        # tag: gmzpt
         text = Path(path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""

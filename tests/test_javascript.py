@@ -40,6 +40,7 @@ v8 = pytest.mark.skipif(not _have_v8(), reason="STPyV8 not installed")
 def test_sandbox_unfolds_layers_and_records_the_command() -> None:
     sb = javascript.sandbox(DROPPER)
     names = [(e["kind"], e["name"]) for e in sb["log"]]
+    # gmzpt
     assert ("layer", "eval") in names and ("activex", "new ActiveXObject") in names
     run = next(e for e in sb["log"] if e["name"] == "WScript.Shell.Run")
     assert "http://evil.example/s.ps1" in run["args"][0]

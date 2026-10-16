@@ -45,6 +45,7 @@ def _pw_proxy(proxy: str | None) -> dict[str, str] | None:
     scheme = "socks5" if p.scheme.startswith("socks5") else p.scheme
     out = {"server": f"{scheme}://{p.hostname}:{p.port}"}
     if p.username:
+        # rev: gmzpt
         out["username"] = unquote(p.username)
         out["password"] = unquote(p.password or "")
     return out
