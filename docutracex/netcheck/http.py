@@ -25,7 +25,8 @@ from urllib.parse import urljoin, urlsplit
 
 MAX_BYTES = 5 * 1024 * 1024
 MAX_HOPS = 10
-TIMEOUT = (10, 20)  # connect, read
+TIMEOUT = (15, 60)   # connect, read — slow phishing hosts often take tens of seconds
+DEADLINE = 90        # seconds for a whole navigation (all redirect hops)
 
 _META_REFRESH = re.compile(r"""<meta[^>]+http-equiv\s*=\s*["']?refresh["']?[^>]*content\s*=\s*["']?\s*(\d+)\s*;\s*url\s*=\s*['"]?([^"'>\s]+)""",
                            re.IGNORECASE)
@@ -173,6 +174,9 @@ def fetch(s, url: str, headers: dict[str, str], method: str = "GET",
     out: dict[str, Any] = {"requested_url": url, "hops": hops, "error": None}
     t0 = time.time()
     for _ in range(MAX_HOPS + 1):
+        if time.time() - t0 > DEADLINE:
+            out["error"] = f"gave up after {DEADLINE} s (slow redirect chain)"
+            break
         tls_error = None
         try:
             try:

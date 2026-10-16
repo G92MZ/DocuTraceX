@@ -553,7 +553,7 @@ function paneIocs(iocs, net) {
   }).join("");
   const c = iocs.counts || {};
   const bits = Object.keys(c).filter((k) => k !== "total").map((k) => `${c[k]} ${k}`);
-  const allBtn = safe.length ? ` <button class="btn btn-ghost btn-sm" type="button" data-net-all='${escapeHtml(JSON.stringify(safe))}' title="DNS, RDAP, certificates and IP owner — never contacts the URLs themselves">Check all domains &amp; IPs</button>` : "";
+  const allBtn = safe.length ? ` <button class="btn btn-ghost btn-sm" type="button" data-net-all='${escapeHtml(JSON.stringify(safe))}' title="Domains: DNS, RDAP, certificates and a visit to the website (screenshot, page). IPs: owner, ASN, Tor. Through the proxy.">Check all domains &amp; IPs</button>` : "";
   return `<p class="hint-line">${escapeHtml(bits.join(" · "))}${allBtn}</p>` +
     table(["Type", "Value", "Count", "Provenance", "Mark", "Network"], rows);
 }
@@ -2303,12 +2303,18 @@ function netViewHtml(analysisId, v, title, rec, isDesktop) {
 }
 
 function netUrlCard(analysisId, c) {
-  const views = c.views || {};
   let body = `<div class="ident-box"><b>Fake identity used:</b> <span class="mono">${escapeHtml(c.identity.email)}</span> · password <span class="mono">${escapeHtml(c.identity.password)}</span>
     ${(c.replacements || []).length ? `<div class="hint-line">Victim data replaced in the URL: ${c.replacements.map((r) => `${escapeHtml(r.where)} (${escapeHtml(r.encoding)}): ${escapeHtml(r.original)} → ${escapeHtml(r.replacement)}`).join("<br>")}</div>
       <div class="hint-line">Fetched: <span class="mono">${escapeHtml(c.fetched_url)}</span></div>` : '<div class="hint-line">No victim data found in the URL.</div>'}
     ${c.referer ? `<div class="hint-line">Referer sent: ${escapeHtml(c.referer)} (link clicked from webmail)</div>` : ""}</div>`;
-  body += `<div class="net-views">${netViewHtml(analysisId, views.desktop, "Desktop — Edge on Windows", c, true)}${netViewHtml(analysisId, views.iphone, "Mobile — Safari on iPhone", c, false)}</div>`;
+  return body + netWebHtml(analysisId, c);
+}
+
+// The website part of a check (URL, or a domain's site): both views, live
+// screenshot, submissions, served files and the findings.
+function netWebHtml(analysisId, c) {
+  const views = c.views || {};
+  let body = `<div class="net-views">${netViewHtml(analysisId, views.desktop, "Desktop — Edge on Windows", c, true)}${netViewHtml(analysisId, views.iphone, "Mobile — Safari on iPhone", c, false)}</div>`;
   const live = c.live_screenshot;
   body += `<div style="margin-top:10px"><button class="btn btn-ghost btn-sm" type="button" data-net-kind="shot_live" data-net-check="${c.id}" title="Loads the page with its images and CSS (JavaScript still off) — contacts the server again, through the proxy">Live screenshot (loads resources)</button></div>`;
   if (live) {
@@ -2326,9 +2332,19 @@ function netUrlCard(analysisId, c) {
   return body;
 }
 
-function netDomainCard(c) {
+function netDomainCard(analysisId, c) {
   const d = c.data || {};
   if (d.note) return `<p class="hint-line">${escapeHtml(d.note)}</p>` + netFindingsList(c.findings || []);
+  if (c.views && c.views.desktop) {
+    return netDomainInfo(d) + `<h4 style="margin:14px 0 4px">Website — <span class="mono">${escapeHtml(c.fetched_url || "")}</span></h4>`
+      + `<div class="ident-box">Fake identity for forms: <span class="mono">${escapeHtml((c.identity || {}).email || "")}</span></div>`
+      + netWebHtml(analysisId, c);
+  }
+  return netDomainInfo(d) + `<p class="hint-line">Website not visited (the domain does not resolve).</p>`
+    + `<h4 style="margin:14px 0 4px">Findings (${(c.findings || []).length})</h4>` + netFindingsList(c.findings || []);
+}
+
+function netDomainInfo(d) {
   const dns = (d.dns || {}).records || {};
   let h = `<div class="net-views"><div class="net-view"><h4>DNS</h4>${(d.dns || {}).nxdomain ? '<p class="bad-text">NXDOMAIN — does not resolve</p>' : ""}`
     + kv(Object.entries(dns).map(([k, v]) => [k, v.join(", ")])) + `</div>`;
@@ -2337,7 +2353,7 @@ function netDomainCard(c) {
   const ct = d.ct || {};
   h += `<div class="net-view"><h4>Certificate Transparency (crt.sh)</h4>${ct.error || ct.note ? `<p class="hint-line">${escapeHtml(ct.error || ct.note)}</p>` : kv([["Certificates", ct.count], ["First seen", ct.first_seen ? `${ct.first_seen} (${ct.first_seen_days} days ago)` : ""], ["Issuers", (ct.issuers || []).join(", ")]])
     + ((ct.names || []).length ? `<details class="disclose"><summary>Names (${ct.names.length})</summary><p class="mono">${escapeHtml(ct.names.join("  "))}</p></details>` : "")}</div></div>`;
-  return h + `<h4 style="margin:14px 0 4px">Findings (${(c.findings || []).length})</h4>` + netFindingsList(c.findings || []);
+  return h;
 }
 
 function netIpCard(c) {
@@ -2358,7 +2374,7 @@ function paneChecks(analysisId, net) {
   return checks.slice().sort((a, b) => (order[a.kind] - order[b.kind]) || a.target.localeCompare(b.target)).map((c) => {
     const fs = c.findings || [];
     const sev = fs.some((f) => f.severity === "high") ? "bad" : (fs.length ? "warn" : "ok");
-    const body = c.kind === "url" ? netUrlCard(analysisId, c) : (c.kind === "domain" ? netDomainCard(c) : netIpCard(c));
+    const body = c.kind === "url" ? netUrlCard(analysisId, c) : (c.kind === "domain" ? netDomainCard(analysisId, c) : netIpCard(c));
     return `<details class="net-card"${sev === "bad" ? " open" : ""}><summary>
         <span class="badge badge-muted">${escapeHtml(c.kind)}</span><span class="mono">${escapeHtml(c.target)}</span>
         <span class="badge badge-${sev}">${fs.length} finding(s)</span>
