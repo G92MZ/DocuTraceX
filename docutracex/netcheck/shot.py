@@ -3,7 +3,7 @@
 Run as a separate process with a time limit:
 
     python -m docutracex.netcheck.shot offline <page.html> <out.png>
-    python -m docutracex.netcheck.shot live <url> <out.png> [proxy_url] [user_agent]
+    python -m docutracex.netcheck.shot live <url> <out.png> [proxy_url] [user_agent] [strict]
 
 - ``offline``: renders the HTML already downloaded, with *every* network
   request blocked — contacts nobody.
@@ -24,6 +24,7 @@ from urllib.parse import unquote, urlsplit
 from ..config import settings
 
 VIEWPORT = {"width": 1280, "height": 900}
+GOTO_TIMEOUT_MS = 60000  # live page load (slow hosts); the whole process is capped by the caller
 
 
 def browsers_path() -> Path:
@@ -79,24 +80,25 @@ def main(argv: list[str]) -> int:
 
     mode, target, out = argv[0], argv[1], argv[2]
     proxy = argv[3] if len(argv) > 3 and argv[3] else None
-    ua = argv[4] if len(argv) > 4 else None
+    ua = argv[4] if len(argv) > 4 and argv[4] else None
+    strict = len(argv) > 5 and argv[5] == "strict"  # free (untrusted) proxy: never accept a bad certificate
     res = {"ok": False, "mode": mode}
     with sync_playwright() as p:
         browser = _launch(p, _pw_proxy(proxy) if mode == "live" else None)
         try:
             ctx = browser.new_context(java_script_enabled=False, viewport=VIEWPORT, user_agent=ua,
-                                      locale="es-ES", accept_downloads=False, ignore_https_errors=True,
+                                      locale="es-ES", accept_downloads=False, ignore_https_errors=not strict,
                                       service_workers="block")
             page = ctx.new_page()
             if mode == "offline":
                 page.route("**/*", lambda route: route.abort())
                 page.set_content(Path(target).read_text(encoding="utf-8", errors="replace"), wait_until="domcontentloaded",
-                                 timeout=15000)
+                                 timeout=30000)
             else:
-                resp = page.goto(target, wait_until="load", timeout=30000)
+                resp = page.goto(target, wait_until="load", timeout=GOTO_TIMEOUT_MS)
                 res["status"] = resp.status if resp else None
                 res["final_url"] = page.url
-            page.screenshot(path=out, full_page=True, timeout=15000)
+            page.screenshot(path=out, full_page=True, timeout=30000)
             res["ok"] = True
         except Exception as exc:  # noqa: BLE001
             res["error"] = f"{exc.__class__.__name__}: {str(exc)[:300]}"

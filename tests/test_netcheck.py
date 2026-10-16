@@ -263,3 +263,44 @@ def test_check_runs_as_a_subprocess_like_on_the_portable(tmp_path: Path) -> None
     assert proc.returncode == 0, proc.stderr[-800:]
     net = read_json(CasePaths(root.name, cases_dir=root.parent).subresult("netcheck"))
     assert net["checks"][0]["target"] == "login.rnicrosoft-online.example"
+
+
+def test_domain_check_visits_the_website(lab: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A domain that resolves gets its site visited like a URL: both views,
+    page analysis, cloaking, screenshot/preview and forms (fake credentials)."""
+    from docutracex import netcheck
+    from docutracex.netcheck import domain
+    from docutracex.storage import CasePaths, read_json
+
+    shots = []
+    monkeypatch.setattr(netcheck, "_shot", lambda *a, **k: shots.append(a[0]) or {"ok": False, "error": "skipped"})
+    monkeypatch.setattr(domain, "check", lambda s, host: ({"host": host, "dns": {"records": {"A": ["127.0.0.1"]},
+                                                                                 "nxdomain": False}}, []))
+    # https on the lab port fails (plain HTTP server) -> falls back to http, like a real site without TLS.
+    port = lab.rsplit(":", 1)[1]
+    monkeypatch.setattr(netcheck, "site_candidates", lambda host: [f"https://127.0.0.1:{port}/owa/?e=",
+                                                                   f"http://127.0.0.1:{port}/owa/?e="])
+    root = _case(tmp_path)
+    paths = CasePaths(root.name, cases_dir=root.parent)
+    netcheck.run(root, {"kind": "domain", "target": "portal-pagos.example.net"})
+    c = read_json(paths.subresult("netcheck"))["checks"][0]
+    assert c["kind"] == "domain" and c["fetched_url"].startswith("http://")
+    desk = c["views"]["desktop"]
+    assert desk["status"] == 200 and desk["page"]["forms"][0]["has_password"] and desk.get("preview_path")
+    assert shots == ["offline"]
+    rules = {f["rule"] for f in c["findings"]}
+    assert {"web_credential_form", "web_cloaking"} <= rules
+    assert all(f["location"].startswith("netcheck:domain:") for f in c["findings"])
+    netcheck.run(root, {"kind": "submit", "check_id": c["id"], "form": 0})
+    c = read_json(paths.subresult("netcheck"))["checks"][0]
+    assert c["submissions"][0]["view"]["page"]["title"] == "Comprobar su identidad"
+
+
+def test_unresolved_domain_is_not_visited(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from docutracex import netcheck
+    from docutracex.netcheck import domain
+
+    monkeypatch.setattr(domain, "check", lambda s, host: ({"host": host, "dns": {"records": {}, "nxdomain": True}}, []))
+    monkeypatch.setattr(netcheck, "_visit", lambda *a, **k: (_ for _ in ()).throw(AssertionError("visited")))
+    rec = netcheck.check_domain(None, "gone.example.org", None)
+    assert "views" not in rec
