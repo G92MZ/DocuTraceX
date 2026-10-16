@@ -241,3 +241,25 @@ def test_loaded_settings_never_alias_the_defaults() -> None:
     data = appsettings.load()
     data["network"]["proxy"]["host"] = "mutated"
     assert appsettings.DEFAULTS["network"]["proxy"]["host"] == ""
+
+
+def test_check_runs_as_a_subprocess_like_on_the_portable(tmp_path: Path) -> None:
+    """The task queue runs `python -m docutracex.netcheck <case> <json>` on the
+    portable interpreter: the package must be executable with -m."""
+    import json
+    import os
+    import subprocess
+
+    from docutracex import cases
+    from docutracex.storage import CasePaths, read_json
+
+    with (ROOT / "samples" / "sample.rtf").open("rb") as fh:
+        m = cases.create_case(fh, "x.rtf", cases_dir=tmp_path / "cases")
+    root = tmp_path / "cases" / m["analysis_id"]
+    env = dict(os.environ, PYTHONPATH=str(ROOT), DOCUTRACEX_CONFIG_DIR=str(tmp_path / "config"))
+    proc = subprocess.run([sys.executable, "-m", "docutracex.netcheck", str(root),
+                           json.dumps({"kind": "domain", "target": "login.rnicrosoft-online.example"})],
+                          capture_output=True, text=True, timeout=120, env=env, cwd=str(tmp_path))
+    assert proc.returncode == 0, proc.stderr[-800:]
+    net = read_json(CasePaths(root.name, cases_dir=root.parent).subresult("netcheck"))
+    assert net["checks"][0]["target"] == "login.rnicrosoft-online.example"
