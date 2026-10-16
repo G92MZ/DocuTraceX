@@ -149,7 +149,7 @@ def get_network_checks(case_id: str) -> dict[str, Any]:
                                "via": c.get("via"),
                                "findings": [f"{f.get('severity')} {f.get('rule')}: {_clip(f.get('detail'), 200)}"
                                             for f in c.get("findings", [])][:30]}
-        if c.get("kind") == "url":
+        if c.get("views"):  # URL checks, and the website of a checked domain
             views = {}
             for name, v in (c.get("views") or {}).items():
                 pg = v.get("page") or {}
@@ -164,7 +164,7 @@ def get_network_checks(case_id: str) -> dict[str, Any]:
                                    "final_url": (s.get("view") or {}).get("final_url"),
                                    "title": ((s.get("view") or {}).get("page") or {}).get("title")}
                                   for s in c.get("submissions", [])]
-        else:
+        if c.get("kind") != "url":
             rec["data"] = c.get("data", {})
         out.append(rec)
     return {"checks": out, "count": len(out)}

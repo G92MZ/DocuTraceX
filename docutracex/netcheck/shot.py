@@ -24,6 +24,7 @@ from urllib.parse import unquote, urlsplit
 from ..config import settings
 
 VIEWPORT = {"width": 1280, "height": 900}
+GOTO_TIMEOUT_MS = 60000  # live page load (slow hosts); the whole process is capped by the caller
 
 
 def browsers_path() -> Path:
@@ -91,12 +92,12 @@ def main(argv: list[str]) -> int:
             if mode == "offline":
                 page.route("**/*", lambda route: route.abort())
                 page.set_content(Path(target).read_text(encoding="utf-8", errors="replace"), wait_until="domcontentloaded",
-                                 timeout=15000)
+                                 timeout=30000)
             else:
-                resp = page.goto(target, wait_until="load", timeout=30000)
+                resp = page.goto(target, wait_until="load", timeout=GOTO_TIMEOUT_MS)
                 res["status"] = resp.status if resp else None
                 res["final_url"] = page.url
-            page.screenshot(path=out, full_page=True, timeout=15000)
+            page.screenshot(path=out, full_page=True, timeout=30000)
             res["ok"] = True
         except Exception as exc:  # noqa: BLE001
             res["error"] = f"{exc.__class__.__name__}: {str(exc)[:300]}"
