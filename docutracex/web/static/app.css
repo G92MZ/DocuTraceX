@@ -400,3 +400,20 @@ table.cases td.mono { word-break: break-all; }
 .hop-list { font-size: 12px; margin: 4px 0 0; padding-left: 18px; }
 .hop-list li { overflow-wrap: anywhere; }
 .ident-box { background: #151c27; border: 1px dashed #3b4a62; border-radius: 8px; padding: 8px 12px; font-size: 13px; margin: 8px 0; }
+
+/* AI tab */
+.ai-cfg .wide { grid-column: 1 / -1; }
+.ai-ask { display: flex; margin: 12px 0; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ai-q { flex: 1 1 320px; min-width: 0; background: #0f141c; border: 1px solid var(--panel-border); border-radius: 8px;
+  color: var(--text); padding: 9px 11px; font: inherit; font-size: 14px; }
+.ai-out { display: flex; flex-direction: column; gap: 10px; }
+.ai-msg { border: 1px solid var(--panel-border); border-radius: 10px; padding: 10px 14px; white-space: pre-wrap;
+  overflow-wrap: anywhere; line-height: 1.5; font-size: 14px; }
+.ai-msg.me { background: #142132; border-color: #2b4a6b; }
+.ai-msg.bot { background: #10151d; }
+.ai-trace { margin-top: 8px; font-size: 12px; color: var(--text-dim); font-family: ui-monospace, monospace; white-space: pre-wrap; }
+.mcp-block { position: relative; }
+.mcp-block pre { margin: 6px 0 14px; }
+.mcp-copy { position: absolute; top: 6px; right: 6px; }
+.ai-case-select { background: #0f141c; border: 1px solid var(--panel-border); border-radius: 8px; color: var(--text);
+  padding: 7px 9px; font: inherit; font-size: 14px; max-width: 100%; min-width: 0; }
