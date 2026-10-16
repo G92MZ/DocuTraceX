@@ -22,6 +22,8 @@ htmlcov/
 !/tools/.gitkeep
 /yara/*
 !/yara/.gitkeep
+# Local settings (proxy credentials...)
+/config/
 
 # OS / editor
 .DS_Store

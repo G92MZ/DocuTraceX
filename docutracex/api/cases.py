@@ -270,3 +270,84 @@ async def remove_manual_finding(analysis_id: str, finding_id: str) -> dict:
     if not marks_service.remove_manual(CasePaths(analysis_id), finding_id):
         raise HTTPException(status_code=404, detail="Manual finding not found")
     return {"removed": finding_id}
+
+
+# --- network checks (on demand, through the configured proxy) -----------------------
+
+_NET_KINDS = ("url", "domain", "ip", "submit", "shot_live")
+
+
+@router.post("/{analysis_id}/netcheck")
+async def queue_netcheck(analysis_id: str, payload: dict = Body(...)) -> dict:
+    """Queue a network check: ``{"kind": "url"|"domain"|"ip", "target": ...}``,
+    ``{"kind": "submit", "check_id": ..., "form": n}`` or
+    ``{"kind": "shot_live", "check_id": ...}``."""
+    import ipaddress
+    import re as _re
+
+    from ..tasks import manager
+
+    try:
+        manifest = case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    kind = str(payload.get("kind") or "")
+    if kind not in _NET_KINDS:
+        raise HTTPException(status_code=400, detail=f"kind must be one of {', '.join(_NET_KINDS)}")
+    params: dict = {"kind": kind}
+    target = str(payload.get("target") or "").strip()
+    if kind == "url":
+        if not _re.match(r"^https?://[^\s/]+", target, _re.I):
+            raise HTTPException(status_code=400, detail="target must be an http(s) URL")
+        params["target"] = target
+    elif kind == "domain":
+        if not _re.match(r"^(?=.{1,253}$)([a-z0-9-]{1,63}\.)+[a-z0-9-]{2,63}$", target.lower().rstrip(".")):
+            raise HTTPException(status_code=400, detail="target must be a domain name")
+        params["target"] = target.lower().rstrip(".")
+    elif kind == "ip":
+        try:
+            params["target"] = str(ipaddress.ip_address(target))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="target must be an IP address") from exc
+    else:
+        params["check_id"] = str(payload.get("check_id") or "")
+        if not _re.fullmatch(r"[0-9a-f]{12}", params["check_id"]):
+            raise HTTPException(status_code=400, detail="check_id required")
+        if kind == "submit":
+            params["form"] = int(payload.get("form") or 0)
+    task = manager.submit("netcheck", analysis_id, manifest["original"]["filename"],
+                          target=f"netcheck:{kind}", cases_dir=settings.cases_dir, params=params)
+    return {"task": task.public()}
+
+
+@router.get("/{analysis_id}/netcheck")
+async def get_netcheck(analysis_id: str) -> dict:
+    from ..storage import CasePaths, read_json
+
+    try:
+        case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return read_json(CasePaths(analysis_id).subresult("netcheck")) or {"checks": []}
+
+
+@router.get("/{analysis_id}/netcheck/asset")
+async def netcheck_asset(analysis_id: str, path: str):
+    """Serve a check's screenshot (PNG) or safe preview (HTML) inline. Previews
+    get a CSP that blocks scripts and every network load; the UI also shows
+    them in a sandboxed iframe."""
+    from fastapi.responses import FileResponse
+
+    try:
+        case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if not path.startswith("extracted/netcheck/") or not path.endswith((".png", ".preview.html")):
+        raise HTTPException(status_code=400, detail="Not a network-check asset")
+    target = _safe_target(analysis_id, path)
+    if path.endswith(".png"):
+        return FileResponse(str(target), media_type="image/png")
+    return FileResponse(str(target), media_type="text/html; charset=utf-8", headers={
+        "Content-Security-Policy": ("default-src 'none'; style-src 'unsafe-inline'; img-src data:; "
+                                    "font-src data:; form-action 'none'; sandbox"),
+        "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer"})

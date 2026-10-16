@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import __version__
 from .api.cases import router as cases_router
+from .api.settings_api import router as settings_router
 from .api.yara import router as yara_router
 from .config import settings
 from .deps import log_startup_report, run_checks
@@ -56,6 +57,7 @@ def create_app() -> FastAPI:
 
     app.include_router(cases_router)
     app.include_router(yara_router)
+    app.include_router(settings_router)
 
     @app.get("/health", response_class=JSONResponse)
     async def health() -> dict:

@@ -55,6 +55,16 @@ python scripts/make_samples.py
 | `sample.emlx` | The same message in Apple Mail's `.emlx` wrapper. |
 | `sample.msg` | The same message as an Outlook `.msg` (MAPI streams, HTML body, the same attachments). |
 
+## Lab: test the network checks safely
+
+`samples/lab/phish_lab.eml` is the same campaign with its link and an attached login form pointing to a **local phishing-kit simulator**:
+
+```bash
+python scripts/phish_lab.py      # serves http://127.0.0.1:8808 (Ctrl+C to stop)
+```
+
+Open the email in DocuTraceX and press **Check** on the `127.0.0.1` URL in the IOCs tab. The simulator behaves like a real kit: a bot filter (no browser headers → 404), a redirect, a Microsoft 365 look-alike login prefilled with the address from the link, an obfuscated script that "exfiltrates" to a `*.example` URL, a different page for iPhones (cloaking), and — after **Send fake credentials** — an MFA page linking to a `.docm` download. The simulator's console prints the fake identity it receives.
+
 ## Third-party
 
 | File | Source | License |

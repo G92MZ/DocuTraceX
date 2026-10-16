@@ -310,6 +310,22 @@ def sources_from_modules(modules: dict[str, dict[str, Any]]) -> list[dict[str, A
             if f.get("rule") in ("ole2link", "remote_template", "unc_file_target"):
                 add("rtf", f.get("rule"), f.get("evidence"))
 
+    # Network checks: what the checks revealed (redirect hops, final URLs, form
+    # targets, served files) — not every link of the fetched page.
+    net = modules.get("netcheck")
+    if net:
+        for c in net.get("checks", []) or []:
+            if c.get("kind") != "url":
+                continue
+            views = list((c.get("views") or {}).values()) + [s.get("view") or {} for s in c.get("submissions", []) or []]
+            for v in views:
+                for h in v.get("hops", []) or []:
+                    add("netcheck", f"{c['target']}/hop", h.get("url"))
+                for f in (v.get("page") or {}).get("forms", []) or []:
+                    add("netcheck", f"{c['target']}/form", f.get("action"))
+            for d in c.get("downloads", []) or []:
+                add("netcheck", f"{c['target']}/download", f"{d.get('url')} {d.get('sha256')}")
+
     # PDF tools: decoded QR codes and the targets of the own PDF rules.
     pt = modules.get("pdftools")
     if pt:
