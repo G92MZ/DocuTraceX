@@ -54,6 +54,15 @@ def case_password(paths: CasePaths) -> str | None:
     return pw if isinstance(pw, str) and pw != "" else None
 
 
+def case_wordlist(paths: CasePaths) -> bool:
+    """True when the analyst asked to try every word of the email as a password
+    (the "Try every word of the email" button)."""
+    try:
+        return bool((read_json(paths.password) or {}).get("wordlist"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _unlock_original(original: Path, paths: CasePaths, user_pw: str | None) -> dict[str, Any]:
     """Decrypt an encrypted Office/PDF original into extracted/decrypted/."""
     from . import unlock
@@ -404,9 +413,18 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         # Passwords given in the mail ("the password is 1234") unlock its
         # encrypted attachments (Office, PDF, ZIP/7z).
         harvested = _harvest_mail_passwords(mail_res, paths) if mail_res else []
-        nested_res = run("nested: recursive scan of attachments (unlocking encrypted ones)",
-                         lambda: nested.scan_children(items, paths,
-                                                      unlock_ctx={"user": user_pw, "harvested": harvested}))
+        ctx: dict[str, Any] = {"user": user_pw, "harvested": harvested}
+        if mail_res and case_wordlist(paths):
+            # On request: every word of the email is tried on its encrypted
+            # attachments too (no limit — it takes what it takes).
+            from . import passwords
+            ctx["words"] = passwords.email_words(mail_res)
+            ctx["wordlist"] = True
+            mail_res["wordlist"] = {"enabled": True, "candidates": len(ctx["words"])}
+            write_subresult(paths, "email", mail_res)
+        nested_res = run("nested: recursive scan of attachments (unlocking encrypted ones)"
+                         + (" · trying every word of the email" if ctx.get("wordlist") else ""),
+                         lambda: nested.scan_children(items, paths, unlock_ctx=ctx))
         if nested_res.get("tree"):
             write_subresult(paths, "nested", nested_res)
             ran.append("nested")
@@ -790,8 +808,10 @@ def run_analysis(case_root: Path, module: str | None = None) -> None:
         try:
             proc = subprocess.run(
                 cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                # Generous: every tool (incl. ViperMonkey emulation) runs per case.
-                timeout=1800, env=native.subprocess_env(),
+                # Generous: every tool (incl. ViperMonkey emulation) runs per case;
+                # no limit when trying every word of an email as a password.
+                timeout=None if case_wordlist(CasePaths(case_root.name, cases_dir=case_root.parent)) else 1800,
+                env=native.subprocess_env(),
             )
             if proc.returncode == 0:
                 return

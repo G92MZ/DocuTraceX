@@ -23,16 +23,25 @@ def _load_findings_with_marks(analysis_id: str) -> dict:
     return marks_service.apply(findings, marks_service.read_marks(paths))
 
 
-def _save_password(analysis_id: str, password: str) -> None:
-    """Keep (or clear) the analyst's password for an encrypted original. Stored
-    in the case folder, apart from case.json, so it isn't served with it."""
-    from ..storage import CasePaths, write_json
+def _save_unlock(analysis_id: str, **changes) -> dict:
+    """Update the case's unlock options — ``password`` (the analyst's) and
+    ``wordlist`` (try every word of the email). Stored in the case folder,
+    apart from case.json, so they aren't served with it."""
+    from ..storage import CasePaths, read_json, write_json
 
     paths = CasePaths(analysis_id)
-    if password:
-        write_json(paths.password, {"password": password})
+    data = read_json(paths.password) or {}
+    data.update(changes)
+    data = {k: v for k, v in data.items() if v}
+    if data:
+        write_json(paths.password, data)
     else:
         paths.password.unlink(missing_ok=True)
+    return data
+
+
+def _save_password(analysis_id: str, password: str) -> None:
+    _save_unlock(analysis_id, password=password)
 
 
 @router.post("")
@@ -231,6 +240,24 @@ async def set_password(analysis_id: str, payload: dict = Body(...)) -> dict:
     task = manager.submit("rerun", analysis_id, manifest["original"]["filename"], target="full",
                           cases_dir=settings.cases_dir)
     return {"password_set": bool(password), "task": task.public()}
+
+
+@router.post("/{analysis_id}/wordlist")
+async def set_wordlist(analysis_id: str, payload: dict = Body(default={})) -> dict:
+    """Try every word of the email (body, subject, attachment names, addresses)
+    as the password of its encrypted attachments: queue a full re-analysis with
+    that option on (``{"enabled": false}`` turns it off). No time limit."""
+    from ..tasks import manager
+
+    try:
+        manifest = case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    enabled = bool((payload or {}).get("enabled", True))
+    _save_unlock(analysis_id, wordlist=enabled)
+    task = manager.submit("rerun", analysis_id, manifest["original"]["filename"], target="full",
+                          cases_dir=settings.cases_dir)
+    return {"wordlist": enabled, "task": task.public()}
 
 
 @router.get("/{analysis_id}/tasks")
