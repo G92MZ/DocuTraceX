@@ -141,6 +141,7 @@ PRELUDE = r"""
   var el = function(tag){ var o = {tagName: tag, style: {}, children: [], attrs: {},
       setAttribute: function(k, v){ this.attrs[k] = v; _dtx_log('dom', 'setAttribute', k + '=' + v); },
       appendChild: function(c){ this.children.push(c); return c; },
+      addEventListener: function(t){ _dtx_log('dom', 'addEventListener', tag + ':' + t); },
       click: function(){ _dtx_log('dom', 'click', (this.href || '') + ' download=' + (this.download || '')); },
       submit: function(){ _dtx_log('dom', 'form.submit', this.action || ''); } };
     return o; };
@@ -164,6 +165,7 @@ PRELUDE = r"""
   g.fetch = function(u, o){ _dtx_log('url', 'fetch', String(u)); return { then: function(){ return this; } }; };
   g.XMLHttpRequest = function(){ return { open: function(m, u){ _dtx_log('url', 'XMLHttpRequest.open', m + ' ' + u); },
     send: function(d){ _dtx_log('call', 'XMLHttpRequest.send', String(d || '')); }, setRequestHeader: function(){} }; };
+  g.FormData = function(){ return { get: function(){ return ''; }, append: function(){} }; };
   g.Blob = function(parts, opts){ _dtx_log('dom', 'new Blob', (opts && opts.type) || ''); this.size = 0; };
   g.URL = { createObjectURL: function(){ _dtx_log('dom', 'URL.createObjectURL', 'blob'); return 'blob:sandbox'; } };
   g.navigator.msSaveOrOpenBlob = function(b, n){ _dtx_log('dom', 'msSaveOrOpenBlob', String(n)); };

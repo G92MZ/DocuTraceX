@@ -53,7 +53,7 @@ def _elapsed(start: str, end: str) -> float | None:
 @dataclass
 class Task:
     id: str
-    type: str               # "analyze" | "rerun" | "rerun_module"
+    type: str               # "analyze" | "rerun" | "rerun_module" | "netcheck"
     analysis_id: str
     filename: str
     target: str = "full"    # "full" or a module name
@@ -68,6 +68,7 @@ class Task:
     counts: dict[str, Any] = field(default_factory=dict)
     steps: list[dict[str, Any]] = field(default_factory=list)
     cases_dir: str | None = None
+    params: dict[str, Any] = field(default_factory=dict)   # netcheck: kind/target/...
 
     def public(self) -> dict[str, Any]:
         return {
@@ -77,6 +78,7 @@ class Task:
             "created_utc": self.created_utc, "started_utc": self.started_utc,
             "finished_utc": self.finished_utc, "duration_s": self.duration_s,
             "error": self.error, "counts": self.counts, "steps": self.steps,
+            "params": {k: v for k, v in self.params.items() if k in ("kind", "target", "check_id", "form")},
         }
 
 
@@ -135,12 +137,12 @@ class TaskManager:
                 self._worker.start()
 
     def submit(self, type: str, analysis_id: str, filename: str, target: str = "full",
-               cases_dir: Path | None = None) -> Task:
+               cases_dir: Path | None = None, params: dict[str, Any] | None = None) -> Task:
         self._ensure_worker()
         tid = f"task-{next(self._counter):04d}"
         task = Task(id=tid, type=type, analysis_id=analysis_id, filename=filename,
                     target=target or "full",
-                    cases_dir=str(cases_dir) if cases_dir else None)
+                    cases_dir=str(cases_dir) if cases_dir else None, params=dict(params or {}))
         with self._lock:
             self._tasks[tid] = task
             self._order.append(tid)
@@ -208,13 +210,16 @@ class TaskManager:
                 return
             task.state = RUNNING
             task.started_utc = _now()
-            task.phase = "analyzing"
+            task.phase = "network check" if task.type == "netcheck" else "analyzing"
             task.progress = None  # unknown, not 0%
             cases_dir = Path(task.cases_dir) if task.cases_dir else settings.cases_dir
 
         from . import analyze
 
         paths = CasePaths(task.analysis_id, cases_dir=cases_dir)
+        if task.type == "netcheck":
+            self._process_netcheck(task, paths)
+            return
         module = None if task.target in ("", "full") else task.target
         if module or task.type != "analyze":
             _snapshot_history(paths)  # re-run: keep the previous results
@@ -242,6 +247,36 @@ class TaskManager:
                 task.state = _FINAL_FROM_SUMMARY.get(summary.get("state", "completed"), COMPLETED)
         _append_attempt(paths, task)
         log.info("Task %s finished: %s (%.1fs)", tid, task.state, task.duration_s or 0.0)
+
+    def _process_netcheck(self, task: Task, paths: CasePaths) -> None:
+        from . import netcheck
+
+        error = None
+        try:
+            netcheck.run_task(paths.root, task.params)
+        except Exception as exc:  # noqa: BLE001
+            error = str(exc)[:500]
+        summary = read_json(paths.summary) or {}
+        with self._lock:
+            task.finished_utc = _now()
+            task.duration_s = _elapsed(task.started_utc or task.finished_utc, task.finished_utc)
+            task.counts = summary.get("counts", {})
+            task.steps = [_netcheck_step(task, error)]
+            task.phase = "done"
+            task.state = FAILED if error else COMPLETED
+            task.error = error
+            self._cancel.discard(task.id)
+        _append_attempt(paths, task)
+        log.info("Network check %s finished: %s", task.id, task.state)
+
+
+def _netcheck_step(task: Task, error: str | None) -> dict[str, Any]:
+    p = task.params
+    what = p.get("target") or p.get("check_id", "")
+    if p.get("kind") == "submit":
+        what = f"form #{int(p.get('form', 0)) + 1} of {p.get('check_id')}"
+    return {"step": f"netcheck: {p.get('kind')} {what}"[:200], "status": "error" if error else "ok",
+            "note": error, "duration_s": task.duration_s}
 
 
 # Process-wide singleton (one instance = one sequential queue).
