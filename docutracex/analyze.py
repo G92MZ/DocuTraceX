@@ -123,6 +123,23 @@ def _effective_family(manifest: dict[str, Any], subject: Path, unlock_rec: dict[
     return family
 
 
+def _file_record(manifest: dict[str, Any], original: Path) -> dict[str, Any]:
+    """What we know of a file no parser covers: name, detected type, size, hashes."""
+    orig = manifest.get("original") or {}
+    fmt = manifest.get("format") or {}
+    det = fmt.get("detected") or {}
+    return {
+        "module": "file", "status": "ok", "findings": [], "counts": {"findings": 0},
+        "filename": orig.get("filename"), "declared_extension": orig.get("declared_extension"),
+        "size_bytes": orig.get("size_bytes"), "hashes": orig.get("hashes") or {},
+        "detected_mime": det.get("mime"), "detected_name": det.get("name"),
+        "discrepancy": (fmt.get("discrepancy") or {}).get("status"),
+        "stored_path": orig.get("stored_path"),
+        "note": "No specific parser for this type: run YARA rules on it (YARA tab), add marks and "
+                "notes, and build the report.",
+    }
+
+
 def _office_extras(run, original: Path, paths: CasePaths, family: str, declared_ext: str,
                    ole_res: dict[str, Any]) -> list[dict[str, Any]]:
     """Own Office rules, VBA/OLE structure tools and ViperMonkey emulation."""
@@ -529,13 +546,18 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                 ran.append("nested")
                 findings_total += nested_res.get("counts", {}).get("findings", 0)
     else:
-        # No parser for this family yet.
+        # Any other file (exe, dll, script, image...): no family parser, but it is
+        # still a case — a basic file record, YARA on demand, marks and report.
+        file_res = run("file: generic record (type, size, hashes) — YARA, marks and report",
+                       lambda: _file_record(manifest, original))
+        write_subresult(paths, "file", file_res)
+        ran.append("file")
         state = "completed"
 
     # JavaScript: extracted from every place it can hide (PDF, HTML body,
     # attachments, OLE packages, nested children...), analysed and sandboxed.
     from .parsers import javascript
-    if ran or original.suffix.lower() in javascript._SCRIPT_EXT:
+    if [m for m in ran if m != "file"] or original.suffix.lower() in javascript._SCRIPT_EXT:
         js_mods = {m: read_json(paths.subresult(m)) for m in ("pdf", "email", "oletools")}
         js_res = run("javascript: extraction · static analysis · STPyV8 sandbox",
                      lambda: javascript.analyze(original, paths.extracted_dir,
@@ -611,7 +633,7 @@ _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto"
                "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole",
                "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules", "javascript", "rtf")
 # Modules whose findings feed the consolidated view (includes derived ones).
-_COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive")
+_COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file")
 
 
 def _collect_modules(paths: CasePaths) -> dict[str, Any]:

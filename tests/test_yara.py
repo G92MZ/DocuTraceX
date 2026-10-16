@@ -224,3 +224,25 @@ def test_rule_source_extraction(tmp_path: Path) -> None:
     assert yara_engine.rule_source(f, "B").endswith("/\\.te{1}xt/ }")
     assert yara_engine.rule_source(f, "C") == "rule C { condition: true }"
     assert yara_engine.rule_source(f, "Fake") == ""
+
+
+def test_any_other_file_gets_yara_marks_and_report(client: TestClient, env: Path) -> None:
+    """A file no parser covers (here a PE-looking .exe) is still a full case."""
+    client.post("/api/yara/upload", files={"file": ("pe.yar", (
+        'rule Fake_Dropper { meta: description="dropper string" strings: $s="DropperMarker" '
+        'condition: uint16(0) == 0x5A4D and $s }').encode())})
+    _compile(client)
+    exe = b"MZ\x90\x00" + b"\x00" * 60 + b"This program cannot be run in DOS mode. DropperMarker"
+    cid = client.post("/api/cases", files={"file": ("payload.exe", exe)}).json()["analysis_id"]
+    _wait_case(client, cid)
+    comp = client.get(f"/api/cases/{cid}/components").json()
+    f = comp["modules"]["file"]
+    assert f["filename"] == "payload.exe" and f["size_bytes"] == len(exe) and f["hashes"]["sha256"]
+    assert "javascript" not in comp["modules"]
+
+    _run_yara(client, cid)
+    comp = client.get(f"/api/cases/{cid}/components").json()
+    yf = [x for x in comp["findings"] if x["source"] == "yara"]
+    assert yf and yf[0]["rule"] == "yara:Fake_Dropper"
+    client.put(f"/api/cases/{cid}/marks/{yf[0]['id']}", json={"state": "true_positive"})
+    assert "yara:Fake_Dropper" in client.get(f"/api/cases/{cid}/report").text

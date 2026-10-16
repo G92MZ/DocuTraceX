@@ -12,6 +12,8 @@ const FORMATS = [
   { name: "Email", color: "#7f93ad", glyph: "mail", exts: [".eml", ".emlx", ".msg"] },
   { name: "RTF", color: "#6c5ce7", glyph: "RTF", exts: [".rtf"] },
   { name: "Archive", color: "#9a7b4f", glyph: "ZIP", exts: [".zip", ".7z"] },
+  { name: "Any other file", color: "#5f6b7a", glyph: "BIN", exts: [".exe", ".dll", ".js", ".html", "…"],
+    title: "Anything else (executables, scripts, images...): YARA, marks and the report" },
 ];
 
 // Playful document "character": page + eyes + smile, colored band + letter.
@@ -49,7 +51,7 @@ function renderFormats() {
   grid.innerHTML = FORMATS.map((f) => {
     const icon = f.glyph === "mail" ? mailIcon(f.color) : docIcon(f.color, f.glyph);
     const chips = f.exts.map((e) => `<span class="ext-chip">${e}</span>`).join("");
-    return `<div class="fmt-card">
+    return `<div class="fmt-card"${f.title ? ` title="${f.title}"` : ""}>
       ${icon}
       <div class="fmt-name">${f.name}</div>
       <div class="fmt-exts">${chips}</div>
@@ -1383,6 +1385,20 @@ function wireUnlock(root, analysisId) {
     "Queued: trying every word of the email (no time limit — see Tasks)…"));
 }
 
+// Any file no parser covers: the basic record; YARA, marks and report apply.
+function paneFile(f) {
+  const h = f.hashes || {};
+  const rows = [
+    ["File", `<span class="mono">${escapeHtml(f.filename || "")}</span> ${fileActions(f.stored_path)}`],
+    ["Detected type", escapeHtml([f.detected_name, f.detected_mime].filter(Boolean).join(" · ") || "unknown")],
+    ["Size", escapeHtml(f.size_bytes != null ? `${f.size_bytes} bytes` : "")],
+    ...["md5", "sha1", "sha256"].filter((k) => h[k]).map((k) => [k.toUpperCase(), `<span class="mono">${escapeHtml(h[k])}</span>`]),
+  ].map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join("");
+  return `<p class="hint-line">${escapeHtml(f.note || "")}</p>
+    <div class="kv">${rows}</div>
+    <p style="margin-top:10px">${addMarkCell("file", `File ${f.filename || ""}`, f.stored_path || "file", (h.sha256 || ""))}</p>`;
+}
+
 function paneArchive(arc) {
   const rows = (arc.entries || []).map((e) => `<tr>
     <td class="mono">${escapeHtml(e.name || "")}</td>
@@ -1392,7 +1408,7 @@ function paneArchive(arc) {
   const head = `<p class="hint-line">${escapeHtml(arc.detail || "")}${arc.encrypted ? (arc.decrypted
     ? ` · opened with ${escapeHtml(PW_SOURCE[arc.password_source] || "")}` : " · locked") : ""}
     ${arc.error ? ` · <span class="bad-text">${escapeHtml(arc.error)}</span>` : ""} · entries are scanned recursively (Nested tab)</p>`;
-  return head + (rows ? `<table class="tbl"><thead><tr><th>Entry</th><th>Size</th><th></th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+  return head + (rows ? `<table class="cases"><thead><tr><th>Entry</th><th>Size</th><th></th><th></th></tr></thead><tbody>${rows}</tbody></table>`
     : `<p class="hint-line">No entries extracted.</p>`);
 }
 
@@ -1512,7 +1528,7 @@ async function openComponents(analysisId, keepTab) {
     let nested = mods.nested;
     const iocs = d.iocs;
     const rtf = mods.rtf;
-    if (!ooxml && !sem && !ole && !email && !pdf && !oleLegacy && !mods.javascript && !rtf && !mods.archive && !mods.unlock) {
+    if (!ooxml && !sem && !ole && !email && !pdf && !oleLegacy && !mods.javascript && !rtf && !mods.archive && !mods.unlock && !mods.file) {
       bodyEl.innerHTML = `<p class="hint-line">No component analysis for this case yet.</p>`;
       return;
     }
@@ -1529,6 +1545,7 @@ async function openComponents(analysisId, keepTab) {
     else if (pdf) compLabel = `${pdf.page_count || 0} pages · ${(pdf.embedded || []).length} embedded`;
     else if (rtf) compLabel = `RTF · ${(rtf.objects || []).length} objects · ${(rtf.fields || []).length} fields`;
     else if (oleLegacy) compLabel = `${oleLegacy.kind || "ole"} · ${(oleLegacy.streams || []).length} streams`;
+    else if (mods.file && !mods.javascript) compLabel = `${mods.file.detected_name || mods.file.detected_mime || "file"}`;
     else if (mods.archive) compLabel = `${(mods.archive.entries || []).filter((e) => e.stored_path).length} archive entries`;
     else if (!ooxml && mods.javascript) compLabel = `${(mods.javascript.scripts || []).length} script(s)`;
     else compLabel = `${(ooxml && ooxml.counts && ooxml.counts.components) || 0} parts`;
@@ -1548,6 +1565,9 @@ async function openComponents(analysisId, keepTab) {
       sections.push({ id: "headers", label: `Headers (${(email.headers || []).length})`, html: paneEmailHeaders(email) });
       sections.push({ id: "attachments", label: `Attachments (${email.attachment_count || 0})`, html: paneAttachments(email, nested) });
       sections.push({ id: "body", label: "Body", html: paneEmailBody(email, mods.mailrules) });
+    }
+    if (mods.file) {
+      sections.push({ id: "file", label: "File", html: paneFile(mods.file) });
     }
     if (mods.archive) {
       sections.push({ id: "archive", label: `Archive (${(mods.archive.entries || []).filter((e) => e.stored_path).length})`, html: paneArchive(mods.archive) });
