@@ -185,3 +185,72 @@ def harvest(*texts: str) -> list[dict[str, Any]]:
                 if len(out) >= _MAX_CANDIDATES:
                     return out
     return out
+
+
+# --- every word of the email (on demand) ------------------------------------
+
+_RE_WORD = re.compile(r"\w+(?:[-_.]\w+)*")
+
+
+def _variants(tok: str) -> list[str]:
+    """A token as written, without the punctuation around it, and its word pieces
+    ("(Fact-2026)." -> "(Fact-2026).", "Fact-2026", "Fact", "2026")."""
+    out = [tok, _clean(tok), tok.strip(_QUOTES + ".,;:!?¡¿")]
+    pieces = _RE_WORD.findall(tok)
+    out += pieces
+    for p in pieces:
+        out += re.findall(r"\w+", p)
+    return out
+
+
+def email_words(mail_res: dict[str, Any]) -> list[dict[str, str]]:
+    """Every word of the email as a password candidate, for when the password is
+    not announced in a recognisable way: the text body (the HTML body as text
+    only if there is no text part — it carries gateway banners), the subject,
+    the attachment names, and the sender's/recipients' addresses, names and
+    domains. In order of appearance, de-duplicated, ``{password, origin}``."""
+    out: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def add(word: str, origin: str) -> None:
+        word = (word or "").strip()
+        if 2 <= len(word) <= 64 and word not in seen:
+            seen.add(word)
+            out.append({"password": word, "origin": origin})
+
+    text = mail_res.get("body_sample") or mail_res.get("html_text_sample") or ""
+    for tok in text.split():
+        for v in _variants(tok):
+            add(v, "body")
+    addrs = mail_res.get("addresses") or {}
+    for tok in (addrs.get("subject") or "").split():
+        for v in _variants(tok):
+            add(v, "subject")
+    for att in mail_res.get("attachments") or []:
+        name = att.get("filename") or ""
+        stem = name.rsplit(".", 1)[0] if "." in name else name
+        for v in (name, stem, *_variants(stem)):
+            add(v, "attachment name")
+    people = [addrs.get(k) for k in ("from", "reply_to", "return_path", "sender")] + list(addrs.get("to") or [])
+    for addr in filter(None, people):
+        local, _, domain = addr.partition("@")
+        add(addr, "address")
+        add(local, "address")
+        for v in _variants(local):
+            add(v, "address")
+        if domain:
+            add(domain, "address")
+            labels = domain.split(".")
+            for i in range(len(labels) - 1):
+                add(".".join(labels[i:]), "address")
+                add(labels[i], "address")
+                for v in _variants(labels[i]):
+                    add(v, "address")
+    display = addrs.get("from_display") or ""
+    if display:
+        add(display, "sender name")
+        add(display.replace(" ", ""), "sender name")
+        for tok in display.split():
+            for v in _variants(tok):
+                add(v, "sender name")
+    return out
