@@ -47,9 +47,10 @@ _7Z_MAGIC = b"7z\xbc\xaf\x27\x1c"
 # --- candidates -------------------------------------------------------------
 
 def candidates(user: str | None = None, harvested: list[dict[str, Any]] | None = None,
-               kind: str = "document") -> list[dict[str, str]]:
+               kind: str = "document", words: list[dict[str, str]] | None = None) -> list[dict[str, str]]:
     """Ordered, de-duplicated passwords to try: the analyst's, the ones found in
-    the carrying email, then the defaults for the kind of file."""
+    the carrying email, the defaults for the kind of file and, when the analyst
+    asked for it, every word of the email (``words``, see passwords.email_words)."""
     out: list[dict[str, str]] = []
     seen: set[str] = set()
 
@@ -72,6 +73,8 @@ def candidates(user: str | None = None, harvested: list[dict[str, Any]] | None =
     else:
         for pw in OFFICE_DEFAULTS:
             add(pw, "default")
+    for w in words or []:
+        add(w.get("password"), "email_words", w.get("origin", ""))
     return out
 
 
@@ -217,6 +220,11 @@ def _decrypted_findings(kind: str, used: dict[str, str], name: str, location: st
                          f"Encrypted {what} '{name}' opens with a password given in the email "
                          f"('{pw}') — encryption used to get the payload past mail gateways and AV.",
                          location)]
+    if src == "email_words":
+        return [_finding("password_in_email", "medium",
+                         f"Encrypted {what} '{name}' opens with '{pw}', a word of the email "
+                         f"({used.get('context') or 'body'}) found by trying every word — the "
+                         "password was sent with the payload, disguised.", location)]
     if src == "default":
         return [_finding("encrypted_archive_default", "low",
                          f"{what} protected with the conventional password '{pw}'.", location)]
