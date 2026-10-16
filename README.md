@@ -40,7 +40,9 @@ scripts, OfficeMalScanner, the IP database and Chromium for screenshots — see
 `scripts/setup_portable_python.py`). On Windows, point it at your FLARE-VM and it
 just works.
 
-> 🧪 **Try it now:** `samples/` holds one realistic, **benign** sample per
+> 🧪 **Try it now:** `samples/samples.zip` (password **`infected`**, so antivirus
+> engines leave it alone — open it with 7-Zip/Windows, or run
+> `python scripts/make_samples.py --extract`) holds one realistic, **benign** sample per
 > supported type, all telling the same story — an invoice-fraud campaign that
 > impersonates a supplier: a `.docm` with a VBA downloader + DDEAUTO, an `.xlsm`
 > with a very-hidden Excel 4.0 macro sheet, an RTF disguised as `.doc` with
@@ -79,7 +81,7 @@ just works.
 | 🌐 **Network checks** | on demand, through your proxy: **URLs** visited as a real browser (Edge on Windows *and* Safari on iPhone → cloaking) with the victim's address swapped for a fake identity — redirects, TLS certificate, forms, impersonated brand, page scripts in the V8 sandbox, screenshot with JavaScript off, safe preview, served files analysed, and *Send fake credentials* to see the kit's next stage; **domains**: DNS, RDAP age/registrar, Certificate Transparency; **IPs**: ASN/ISP/country offline, RDAP owner and abuse contact, reverse DNS, Tor exit |
 | 🛡️ **YARA** | your rules by upload (`.yar`/`.yara`/`.zip`/`.tar.gz`) or **server path**, compiled on demand with streaming progress; matches with the rule source, the matched bytes in context and the file path — every hit a finding you mark |
 | 🤖 **AI & MCP** | **AI (API)**: any OpenAI-compatible endpoint (your company's LiteLLM, a provider's API); **AI (local)**: Ollama / LM Studio / llama.cpp on your machine; **MCP**: a stdio server for Claude Desktop / Claude Code — all three use the same **read-only** tools over the case |
-| 🏷️ **Marks** | per-finding TP/FP/Suspicious/Informational + comment, manual marks on any IOC/header/attachment and free-text notes, kept separate from the evidence and **preserved across re-analysis** (stable finding IDs) |
+| 🏷️ **Marks** | per-finding TP/FP/Suspicious/Informational + comment, manual marks on any IOC/header/attachment/JavaScript hit, sandbox event or decoded string, and free-text notes, kept separate from the evidence and **preserved across re-analysis** (stable finding IDs) |
 | 🧵 **Tasks** | a sequential queue with per-file **sub-step log** — every tool that ran, its status, timing and findings — plus isolated **re-run** of a single module |
 | 📊 **Report** | one self-contained HTML report of the confirmed findings, with evidence, IOCs and the nested tree |
 | ⚙️ **Settings** | the app-wide proxy for network checks (HTTP/HTTPS/SOCKS5, tested from the UI) |
@@ -108,7 +110,7 @@ Checking an indicator means contacting the attacker's infrastructure, so DocuTra
 - **Nothing runs.** No JavaScript runs and no images, CSS or scripts are downloaded; page scripts go through the V8 sandbox, the screenshot is rendered from the downloaded HTML with every request blocked, and the preview is sandboxed with a CSP that forbids any load. The optional *live screenshot* (with images/CSS, still no JavaScript) is the only exception, through the proxy.
 - **Forms only on request.** *Send fake credentials* posts the fake identity through a form (hidden fields and cookies kept) to show the kit's next stage — only when you press it.
 - **Domains and IPs without touching the attacker:** DNS through your resolver; RDAP, crt.sh and the Tor list through the proxy; ASN/ISP/country from a local database.
-- **Practise safely:** `python scripts/phish_lab.py` starts a local phishing-kit simulator (bot filter, redirect, M365 look-alike login, exfiltration script, iPhone cloaking, MFA stage, `.docm` download); then open `samples/lab/phish_lab.eml` and press **Check**.
+- **Practise safely:** `python scripts/phish_lab.py` starts a local phishing-kit simulator (bot filter, redirect, M365 look-alike login, exfiltration script, iPhone cloaking, MFA stage, `.docm` download); then open `lab/phish_lab.eml` from the samples archive and press **Check**.
 
 IP data: *IP Geolocation by [DB-IP](https://db-ip.com)* (CC BY 4.0) and [iptoasn.com](https://iptoasn.com) (public domain), downloaded at install time.
 
