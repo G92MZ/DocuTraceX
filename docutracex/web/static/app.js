@@ -1286,7 +1286,7 @@ function panePdfEmbedded(pdf) {
 // --- Nested (recursive child analysis) --------------------------------------
 
 const PW_SOURCE = { user: "your password", email: "the password from the email", default: "the default password",
-  empty: "the empty password", none: "not encrypted" };
+  empty: "the empty password", email_words: "a word of the email", none: "not encrypted" };
 
 // Encrypted children anywhere in the nested tree that could not be opened.
 function lockedNested(nodes, out = []) {
@@ -1323,9 +1323,18 @@ function lockBanner(mods) {
     needPw = true;
     msg = (msg ? msg + "<br>" : "") + `🔒 Encrypted attachment(s)/entries not opened: <span class="mono">${escapeHtml(locked.join(", "))}</span>`;
   }
+  // Email with attachments still locked: offer to try every word of it.
+  const wl = mods.email && mods.email.wordlist;
+  let words = "";
+  if (needPw && mods.email && locked.length) {
+    words = wl && wl.enabled
+      ? `<div class="hint-line">Every word of the email was tried (${wl.candidates || 0} candidates) — none opened them.</div>`
+      : `<button class="btn btn-ghost btn-sm" id="unlock-words" title="Body text, subject, attachment names, sender/recipient addresses, names and domains — every word is tried as the password. No time limit: it can take a while with many words.">🔑 Try every word of the email</button>`;
+  }
   const form = needPw
     ? `<div class="unlock-form"><input type="password" id="unlock-pw" autocomplete="off" placeholder="Password">
         <button class="btn btn-primary btn-sm" id="unlock-go">Unlock &amp; re-analyse</button>
+        ${words}
         <span id="unlock-status" class="status"></span></div>`
     : "";
   return `<div class="unlock-banner ${needPw ? "is-locked" : ""}">${found}${msg || ""}${form}</div>`;
@@ -1336,18 +1345,18 @@ function wireUnlock(root, analysisId) {
   if (!go) return;
   const pw = root.querySelector("#unlock-pw");
   const st = root.querySelector("#unlock-status");
-  const submit = async () => {
-    if (!pw.value) { st.textContent = "Enter the password."; return; }
+  const wordsBtn = root.querySelector("#unlock-words");
+  // Queue the re-analysis, then reopen this case when it is done.
+  const queue = async (path, body, msg) => {
     go.disabled = true;
-    st.textContent = "Queued: decrypting and re-analysing…";
+    if (wordsBtn) wordsBtn.disabled = true;
+    st.textContent = msg;
     try {
-      const r = await fetch(`/api/cases/${encodeURIComponent(analysisId)}/password`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: pw.value }),
+      const r = await fetch(`/api/cases/${encodeURIComponent(analysisId)}/${path}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       });
       if (!r.ok) throw new Error((await r.json()).detail || r.status);
-      pw.value = "";
       startTaskPoller();
-      // Reopen this case when its re-analysis is done.
       const iv = setInterval(async () => {
         try {
           const t = await fetch(`/api/cases/${encodeURIComponent(analysisId)}/tasks`).then((x) => x.json());
@@ -1356,13 +1365,22 @@ function wireUnlock(root, analysisId) {
         clearInterval(iv);
         if (_openCaseId === analysisId) openComponents(analysisId, _compState && _compState.active);
       }, 2500);
+      return true;
     } catch (err) {
       st.textContent = "Failed: " + err.message;
       go.disabled = false;
+      if (wordsBtn) wordsBtn.disabled = false;
+      return false;
     }
+  };
+  const submit = async () => {
+    if (!pw.value) { st.textContent = "Enter the password."; return; }
+    if (await queue("password", { password: pw.value }, "Queued: decrypting and re-analysing…")) pw.value = "";
   };
   go.addEventListener("click", submit);
   pw.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+  if (wordsBtn) wordsBtn.addEventListener("click", () => queue("wordlist", { enabled: true },
+    "Queued: trying every word of the email (no time limit — see Tasks)…"));
 }
 
 function paneArchive(arc) {

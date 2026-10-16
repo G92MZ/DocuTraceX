@@ -294,3 +294,71 @@ def test_api_password_kept_out_of_manifest(tmp_path: Path, monkeypatch: pytest.M
     r = client.post(f"/api/cases/{aid}/password", json={"password": ""})
     assert r.json()["password_set"] is False and not paths.password.exists()
     assert client.post(f"/api/cases/{aid}/password", json={"password": 5}).status_code == 400
+
+
+# --- every word of the email (on demand) ------------------------------------
+
+def test_email_words_sources() -> None:
+    words = [w["password"] for w in passwords.email_words({
+        "body_sample": "Adjuntamos la factura número 129592.\nAtentamente.",
+        "html_text_sample": "Report Suspicious gateway banner",
+        "addresses": {"from": "facturacion@suministros-iberia.example.com", "from_display": "Suministros Iberia",
+                      "to": ["cuentas.pagar@grupoejemplo.example"], "subject": "Factura 2026-0187"},
+        "attachments": [{"filename": "Factura_2026-0187.zip"}],
+    })]
+    for w in ("129592", "Atentamente", "2026-0187", "Factura_2026-0187", "facturacion",
+              "suministros-iberia", "cuentas.pagar", "grupoejemplo", "SuministrosIberia",
+              "facturacion@suministros-iberia.example.com"):
+        assert w in words, w
+    assert "Suspicious" not in words  # HTML body only when there is no text part
+    assert len(words) == len(set(words))
+
+
+def _invoice_mail(zip_password: str) -> bytes:
+    msg = EmailMessage()
+    msg["From"] = "facturacion@suministros-iberia.example.com"
+    msg["To"] = "cuentas.pagar@grupoejemplo.example"
+    msg["Subject"] = "Factura"
+    # The password is the invoice number, never announced as a password.
+    msg.set_content("Buen día,\n\nAdjuntamos la factura correspondiente al número 129592 para su consulta.\n")
+    msg.add_attachment(_zip_aes({"factura.js": b"WScript.Echo(1)"}, zip_password), maintype="application",
+                       subtype="zip", filename="factura.zip")
+    return msg.as_bytes()
+
+
+def test_wordlist_unlocks_on_request(cases_dir: Path) -> None:
+    from docutracex import analyze
+    from docutracex.storage import read_json, write_json
+
+    paths = _new_case(cases_dir, "factura.eml", _invoice_mail("129592"))
+    analyze.analyze_case(paths.root)
+    arc = read_json(paths.subresult("nested"))["tree"][0]["archive"]
+    assert arc["encrypted"] and not arc["decrypted"]
+
+    write_json(paths.password, {"wordlist": True})
+    analyze.analyze_case(paths.root)
+    assert read_json(paths.subresult("email"))["wordlist"]["enabled"] is True
+    node = read_json(paths.subresult("nested"))["tree"][0]
+    assert node["archive"]["decrypted"] and node["archive"]["password_source"] == "email_words"
+    assert node["archive"]["password"] == "129592"
+    assert node["children"][0]["filename"] == "factura.js"
+    f = [x for x in read_json(paths.subresult("findings"))["findings"] if x["rule"] == "password_in_email"]
+    assert f and "every word" in f[0]["detail"]
+
+
+def test_api_wordlist_keeps_password(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from fastapi.testclient import TestClient
+
+    from docutracex.app import create_app
+    from docutracex.config import settings
+    from docutracex.storage import CasePaths, read_json
+
+    monkeypatch.setattr(settings, "cases_dir", tmp_path)
+    client = TestClient(create_app())
+    aid = client.post("/api/cases", files={"file": ("f.eml", _invoice_mail("x1"), "message/rfc822")},
+                      data={"password": "pw1"}).json()["analysis_id"]
+    r = client.post(f"/api/cases/{aid}/wordlist", json={})
+    assert r.status_code == 200 and r.json()["wordlist"] is True
+    assert read_json(CasePaths(aid).password) == {"password": "pw1", "wordlist": True}
+    client.post(f"/api/cases/{aid}/wordlist", json={"enabled": False})
+    assert read_json(CasePaths(aid).password) == {"password": "pw1"}

@@ -128,7 +128,8 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
         # analyse the decrypted copy (the hash above stays the original's).
         if kind in ("ooxml", "ole", "pdf"):
             rec = unlock.unlock_file(abs_path, work / "decrypted" / node["sha256"][:12],
-                                     unlock.candidates(ctx.get("user"), ctx.get("harvested")), name=name)
+                                     unlock.candidates(ctx.get("user"), ctx.get("harvested"),
+                                                       words=ctx.get("words")), name=name)
             if rec["encrypted"]:
                 node["unlock"] = unlock.public(rec, paths.root)
                 add_findings(rec["findings"], "unlock")
@@ -139,7 +140,8 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
         if kind == "archive":
             rec = unlock.extract_archive(abs_path, work / "archives" / node["sha256"][:12],
                                          unlock.candidates(ctx.get("user"), ctx.get("harvested"),
-                                                           kind="archive"), name=name)
+                                                           kind="archive", words=ctx.get("words")),
+                                         name=name)
             node["archive"] = unlock.public(rec, paths.root)
             add_findings(rec["findings"], "archive")
             for e in rec["entries"]:
@@ -210,6 +212,10 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
             if found:
                 node["password_candidates"] = found
                 ctx = {**ctx, "harvested": found + list(ctx.get("harvested") or [])}
+            if ctx.get("wordlist"):
+                words = passwords.email_words(res)
+                node["wordlist"] = {"enabled": True, "candidates": len(words)}
+                ctx = {**ctx, "words": words + list(ctx.get("words") or [])}
     except Exception as exc:  # noqa: BLE001
         node["error"] = str(exc)
 
