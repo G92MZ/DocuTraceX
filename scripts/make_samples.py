@@ -27,6 +27,9 @@ find:
   Links + Proofpoint wrapped look-alike link, tracking pixel, and attachments:
   the .docm, the RTF disguised as .doc, a double-extension "PDF", a QR image and
   an HTML-smuggling page.
+- Encrypted (``encrypted/``): an email whose AES ZIP holds a password-protected
+  workbook, with the password in the body; a workbook encrypted with Excel's
+  default ``VelvetSweatshop``.
 
 Every host, address and payload is an inert documentation value: ``*.example``
 domains (RFC 2606), TEST-NET IPs (RFC 5737), placeholder binaries ("MZ" + text).
@@ -501,6 +504,53 @@ def lab_eml() -> bytes:
         attachments=[("Acceso_portal.html", "text/html", LAB_FORM.encode())])
 
 
+# --- encrypted samples (unlocking) -----------------------------------------------------
+
+ENC_PASSWORD = "Fact2026"
+ENC_TEXT = (f"Estimados señores:\n\nAdjuntamos la factura {INVOICE} con los nuevos datos bancarios.\n"
+            "Por seguridad el archivo va protegido.\n\n"
+            f"La contraseña del archivo es: {ENC_PASSWORD}\n\nUn saludo,\nDepartamento de Administración\n{SUPPLIER}\n")
+
+
+def _encrypt_ooxml(plain: bytes, password: str) -> bytes:
+    import io
+
+    from msoffcrypto.format.ooxml import OOXMLFile
+
+    out = io.BytesIO()
+    OOXMLFile(io.BytesIO(plain)).encrypt(password, out)
+    return out.getvalue()
+
+
+def encrypted_eml() -> bytes:
+    """Gateway evasion: an AES-encrypted ZIP holding a password-protected .xlsm,
+    with the password in the body (in Spanish) — DocuTraceX finds it, opens the
+    ZIP and the workbook, and analyses the macros inside."""
+    import io
+
+    import pyzipper
+
+    inner = _encrypt_ooxml(excel(".xlsm"), ENC_PASSWORD)
+    buf = io.BytesIO()
+    with pyzipper.AESZipFile(buf, "w", compression=pyzipper.ZIP_DEFLATED, encryption=pyzipper.WZ_AES) as z:
+        z.setpassword(ENC_PASSWORD.encode())
+        z.writestr(f"Factura_{INVOICE}.xlsm", inner)
+    html = ("<html><body style=\"font-family:Calibri,Arial\">"
+            + "".join(f"<p>{line}</p>" for line in ENC_TEXT.split("\n\n")).replace(
+                ENC_PASSWORD, f"<b>{ENC_PASSWORD}</b>") + "</body></html>")
+    return mk.build_email(
+        from_=FROM, to=TO, subject=f"Factura {INVOICE} (protegida)", html=html, text=ENC_TEXT,
+        received=RECEIVED, auth_results=AUTH, reply_to="pagos.suministros@mail-box.example.org",
+        x_mailer="PHPMailer 6.8.0", message_id="<enc-0187@vps-2291.hosting.example>",
+        attachments=[(f"Factura_{INVOICE}.zip", "application/zip", buf.getvalue())])
+
+
+def velvet_xlsm() -> bytes:
+    """The macro workbook encrypted with Excel's built-in 'VelvetSweatshop'
+    password: it opens without a prompt but scanners only see ciphertext."""
+    return _encrypt_ooxml(excel(".xlsm"), "VelvetSweatshop")
+
+
 # --- main -----------------------------------------------------------------------------
 
 def build_all() -> dict[str, bytes]:
@@ -516,6 +566,8 @@ def build_all() -> dict[str, bytes]:
         out[f"sample{ext}"] = powerpoint(ext)
     for ext in (".doc", ".dot", ".xls", ".xlt", ".xla", ".ppt", ".pot"):
         out[f"sample{ext}"] = legacy(ext)
+    out["encrypted/sample_encrypted.eml"] = encrypted_eml()
+    out["encrypted/sample_velvet.xlsm"] = velvet_xlsm()
     return out
 
 
