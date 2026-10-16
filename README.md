@@ -99,6 +99,7 @@ just works.
 | **PDF** | `.pdf` |
 | **Email** | `.eml` `.emlx` `.msg` |
 | **Archive** | `.zip` `.7z` (also inside emails and other files; password-protected too) |
+| **Any other file** | `.exe` `.dll` `.js` `.html` `.ps1` images… — no specific parser, but still a full case: basic record (type, size, hashes), **YARA**, marks, notes and the report (scripts and web pages also get the JavaScript analysis) |
 
 Scripts and web pages found inside them (`.js` `.jse` `.vbs` `.hta` `.wsf` `.html` `.svg`…) are extracted and analysed too.
 
