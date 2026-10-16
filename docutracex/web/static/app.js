@@ -11,6 +11,7 @@ const FORMATS = [
   { name: "PDF", color: "#c0392b", glyph: "PDF", exts: [".pdf"] },
   { name: "Email", color: "#7f93ad", glyph: "mail", exts: [".eml", ".emlx", ".msg"] },
   { name: "RTF", color: "#6c5ce7", glyph: "RTF", exts: [".rtf"] },
+  { name: "Archive", color: "#9a7b4f", glyph: "ZIP", exts: [".zip", ".7z"] },
 ];
 
 // Playful document "character": page + eyes + smile, colored band + letter.
@@ -132,6 +133,8 @@ document.getElementById("upload-form").addEventListener("submit", async (e) => {
   if (!fileInput.files.length) return;
   const data = new FormData();
   data.append("file", fileInput.files[0]);
+  const pwInput = document.getElementById("upload-password");
+  if (pwInput && pwInput.value) data.append("password", pwInput.value);
   status.textContent = "Uploading…";
   try {
     const resp = await fetch("/api/cases", { method: "POST", body: data });
@@ -139,6 +142,7 @@ document.getElementById("upload-form").addEventListener("submit", async (e) => {
     const manifest = await resp.json();
     status.textContent = "Case queued for analysis: " + manifest.analysis_id;
     fileInput.value = "";
+    if (pwInput) pwInput.value = "";
     fileName.textContent = "No file selected";
     fileName.classList.remove("has-file");
     loadCases();
@@ -410,6 +414,7 @@ function pivotTarget(f, ids) {
         && !/field/.test(loc)) return has("relationships") ? "relationships" : null;
     return null;
   }
+  if (src === "archive") return has("archive") ? "archive" : null;
   if (src === "yara") return has("yara") ? "yara" : null;
   if (src === "netcheck" || loc.startsWith("netcheck:")) return has("checks") ? "checks" : null;
   if (src === "ole") return has("ole") ? "ole" : null;
@@ -1280,16 +1285,118 @@ function panePdfEmbedded(pdf) {
 
 // --- Nested (recursive child analysis) --------------------------------------
 
+const PW_SOURCE = { user: "your password", email: "the password from the email", default: "the default password",
+  empty: "the empty password", none: "not encrypted" };
+
+// Encrypted children anywhere in the nested tree that could not be opened.
+function lockedNested(nodes, out = []) {
+  (nodes || []).forEach((n) => {
+    const lk = n.unlock || n.archive;
+    if (lk && lk.encrypted && !lk.decrypted) out.push(n.filename);
+    lockedNested(n.children, out);
+  });
+  return out;
+}
+
+// Banner above the sub-tabs: how an encrypted original/archive was opened, or
+// a password box to unlock it (and any encrypted attachment) and re-analyse.
+function lockBanner(mods) {
+  const u = mods.unlock || mods.archive;
+  const locked = lockedNested((mods.nested || {}).tree);
+  const pwc = (mods.email && mods.email.password_candidates) || [];
+  const found = pwc.length
+    ? `<div>🔑 The email gives ${pwc.length > 1 ? "passwords" : "a password"}: ${pwc.map((c) => `<span class="mono" title="${escapeHtml(c.context || "")}">'${escapeHtml(c.password)}'</span>`).join(", ")} — tried on its encrypted attachments.</div>`
+    : "";
+  if (!(u && u.encrypted) && !locked.length) return found ? `<div class="unlock-banner">${found}</div>` : "";
+  const what = u && u.kind ? ({ office: "Office document", pdf: "PDF", zip: "ZIP archive", "7z": "7z archive" }[u.kind] || u.kind) : "";
+  let msg;
+  let needPw = false;
+  if (u && u.encrypted && u.decrypted) {
+    msg = `🔓 Encrypted ${escapeHtml(what)} (${escapeHtml(u.detail || "")}) — opened with ${escapeHtml(PW_SOURCE[u.password_source] || u.password_source)}`
+      + (u.password_source !== "user" ? ` <span class="mono">'${escapeHtml(u.password || "")}'</span>` : "")
+      + (u.decrypted_path ? ` · the analysis covers the <b>decrypted copy</b> <span class="mono">${escapeHtml(u.decrypted_path)}</span> ${fileActions(u.decrypted_path)}` : ` · ${(u.entries || []).filter((e) => e.stored_path).length} entries extracted`);
+  } else if (u && u.encrypted) {
+    needPw = true;
+    msg = `🔒 Encrypted ${escapeHtml(what)} (${escapeHtml(u.detail || "")}) — none of the known passwords opened it (${u.tried || 0} tried), so its content was <b>not</b> analysed.`;
+  }
+  if (locked.length) {
+    needPw = true;
+    msg = (msg ? msg + "<br>" : "") + `🔒 Encrypted attachment(s)/entries not opened: <span class="mono">${escapeHtml(locked.join(", "))}</span>`;
+  }
+  const form = needPw
+    ? `<div class="unlock-form"><input type="password" id="unlock-pw" autocomplete="off" placeholder="Password">
+        <button class="btn btn-primary btn-sm" id="unlock-go">Unlock &amp; re-analyse</button>
+        <span id="unlock-status" class="status"></span></div>`
+    : "";
+  return `<div class="unlock-banner ${needPw ? "is-locked" : ""}">${found}${msg || ""}${form}</div>`;
+}
+
+function wireUnlock(root, analysisId) {
+  const go = root.querySelector("#unlock-go");
+  if (!go) return;
+  const pw = root.querySelector("#unlock-pw");
+  const st = root.querySelector("#unlock-status");
+  const submit = async () => {
+    if (!pw.value) { st.textContent = "Enter the password."; return; }
+    go.disabled = true;
+    st.textContent = "Queued: decrypting and re-analysing…";
+    try {
+      const r = await fetch(`/api/cases/${encodeURIComponent(analysisId)}/password`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password: pw.value }),
+      });
+      if (!r.ok) throw new Error((await r.json()).detail || r.status);
+      pw.value = "";
+      startTaskPoller();
+      // Reopen this case when its re-analysis is done.
+      const iv = setInterval(async () => {
+        try {
+          const t = await fetch(`/api/cases/${encodeURIComponent(analysisId)}/tasks`).then((x) => x.json());
+          if ((t.live || []).some((x) => ["queued", "running", "cancelling"].includes(x.state))) return;
+        } catch (e) { return; }
+        clearInterval(iv);
+        if (_openCaseId === analysisId) openComponents(analysisId, _compState && _compState.active);
+      }, 2500);
+    } catch (err) {
+      st.textContent = "Failed: " + err.message;
+      go.disabled = false;
+    }
+  };
+  go.addEventListener("click", submit);
+  pw.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+}
+
+function paneArchive(arc) {
+  const rows = (arc.entries || []).map((e) => `<tr>
+    <td class="mono">${escapeHtml(e.name || "")}</td>
+    <td>${e.size != null ? escapeHtml(String(e.size)) : ""}</td>
+    <td>${e.encrypted ? "🔒" : ""}</td>
+    <td>${e.skipped ? `<span class="badge badge-warn">${escapeHtml(e.skipped)}</span>` : fileActions(e.stored_path)}</td></tr>`).join("");
+  const head = `<p class="hint-line">${escapeHtml(arc.detail || "")}${arc.encrypted ? (arc.decrypted
+    ? ` · opened with ${escapeHtml(PW_SOURCE[arc.password_source] || "")}` : " · locked") : ""}
+    ${arc.error ? ` · <span class="bad-text">${escapeHtml(arc.error)}</span>` : ""} · entries are scanned recursively (Nested tab)</p>`;
+  return head + (rows ? `<table class="tbl"><thead><tr><th>Entry</th><th>Size</th><th></th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+    : `<p class="hint-line">No entries extracted.</p>`);
+}
+
 function nestedNode(n) {
   const fcount = (n.findings || []).length;
   const badge = fcount
     ? `<span class="badge badge-bad">${fcount} finding(s)</span>`
     : (n.kind === "other" ? '<span class="badge badge-muted">not analyzable</span>'
                           : '<span class="badge badge-ok">clean</span>');
+  const lk = n.unlock || n.archive;
+  const lock = lk && lk.encrypted
+    ? (lk.decrypted
+      ? `<span class="badge badge-warn" title="${escapeHtml(lk.detail || "")}">🔓 decrypted (${escapeHtml(PW_SOURCE[lk.password_source] || lk.password_source || "")})</span>`
+      : `<span class="badge badge-bad" title="${escapeHtml(lk.detail || "")}">🔒 encrypted — not opened</span>`)
+    : "";
+  const pwc = (n.password_candidates || []).length
+    ? `<span class="badge badge-muted" title="${escapeHtml(n.password_candidates.map((c) => c.context).join("\n"))}">🔑 ${n.password_candidates.length} password(s) in body</span>` : "";
   let html = `<div class="nested-node">
     <div class="nested-row">
       <span class="mono">${escapeHtml(n.filename)}</span>
       <span class="badge badge-muted">${escapeHtml(n.kind)}</span>
+      ${lock}${pwc}
       ${badge}
       ${fileActions(n.stored_path)}
       ${addMarkCell("nested", `Nested item ${n.filename}`, n.stored_path || "nested", n.kind || "")}
@@ -1358,6 +1465,7 @@ function renderSubtabs() {
   wireAddMarks(bodyEl, _openCaseId);
   wirePivots(bodyEl);
   wireNet(bodyEl, _openCaseId);
+  wireUnlock(bodyEl, _openCaseId);
 }
 
 async function openComponents(analysisId, keepTab) {
@@ -1386,7 +1494,7 @@ async function openComponents(analysisId, keepTab) {
     let nested = mods.nested;
     const iocs = d.iocs;
     const rtf = mods.rtf;
-    if (!ooxml && !sem && !ole && !email && !pdf && !oleLegacy && !mods.javascript && !rtf) {
+    if (!ooxml && !sem && !ole && !email && !pdf && !oleLegacy && !mods.javascript && !rtf && !mods.archive && !mods.unlock) {
       bodyEl.innerHTML = `<p class="hint-line">No component analysis for this case yet.</p>`;
       return;
     }
@@ -1403,6 +1511,7 @@ async function openComponents(analysisId, keepTab) {
     else if (pdf) compLabel = `${pdf.page_count || 0} pages · ${(pdf.embedded || []).length} embedded`;
     else if (rtf) compLabel = `RTF · ${(rtf.objects || []).length} objects · ${(rtf.fields || []).length} fields`;
     else if (oleLegacy) compLabel = `${oleLegacy.kind || "ole"} · ${(oleLegacy.streams || []).length} streams`;
+    else if (mods.archive) compLabel = `${(mods.archive.entries || []).filter((e) => e.stored_path).length} archive entries`;
     else if (!ooxml && mods.javascript) compLabel = `${(mods.javascript.scripts || []).length} script(s)`;
     else compLabel = `${(ooxml && ooxml.counts && ooxml.counts.components) || 0} parts`;
     summary.textContent = `${compLabel} · ${findings.length} findings · ${ni} IOCs`;
@@ -1410,7 +1519,7 @@ async function openComponents(analysisId, keepTab) {
 
     // Build only the sub-tabs that have content.
     const sections = [];
-    const headerHtml = email ? hopsTable(email) : "";
+    const headerHtml = lockBanner(mods) + (email ? hopsTable(email) : "");
     sections.push({ id: "findings", label: `Findings (${findings.length})`, render: () => paneFindings(findings) });
     sections.push({ id: "iocs", label: `IOCs (${ni})`, html: paneIocs(iocs, mods.netcheck) });
     if (mods.netcheck && (mods.netcheck.checks || []).length) {
@@ -1421,6 +1530,9 @@ async function openComponents(analysisId, keepTab) {
       sections.push({ id: "headers", label: `Headers (${(email.headers || []).length})`, html: paneEmailHeaders(email) });
       sections.push({ id: "attachments", label: `Attachments (${email.attachment_count || 0})`, html: paneAttachments(email, nested) });
       sections.push({ id: "body", label: "Body", html: paneEmailBody(email, mods.mailrules) });
+    }
+    if (mods.archive) {
+      sections.push({ id: "archive", label: `Archive (${(mods.archive.entries || []).filter((e) => e.stored_path).length})`, html: paneArchive(mods.archive) });
     }
     if (oleLegacy) {
       sections.push({ id: "ole", label: "OLE", html: paneOle(oleLegacy) });

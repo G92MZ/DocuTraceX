@@ -36,11 +36,13 @@
     <div class="view" data-view="overview">
       <section class="panel">
         <h1>New analysis</h1>
-        <p>Upload a file to open a case. The original is stored unmodified and hashed; no content is executed.</p>
+        <p>Upload a file to open a case. The original is stored unmodified and hashed; no content is executed. Encrypted documents and archives are decrypted first when the password is known, and the decrypted copy is analysed.</p>
         <form id="upload-form" class="upload">
           <input type="file" id="file-input" class="file-native" required />
           <label for="file-input" class="btn btn-ghost">Choose file</label>
           <span id="file-name" class="file-name">No file selected</span>
+          <input type="password" id="upload-password" class="upload-password" autocomplete="off"
+                 placeholder="Password (optional)" title="Password of an encrypted document or archive, if you know it. Passwords given in an email body, Excel's default and 'infected' are tried automatically." />
           <button type="submit" class="btn btn-primary">Analyze</button>
           <span id="upload-status" class="status"></span>
         </form>

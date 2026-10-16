@@ -44,6 +44,76 @@ def _family(manifest: dict[str, Any], original: Path | None = None) -> str | Non
 
 
 
+def case_password(paths: CasePaths) -> str | None:
+    """Password the analyst gave for this case (upload form / Unlock button)."""
+    try:
+        data = read_json(paths.password) or {}
+    except Exception:  # noqa: BLE001
+        return None
+    pw = data.get("password")
+    return pw if isinstance(pw, str) and pw != "" else None
+
+
+def _unlock_original(original: Path, paths: CasePaths, user_pw: str | None) -> dict[str, Any]:
+    """Decrypt an encrypted Office/PDF original into extracted/decrypted/."""
+    from . import unlock
+
+    rec = unlock.unlock_file(original, paths.extracted_dir / "decrypted", unlock.candidates(user_pw))
+    out = unlock.public(rec, paths.root)
+    out.update(module="unlock", password_set=bool(user_pw),
+               original_sha256=(read_json(paths.manifest) or {}).get("original", {}).get("hashes", {}).get("sha256"),
+               counts={"findings": len(rec["findings"])},
+               status="ok_with_findings" if rec["findings"] else "ok")
+    return out
+
+
+def _harvest_mail_passwords(mail_res: dict[str, Any], paths: CasePaths) -> list[dict[str, Any]]:
+    """Password candidates in the email's subject/body; recorded in the email
+    result (``password_candidates``) with a finding when it has attachments."""
+    from . import passwords
+
+    subject = (mail_res.get("addresses") or {}).get("subject", "")
+    found = passwords.harvest(subject, mail_res.get("body_sample", ""), mail_res.get("html_text_sample", ""))
+    if not found:
+        return []
+    mail_res["password_candidates"] = found
+    if mail_res.get("attachment_count"):
+        shown = ", ".join(f"'{c['password']}'" for c in found[:5])
+        mail_res.setdefault("findings", []).append({
+            "rule": "password_in_body", "severity": "low", "location": "body",
+            "detail": f"The email gives a password ({shown}) — typical of encrypted attachments "
+                      "sent to get past mail gateways; it is tried on them automatically."})
+        mail_res.setdefault("counts", {})["findings"] = len(mail_res["findings"])
+    write_subresult(paths, "email", mail_res)
+    return found
+
+
+def _subject(paths: CasePaths, original: Path) -> Path:
+    """What the parsers analyse: the decrypted copy when the original was
+    encrypted and could be unlocked, else the original itself."""
+    u = read_json(paths.subresult("unlock")) or {}
+    if u.get("decrypted") and u.get("decrypted_path"):
+        p = paths.root / u["decrypted_path"]
+        if p.is_file():
+            return p
+    return original
+
+
+def _effective_family(manifest: dict[str, Any], subject: Path, unlock_rec: dict[str, Any]) -> str | None:
+    family = _family(manifest, subject)
+    # An encrypted .docx/.xlsx that couldn't be unlocked is an OLE container
+    # (EncryptionInfo + EncryptedPackage), not a ZIP package.
+    if (unlock_rec.get("encrypted") and not unlock_rec.get("decrypted")
+            and unlock_rec.get("kind") == "office" and family == "ooxml"):
+        return "ole"
+    if family is None:
+        from . import unlock
+        kind = unlock.detect(subject).get("kind")
+        if kind in ("zip", "7z"):
+            return kind
+    return family
+
+
 def _office_extras(run, original: Path, paths: CasePaths, family: str, declared_ext: str,
                    ole_res: dict[str, Any]) -> list[dict[str, Any]]:
     """Own Office rules, VBA/OLE structure tools and ViperMonkey emulation."""
@@ -78,7 +148,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         raise FileNotFoundError(f"No case.json in {case_root}")
 
     original = paths.root / manifest["original"]["stored_path"]
-    family = _family(manifest, original)
+    user_pw = case_password(paths)
     ran: list[str] = []
     overall_counts: dict[str, int] = {"components": 0, "findings": 0, "iocs": 0}
     state = "completed"
@@ -110,6 +180,26 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             rec["note"] = note
         steps.append(rec)
         return res
+
+    # Encrypted Office/PDF original: decrypt it (analyst's password, then the
+    # well-known defaults) and analyse the decrypted copy; the original keeps
+    # only the encryption findings. (msoffcrypto's own result is superseded.)
+    from . import unlock as unlock_mod
+
+    for stale in ("unlock", "msoffcrypto", "archive"):
+        paths.subresult(stale).unlink(missing_ok=True)
+    unlock_rec: dict[str, Any] = {}
+    det = unlock_mod.detect(original)
+    if det["encrypted"] and det["kind"] in ("office", "pdf"):
+        unlock_rec = run("unlock: encrypted document · decrypt (analyst / default passwords)",
+                         lambda: _unlock_original(original, paths, user_pw)) or {}
+        if unlock_rec:
+            write_subresult(paths, "unlock", unlock_rec)
+            ran.append("unlock")
+            findings_total += unlock_rec.get("counts", {}).get("findings", 0)
+            if unlock_rec.get("decrypted"):
+                original = paths.root / unlock_rec["decrypted_path"]
+    family = _effective_family(manifest, original, unlock_rec)
 
     if family == "ooxml":
         from .parsers import ooxml, office
@@ -157,7 +247,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 
         # External tools: the oletools suite (olevba, oleid, mraptor, msodde,
         # oleobj) — runs on the portable.
-        from .parsers import crypto, didier, oletools_suite
+        from .parsers import didier, oletools_suite
 
         ole_res = run("oletools: olevba · oleid · mraptor · msodde · oleobj",
                       lambda: oletools_suite.analyze(original, paths.extracted_dir))
@@ -165,15 +255,6 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         ran.append("oletools")
         findings_total += ole_res.get("counts", {}).get("findings", 0)
         if ole_res.get("findings") and state == "completed":
-            state = "completed"
-
-        # External tool: encrypted-document detection / default-password decrypt.
-        crypto_res = run("msoffcrypto: encryption / default-password decrypt",
-                         lambda: crypto.analyze(original, paths.extracted_dir))
-        write_subresult(paths, "msoffcrypto", crypto_res)
-        ran.append("msoffcrypto")
-        findings_total += crypto_res.get("counts", {}).get("findings", 0)
-        if crypto_res.get("findings") and state == "completed":
             state = "completed"
 
         # External scripts: Didier Stevens Suite (zipdump, oledump) — raw output.
@@ -210,7 +291,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                  if o.get("stored_path")]
         if items:
             nested_res = run("nested: recursive scan of embedded OLE objects",
-                             lambda: nested.scan_children(items, paths))
+                             lambda: nested.scan_children(items, paths, unlock_ctx={"user": user_pw}))
             if nested_res.get("tree"):
                 write_subresult(paths, "nested", nested_res)
                 ran.append("nested")
@@ -243,7 +324,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                  for o in rtf_res.get("objects") or [] if o.get("stored_path")]
         if items:
             nested_res = run("nested: recursive scan of embedded RTF objects",
-                             lambda: nested.scan_children(items, paths))
+                             lambda: nested.scan_children(items, paths, unlock_ctx={"user": user_pw}))
             if nested_res.get("tree"):
                 write_subresult(paths, "nested", nested_res)
                 ran.append("nested")
@@ -280,7 +361,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                  for e in pdf_res.get("embedded", []) or [] if e.get("stored_path")]
         if items:
             nested_res = run("nested: recursive scan of embedded files",
-                             lambda: nested.scan_children(items, paths))
+                             lambda: nested.scan_children(items, paths, unlock_ctx={"user": user_pw}))
             if nested_res.get("tree"):
                 write_subresult(paths, "nested", nested_res)
                 ran.append("nested")
@@ -320,8 +401,12 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         items = [{"path": str(paths.root / a["stored_path"]), "filename": a.get("filename")}
                  for a in (mail_res.get("attachments", []) if mail_res else [])
                  if a.get("stored_path")]
-        nested_res = run("nested: recursive scan of attachments",
-                         lambda: nested.scan_children(items, paths))
+        # Passwords given in the mail ("the password is 1234") unlock its
+        # encrypted attachments (Office, PDF, ZIP/7z).
+        harvested = _harvest_mail_passwords(mail_res, paths) if mail_res else []
+        nested_res = run("nested: recursive scan of attachments (unlocking encrypted ones)",
+                         lambda: nested.scan_children(items, paths,
+                                                      unlock_ctx={"user": user_pw, "harvested": harvested}))
         if nested_res.get("tree"):
             write_subresult(paths, "nested", nested_res)
             ran.append("nested")
@@ -338,8 +423,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         # Legacy OLE / BIFF: .doc / .xls / .ppt (Compound File). (.msg already
         # handled by the email branch above.)
         from . import nested
-        from .parsers import (crypto, didier, ole_legacy, officemalscanner,
-                              oletools_suite, xlm)
+        from .parsers import didier, officemalscanner, ole_legacy, oletools_suite, xlm
 
         declared_ext = manifest["original"].get("declared_extension", "")
         res = run("ole: CFB structure (streams, metadata, VBA)",
@@ -355,12 +439,6 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         write_subresult(paths, "oletools", ole_res)
         ran.append("oletools")
         findings_total += ole_res.get("counts", {}).get("findings", 0)
-
-        crypto_res = run("msoffcrypto: encryption / default-password decrypt",
-                         lambda: crypto.analyze(original, paths.extracted_dir))
-        write_subresult(paths, "msoffcrypto", crypto_res)
-        ran.append("msoffcrypto")
-        findings_total += crypto_res.get("counts", {}).get("findings", 0)
 
         # Excel 4.0 (XLM) macros in legacy BIFF .xls (hidden/very-hidden sheets).
         if declared_ext.lower() in (".xls", ".xlt", ".xla", ".xlm"):
@@ -395,7 +473,39 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                  if o.get("stored_path")]
         if items:
             nested_res = run("nested: recursive scan of embedded OLE objects",
-                             lambda: nested.scan_children(items, paths))
+                             lambda: nested.scan_children(items, paths, unlock_ctx={"user": user_pw}))
+            if nested_res.get("tree"):
+                write_subresult(paths, "nested", nested_res)
+                ran.append("nested")
+                findings_total += nested_res.get("counts", {}).get("findings", 0)
+    elif family in ("zip", "7z"):
+        # Archive (a .zip/.7z upload, e.g. a malware drop): extract with bounds,
+        # with the analyst's password or the usual ones ("infected"...), and
+        # scan every entry recursively.
+        from . import nested
+
+        def _archive() -> dict[str, Any]:
+            rec = unlock_mod.extract_archive(original, paths.extracted_dir / "archive",
+                                             unlock_mod.candidates(user_pw, kind="archive"))
+            out = unlock_mod.public(rec, paths.root)
+            out.update(module="archive", password_set=bool(user_pw),
+                       counts={"findings": len(rec["findings"]),
+                               "entries": len([e for e in rec["entries"] if e.get("file")])},
+                       status="ok_with_findings" if rec["findings"] else "ok")
+            out["_files"] = [(e["file"], e["name"]) for e in rec["entries"] if e.get("file")]
+            return out
+
+        arc = run("archive: list · extract (bounded) · password (analyst / defaults)", _archive) or {}
+        files = arc.pop("_files", [])
+        if arc:
+            write_subresult(paths, "archive", arc)
+            ran.append("archive")
+            overall_counts["components"] = arc["counts"]["entries"]
+            findings_total += arc["counts"]["findings"]
+        items = [{"path": f, "filename": Path(n).name} for f, n in files]
+        if items:
+            nested_res = run("nested: recursive scan of archive entries",
+                             lambda: nested.scan_children(items, paths, unlock_ctx={"user": user_pw}))
             if nested_res.get("tree"):
                 write_subresult(paths, "nested", nested_res)
                 ran.append("nested")
@@ -483,7 +593,7 @@ _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto"
                "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole",
                "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules", "javascript", "rtf")
 # Modules whose findings feed the consolidated view (includes derived ones).
-_COLLECTABLE = _RERUNNABLE + ("nested", "netcheck")
+_COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive")
 
 
 def _collect_modules(paths: CasePaths) -> dict[str, Any]:
@@ -547,9 +657,10 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
     if module not in _RERUNNABLE:
         raise ValueError(f"Module not re-runnable: {module!r}")
 
-    original = paths.root / manifest["original"]["stored_path"]
+    true_original = paths.root / manifest["original"]["stored_path"]
+    original = _subject(paths, true_original)
     declared_ext = manifest["original"].get("declared_extension", "")
-    family = _family(manifest, original)
+    family = _effective_family(manifest, original, read_json(paths.subresult("unlock")) or {})
     ed = paths.extracted_dir
 
     if module == "ooxml":
@@ -582,7 +693,7 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
         res = oletools_suite.analyze(original, ed)
     elif module == "msoffcrypto":
         from .parsers import crypto
-        res = crypto.analyze(original, ed)
+        res = crypto.analyze(true_original, ed)
     elif module == "xlmdeobf":
         from .parsers import xlm
         res = xlm.analyze(original)

@@ -61,6 +61,12 @@ dependencies = [
     "maxminddb>=2.5",
     "tldextract>=5.1",
     "playwright>=1.45",
+    # Encrypted documents/archives: PDF decryption keeping the objects as they
+    # are (pikepdf/qpdf), ZIP with WinZip AES (pyzipper), 7z (py7zr, LGPL-2.1:
+    # installed into the portable, never shipped in this repository).
+    "pikepdf>=8.0",
+    "pyzipper>=0.3.6",
+    "py7zr>=0.20",
     # AI tab: MCP server (stdio) exposing the cases read-only to MCP clients.
     "mcp>=1.2",
 ]

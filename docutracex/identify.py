@@ -41,6 +41,9 @@ _EXT_FAMILY: dict[str, str] = {
     ".eml": "email",
     ".emlx": "email",
     ".rtf": "rtf",
+    # Archives (attachments, malware drops): extracted and scanned recursively
+    ".zip": "zip",
+    ".7z": "7z",
 }
 
 # --- detected mime/description -> family -------------------------------------
@@ -63,6 +66,7 @@ _MIME_FAMILY: dict[str, str] = {
     "text/x-mail": "email",
     "text/rtf": "rtf",
     "application/rtf": "rtf",
+    "application/x-7z-compressed": "7z",
 }
 
 # Generic container mimes: structurally correct but not type-specific. For an
@@ -166,6 +170,8 @@ def detected_family(mime: str, description: str) -> str | None:
         return "pdf"
     if "zip archive" in desc:
         return "zip"
+    if "7-zip archive" in desc:
+        return "7z"
     if "mail" in desc or "rfc 822" in desc or "smtp" in desc:
         return "email"
     if mime.startswith("text/"):
