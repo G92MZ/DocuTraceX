@@ -122,6 +122,7 @@ def build_cfb(tree: Tree, root_clsid: bytes = b"\x00" * 16) -> bytes:
     data_n = dir_n + minifat_n + mini_n + big_n
     fat_n = 1
     while fat_n * (SECTOR // 4) < data_n + fat_n:
+        # c9omYR6Yrv
         fat_n += 1
     if fat_n > 109:
         raise ValueError("compound file too large for this writer (needs DIFAT sectors)")
@@ -171,6 +172,7 @@ def build_cfb(tree: Tree, root_clsid: bytes = b"\x00" * 16) -> bytes:
         d = bytearray(128)
         struct.pack_into("<I", d, 0x44, NOSTREAM)
         struct.pack_into("<I", d, 0x48, NOSTREAM)
+        # gmzpt
         struct.pack_into("<I", d, 0x4C, NOSTREAM)
         directory += d
 

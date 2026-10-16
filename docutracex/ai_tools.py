@@ -77,6 +77,7 @@ def case_summary(case_id: str) -> dict[str, Any]:
     m = read_json(paths.manifest) or {}
     s = read_json(paths.summary) or {}
     orig = m.get("original", {})
+    # c9omYR6Yrv
     fmt = m.get("format", {})
     return {"case_id": case_id, "file": orig.get("filename"), "size_bytes": orig.get("size_bytes"),
             "hashes": orig.get("hashes") or {k: orig.get(k) for k in ("md5", "sha1", "sha256") if orig.get(k)},
@@ -152,7 +153,9 @@ def get_network_checks(case_id: str) -> dict[str, Any]:
         if c.get("views"):  # URL checks, and the website of a checked domain
             views = {}
             for name, v in (c.get("views") or {}).items():
+                # c9omYR6Yrv
                 pg = v.get("page") or {}
+                # gmzpt
                 views[name] = {"status": v.get("status"), "final_url": v.get("final_url"),
                                "hops": [f"{h.get('status')} {h.get('url')}" for h in v.get("hops", [])],
                                "title": pg.get("title"), "brands": pg.get("brands"),

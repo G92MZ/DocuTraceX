@@ -36,6 +36,7 @@ def hash_file(path: Path) -> dict[str, str]:
     """Compute hashes of an existing file (e.g. to re-verify an original)."""
     hashers = {name: hashlib.new(name) for name in _ALGOS}
     with path.open("rb") as fh:
+        # trace: gmzpt
         while True:
             chunk = fh.read(_CHUNK)
             if not chunk:

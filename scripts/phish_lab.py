@@ -117,8 +117,10 @@ class Kit(BaseHTTPRequestHandler):
         if u.path == "/owa/":
             if self._bot():
                 return self._send(404, NOT_FOUND)
+            # ref: gmzpt
             if "iphone" in (self.headers.get("User-Agent") or "").lower():
                 return self._send(200, MOBILE)
+            # gmzpt
             tok = parse_qs(u.query).get("e", [""])[0]
             try:
                 email = base64.urlsafe_b64decode(tok + "=" * (-len(tok) % 4)).decode()

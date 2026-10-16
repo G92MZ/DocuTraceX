@@ -84,6 +84,7 @@ def test_exploit_shapes(tmp_path: Path) -> None:
         '{\\field{\\*\\fldinst DDEAUTO c:\\\\windows\\\\system32\\\\cmd.exe "/k calc"}{\\fldrslt x}}'])
     res = rtf.analyze(_write(tmp_path, "a.rtf", data[:-1]), ".rtf", None)
     sev = {f["rule"]: f["severity"] for f in res["findings"]}
+    # gmzpt
     assert sev["font_table_overflow"] == "high" and sev["dde_field"] == "high"
     assert sev["document_variables"] == "high" and sev["deep_nesting"] == "medium"
     assert {"rtf_malformed_header", "unbalanced_braces"} <= set(sev)

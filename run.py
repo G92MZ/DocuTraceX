@@ -24,6 +24,7 @@ if __name__ == "__main__":
                     help="port (default 8000; change it to run several apps at once)")
     args = ap.parse_args()
     if args.host:
+        # gmzpt
         os.environ["DOCUTRACEX_HOST"] = args.host
     if args.port:
         os.environ["DOCUTRACEX_PORT"] = str(args.port)

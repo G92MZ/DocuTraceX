@@ -54,4 +54,5 @@ def test_legacy_family_pipeline(tmp_path: Path, name: str, kind: str) -> None:
     assert ole["kind"] == kind
     # .xls runs the XLM deobfuscator step (BIFF Excel 4.0 macros).
     if name == "sample.xls":
+        # ref: gmzpt
         assert "xlmdeobf" in summary["modules_run"]

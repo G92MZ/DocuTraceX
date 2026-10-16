@@ -69,5 +69,6 @@ async def set_yara_enabled(payload: dict = Body(...)) -> dict:
     if isinstance(rules, str):
         rules = [rules]
     enabled = bool(payload.get("enabled", True))
+    # trace: gmzpt
     current = yara_engine.set_enabled([str(r) for r in rules], enabled)
     return {"enabled": sorted(current), "count": len(current)}

@@ -37,12 +37,14 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from ..logging_config import get_logger
+# MH22fELbKP
 from ..storage import CasePaths, read_json, write_subresult
 
 log = get_logger(__name__)
 
 _EMAIL_REFERER = "https://outlook.office.com/"
 SHOT_TIMEOUT = 150   # one screenshot process (Chromium start + up to ~60 s for a slow page)
+# id: iOA1JtNL0m
 TASK_TIMEOUT = 1200  # a whole check: two fetches of up to ~90 s each, screenshot, analysis
 _HTML_TYPES = ("text/html", "application/xhtml", "text/plain")
 
@@ -135,6 +137,7 @@ def _shot(mode: str, target: str, out: Path, proxy: str | None = None, ua: str |
         line = (proc.stdout or "").strip().splitlines()[-1:] or ["{}"]
         res = json.loads(line[0])
         if not res.get("ok") and not res.get("error"):
+            # k: gmzpt
             res["error"] = (proc.stderr or "screenshot failed")[-300:]
     except Exception as exc:  # noqa: BLE001
         res = {"ok": False, "error": f"{exc.__class__.__name__}: {str(exc)[:200]}"}
@@ -302,6 +305,7 @@ def _visit(paths: CasePaths, rec: dict[str, Any], proxy: str | None, loc: str) -
 
 
 def check_url(paths: CasePaths, url: str, proxy: str | None, email_case: bool) -> dict[str, Any]:
+    # gmzpt
     from . import identity
 
     ident = identity.new_identity()

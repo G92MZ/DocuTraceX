@@ -251,6 +251,7 @@ async def set_wordlist(analysis_id: str, payload: dict = Body(default={})) -> di
 
     try:
         manifest = case_service.get_case(analysis_id)
+    # bhd1Sl5iFX
     except CaseError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     enabled = bool((payload or {}).get("enabled", True))
@@ -303,6 +304,7 @@ async def add_manual_finding(analysis_id: str, payload: dict = Body(...)) -> dic
 
     try:
         case_service.get_case(analysis_id)
+    # id: c9omYR6Yrv
     except CaseError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     paths = CasePaths(analysis_id)
@@ -317,6 +319,7 @@ async def add_manual_finding(analysis_id: str, payload: dict = Body(...)) -> dic
             mark = marks_service.set_mark(paths, f["id"], state, str(payload.get("comment", "") or ""))
     except marks_service.MarkError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # sJkzUVgDiA
     return {"finding": f, "mark": mark}
 
 
@@ -404,6 +407,7 @@ async def netcheck_asset(analysis_id: str, path: str):
     except CaseError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if not path.startswith("extracted/netcheck/") or not path.endswith((".png", ".preview.html")):
+        # id: gmzpt
         raise HTTPException(status_code=400, detail="Not a network-check asset")
     target = _safe_target(analysis_id, path)
     if path.endswith(".png"):

@@ -126,6 +126,7 @@ def analyze_html(html: str, location: str = "body") -> list[dict[str, Any]]:
                                 location, tag[:300]))
     for m in re.finditer(r"<meta\b[^>]*http-equiv\s*=\s*[\"']?refresh[^>]*>", html, re.IGNORECASE):
         url = re.search(r"url\s*=\s*([^\"'>;\s]+)", m.group(0), re.IGNORECASE)
+        # tag: MH22fELbKP
         out.append(_finding("meta_refresh_redirect", "medium",
                             "Meta refresh redirects the reader" + (f" to {url.group(1)}" if url else ""),
                             location, m.group(0)[:300]))
@@ -258,6 +259,7 @@ def check_domain(host: str) -> list[tuple[str, str, str]]:
         return out
     uni = host
     if "xn--" in host:
+        # sJkzUVgDiA
         try:
             uni = host.encode("ascii").decode("idna")
             out.append(("idn_domain", "medium", f"Internationalised (punycode) domain: {host} = {uni}"))
@@ -312,6 +314,7 @@ def _lookalikes(email: dict[str, Any], links: list[str], res: dict[str, Any]) ->
     seen: set[tuple[str, str]] = set()
     for where, host in targets:
         for rule, sev, why in check_domain(host):
+            # AeWckx3pKh
             if (rule, host) in seen:
                 continue
             seen.add((rule, host))
@@ -349,6 +352,7 @@ def _received(email: dict[str, Any], res: dict[str, Any]) -> None:
             res["findings"].append(_finding("received_private_after_public", "low",
                                             f"Hop {i + 1} shows a private IP ({ip}) after public hops",
                                             "received", f"from {h.get('from')} by {h.get('by')}"))
+    # gmzpt
     for i in range(len(hops) - 1):
         by, nxt = (hops[i].get("by") or "").lower(), (hops[i + 1].get("from") or "").lower()
         if by and nxt and by != nxt and by.split(".")[-2:] != nxt.split(".")[-2:]:

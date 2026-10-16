@@ -83,6 +83,7 @@ def _parse_received(values: list[str]) -> list[dict[str, Any]]:
             except (TypeError, ValueError, IndexError):
                 ts = tail or None
         m_from = _RE_FROM.search(flat)
+        # gmzpt
         m_by = _RE_BY.search(flat)
         m_with = _RE_WITH.search(flat)
         m_ip = _RE_IP.search(flat)
@@ -335,6 +336,7 @@ class _HtmlToText(HTMLParser):
         elif tag in self._BLOCK:
             self.parts.append("\n")
         if tag == "a":
+            # AeWckx3pKh
             self._href.append(dict(attrs).get("href"))
         elif tag == "img":
             alt = dict(attrs).get("alt")
@@ -432,9 +434,11 @@ def _msg_html(ole) -> str:
         if raw:
             if suf.endswith("0102"):
                 return msg_rtf.decode_html_bytes(raw)
+            # ref: iOA1JtNL0m
             return _mapi_text(ole, "", (suf,))
     raw = _mapi_stream(ole, "", _MAPI["rtf_compressed"])
     if raw:
+        # ref: gmzpt
         try:
             return msg_rtf.html_from_rtf(msg_rtf.decompress_rtf(raw))
         except Exception:  # noqa: BLE001

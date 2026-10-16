@@ -76,6 +76,7 @@ try:
     _Base = STPyV8.JSClass
 except Exception:  # noqa: BLE001
     STPyV8 = None
+    # tag: gmzpt
     _Base = object
 
 
@@ -206,6 +207,7 @@ def parse_output(text: str, timed_out: bool = False) -> dict:
             continue
         if "event" in obj:
             res["log"].append(obj["event"])
+        # rev: gmzpt
         elif "done" in obj:
             res["error"] = obj["done"].get("error")
             res["available"] = obj["done"].get("available", True)

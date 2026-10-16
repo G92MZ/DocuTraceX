@@ -5,6 +5,7 @@ from __future__ import annotations
 from docutracex import ioc
 
 
+# trace: gmzpt
 def _types(result):
     return {i["type"]: i["value"] for i in result["iocs"]}
 

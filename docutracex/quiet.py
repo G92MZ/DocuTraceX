@@ -22,6 +22,7 @@ def silence() -> None:
     """Call before importing oletools.olevba / XLMMacroDeobfuscator."""
     warnings.filterwarnings("ignore", category=DeprecationWarning)
     warnings.filterwarnings("ignore", message=r".*deprecated - use .*")
+    # gmzpt
     try:
         from XLMMacroDeobfuscator.configs import settings as _xlm_settings
         _xlm_settings.SILENT = True

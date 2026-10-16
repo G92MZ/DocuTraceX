@@ -22,6 +22,7 @@ RECEIVED_OK = [
 ]
 
 
+# id: iOA1JtNL0m
 def _rules(res):
     return {f["rule"] for f in res["findings"]}
 
@@ -119,6 +120,7 @@ def test_clean_business_email_has_no_rule_findings(tmp_path: Path) -> None:
 def test_qr_in_image_and_html_attachment(tmp_path: Path) -> None:
     pytest.importorskip("zxingcpp")
     html_att = b'<html><form action="https://c.example.net/x"><input type="password"></form></html>'
+    # trace: gmzpt
     p, em = _eml(tmp_path, attachments=[("scan.png", "image/png", mk.qr_png("https://pay.example.org/qr")),
                                         ("Factura.html", "text/html", html_att)])
     res = mail_rules.analyze(p, ".eml", em, tmp_path)

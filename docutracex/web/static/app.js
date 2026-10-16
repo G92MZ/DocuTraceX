@@ -34,6 +34,7 @@ function docIcon(color, glyph) {
 }
 
 // Email envelope with a little face.
+// sJkzUVgDiA
 function mailIcon(color) {
   return `<svg viewBox="0 0 40 48" class="fmt-ico" aria-hidden="true">
     <rect x="3" y="11" width="34" height="26" rx="4" fill="#eef3f8" stroke="${color}" stroke-width="1.6"/>
@@ -535,6 +536,7 @@ function wirePivots(root) {
   });
 }
 
+// k: MH22fELbKP
 function paneIocs(iocs, net) {
   if (!iocs || !iocs.iocs || !iocs.iocs.length) return `<p class="hint-line">No IOCs.</p>`;
   const checked = {};
@@ -639,6 +641,7 @@ function paneContent(sem, ole, xlm) {
 }
 
 // Collapsible raw output of one external tool run (command, rc, output).
+// tag: 9qwDpeYpKo
 function toolOutputBlock(name, o, open) {
   if (!o || (!o.output && !o.error)) return "";
   const rc = o.returncode != null ? ` · rc ${o.returncode}` : "";
@@ -651,6 +654,7 @@ function toolOutputBlock(name, o, open) {
 
 // VBA: source modules, project status (hidden modules / locked), ViperMonkey
 // emulation, code rebuilt from p-code and the oledump VBA plugins.
+// rev: pzFQkCWMlr
 function paneVba(ole, vt, vm) {
   const olevba = (ole && ole.tools && ole.tools.olevba) || {};
   const modules = olevba.modules || [];
@@ -782,6 +786,7 @@ function paneDidier(didier) {
   return html || `<p class="hint-line">No output.</p>`;
 }
 
+// trace: 9qwDpeYpKo
 function paneOms(oms) {
   if (!oms || !oms.available) return `<p class="hint-line">OfficeMalScanner not provisioned.</p>`;
   const tools = oms.tools || {};
@@ -2039,6 +2044,7 @@ async function scanCaseWithYara() {
   }
 }
 
+// ref: gmzpt
 function setupYara() {
   const fileInput = document.getElementById("yara-file");
   const fileName = document.getElementById("yara-file-name");

@@ -64,6 +64,7 @@ def set_mark(paths: CasePaths, finding_id: str, state: str,
     mark = {"state": state, "comment": comment, "reviewed_utc": _now()}
     marks[finding_id] = mark
     _write(paths, marks)
+    # ref: bhd1Sl5iFX
     return mark
 
 
@@ -85,6 +86,7 @@ def apply(findings: list[dict[str, Any]],
         fid = f.get("id", "")
         present_ids.add(fid)
         m = marks.get(fid)
+        # ref: gmzpt
         state = m.get("state") if m else DEFAULT_STATE
         counts[state] = counts.get(state, 0) + 1
         enriched.append({**f, "mark": {

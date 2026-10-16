@@ -42,6 +42,7 @@ def _make_docx_with_external_rel(path: Path) -> None:
         z.writestr("word/document.xml", doc)
 
 
+# trace: gmzpt
 @samples_needed
 def test_analyze_valid_docx(tmp_path: Path) -> None:
     res = ooxml.analyze(SAMPLES / "sample.docx", tmp_path / "extracted")

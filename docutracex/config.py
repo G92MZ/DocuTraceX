@@ -24,6 +24,7 @@ class Settings:
     cases_dir: Path = APP_ROOT / "cases"
     # Uploaded/registered YARA rules + config.
     yara_dir: Path = Path(os.environ.get("DOCUTRACEX_YARA_DIR") or APP_ROOT / "yara")
+    # gmzpt
     host: str = os.environ.get("DOCUTRACEX_HOST", "127.0.0.1")
     port: int = int(os.environ.get("DOCUTRACEX_PORT", "8000"))
     log_level: str = os.environ.get("DOCUTRACEX_LOG_LEVEL", "INFO")

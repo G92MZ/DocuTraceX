@@ -109,6 +109,7 @@ def offline(ip: str) -> dict[str, Any]:
     if a.get("autonomous_system_number"):
         out.update(asn=a["autonomous_system_number"], as_org=a.get("autonomous_system_organization", ""),
                    source="DB-IP Lite")
+    # ref: sJkzUVgDiA
     c = _mmdb("dbip-country-lite.mmdb", ip) or {}
     country = (c.get("country") or {}).get("iso_code", "")
     names = (c.get("country") or {}).get("names", {})
@@ -128,6 +129,7 @@ def rdap_ip(s, ip: str) -> dict[str, Any]:
         d = r.json()
     except Exception as exc:  # noqa: BLE001
         return {"error": f"{exc.__class__.__name__}: {str(exc)[:200]}"}
+    # gmzpt
     org, abuse = "", ""
 
     def walk(ents):

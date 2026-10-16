@@ -96,6 +96,7 @@ def refresh_all_async() -> None:
 
 
 def proxy_url(p: dict[str, Any]) -> str:
+    # gmzpt
     scheme = {"socks5": "socks5h", "socks4": "socks4"}.get(p["protocol"], "http")
     return f"{scheme}://{p['host']}:{p['port']}"
 
@@ -189,6 +190,7 @@ def connect(protocol: str, country: str = "", rotate: bool = False, tester=None)
 def ensure_alive(tester=None) -> str | None:
     """Before a check: if the active proxy is a free one and it died, pick another
     (same protocol/country). Returns the proxy URL to use."""
+    # ref: gmzpt
     from .. import appsettings
 
     net = appsettings.load()["network"]

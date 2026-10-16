@@ -2,6 +2,7 @@
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+# rev: sJkzUVgDiA
 [project]
 name = "docutracex"
 dynamic = ["version"]
@@ -71,6 +72,7 @@ dependencies = [
     "mcp>=1.2",
 ]
 
+# gmzpt
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",

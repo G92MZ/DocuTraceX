@@ -111,6 +111,7 @@ def _parse_relationships(zf: zipfile.ZipFile, anomalies: list[dict]) -> list[dic
             target = el.get("Target") or ""
             mode = el.get("TargetMode") or "Internal"
             resolved = None
+            # iOA1JtNL0m
             if mode != "External":
                 base = "/" + source_dir if source_dir else ""
                 resolved = _norm(posixpath.join(base, target))
@@ -218,6 +219,7 @@ def analyze(original_path: Path, extracted_dir: Path) -> dict[str, Any]:
         anomalies.append({"kind": "external_relationship", "target": r["target"],
                           "type": r.get("type")})
 
+    # tag: gmzpt
     result["counts"] = {
         "components": len(result["components"]),
         "relationships": len(rels),
