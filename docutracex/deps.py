@@ -489,7 +489,8 @@ def run_checks() -> dict[str, Any]:
             category="Network checks",
             name="Proxy",
             status="ok" if net["proxy_active"] else "warn",
-            detail=(f"{net['proxy']['scheme']}://{net['proxy']['host']}:{net['proxy']['port']}" if net["proxy_active"]
+            detail=(f"{net['proxy']['scheme']}://{net['proxy']['host']}:{net['proxy']['port']}"
+                    + (" (free public proxy — strict TLS)" if net["proxy"].get("free") else "") if net["proxy_active"]
                     else "none — checks go out from this machine's IP"
                     + (" (risk accepted)" if net["risk_accepted"] else "")),
             remedy="" if net["proxy_active"] else "configure one in Settings → Network",

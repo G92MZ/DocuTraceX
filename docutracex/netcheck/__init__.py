@@ -42,6 +42,8 @@ from ..storage import CasePaths, read_json, write_subresult
 log = get_logger(__name__)
 
 _EMAIL_REFERER = "https://outlook.office.com/"
+SHOT_TIMEOUT = 150   # one screenshot process (Chromium start + up to ~60 s for a slow page)
+TASK_TIMEOUT = 1200  # a whole check: two fetches of up to ~90 s each, screenshot, analysis
 _HTML_TYPES = ("text/html", "application/xhtml", "text/plain")
 
 
@@ -86,9 +88,15 @@ def _upsert(data: dict[str, Any], rec: dict[str, Any]) -> None:
 
 
 def _proxy_label(proxy: str | None) -> str:
+    from .. import appsettings
+
     if not proxy:
         return "direct (no proxy — your own IP)"
     p = urlsplit(proxy)
+    if appsettings.proxy_is_free():
+        info = appsettings.load()["network"]["proxy"].get("free_info") or {}
+        where = f", {info['country']}" if info.get("country") else ""
+        return f"free proxy (untrusted, strict TLS) {p.scheme}://{p.hostname}:{p.port}{where}"
     return f"proxy {p.scheme}://{p.hostname}:{p.port}"
 
 
@@ -116,12 +124,14 @@ def _shot(mode: str, target: str, out: Path, proxy: str | None = None, ua: str |
     from . import shot
     from .. import native
 
-    cmd = [sys.executable, "-m", "docutracex.netcheck.shot", mode, target, str(out), proxy or "", ua or ""]
+    from . import http as _http
+    strict = "strict" if getattr(_http, "_STRICT_DEFAULT", False) else ""
+    cmd = [sys.executable, "-m", "docutracex.netcheck.shot", mode, target, str(out), proxy or "", ua or "", strict]
     env = {**native.subprocess_env(), **{k: v for k, v in shot.env().items() if k == "PLAYWRIGHT_BROWSERS_PATH"}}
     root = str(Path(__file__).resolve().parents[2])
     env["PYTHONPATH"] = root + (";" if sys.platform.startswith("win") else ":") + env.get("PYTHONPATH", "")
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=90, env=env, cwd=root)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=SHOT_TIMEOUT, env=env, cwd=root)
         line = (proc.stdout or "").strip().splitlines()[-1:] or ["{}"]
         res = json.loads(line[0])
         if not res.get("ok") and not res.get("error"):
@@ -254,23 +264,18 @@ def _downloads_nested(paths: CasePaths, downloads: list[dict[str, Any]], loc: st
     return res, out
 
 
-def check_url(paths: CasePaths, url: str, proxy: str | None, email_case: bool) -> dict[str, Any]:
-    from . import http, identity
+def _visit(paths: CasePaths, rec: dict[str, Any], proxy: str | None, loc: str) -> None:
+    """Fetch ``rec['fetched_url']`` as desktop and mobile browsers and fill the
+    record: views (page, screenshot, preview), findings, cloaking, downloads."""
+    from . import http
 
-    cid = check_id("url", url)
-    workdir = paths.extracted_dir / "netcheck" / cid
+    workdir = paths.extracted_dir / "netcheck" / rec["id"]
     workdir.mkdir(parents=True, exist_ok=True)
-    loc = f"netcheck:url:{url}"
-    ident = identity.new_identity()
-    target, changes = identity.rewrite_url(url, ident)
-    referer = _EMAIL_REFERER if email_case else None
-    rec: dict[str, Any] = {"id": cid, "kind": "url", "target": url, "checked_utc": _now(),
-                           "via": _proxy_label(proxy), "identity": ident, "fetched_url": target,
-                           "replacements": changes, "referer": referer, "views": {}, "findings": []}
+    referer = rec.get("referer")
     downloads: list[dict[str, Any]] = []
     for prof in ("desktop", "iphone"):
         s = http.session(proxy)
-        res = http.fetch(s, target, http.profile(prof, referer))
+        res = http.fetch(s, rec["fetched_url"], http.profile(prof, referer))
         view, f, d = _view(paths, workdir, prof, res, loc, shot=(prof == "desktop"))
         view["user_agent"] = http.profile(prof)["User-Agent"]
         if prof == "desktop":
@@ -285,13 +290,54 @@ def check_url(paths: CasePaths, url: str, proxy: str | None, email_case: bool) -
         rec["views"][prof] = view
     rec["findings"] += _cloaking(rec["views"]["desktop"], rec["views"]["iphone"], loc)
     from ..parsers.mail_rules import check_domain
+    known = {(x["rule"], x["evidence"]) for x in rec["findings"]}
     for h in {_host(v.get("final_url") or "") for v in rec["views"].values()} - {""}:
         for rule, sev, why in check_domain(h):
-            rec["findings"].append({"tool": "netcheck", "rule": rule, "severity": sev, "detail": why,
-                                    "location": loc, "evidence": h})
+            if (rule, h) not in known:
+                rec["findings"].append({"tool": "netcheck", "rule": rule, "severity": sev, "detail": why,
+                                        "location": loc, "evidence": h})
     rec["nested"], extra = _downloads_nested(paths, downloads, loc)
     rec["findings"] += extra
     rec["downloads"] = downloads
+
+
+def check_url(paths: CasePaths, url: str, proxy: str | None, email_case: bool) -> dict[str, Any]:
+    from . import identity
+
+    ident = identity.new_identity()
+    target, changes = identity.rewrite_url(url, ident)
+    rec: dict[str, Any] = {"id": check_id("url", url), "kind": "url", "target": url, "checked_utc": _now(),
+                           "via": _proxy_label(proxy), "identity": ident, "fetched_url": target,
+                           "replacements": changes, "referer": _EMAIL_REFERER if email_case else None,
+                           "views": {}, "findings": []}
+    _visit(paths, rec, proxy, f"netcheck:url:{url}")
+    return rec
+
+
+def site_candidates(host: str) -> list[str]:
+    """Where a domain's website is tried: HTTPS first, then plain HTTP."""
+    return [f"https://{host}/", f"http://{host}/"]
+
+
+def check_domain(paths: CasePaths, host: str, proxy: str | None) -> dict[str, Any]:
+    """DNS / RDAP / CT, plus a visit to the domain's website (screenshot, page,
+    cloaking...) like a URL check, when the name resolves."""
+    from . import domain, http, identity
+
+    s = http.session(proxy)
+    d, f = domain.check(s, host)
+    rec: dict[str, Any] = {"id": check_id("domain", host), "kind": "domain", "target": host, "checked_utc": _now(),
+                           "via": _proxy_label(proxy), "data": d, "findings": f}
+    if d.get("note") or (d.get("dns") or {}).get("nxdomain"):
+        return rec  # reserved name or no such domain: nothing to visit
+    rec.update(identity=identity.new_identity(), replacements=[], referer=None, views={})
+    loc = f"netcheck:domain:{host}"
+    for url in site_candidates(host):
+        rec["fetched_url"] = url
+        rec["views"], rec["findings"] = {}, list(f)
+        _visit(paths, rec, proxy, loc)
+        if rec["views"]["desktop"].get("status"):
+            break  # the site answered (any HTTP status); otherwise try plain HTTP
     return rec
 
 
@@ -325,7 +371,7 @@ def submit_form(paths: CasePaths, cid: str, form_index: int, proxy: str | None, 
     workdir = paths.extracted_dir / "netcheck" / cid
     workdir.mkdir(parents=True, exist_ok=True)
     n = len(rec.get("submissions", [])) + 1
-    loc = f"netcheck:url:{rec['target']} › form#{form_index + 1}"
+    loc = f"netcheck:{rec['kind']}:{rec['target']} › form#{form_index + 1}"
     sview, f, d = _view(paths, workdir, f"submit{n}", res, loc, shot=True)
     nested_res, extra = _downloads_nested(paths, d, loc)
     sub = {"n": n, "form_index": form_index, "method": method, "action": form["action"], "sent": values,
@@ -348,7 +394,12 @@ def run(case_root: Path, params: dict[str, Any]) -> dict[str, Any]:
 
     case_root = Path(case_root)
     paths = CasePaths(case_root.name, cases_dir=case_root.parent)
-    proxy = appsettings.proxy_url()
+    from . import freeproxy, http as _http
+
+    free = appsettings.proxy_is_free()
+    # A free proxy may have died since it was picked: re-test it, rotate if needed.
+    proxy = freeproxy.ensure_alive() if free else appsettings.proxy_url()
+    _http.set_strict_default(free)
     kind, target = params.get("kind"), (params.get("target") or "").strip()
     data = _load(paths)
     if kind == "url":
@@ -367,10 +418,12 @@ def run(case_root: Path, params: dict[str, Any]) -> dict[str, Any]:
             res["path"] = _rel(paths, out)
         res["taken_utc"], res["via"] = _now(), _proxy_label(proxy)
         rec["live_screenshot"] = res
-    elif kind in ("domain", "ip"):
-        from . import domain, http, ipinfo
+    elif kind == "domain":
+        rec = check_domain(paths, target, proxy)
+    elif kind == "ip":
+        from . import http, ipinfo
         s = http.session(proxy)
-        d, f = (domain.check(s, target) if kind == "domain" else ipinfo.check(s, target))
+        d, f = ipinfo.check(s, target)
         rec = {"id": check_id(kind, target), "kind": kind, "target": target, "checked_utc": _now(),
                "via": _proxy_label(proxy), "data": d, "findings": f}
     else:
@@ -397,7 +450,7 @@ def run_task(case_root: Path, params: dict[str, Any]) -> None:
         cmd = [str(portable), "-m", "docutracex.netcheck", str(case_root), json.dumps(params)]
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                                  timeout=600, env=native.subprocess_env())
+                                  timeout=TASK_TIMEOUT, env=native.subprocess_env())
             if proc.returncode == 0:
                 return
             raise RuntimeError(proc.stderr.strip()[-500:] or f"exit {proc.returncode}")

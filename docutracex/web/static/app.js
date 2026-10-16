@@ -553,7 +553,7 @@ function paneIocs(iocs, net) {
   }).join("");
   const c = iocs.counts || {};
   const bits = Object.keys(c).filter((k) => k !== "total").map((k) => `${c[k]} ${k}`);
-  const allBtn = safe.length ? ` <button class="btn btn-ghost btn-sm" type="button" data-net-all='${escapeHtml(JSON.stringify(safe))}' title="DNS, RDAP, certificates and IP owner — never contacts the URLs themselves">Check all domains &amp; IPs</button>` : "";
+  const allBtn = safe.length ? ` <button class="btn btn-ghost btn-sm" type="button" data-net-all='${escapeHtml(JSON.stringify(safe))}' title="Domains: DNS, RDAP, certificates and a visit to the website (screenshot, page). IPs: owner, ASN, Tor. Through the proxy.">Check all domains &amp; IPs</button>` : "";
   return `<p class="hint-line">${escapeHtml(bits.join(" · "))}${allBtn}</p>` +
     table(["Type", "Value", "Count", "Provenance", "Mark", "Network"], rows);
 }
@@ -2058,7 +2058,14 @@ async function loadSettings() {
     const pw = document.getElementById("proxy-pass");
     pw.value = "";
     pw.placeholder = p.password_set ? "unchanged (saved)" : "";
-    st.textContent = n.proxy_active ? `Proxy active: ${p.scheme}://${p.host}:${p.port}` : "No proxy";
+    const fi = p.free_info || {};
+    st.textContent = n.proxy_active
+      ? `Proxy active: ${p.scheme}://${p.host}:${p.port}` + (p.free ? ` · free proxy${fi.country ? " " + fi.country : ""}${fi.egress_ip ? " · exit IP " + fi.egress_ip : ""}${fi.latency_ms ? " · " + fi.latency_ms + " ms" : ""}` : "")
+      : "No proxy";
+    if (p.free) document.getElementById("free-proto").value = p.scheme;
+    const fl = n.free_lists || {};
+    document.getElementById("free-lists").textContent = "Free lists: " + ["http", "socks4", "socks5"].map((k) =>
+      `${k.toUpperCase()} ${(fl[k] || {}).count || 0}${(fl[k] || {}).fetched ? " (" + fl[k].fetched + ")" : ""}`).join(" · ");
     st.className = "status " + (n.proxy_active ? "ok-text" : "bad-text");
     const risk = document.getElementById("risk-line");
     risk.innerHTML = n.risk_accepted
@@ -2091,9 +2098,36 @@ async function putNetwork(body) {
   return j;
 }
 
+async function connectFreeProxy(rotate) {
+  const status = document.getElementById("free-status");
+  const btns = [document.getElementById("free-connect"), document.getElementById("free-rotate")];
+  btns.forEach((b) => { b.disabled = true; });
+  status.className = "status";
+  status.textContent = "Testing random proxies from the list (up to ~90 s)…";
+  try {
+    const r = await fetch("/api/settings/network/free-proxy", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ protocol: document.getElementById("free-proto").value,
+        country: document.getElementById("free-country").value.trim(), rotate }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || "error");
+    const f = j.found;
+    status.textContent = `Connected: ${f.protocol}://${f.host}:${f.port}${f.country ? " (" + f.country + ")" : ""} · exit IP ${f.egress_ip} · ${f.latency_ms} ms · ${f.tried} tested in ${f.search_s}s`;
+    status.className = "status ok-text";
+    loadSettings();
+    loadDiagnostics();
+  } catch (err) {
+    status.textContent = String(err.message || err);
+    status.className = "status bad-text";
+  } finally {
+    btns.forEach((b) => { b.disabled = false; });
+  }
+}
+
 function setupSettings() {
   const form = document.getElementById("proxy-form");
   if (!form) return;
+  document.getElementById("free-connect").addEventListener("click", () => connectFreeProxy(false));
+  document.getElementById("free-rotate").addEventListener("click", () => connectFreeProxy(true));
   const status = document.getElementById("proxy-status");
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -2303,12 +2337,18 @@ function netViewHtml(analysisId, v, title, rec, isDesktop) {
 }
 
 function netUrlCard(analysisId, c) {
-  const views = c.views || {};
   let body = `<div class="ident-box"><b>Fake identity used:</b> <span class="mono">${escapeHtml(c.identity.email)}</span> · password <span class="mono">${escapeHtml(c.identity.password)}</span>
     ${(c.replacements || []).length ? `<div class="hint-line">Victim data replaced in the URL: ${c.replacements.map((r) => `${escapeHtml(r.where)} (${escapeHtml(r.encoding)}): ${escapeHtml(r.original)} → ${escapeHtml(r.replacement)}`).join("<br>")}</div>
       <div class="hint-line">Fetched: <span class="mono">${escapeHtml(c.fetched_url)}</span></div>` : '<div class="hint-line">No victim data found in the URL.</div>'}
     ${c.referer ? `<div class="hint-line">Referer sent: ${escapeHtml(c.referer)} (link clicked from webmail)</div>` : ""}</div>`;
-  body += `<div class="net-views">${netViewHtml(analysisId, views.desktop, "Desktop — Edge on Windows", c, true)}${netViewHtml(analysisId, views.iphone, "Mobile — Safari on iPhone", c, false)}</div>`;
+  return body + netWebHtml(analysisId, c);
+}
+
+// The website part of a check (URL, or a domain's site): both views, live
+// screenshot, submissions, served files and the findings.
+function netWebHtml(analysisId, c) {
+  const views = c.views || {};
+  let body = `<div class="net-views">${netViewHtml(analysisId, views.desktop, "Desktop — Edge on Windows", c, true)}${netViewHtml(analysisId, views.iphone, "Mobile — Safari on iPhone", c, false)}</div>`;
   const live = c.live_screenshot;
   body += `<div style="margin-top:10px"><button class="btn btn-ghost btn-sm" type="button" data-net-kind="shot_live" data-net-check="${c.id}" title="Loads the page with its images and CSS (JavaScript still off) — contacts the server again, through the proxy">Live screenshot (loads resources)</button></div>`;
   if (live) {
@@ -2326,9 +2366,19 @@ function netUrlCard(analysisId, c) {
   return body;
 }
 
-function netDomainCard(c) {
+function netDomainCard(analysisId, c) {
   const d = c.data || {};
   if (d.note) return `<p class="hint-line">${escapeHtml(d.note)}</p>` + netFindingsList(c.findings || []);
+  if (c.views && c.views.desktop) {
+    return netDomainInfo(d) + `<h4 style="margin:14px 0 4px">Website — <span class="mono">${escapeHtml(c.fetched_url || "")}</span></h4>`
+      + `<div class="ident-box">Fake identity for forms: <span class="mono">${escapeHtml((c.identity || {}).email || "")}</span></div>`
+      + netWebHtml(analysisId, c);
+  }
+  return netDomainInfo(d) + `<p class="hint-line">Website not visited (the domain does not resolve).</p>`
+    + `<h4 style="margin:14px 0 4px">Findings (${(c.findings || []).length})</h4>` + netFindingsList(c.findings || []);
+}
+
+function netDomainInfo(d) {
   const dns = (d.dns || {}).records || {};
   let h = `<div class="net-views"><div class="net-view"><h4>DNS</h4>${(d.dns || {}).nxdomain ? '<p class="bad-text">NXDOMAIN — does not resolve</p>' : ""}`
     + kv(Object.entries(dns).map(([k, v]) => [k, v.join(", ")])) + `</div>`;
@@ -2337,7 +2387,7 @@ function netDomainCard(c) {
   const ct = d.ct || {};
   h += `<div class="net-view"><h4>Certificate Transparency (crt.sh)</h4>${ct.error || ct.note ? `<p class="hint-line">${escapeHtml(ct.error || ct.note)}</p>` : kv([["Certificates", ct.count], ["First seen", ct.first_seen ? `${ct.first_seen} (${ct.first_seen_days} days ago)` : ""], ["Issuers", (ct.issuers || []).join(", ")]])
     + ((ct.names || []).length ? `<details class="disclose"><summary>Names (${ct.names.length})</summary><p class="mono">${escapeHtml(ct.names.join("  "))}</p></details>` : "")}</div></div>`;
-  return h + `<h4 style="margin:14px 0 4px">Findings (${(c.findings || []).length})</h4>` + netFindingsList(c.findings || []);
+  return h;
 }
 
 function netIpCard(c) {
@@ -2358,7 +2408,7 @@ function paneChecks(analysisId, net) {
   return checks.slice().sort((a, b) => (order[a.kind] - order[b.kind]) || a.target.localeCompare(b.target)).map((c) => {
     const fs = c.findings || [];
     const sev = fs.some((f) => f.severity === "high") ? "bad" : (fs.length ? "warn" : "ok");
-    const body = c.kind === "url" ? netUrlCard(analysisId, c) : (c.kind === "domain" ? netDomainCard(c) : netIpCard(c));
+    const body = c.kind === "url" ? netUrlCard(analysisId, c) : (c.kind === "domain" ? netDomainCard(analysisId, c) : netIpCard(c));
     return `<details class="net-card"${sev === "bad" ? " open" : ""}><summary>
         <span class="badge badge-muted">${escapeHtml(c.kind)}</span><span class="mono">${escapeHtml(c.target)}</span>
         <span class="badge badge-${sev}">${fs.length} finding(s)</span>

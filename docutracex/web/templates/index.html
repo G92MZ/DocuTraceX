@@ -212,7 +212,7 @@
         <form id="proxy-form" class="settings-form" autocomplete="off">
           <label class="check-line"><input type="checkbox" id="proxy-enabled"> Use a proxy</label>
           <div class="settings-grid">
-            <label>Type<select id="proxy-scheme"><option value="http">HTTP</option><option value="https">HTTPS</option><option value="socks5">SOCKS5 (also Tor)</option></select></label>
+            <label>Type<select id="proxy-scheme"><option value="http">HTTP</option><option value="https">HTTPS</option><option value="socks4">SOCKS4</option><option value="socks5">SOCKS5 (also Tor)</option></select></label>
             <label>Host<input type="text" id="proxy-host" placeholder="127.0.0.1"></label>
             <label>Port<input type="number" id="proxy-port" min="1" max="65535" placeholder="8080"></label>
             <label>User (optional)<input type="text" id="proxy-user"></label>
@@ -224,6 +224,19 @@
             <span id="proxy-status" class="status"></span>
           </div>
         </form>
+        <h3 class="formats-title">Network — free public proxy</h3>
+        <p class="hint-line">Pick a working proxy from the <a href="https://proxyscrape.com/free-proxy-list" target="_blank" rel="noopener noreferrer">ProxyScrape free list</a> (downloaded at startup, refreshed daily): random candidates are tested in parallel and the first that answers a <b>strictly verified HTTPS</b> request becomes the proxy above. Free proxies are untrusted: checks through them never accept an invalid certificate (so they can't inject content into the evidence) and are labelled "free proxy". They die often — a dead one is replaced automatically before the next check. Kits sometimes block public proxy IPs: if a page looks clean, re-check after rotating.</p>
+        <div class="settings-grid">
+          <label>Protocol<select id="free-proto"><option value="http">HTTP</option><option value="socks4">SOCKS4</option><option value="socks5">SOCKS5</option></select></label>
+          <label>Country (optional, ISO code)<input type="text" id="free-country" maxlength="2" placeholder="ES, US, DE…"></label>
+        </div>
+        <div style="margin-top:12px">
+          <button type="button" id="free-connect" class="btn btn-primary">Connect to free proxy</button>
+          <button type="button" id="free-rotate" class="btn btn-ghost">Rotate (another one)</button>
+          <span id="free-status" class="status"></span>
+        </div>
+        <div id="free-lists" class="hint-line"></div>
+
         <h3 class="formats-title">Network — without a proxy</h3>
         <div id="risk-line" class="hint-line"></div>
         <h3 class="formats-title">How URLs are checked</h3>

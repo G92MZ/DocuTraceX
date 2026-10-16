@@ -2,7 +2,8 @@
 
 Currently the network section:
 
-- ``proxy``: optional HTTP/HTTPS/SOCKS5 proxy used by every feature of the app
+- ``proxy``: optional HTTP/HTTPS/SOCKS4/SOCKS5 proxy (``free``: picked from the
+  ProxyScrape free list, see ``netcheck.freeproxy``) used by every feature of the app
   that goes to the Internet (URL/domain/IP checks). The installer and
   ``update.py`` never use it.
 - ``risk_accepted``: the analyst chose, once, to run network checks without a
@@ -25,11 +26,12 @@ from urllib.parse import quote
 from .config import APP_ROOT
 
 _LOCK = threading.Lock()
-_SCHEMES = ("http", "https", "socks5")
+_SCHEMES = ("http", "https", "socks4", "socks5")
 
 DEFAULTS: dict[str, Any] = {
     "network": {
-        "proxy": {"enabled": False, "scheme": "http", "host": "", "port": 8080, "username": "", "password": ""},
+        "proxy": {"enabled": False, "scheme": "http", "host": "", "port": 8080, "username": "", "password": "",
+                  "free": False, "free_info": {}},
         "risk_accepted": False,
     },
 }
@@ -85,8 +87,10 @@ def validate_proxy(proxy: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("host and a valid port are required")
     if any(c in host for c in "/@ "):
         raise ValueError("host must be a hostname or IP, without scheme or path")
+    # A proxy typed in by the analyst is not a "free proxy" any more.
     return {"enabled": enabled, "scheme": scheme, "host": host, "port": port or 8080,
-            "username": str(proxy.get("username") or ""), "password": str(proxy.get("password") or "")}
+            "username": str(proxy.get("username") or ""), "password": str(proxy.get("password") or ""),
+            "free": False, "free_info": {}}
 
 
 def proxy_url(net: dict[str, Any] | None = None) -> str | None:
@@ -95,11 +99,17 @@ def proxy_url(net: dict[str, Any] | None = None) -> str | None:
     p = (net or load()["network"])["proxy"]
     if not p.get("enabled") or not p.get("host"):
         return None
-    scheme = "socks5h" if p["scheme"] == "socks5" else p["scheme"]
+    scheme = {"socks5": "socks5h", "socks4": "socks4"}.get(p["scheme"], p["scheme"])
     auth = ""
     if p.get("username"):
         auth = quote(p["username"], safe="") + (":" + quote(p.get("password") or "", safe="")) + "@"
     return f"{scheme}://{auth}{p['host']}:{p['port']}"
+
+
+def proxy_is_free(net: dict[str, Any] | None = None) -> bool:
+    """The active proxy is a free public one (untrusted: strict TLS, labelled)."""
+    n = net or load()["network"]
+    return bool(proxy_url(n) and n["proxy"].get("free"))
 
 
 def public_network() -> dict[str, Any]:
