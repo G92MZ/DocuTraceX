@@ -4,7 +4,9 @@ A maldoc's payload usually lives one level down: a macro .docm attached to an
 email, an OLE object embedded in a Word file, a PDF carrying an embedded office
 document. This walks those children and runs the family-appropriate tools on
 each — olevba/oleid/msodde/mraptor/oleobj for Office/OLE, the PDF scanner for
-PDFs, the email parser for messages — then recurses into whatever THEY extract,
+PDFs, the email parser for messages, extraction for ZIP/7z archives; encrypted
+children are unlocked first (passwords from the analyst or the carrying email,
+see ``unlock``) — then recurses into whatever THEY extract,
 up to a bounded depth. Findings are flattened with a path chain so the origin
 is always clear.
 
@@ -31,6 +33,7 @@ _OOXML_EXT = {".docx", ".docm", ".dotx", ".dotm", ".xlsx", ".xlsm", ".xltx", ".x
               ".ppam", ".sldx", ".sldm"}
 _OLE_EXT = {".doc", ".dot", ".xls", ".xlt", ".xla", ".ppt", ".pot"}
 _EMAIL_EXT = {".eml", ".emlx", ".msg"}
+_ARCHIVE_EXT = {".zip", ".7z"}
 
 
 def _ext(name: str) -> str:
@@ -63,6 +66,8 @@ def _kind(path: Path, name: str) -> str:
         return "pdf"
     if head[:4] == b"\xd0\xcf\x11\xe0":
         return "ole"
+    if head[:6] == b"7z\xbc\xaf\x27\x1c":
+        return "archive"
     if head[:4] == b"PK\x03\x04":
         try:
             with zipfile.ZipFile(path) as zf:
@@ -70,6 +75,7 @@ def _kind(path: Path, name: str) -> str:
                     return "ooxml"
         except Exception:  # noqa: BLE001
             return "other"
+        return "archive"
     return "other"
 
 
@@ -81,8 +87,12 @@ def _rel(paths: CasePaths, p: Path) -> str:
 
 
 def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
-              chain: str) -> dict[str, Any]:
-    """Analyze one child; return a node with its findings and children."""
+              chain: str, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Analyze one child; return a node with its findings and children.
+
+    ``ctx`` carries the passwords to try on encrypted children: the analyst's
+    (``user``) and those given by an enclosing email (``harvested``)."""
+    ctx = ctx or {}
     node: dict[str, Any] = {
         "filename": name, "kind": _kind(abs_path, name), "depth": depth,
         "stored_path": _rel(paths, abs_path),
@@ -111,8 +121,31 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
                 "location": f"nested:{this_chain}",
             })
 
+    from . import unlock
+
     try:
-        if kind in ("ooxml", "ole"):
+        # Encrypted Office/PDF child: decrypt it with the known passwords and
+        # analyse the decrypted copy (the hash above stays the original's).
+        if kind in ("ooxml", "ole", "pdf"):
+            rec = unlock.unlock_file(abs_path, work / "decrypted" / node["sha256"][:12],
+                                     unlock.candidates(ctx.get("user"), ctx.get("harvested")), name=name)
+            if rec["encrypted"]:
+                node["unlock"] = unlock.public(rec, paths.root)
+                add_findings(rec["findings"], "unlock")
+                if rec["decrypted"]:
+                    abs_path = Path(rec["decrypted_file"])
+                elif rec["kind"] == "office" and kind == "ooxml":
+                    kind = node["kind"] = "ole"
+        if kind == "archive":
+            rec = unlock.extract_archive(abs_path, work / "archives" / node["sha256"][:12],
+                                         unlock.candidates(ctx.get("user"), ctx.get("harvested"),
+                                                           kind="archive"), name=name)
+            node["archive"] = unlock.public(rec, paths.root)
+            add_findings(rec["findings"], "archive")
+            for e in rec["entries"]:
+                if e.get("file"):
+                    kids.append((Path(e["file"]), Path(e["name"]).name))
+        elif kind in ("ooxml", "ole"):
             from .parsers import oletools_suite
             res = oletools_suite.analyze(abs_path, work)
             add_findings(res.get("findings"), "oletools")
@@ -170,6 +203,13 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
                 sp = att.get("stored_path")
                 if sp:
                     kids.append((paths.root / sp, att.get("filename") or Path(sp).name))
+            # Passwords this email gives unlock its own attachments.
+            from . import passwords
+            found = passwords.harvest((res.get("addresses") or {}).get("subject", ""),
+                                      res.get("body_sample", ""), res.get("html_text_sample", ""))
+            if found:
+                node["password_candidates"] = found
+                ctx = {**ctx, "harvested": found + list(ctx.get("harvested") or [])}
     except Exception as exc:  # noqa: BLE001
         node["error"] = str(exc)
 
@@ -184,7 +224,7 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
                     alt = cpath
                 cpath = alt
             if cpath.is_file():
-                node["children"].append(_scan_one(cpath, cname, paths, depth + 1, this_chain))
+                node["children"].append(_scan_one(cpath, cname, paths, depth + 1, this_chain, ctx))
     elif kids:
         node["truncated_children"] = len(kids)
     return node
@@ -196,13 +236,15 @@ def _flatten(nodes: list[dict[str, Any]], out: list[dict[str, Any]]) -> None:
         _flatten(n.get("children", []), out)
 
 
-def scan_children(items: list[dict[str, Any]], paths: CasePaths) -> dict[str, Any]:
-    """Recursively scan a list of extracted children (``{path, filename}``)."""
+def scan_children(items: list[dict[str, Any]], paths: CasePaths,
+                  unlock_ctx: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Recursively scan a list of extracted children (``{path, filename}``).
+    ``unlock_ctx`` = passwords for encrypted children (see ``_scan_one``)."""
     result: dict[str, Any] = {"module": "nested", "tree": [], "findings": [], "status": "ok"}
     for it in items[:MAX_CHILDREN]:
         p = Path(it["path"])
         if p.is_file():
-            result["tree"].append(_scan_one(p, it.get("filename") or p.name, paths, 1, ""))
+            result["tree"].append(_scan_one(p, it.get("filename") or p.name, paths, 1, "", unlock_ctx))
     flat: list[dict[str, Any]] = []
     _flatten(result["tree"], flat)
     result["findings"] = flat

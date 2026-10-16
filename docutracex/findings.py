@@ -85,7 +85,8 @@ def consolidate(modules: dict[str, Any]) -> list[dict[str, Any]]:
                  f.get("rule", ""), f.get("detail", ""), f.get("location", ""),
                  f.get("evidence", ""))
 
-    for mod_name, source in (("msoffcrypto", "msoffcrypto"), ("xlmdeobf", "xlmdeobf"),
+    for mod_name, source in (("unlock", "unlock"), ("archive", "archive"),
+                             ("msoffcrypto", "msoffcrypto"), ("xlmdeobf", "xlmdeobf"),
                              ("officemalscanner", "officemalscanner"),
                              ("pdf", "pdf"), ("nested", "nested"), ("yara", "yara"),
                              ("ole", "ole"), ("officerules", "officerules"),

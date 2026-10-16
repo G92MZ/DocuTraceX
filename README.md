@@ -53,7 +53,7 @@ just works.
 
 ## 🧭 How you use it
 
-1. **📥 Upload** — drop a file. The original is copied, hashed and never modified; the analysis is **queued** (one per instance) and runs in the background.
+1. **📥 Upload** — drop a file (and its **password**, if it is encrypted and you know it). The original is copied, hashed and never modified; the analysis is **queued** (one per instance) and runs in the background.
 2. **🔬 Identify** — libmagic + structural recognizers decide the *real* family and flag extension/type **discrepancies** (that `.doc` that is really RTF, that `.pdf` that is an OLE container).
 3. **🧩 Inspect** — **Components**: a sub-tab per analysis — Findings (with the exact **evidence** and a ↗ pivot to where it lives), IOCs, VBA, JavaScript, PDF tools, email Authentication/Headers/Body/Attachments, RTF Objects/Structure, the recursive **Nested** tree, every tool's raw output…
 4. **🌐 Check** — press **Check** on a URL, domain or IP in the IOCs tab: DocuTraceX visits it as a real browser through your proxy (see [Network checks](#-network-checks-and-opsec)).
@@ -76,7 +76,8 @@ just works.
 | ✉️ **Email** | `.eml`/`.emlx`/`.msg`: the **`Received` hop chain** with Δt and anomalies, SPF/DKIM/DMARC, **offline DKIM body hash** (edited after signing?), From/Return-Path/Reply-To & display-name **spoofing**, **look-alike / homoglyph domains**, links rewritten by gateways decoded (Proofpoint, Safe Links, Barracuda, Mimecast, Trend Micro…), HTML phishing patterns (credential forms, **HTML smuggling**, tracking pixels), QR codes in images, attachments hashed, typed and analysed |
 | 🟨 **JavaScript** | collected from PDFs, email HTML, HTML/HTA/SVG/WSF/JS/JSE attachments and JScript inside VBA; static patterns, string decoding and an isolated **STPyV8 sandbox** with recording stubs (WScript, ActiveX, browser, Acrobat) that unfolds `eval`/`Function` layers and logs what the script would do |
 | 🧰 **Real tools** | oletools (olevba · oleid · mraptor · msodde · oleobj · rtfobj), pcodedmp · pcode2code, msoffcrypto-tool, XLMMacroDeobfuscator, pyxlsb2, peepdf · pyHanko · pdfium + zxing-cpp, dkimpy, OfficeMalScanner/RTFScan, Didier Stevens Suite (oledump + plugins, zipdump, pdfid, pdf-parser, emldump, rtfdump, decode-vbe) — each tool's raw output kept next to its findings |
-| 🪆 **Recursion** | attachments, embedded OLE objects, RTF objects, PDF-embedded files and files served by checked URLs are analysed **in turn** with their family's tools — the DDE inside a `.docm` inside a `.pdf` surfaces with its full path |
+| 🔐 **Encrypted files** | password-protected Office (OOXML agile/standard, legacy RC4/CryptoAPI), PDF (RC4/AES, owner-only too) and **ZIP (ZipCrypto/AES) / 7z** archives are **unlocked and the decrypted copy is analysed** in full — with your password (at upload, or *Unlock & re-analyse* later), a password the **email gives in its body** (detected in English, Spanish, Italian, French, German, Portuguese, Dutch, Polish, Turkish, Russian, Chinese… "la contraseña es…", "Kennwort lautet…"), the empty PDF password, Excel's `VelvetSweatshop` or the usual `infected`; the original keeps the encryption findings |
+| 🪆 **Recursion** | attachments, ZIP/7z entries, embedded OLE objects, RTF objects, PDF-embedded files and files served by checked URLs are analysed **in turn** with their family's tools — the DDE inside a `.docm` inside a `.pdf` surfaces with its full path |
 | 🧷 **IOC extractor** | URLs, domains, IPv4/IPv6 and hash-like strings across every parser's output, with provenance (email IOCs come from the content, not the headers) |
 | 🌐 **Network checks** | on demand, through your proxy: **URLs** visited as a real browser (Edge on Windows *and* Safari on iPhone → cloaking) with the victim's address swapped for a fake identity — redirects, TLS certificate, forms, impersonated brand, page scripts in the V8 sandbox, screenshot with JavaScript off, safe preview, served files analysed, and *Send fake credentials* to see the kit's next stage; **domains**: DNS, RDAP age/registrar, Certificate Transparency and a visit to the domain's website (same views, screenshot and forms as a URL); **IPs**: ASN/ISP/country offline, RDAP owner and abuse contact, reverse DNS, Tor exit |
 | 🛡️ **YARA** | your rules by upload (`.yar`/`.yara`/`.zip`/`.tar.gz`) or **server path**, compiled on demand with streaming progress; matches with the rule source, the matched bytes in context and the file path — every hit a finding you mark |
@@ -97,6 +98,7 @@ just works.
 | **RTF** | `.rtf` (and any extension whose content is RTF) |
 | **PDF** | `.pdf` |
 | **Email** | `.eml` `.emlx` `.msg` |
+| **Archive** | `.zip` `.7z` (also inside emails and other files; password-protected too) |
 
 Scripts and web pages found inside them (`.js` `.jse` `.vbs` `.hta` `.wsf` `.html` `.svg`…) are extracted and analysed too.
 
@@ -152,7 +154,8 @@ key is kept in your browser (localStorage), not on the server.
 - **Offline unless you ask.** Analysis never touches the network. Network access happens only for the one-time provisioning, the **network checks you launch**, and the **AI endpoint you configure** when you ask it something.
 - **Your data lives in** `cases/` (per-case evidence, results, marks, report), `yara/` (your rules), `config/` (settings such as the proxy) and `tools/` (the portable runtime) — all git-ignored and preserved across updates.
 - **Two interpreters by design:** the web app on your Python, the analysis tools on the portable one (plus PyPy 2.7 just for ViperMonkey), so a messy tool dependency never touches your environment.
-- **Licences:** DocuTraceX is Apache-2.0 and ships no GPL code. GPL tools (pcodedmp, peepdf-3) are installed into the portable at provisioning time and run as separate processes.
+- **Encrypted files:** nothing is brute-forced — only your password, the ones the carrying email gives, the empty PDF password and the well-known defaults are tried. The decrypted copy goes to `extracted/decrypted/` (archives to `extracted/archive/`, with limits on entries and size against archive bombs); the password you type is kept in the case folder (`password.json`), never in `case.json`.
+- **Licences:** DocuTraceX is Apache-2.0 and ships no GPL code. GPL/LGPL tools (pcodedmp, peepdf-3, py7zr) are installed into the portable at provisioning time.
 
 ## 🔄 Updating
 

@@ -229,6 +229,19 @@ table.cases td.mono { word-break: break-all; }
 }
 .comp-header .formats-title { margin-top: 0; }
 
+/* Encrypted original / attachments: how it was opened, or a password box */
+.unlock-banner {
+  margin: 0 0 10px; padding: 10px 12px; border-radius: 8px; line-height: 1.6;
+  background: rgba(78, 161, 211, 0.08); border: 1px solid var(--accent-dim);
+}
+.unlock-banner.is-locked { background: rgba(231, 76, 60, 0.08); border-color: #7a3a33; }
+.unlock-banner .file-actions { margin-left: 6px; }
+.unlock-form { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.unlock-form input, .upload-password {
+  background: #0b0e12; color: var(--text); border: 1px solid var(--panel-border);
+  border-radius: 6px; padding: 6px 10px; font-size: 13px; min-width: 200px;
+}
+
 /* Re-run control + Tasks */
 .comp-actions { display: flex; align-items: center; gap: 8px; margin: 6px 0 2px; flex-wrap: wrap; }
 .comp-actions select {
