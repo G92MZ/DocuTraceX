@@ -61,6 +61,8 @@ dependencies = [
     "maxminddb>=2.5",
     "tldextract>=5.1",
     "playwright>=1.45",
+    # AI tab: MCP server (stdio) exposing the cases read-only to MCP clients.
+    "mcp>=1.2",
 ]
 
 [project.optional-dependencies]

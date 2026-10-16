@@ -141,6 +141,7 @@ TOOL_DEPS: list[Dependency] = [
           ("maxminddb", "maxminddb", "Network checks: offline IP database (DB-IP Lite)"),
           ("tldextract", "tldextract", "Network checks: registrable domain"),
           ("playwright", "playwright", "Network checks: page screenshots (Chromium, no JavaScript)"),
+          ("mcp", "mcp", "MCP server (AI tab): cases as read-only tools for Claude Desktop/Code"),
       )],
 ]
 
