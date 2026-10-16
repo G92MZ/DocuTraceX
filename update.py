@@ -119,6 +119,26 @@ def apply_update() -> int:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _remove_loose_samples() -> list[str]:
+    """Since 1.11 the samples ship encrypted in samples/samples.zip (password
+    "infected") so antivirus engines leave them alone. Remove the copies that
+    older versions shipped unpacked (sample.<ext> and lab/phish_lab.eml);
+    ``python scripts/make_samples.py --extract`` brings them back."""
+    base = os.path.join(HERE, "samples")
+    if not os.path.isfile(os.path.join(base, "samples.zip")):
+        return []
+    removed = []
+    for fn in sorted(os.listdir(base)) if os.path.isdir(base) else []:
+        if fn.startswith("sample.") and os.path.isfile(os.path.join(base, fn)):
+            os.remove(os.path.join(base, fn))
+            removed.append(fn)
+    lab = os.path.join(base, "lab", "phish_lab.eml")
+    if os.path.isfile(lab):
+        os.remove(lab)
+        removed.append("lab/phish_lab.eml")
+    return removed
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="update.py", description=f"Update {REPO} to the latest version.")
     ap.add_argument("--check", action="store_true", help="only check, do not change anything")
@@ -149,6 +169,10 @@ def main() -> None:
     except Exception as e:  # noqa: BLE001
         print(f"Update failed: {e}", file=sys.stderr)
         sys.exit(1)
+    gone = _remove_loose_samples()
+    if gone:
+        print(f"Removed {len(gone)} unpacked sample(s): they now live in samples/samples.zip "
+              "(password 'infected'); unpack with: python scripts/make_samples.py --extract")
     print(f"Updated to {rem} ({n} files). Restart the app:  python run.py")
 
 

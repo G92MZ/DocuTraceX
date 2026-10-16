@@ -22,6 +22,11 @@ htmlcov/
 !/tools/.gitkeep
 /yara/*
 !/yara/.gitkeep
+# Samples live encrypted in samples/samples.zip (password "infected"); the
+# unpacked copies (make_samples.py --extract, or the tests) are never committed.
+/samples/*
+!/samples/README.md
+!/samples/samples.zip
 # Local settings (proxy credentials...)
 /config/
 
