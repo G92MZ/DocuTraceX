@@ -19,7 +19,8 @@ infrastructure:
     python scripts/phish_lab.py            # http://127.0.0.1:8808
     python scripts/phish_lab.py --port 9000
 
-Then open ``samples/lab/phish_lab.eml`` in DocuTraceX and press "Check" on the
+Then open ``lab/phish_lab.eml`` from ``samples/samples.zip`` (password
+``infected``; or ``python scripts/make_samples.py --extract``) in DocuTraceX and press "Check" on the
 127.0.0.1 URL in the IOCs tab. Everything here is inert and local.
 """
 
@@ -34,7 +35,18 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
-DOCM = ROOT / "samples" / "sample.docm"
+SAMPLES_ZIP = ROOT / "samples" / "samples.zip"
+
+
+def _docm() -> bytes:
+    """The sample .docm served as the kit's "remittance" download (read from the
+    encrypted samples archive; falls back to an unpacked copy)."""
+    loose = ROOT / "samples" / "sample.docm"
+    if loose.is_file():
+        return loose.read_bytes()
+    import zipfile
+    with zipfile.ZipFile(SAMPLES_ZIP) as zf:
+        return zf.read("sample.docm", pwd=b"infected")
 SESSIONS: set[str] = set()
 
 LOGIN = """<!DOCTYPE html>
@@ -121,7 +133,7 @@ class Kit(BaseHTTPRequestHandler):
             return self._send(200, MFA.format(flow=secrets.token_urlsafe(24)))
         if u.path.startswith("/files/") and u.path.endswith(".docm"):
             name = u.path.rsplit("/", 1)[-1]
-            return self._send(200, DOCM.read_bytes(), "application/vnd.ms-word.document.macroEnabled.12",
+            return self._send(200, _docm(), "application/vnd.ms-word.document.macroEnabled.12",
                               extra={"Content-Disposition": f'attachment; filename="{name}"'})
         return self._send(404, NOT_FOUND)
 

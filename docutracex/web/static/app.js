@@ -1126,22 +1126,28 @@ function paneJavascript(js) {
     let body = "";
     if (sc.note) body += `<p class="hint-line">${escapeHtml(sc.note)}</p>`;
     body += `<p class="hint-line">${m.lines || 0} lines · ${sc.size} chars · longest line ${m.longest_line || 0} · entropy ${m.entropy || 0} · obfuscation score ${m.obfuscation_score || 0}</p>`;
+    const jsLoc = sc.location || `javascript:${sc.id}`;
     if (hits.length) {
-      body += table(["Line", "Why", "Code"], hits.map((h) => `<tr><td>${h.line_no}</td>
+      body += table(["Line", "Why", "Code", "Mark"], hits.map((h) => `<tr><td>${h.line_no}</td>
         <td class="${h.severity === "high" ? "bad-text" : ""}">${escapeHtml(h.label)}</td>
-        <td class="mono">${escapeHtml(h.line)}</td></tr>`).join(""));
+        <td class="mono">${escapeHtml(h.line)}</td>
+        <td>${addMarkCell("js_hit", `JavaScript (${sc.origin}): ${h.label} — line ${h.line_no}`, jsLoc, h.line)}</td></tr>`).join(""));
     }
     if (logs.length || sb.error) {
       body += `<p class="hint-line"><strong>Sandbox</strong>${sb.timed_out ? " — stopped by the time limit" : ""}${sb.error && !sb.timed_out ? " — " + escapeHtml(sb.error) : ""}</p>`;
       if (logs.length) {
-        body += table(["Event", "Name", "Arguments"], logs.slice(0, 200).map((e) => `<tr>
-          <td>${escapeHtml(e.kind)}</td><td class="mono">${escapeHtml(e.name)}</td>
-          <td class="mono">${escapeHtml((e.args || []).join(" | ").slice(0, 1500))}</td></tr>`).join(""));
+        body += table(["Event", "Name", "Arguments", "Mark"], logs.slice(0, 200).map((e) => {
+          const args = (e.args || []).join(" | ");
+          return `<tr><td>${escapeHtml(e.kind)}</td><td class="mono">${escapeHtml(e.name)}</td>
+          <td class="mono">${escapeHtml(args.slice(0, 1500))}</td>
+          <td>${addMarkCell("js_sandbox", `JavaScript sandbox (${sc.origin}): ${e.name} ${args}`.slice(0, 300), jsLoc, args.slice(0, 1500))}</td></tr>`;
+        }).join(""));
       }
     }
     if ((sc.decoded || []).length) {
-      body += `<p class="hint-line"><strong>Decoded strings</strong></p>` + table(["Method", "Decoded"],
-        sc.decoded.map((d) => `<tr><td>${escapeHtml(d.method)}</td><td class="mono">${escapeHtml(d.decoded)}</td></tr>`).join(""));
+      body += `<p class="hint-line"><strong>Decoded strings</strong></p>` + table(["Method", "Decoded", "Mark"],
+        sc.decoded.map((d) => `<tr><td>${escapeHtml(d.method)}</td><td class="mono">${escapeHtml(d.decoded)}</td>
+          <td>${addMarkCell("js_decoded", `JavaScript decoded (${d.method}): ${d.decoded}`.slice(0, 300), jsLoc, d.encoded || d.decoded)}</td></tr>`).join(""));
     }
     body += `<details class="disclose"${hits.length ? " open" : ""}><summary>Code${sc.code_truncated ? " (truncated)" : ""}</summary><pre class="text-sample js-code">${codeHtml}</pre></details>`;
     if (sc.pretty) body += `<details class="disclose"><summary>Pretty-printed</summary><pre class="text-sample">${escapeHtml(sc.pretty)}</pre></details>`;
@@ -2278,7 +2284,8 @@ function netViewHtml(analysisId, v, title, rec, isDesktop) {
       h += `<details class="disclose"><summary>Inline scripts (${v.scripts.length}) — static analysis + V8 sandbox</summary>${v.scripts.map((sc) => {
         const logs = ((sc.sandbox || {}).log || []).slice(0, 30);
         return `<div style="margin:6px 0"><span class="hint-line">#${sc.id} · ${sc.size} chars · ${(sc.hits || []).map((x) => x.label).join(" · ")}</span>
-          ${logs.length ? table(["Event", "Name", "Args"], logs.map((e) => `<tr><td>${escapeHtml(e.kind)}</td><td class="mono">${escapeHtml(e.name)}</td><td class="mono">${escapeHtml((e.args || []).join(" | ").slice(0, 400))}</td></tr>`).join("")) : ""}
+          ${logs.length ? table(["Event", "Name", "Args", "Mark"], logs.map((e) => `<tr><td>${escapeHtml(e.kind)}</td><td class="mono">${escapeHtml(e.name)}</td><td class="mono">${escapeHtml((e.args || []).join(" | ").slice(0, 400))}</td>
+            <td>${addMarkCell("js_sandbox", `Page script sandbox (${rec.target}): ${e.name} ${(e.args || []).join(" | ")}`.slice(0, 300), `netcheck:url:${rec.target}/script#${sc.id}`, (e.args || []).join(" | ").slice(0, 1500))}</td></tr>`).join("")) : ""}
           <pre class="text-sample">${escapeHtml((sc.code || "").slice(0, 4000))}</pre></div>`;
       }).join("")}</details>`;
     }
