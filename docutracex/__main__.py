@@ -36,9 +36,24 @@ def _ensure_portable() -> None:
         log.warning("Portable setup check failed: %s", exc)
 
 
+def _prefetch_free_proxies() -> None:
+    """Refresh the free proxy lists (ProxyScrape) in the background, so
+    "Connect to free proxy" in Settings is instant. Never blocks startup."""
+    import os
+
+    if os.environ.get("DOCUTRACEX_SKIP_SETUP") == "1":
+        return
+    try:
+        from .netcheck import freeproxy
+        freeproxy.refresh_all_async()
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Free proxy list prefetch failed: %s", exc)
+
+
 def main() -> None:
     configure_logging(settings.log_level)
     _ensure_portable()
+    _prefetch_free_proxies()
     log.info("Starting DocuTraceX on http://%s:%s", settings.host, settings.port)
     uvicorn.run(
         "docutracex.app:app",

@@ -88,9 +88,15 @@ def _upsert(data: dict[str, Any], rec: dict[str, Any]) -> None:
 
 
 def _proxy_label(proxy: str | None) -> str:
+    from .. import appsettings
+
     if not proxy:
         return "direct (no proxy — your own IP)"
     p = urlsplit(proxy)
+    if appsettings.proxy_is_free():
+        info = appsettings.load()["network"]["proxy"].get("free_info") or {}
+        where = f", {info['country']}" if info.get("country") else ""
+        return f"free proxy (untrusted, strict TLS) {p.scheme}://{p.hostname}:{p.port}{where}"
     return f"proxy {p.scheme}://{p.hostname}:{p.port}"
 
 
@@ -118,7 +124,9 @@ def _shot(mode: str, target: str, out: Path, proxy: str | None = None, ua: str |
     from . import shot
     from .. import native
 
-    cmd = [sys.executable, "-m", "docutracex.netcheck.shot", mode, target, str(out), proxy or "", ua or ""]
+    from . import http as _http
+    strict = "strict" if getattr(_http, "_STRICT_DEFAULT", False) else ""
+    cmd = [sys.executable, "-m", "docutracex.netcheck.shot", mode, target, str(out), proxy or "", ua or "", strict]
     env = {**native.subprocess_env(), **{k: v for k, v in shot.env().items() if k == "PLAYWRIGHT_BROWSERS_PATH"}}
     root = str(Path(__file__).resolve().parents[2])
     env["PYTHONPATH"] = root + (";" if sys.platform.startswith("win") else ":") + env.get("PYTHONPATH", "")
@@ -386,7 +394,12 @@ def run(case_root: Path, params: dict[str, Any]) -> dict[str, Any]:
 
     case_root = Path(case_root)
     paths = CasePaths(case_root.name, cases_dir=case_root.parent)
-    proxy = appsettings.proxy_url()
+    from . import freeproxy, http as _http
+
+    free = appsettings.proxy_is_free()
+    # A free proxy may have died since it was picked: re-test it, rotate if needed.
+    proxy = freeproxy.ensure_alive() if free else appsettings.proxy_url()
+    _http.set_strict_default(free)
     kind, target = params.get("kind"), (params.get("target") or "").strip()
     data = _load(paths)
     if kind == "url":

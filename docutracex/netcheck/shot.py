@@ -3,7 +3,7 @@
 Run as a separate process with a time limit:
 
     python -m docutracex.netcheck.shot offline <page.html> <out.png>
-    python -m docutracex.netcheck.shot live <url> <out.png> [proxy_url] [user_agent]
+    python -m docutracex.netcheck.shot live <url> <out.png> [proxy_url] [user_agent] [strict]
 
 - ``offline``: renders the HTML already downloaded, with *every* network
   request blocked — contacts nobody.
@@ -80,13 +80,14 @@ def main(argv: list[str]) -> int:
 
     mode, target, out = argv[0], argv[1], argv[2]
     proxy = argv[3] if len(argv) > 3 and argv[3] else None
-    ua = argv[4] if len(argv) > 4 else None
+    ua = argv[4] if len(argv) > 4 and argv[4] else None
+    strict = len(argv) > 5 and argv[5] == "strict"  # free (untrusted) proxy: never accept a bad certificate
     res = {"ok": False, "mode": mode}
     with sync_playwright() as p:
         browser = _launch(p, _pw_proxy(proxy) if mode == "live" else None)
         try:
             ctx = browser.new_context(java_script_enabled=False, viewport=VIEWPORT, user_agent=ua,
-                                      locale="es-ES", accept_downloads=False, ignore_https_errors=True,
+                                      locale="es-ES", accept_downloads=False, ignore_https_errors=not strict,
                                       service_workers="block")
             page = ctx.new_page()
             if mode == "offline":

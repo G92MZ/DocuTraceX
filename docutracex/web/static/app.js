@@ -2058,7 +2058,14 @@ async function loadSettings() {
     const pw = document.getElementById("proxy-pass");
     pw.value = "";
     pw.placeholder = p.password_set ? "unchanged (saved)" : "";
-    st.textContent = n.proxy_active ? `Proxy active: ${p.scheme}://${p.host}:${p.port}` : "No proxy";
+    const fi = p.free_info || {};
+    st.textContent = n.proxy_active
+      ? `Proxy active: ${p.scheme}://${p.host}:${p.port}` + (p.free ? ` · free proxy${fi.country ? " " + fi.country : ""}${fi.egress_ip ? " · exit IP " + fi.egress_ip : ""}${fi.latency_ms ? " · " + fi.latency_ms + " ms" : ""}` : "")
+      : "No proxy";
+    if (p.free) document.getElementById("free-proto").value = p.scheme;
+    const fl = n.free_lists || {};
+    document.getElementById("free-lists").textContent = "Free lists: " + ["http", "socks4", "socks5"].map((k) =>
+      `${k.toUpperCase()} ${(fl[k] || {}).count || 0}${(fl[k] || {}).fetched ? " (" + fl[k].fetched + ")" : ""}`).join(" · ");
     st.className = "status " + (n.proxy_active ? "ok-text" : "bad-text");
     const risk = document.getElementById("risk-line");
     risk.innerHTML = n.risk_accepted
@@ -2091,9 +2098,36 @@ async function putNetwork(body) {
   return j;
 }
 
+async function connectFreeProxy(rotate) {
+  const status = document.getElementById("free-status");
+  const btns = [document.getElementById("free-connect"), document.getElementById("free-rotate")];
+  btns.forEach((b) => { b.disabled = true; });
+  status.className = "status";
+  status.textContent = "Testing random proxies from the list (up to ~90 s)…";
+  try {
+    const r = await fetch("/api/settings/network/free-proxy", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ protocol: document.getElementById("free-proto").value,
+        country: document.getElementById("free-country").value.trim(), rotate }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || "error");
+    const f = j.found;
+    status.textContent = `Connected: ${f.protocol}://${f.host}:${f.port}${f.country ? " (" + f.country + ")" : ""} · exit IP ${f.egress_ip} · ${f.latency_ms} ms · ${f.tried} tested in ${f.search_s}s`;
+    status.className = "status ok-text";
+    loadSettings();
+    loadDiagnostics();
+  } catch (err) {
+    status.textContent = String(err.message || err);
+    status.className = "status bad-text";
+  } finally {
+    btns.forEach((b) => { b.disabled = false; });
+  }
+}
+
 function setupSettings() {
   const form = document.getElementById("proxy-form");
   if (!form) return;
+  document.getElementById("free-connect").addEventListener("click", () => connectFreeProxy(false));
+  document.getElementById("free-rotate").addEventListener("click", () => connectFreeProxy(true));
   const status = document.getElementById("proxy-status");
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
