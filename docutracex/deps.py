@@ -134,6 +134,13 @@ TOOL_DEPS: list[Dependency] = [
           ("confusable_homoglyphs", "confusable_homoglyphs", "Look-alike characters"),
           ("STPyV8", "stpyv8", "V8 sandbox for JavaScript deobfuscation"),
           ("jsbeautifier", "jsbeautifier", "JavaScript pretty-printing"),
+          ("requests", "requests", "Network checks: HTTP"),
+          ("socks", "PySocks", "Network checks: SOCKS5 proxy"),
+          ("brotli", "brotli", "Network checks: brotli-compressed pages"),
+          ("dns.resolver", "dnspython", "Network checks: DNS"),
+          ("maxminddb", "maxminddb", "Network checks: offline IP database (DB-IP Lite)"),
+          ("tldextract", "tldextract", "Network checks: registrable domain"),
+          ("playwright", "playwright", "Network checks: page screenshots (Chromium, no JavaScript)"),
       )],
 ]
 
@@ -448,6 +455,44 @@ def run_checks() -> dict[str, Any]:
             purpose="Shellcode/embedded-object scan + VBA/OLE info (legacy OLE and OOXML); "
                     "RTFScan.exe for RTF"
                     + ("" if (oms_dir() / "RTFScan.exe").is_file() or not present else " (RTFScan.exe missing)"),
+        ))
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Network checks: offline IP database + Chromium for screenshots, and the proxy.
+    try:
+        from . import appsettings
+        from .netcheck import ipinfo, shot
+        st = ipinfo.db_status()
+        ok_db = bool(st["dbip_asn"] and st["dbip_country"])
+        checks.append(Check(
+            category="Network checks",
+            name="IP database (DB-IP Lite + iptoasn)",
+            status="ok" if ok_db else "warn",
+            detail=(f"DB-IP ASN {st['dbip_asn']}, country {st['dbip_country']}, iptoasn {st['ip2asn'] or 'missing'}"
+                    if ok_db else "not downloaded yet (IP checks show online data only)"),
+            remedy="" if ok_db else "run scripts/setup_portable_python.py (downloads tools/ipdb/)",
+            purpose=f"ASN / AS organisation / country of IPs, offline. {ipinfo.ATTRIBUTION}",
+        ))
+        chromium = shot.browsers_path().is_dir()
+        checks.append(Check(
+            category="Network checks",
+            name="Chromium (Playwright)",
+            status="ok" if chromium else "warn",
+            detail="tools/playwright/" if chromium else "not provisioned (screenshots use any Chromium Playwright finds)",
+            remedy="" if chromium else "run scripts/setup_portable_python.py",
+            purpose="Screenshots of checked URLs with JavaScript disabled",
+        ))
+        net = appsettings.public_network()
+        checks.append(Check(
+            category="Network checks",
+            name="Proxy",
+            status="ok" if net["proxy_active"] else "warn",
+            detail=(f"{net['proxy']['scheme']}://{net['proxy']['host']}:{net['proxy']['port']}" if net["proxy_active"]
+                    else "none — checks go out from this machine's IP"
+                    + (" (risk accepted)" if net["risk_accepted"] else "")),
+            remedy="" if net["proxy_active"] else "configure one in Settings → Network",
+            purpose="Every network check (URLs, domains, IPs) goes through it",
         ))
     except Exception:  # noqa: BLE001
         pass

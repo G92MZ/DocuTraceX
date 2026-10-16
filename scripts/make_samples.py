@@ -472,6 +472,31 @@ def msg_doc() -> bytes:
                      [(n, d) for n, _ct, d in _attachments()], html=HTML)
 
 
+# --- lab email (local phishing-kit simulator) -------------------------------------------
+
+LAB_URL = "http://127.0.0.1:8808/r/" + base64.urlsafe_b64encode(f"cuentas.pagar@{VICTIM_DOMAIN}".encode()).decode().rstrip("=")
+LAB_FORM = f"""<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Microsoft 365 - Acceso</title></head>
+<body style="font-family:Segoe UI,Arial"><div style="width:420px;margin:60px auto"><b>Microsoft</b>
+<h2>Confirme su cuenta para ver el documento</h2>
+<form method="post" action="http://127.0.0.1:8808/owa/auth.php">
+<input type="hidden" name="src" value="attachment">
+<input type="email" name="loginfmt" value="cuentas.pagar@{VICTIM_DOMAIN}">
+<input type="password" name="passwd" placeholder="Contraseña"><button type="submit">Iniciar sesión</button>
+</form></div></body></html>"""
+
+
+def lab_eml() -> bytes:
+    """Email for the local simulator (scripts/phish_lab.py): its link and its
+    attached login form point to http://127.0.0.1:8808."""
+    html = HTML.replace(mk.safelinks(mk.proofpoint_v3(PHISH_URL)), LAB_URL)
+    return mk.build_email(
+        from_=FROM, to=TO, subject=f"[LAB] {SUBJECT}", html=html, text=TEXT.replace(PHISH_URL, LAB_URL),
+        received=RECEIVED, auth_results=AUTH, reply_to="pagos.suministros@mail-box.example.org",
+        return_path="<bounce@bounce.rnicrosoft-online.example>", x_mailer="PHPMailer 6.8.0",
+        message_id="<lab-0187@vps-2291.hosting.example>",
+        attachments=[("Acceso_portal.html", "text/html", LAB_FORM.encode())])
+
+
 # --- main -----------------------------------------------------------------------------
 
 def build_all() -> dict[str, bytes]:
@@ -496,6 +521,8 @@ def main() -> None:
     for name, data in made.items():
         (SAMPLES / name).write_bytes(data)
     shutil.copyfile(ROOT / "tests" / "data" / "excel4_sample_macro.xlsb", SAMPLES / "sample.xlsb")
+    (SAMPLES / "lab").mkdir(exist_ok=True)
+    (SAMPLES / "lab" / "phish_lab.eml").write_bytes(lab_eml())
     names = sorted([*made, "sample.xlsb"])
     print(f"Generated {len(names)} samples in {SAMPLES}:")
     for name in names:

@@ -67,6 +67,7 @@ it just works.
 | 🪆 **Recursion** | attachments, embedded OLE objects and PDF-embedded files are analyzed **in turn** with their family's tools — the DDE inside a `.docm` inside a `.pdf` surfaces with its full path |
 | 🛡️ **YARA** | your rules by upload (`.yar`/`.yara`/`.zip`/`.tar.gz`) or **server path**, compiled with streaming progress; matches shown as cards — **opt-in**: a rule becomes a finding only when you tick it |
 | 🧷 **IOC extractor** | URLs, domains, IPv4/IPv6 and hash-like strings across every parser's output, with provenance |
+| 🌐 **Network checks** | on demand, through your proxy: **URLs** fetched as a real browser (Edge on Windows *and* Safari on iPhone, to catch cloaking) with the victim's address in the link swapped for a fake identity — redirect chain, TLS certificate, forms, impersonated brand, inline scripts through the V8 sandbox, a screenshot with JavaScript off, a safe preview, files served analysed as nested children, and an explicit *Send fake credentials* button to see the kit's next stage; **domains**: DNS, RDAP age/registrar, Certificate Transparency; **IPs**: ASN/ISP/country offline (DB-IP Lite), RDAP owner and abuse contact, reverse DNS, Tor exit |
 | 🏷️ **Marks** | per-finding TP/FP/Suspicious/Informational + comment, kept separate from the evidence and **preserved across re-analysis** (stable finding IDs) |
 | 🧵 **Tasks** | a sequential queue with per-file **sub-step log** — every tool that ran, its status, timing and findings — plus isolated **re-run** of a single module |
 | 📊 **Report** | one self-contained HTML report of the confirmed findings, with evidence, IOCs and the nested tree |
@@ -86,7 +87,7 @@ it just works.
 ## 📝 Notes
 
 - **Nothing runs for real.** No macro, formula, PDF action, link, media or attachment is ever executed by Office, a browser or the OS. The only exceptions are *emulation*: ViperMonkey (a VBA interpreter written in Python) and the STPyV8 sandbox (a bare V8 with no file system, network or processes, only recording stubs) — both in a separate process with a time limit.
-- **Runs offline.** The only network access is the one-time provisioning of the portable Python and external tools (from PyPI and GitHub) on first launch.
+- **Offline unless you ask.** Analysis never touches the network. The only network access is the one-time provisioning of the portable Python, tools and IP database, and the **network checks you launch yourself** from the IOCs tab — through the proxy configured in **Settings** (if there is none, DocuTraceX asks once before the first check).
 - **Your data lives in** `cases/` (per-case evidence, results, marks, report), `yara/` (your rules) and `tools/` (the portable runtime) — all git-ignored and preserved across updates.
 - **Two interpreters by design:** the web app on your Python, the analysis tools on the portable one, so a messy tool dependency never touches your environment.
 
@@ -102,6 +103,17 @@ python update.py --yes      # update without asking
 ```
 
 (Cloned with git? `git pull` works too.)
+
+## 🌐 Network checks and OPSEC
+
+Checking an indicator means contacting the attacker's infrastructure, so DocuTraceX is careful about it:
+
+- Nothing goes out unless you press **Check**. Configure a proxy (HTTP, HTTPS or SOCKS5 — Tor works) in **Settings**; without one you are asked once and then checks leave from your own IP.
+- Requests carry the full header set of a current browser, so bot filters and cloaking kits treat them like a victim's click. The victim's address in the link (plain, URL-encoded or Base64) is replaced by a random fake identity on mail.com / gmx.com / email.com / post.com / consultant.com / usa.com — never the real victim, never a domain of the victim's organisation.
+- No JavaScript runs and no images, CSS or scripts are downloaded (the optional *live screenshot* is the only exception, and it goes through the proxy). Forms are submitted only with the explicit button, and only with the fake identity.
+- Try it safely with the local kit simulator: `python scripts/phish_lab.py`, then open `samples/lab/phish_lab.eml`.
+
+IP data: *IP Geolocation by [DB-IP](https://db-ip.com)* (CC BY 4.0) and [iptoasn.com](https://iptoasn.com) (public domain), downloaded at install time.
 
 ## 🧭 Roadmap
 

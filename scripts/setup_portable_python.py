@@ -368,6 +368,71 @@ def install_vipermonkey(source: str | None = None) -> bool:
     return False
 
 
+IPDB_DIR = TOOLS / "ipdb"
+PLAYWRIGHT_DIR = TOOLS / "playwright"
+DBIP_BASE = "https://download.db-ip.com/free/"
+IP2ASN_URL = "https://iptoasn.com/data/ip2asn-combined.tsv.gz"
+
+
+def _month_candidates() -> list[str]:
+    import datetime as _dt
+    today = _dt.date.today()
+    prev = (today.replace(day=1) - _dt.timedelta(days=1))
+    return [today.strftime("%Y-%m"), prev.strftime("%Y-%m")]
+
+
+def install_ipdb(force: bool = False) -> bool:
+    """DB-IP Lite (ASN + country, CC BY 4.0) and iptoasn (public domain) into
+    tools/ipdb/. Refreshed when older than ~35 days."""
+    import gzip
+    import time as _time
+
+    IPDB_DIR.mkdir(parents=True, exist_ok=True)
+    ok = True
+    for kind in ("asn", "country"):
+        dest = IPDB_DIR / f"dbip-{kind}-lite.mmdb"
+        if dest.is_file() and not force and _time.time() - dest.stat().st_mtime < 35 * 86400:
+            continue
+        got = False
+        for month in _month_candidates():
+            url = f"{DBIP_BASE}dbip-{kind}-lite-{month}.mmdb.gz"
+            try:
+                print(f"[>] Downloading DB-IP Lite {kind} ({month})")
+                dest.write_bytes(gzip.decompress(_get(url)))
+                got = True
+                break
+            except Exception as exc:  # noqa: BLE001
+                print(f"[!] {url}: {exc}")
+        ok = ok and got
+    dest = IPDB_DIR / "ip2asn-combined.tsv.gz"
+    if force or not dest.is_file() or _time.time() - dest.stat().st_mtime > 35 * 86400:
+        try:
+            print("[>] Downloading iptoasn ip2asn-combined")
+            dest.write_bytes(_get(IP2ASN_URL))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[!] iptoasn: {exc}")
+    return ok
+
+
+def _ipdb_ok() -> bool:
+    return all((IPDB_DIR / f"dbip-{k}-lite.mmdb").is_file() for k in ("asn", "country"))
+
+
+def install_chromium() -> bool:
+    """Headless Chromium for Playwright (screenshots) into tools/playwright/."""
+    import os
+
+    py = _portable_python()
+    env = dict(os.environ, PLAYWRIGHT_BROWSERS_PATH=str(PLAYWRIGHT_DIR))
+    print("[>] Installing Chromium for Playwright into tools/playwright/")
+    r = subprocess.run([str(py), "-m", "playwright", "install", "chromium"], env=env, check=False)
+    return r.returncode == 0 and _chromium_ok()
+
+
+def _chromium_ok() -> bool:
+    return PLAYWRIGHT_DIR.is_dir() and any(PLAYWRIGHT_DIR.glob("chromium*"))
+
+
 def verify() -> None:
     py = _portable_python()
     print("[>] Verifying the portable runtime")
@@ -403,6 +468,8 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
     install_didier()
     install_officemalscanner()
     install_vipermonkey()
+    install_ipdb()
+    install_chromium()
     verify()
 
 
@@ -453,7 +520,9 @@ def ensure(version: str = DEFAULT_VERSION) -> bool:
             didier_ok = _didier_present()
             oms_ok = _officemalscanner_present()
             vm_ok = _vipermonkey_ok()
-            if deps_ok and didier_ok and oms_ok and vm_ok:
+            ipdb_ok = _ipdb_ok()
+            chromium_ok = _chromium_ok()
+            if deps_ok and didier_ok and oms_ok and vm_ok and ipdb_ok and chromium_ok:
                 print(f"[=] Portable Python present with tools OK at {PY_DIR}")
                 return True
             if not deps_ok:
@@ -467,6 +536,10 @@ def ensure(version: str = DEFAULT_VERSION) -> bool:
                 install_officemalscanner()  # retried on each start until present
             if not vm_ok:
                 install_vipermonkey()  # PyPy 2.7 + ViperMonkey; retried until present
+            if not ipdb_ok:
+                install_ipdb()  # DB-IP Lite + iptoasn (network checks of IPs)
+            if not chromium_ok:
+                install_chromium()  # screenshots of checked URLs
             return _tool_deps_ok(py)
 
         print("[>] Portable Python not found — provisioning it now...")
