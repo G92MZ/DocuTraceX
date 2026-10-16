@@ -86,7 +86,8 @@ def test_analyze_case_end_to_end(tmp_path: Path) -> None:
     assert sub.is_file()
     updated = cases.get_case(manifest["analysis_id"], cases_dir=tmp_path)
     assert updated["state"] in ("completed", "partial")
-    # OOXML engine, Word parser, oletools suite and msoffcrypto run.
+    # OOXML engine, Word parser and oletools suite run (encryption is checked
+    # by the unlock step, which only reports when the file is encrypted).
     # (Didier scripts only appear when provisioned in tools/didier/.)
-    assert updated["analysis"]["modules_run"][:4] == ["ooxml", "word", "oletools", "msoffcrypto"]
+    assert updated["analysis"]["modules_run"][:3] == ["ooxml", "word", "oletools"]
     assert (case_root / "results" / "word.json").is_file()

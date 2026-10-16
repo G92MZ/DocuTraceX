@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, File, HTTPException, UploadFile
+from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
 from .. import analyze as analysis
@@ -23,13 +23,28 @@ def _load_findings_with_marks(analysis_id: str) -> dict:
     return marks_service.apply(findings, marks_service.read_marks(paths))
 
 
+def _save_password(analysis_id: str, password: str) -> None:
+    """Keep (or clear) the analyst's password for an encrypted original. Stored
+    in the case folder, apart from case.json, so it isn't served with it."""
+    from ..storage import CasePaths, write_json
+
+    paths = CasePaths(analysis_id)
+    if password:
+        write_json(paths.password, {"password": password})
+    else:
+        paths.password.unlink(missing_ok=True)
+
+
 @router.post("")
-async def create_case(file: UploadFile = File(...)) -> JSONResponse:
+async def create_case(file: UploadFile = File(...), password: str = Form("")) -> JSONResponse:
     """Upload a file, create a case, and queue its analysis (runs in the
-    background worker — one analysis per instance, the rest queued)."""
+    background worker — one analysis per instance, the rest queued).
+    ``password`` (optional) unlocks an encrypted document/archive."""
     from ..tasks import manager
 
     manifest = case_service.create_case(file.file, file.filename or "upload.bin")
+    if password:
+        _save_password(manifest["analysis_id"], password)
     task = manager.submit("analyze", manifest["analysis_id"],
                           manifest["original"]["filename"], target="full",
                           cases_dir=settings.cases_dir)
@@ -197,6 +212,25 @@ async def rerun_case(analysis_id: str, payload: dict = Body(default={})) -> dict
         cases_dir=settings.cases_dir,
     )
     return {"task": task.public()}
+
+
+@router.post("/{analysis_id}/password")
+async def set_password(analysis_id: str, payload: dict = Body(...)) -> dict:
+    """Give (or clear) the password of an encrypted original / archive and
+    queue a full re-analysis that decrypts it first. Marks are preserved."""
+    from ..tasks import manager
+
+    try:
+        manifest = case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    password = (payload or {}).get("password", "")
+    if not isinstance(password, str) or len(password) > 512:
+        raise HTTPException(status_code=400, detail="password must be a string (max 512 chars)")
+    _save_password(analysis_id, password)
+    task = manager.submit("rerun", analysis_id, manifest["original"]["filename"], target="full",
+                          cases_dir=settings.cases_dir)
+    return {"password_set": bool(password), "task": task.public()}
 
 
 @router.get("/{analysis_id}/tasks")

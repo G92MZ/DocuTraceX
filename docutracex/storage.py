@@ -83,6 +83,12 @@ class CasePaths:
     def tasks(self) -> Path:
         return self.results_dir / "tasks.json"
 
+    @property
+    def password(self) -> Path:
+        """Password the analyst gave for an encrypted original (kept apart from
+        case.json so it isn't served with the manifest)."""
+        return self.root / "password.json"
+
     def subresult(self, module: str) -> Path:
         """Path of a single module's sub-result (e.g. 'pdf', 'ooxml', 'email')."""
         if not module or any(sep in module for sep in ("/", "\\", "..")):

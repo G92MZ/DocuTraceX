@@ -141,6 +141,9 @@ TOOL_DEPS: list[Dependency] = [
           ("maxminddb", "maxminddb", "Network checks: offline IP database (DB-IP Lite)"),
           ("tldextract", "tldextract", "Network checks: registrable domain"),
           ("playwright", "playwright", "Network checks: page screenshots (Chromium, no JavaScript)"),
+          ("pikepdf", "pikepdf", "Encrypted PDFs: decrypted copy (qpdf)"),
+          ("pyzipper", "pyzipper", "Password-protected ZIP (ZipCrypto / WinZip AES)"),
+          ("py7zr", "py7zr", "7z archives (incl. password-protected)"),
           ("mcp", "mcp", "MCP server (AI tab): cases as read-only tools for Claude Desktop/Code"),
       )],
 ]
