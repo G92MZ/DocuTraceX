@@ -411,6 +411,7 @@ function pivotTarget(f, ids) {
     return null;
   }
   if (src === "yara") return has("yara") ? "yara" : null;
+  if (src === "netcheck" || loc.startsWith("netcheck:")) return has("checks") ? "checks" : null;
   if (src === "ole") return has("ole") ? "ole" : null;
   if (src === "pdf") return has("pdf") ? "pdf" : null;
   if (src === "pdftools") return has("pdftools") ? "pdftools" : null;
@@ -527,9 +528,17 @@ function wirePivots(root) {
   });
 }
 
-function paneIocs(iocs) {
+function paneIocs(iocs, net) {
   if (!iocs || !iocs.iocs || !iocs.iocs.length) return `<p class="hint-line">No IOCs.</p>`;
+  const checked = {};
+  ((net && net.checks) || []).forEach((c) => { checked[`${c.kind}|${c.target}`] = c; });
+  const safe = iocs.iocs.filter((i) => ["domain", "ipv4", "ipv6"].includes(i.type)).map((i) => [netKindOf(i.type), i.value]);
   const rows = iocs.iocs.map((i) => {
+    const kind = netKindOf(i.type);
+    const done = kind && checked[`${kind}|${i.value}`];
+    const nf = done ? (done.findings || []).length : 0;
+    const netCell = kind ? netButton(kind, i.value, done ? "Re-check" : "Check")
+      + (done ? ` <button class="btn btn-ghost btn-sm" type="button" data-pivot="checks"><span class="badge badge-${nf ? "bad" : "ok"}">${nf} finding(s)</span></button>` : "") : "";
     const where = (i.occurrences || []).map((o) => `${o.module}/${o.location}`);
     const uniq = [...new Set(where)].slice(0, 4).join(", ");
     return `<tr>
@@ -539,12 +548,14 @@ function paneIocs(iocs) {
       <td class="mono" title="${escapeHtml(where.join(", "))}">${escapeHtml(uniq)}</td>
       <td>${addMarkCell("ioc", `${IOC_TYPE_LABEL[i.type] || i.type}: ${i.value}`, "iocs",
         (i.occurrences || []).slice(0, 5).map((o) => `${o.module}/${o.location}: ${o.context || ""}`).join("\n"))}</td>
+      <td>${netCell}</td>
     </tr>`;
   }).join("");
   const c = iocs.counts || {};
   const bits = Object.keys(c).filter((k) => k !== "total").map((k) => `${c[k]} ${k}`);
-  return (bits.length ? `<p class="hint-line">${escapeHtml(bits.join(" · "))}</p>` : "") +
-    table(["Type", "Value", "Count", "Provenance", "Mark"], rows);
+  const allBtn = safe.length ? ` <button class="btn btn-ghost btn-sm" type="button" data-net-all='${escapeHtml(JSON.stringify(safe))}' title="DNS, RDAP, certificates and IP owner — never contacts the URLs themselves">Check all domains &amp; IPs</button>` : "";
+  return `<p class="hint-line">${escapeHtml(bits.join(" · "))}${allBtn}</p>` +
+    table(["Type", "Value", "Count", "Provenance", "Mark", "Network"], rows);
 }
 
 function paneMetadata(sem, ole, rules) {
@@ -1340,6 +1351,7 @@ function renderSubtabs() {
   wireFileActions(bodyEl, _openCaseId);
   wireAddMarks(bodyEl, _openCaseId);
   wirePivots(bodyEl);
+  wireNet(bodyEl, _openCaseId);
 }
 
 async function openComponents(analysisId, keepTab) {
@@ -1365,7 +1377,7 @@ async function openComponents(analysisId, keepTab) {
     const email = mods.email;
     const pdf = mods.pdf;
     const oleLegacy = mods.ole;
-    const nested = mods.nested;
+    let nested = mods.nested;
     const iocs = d.iocs;
     const rtf = mods.rtf;
     if (!ooxml && !sem && !ole && !email && !pdf && !oleLegacy && !mods.javascript && !rtf) {
@@ -1394,7 +1406,10 @@ async function openComponents(analysisId, keepTab) {
     const sections = [];
     const headerHtml = email ? hopsTable(email) : "";
     sections.push({ id: "findings", label: `Findings (${findings.length})`, render: () => paneFindings(findings) });
-    sections.push({ id: "iocs", label: `IOCs (${ni})`, html: paneIocs(iocs) });
+    sections.push({ id: "iocs", label: `IOCs (${ni})`, html: paneIocs(iocs, mods.netcheck) });
+    if (mods.netcheck && (mods.netcheck.checks || []).length) {
+      sections.push({ id: "checks", label: `Checks (${mods.netcheck.checks.length})`, html: paneChecks(analysisId, mods.netcheck) });
+    }
     if (email) {
       sections.push({ id: "auth", label: "Authentication", html: paneAuth(email, mods.mailrules) });
       sections.push({ id: "headers", label: `Headers (${(email.headers || []).length})`, html: paneEmailHeaders(email) });
@@ -1419,6 +1434,15 @@ async function openComponents(analysisId, keepTab) {
       sections.push({ id: "pdfmeta", label: "Metadata", html: panePdfMeta(pdf) });
       sections.push({ id: "embedded", label: `Embedded (${(pdf.embedded || []).length})`, html: panePdfEmbedded(pdf) });
       sections.push({ id: "pdftext", label: "Text", html: `<pre class="text-sample">${escapeHtml((pdf.text_sample || "").slice(0, 8000)) || "(no text)"}</pre>` });
+    }
+    const netTrees = ((mods.netcheck && mods.netcheck.checks) || []).flatMap((c) =>
+      [c.nested, ...(c.submissions || []).map((s) => s.nested)].filter((n) => n && (n.tree || []).length)
+        .flatMap((n) => n.tree.map((t) => Object.assign({}, t, { filename: `${t.filename}  ← ${c.target}` }))));
+    if (netTrees.length) {
+      const base = nested || { tree: [], counts: {} };
+      const merged = { tree: (base.tree || []).concat(netTrees), counts: Object.assign({}, base.counts) };
+      merged.counts.nodes = (merged.counts.nodes || (base.tree || []).length) + netTrees.length;
+      nested = merged;
     }
     if (nested && (nested.tree || []).length) {
       sections.push({ id: "nested", label: `Nested (${(nested.counts || {}).nodes || 0})`, html: paneNested(nested) });
@@ -1471,7 +1495,7 @@ async function openComponents(analysisId, keepTab) {
 function renderRerun(analysisId, d) {
   const el = document.getElementById("comp-actions");
   if (!el) return;
-  const ran = ((d.modules && Object.keys(d.modules)) || []).filter((m) => m !== "iocs");
+  const ran = ((d.modules && Object.keys(d.modules)) || []).filter((m) => !["iocs", "netcheck"].includes(m));
   if (!ran.includes("yara")) ran.push("yara");  // YARA runs only on demand
   const opts = ['<option value="full">Full case</option>']
     .concat(ran.map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`)).join("");
@@ -2014,6 +2038,328 @@ function paneYara(yara, findings) {
   return `<div class="yara-pane">${html}</div>`;
 }
 
+// --- Settings (network) --------------------------------------------------------
+async function loadSettings() {
+  const st = document.getElementById("settings-status");
+  try {
+    const n = await fetch("/api/settings/network").then((r) => r.json());
+    const p = n.proxy || {};
+    document.getElementById("proxy-enabled").checked = !!p.enabled;
+    document.getElementById("proxy-scheme").value = p.scheme || "http";
+    document.getElementById("proxy-host").value = p.host || "";
+    document.getElementById("proxy-port").value = p.port || "";
+    document.getElementById("proxy-user").value = p.username || "";
+    const pw = document.getElementById("proxy-pass");
+    pw.value = "";
+    pw.placeholder = p.password_set ? "unchanged (saved)" : "";
+    st.textContent = n.proxy_active ? `Proxy active: ${p.scheme}://${p.host}:${p.port}` : "No proxy";
+    st.className = "status " + (n.proxy_active ? "ok-text" : "bad-text");
+    const risk = document.getElementById("risk-line");
+    risk.innerHTML = n.risk_accepted
+      ? `You chose to run network checks without a proxy (from this machine's IP). <button class="btn btn-ghost btn-sm" type="button" id="risk-reset">Ask again</button>`
+      : "Without a proxy, DocuTraceX asks once before the first network check.";
+    const rr = document.getElementById("risk-reset");
+    if (rr) rr.addEventListener("click", async () => { await putNetwork({ risk_accepted: false }); loadSettings(); });
+    const db = n.ipdb || {};
+    document.getElementById("ipdb-line").innerHTML =
+      `DB-IP Lite ASN: ${escapeHtml(db.dbip_asn || "missing")} · country: ${escapeHtml(db.dbip_country || "missing")} · iptoasn: ${escapeHtml(db.ip2asn || "missing")} · Chromium: ${n.chromium ? "tools/playwright" : "not provisioned"}<br>${escapeHtml(db.attribution || "")}`;
+  } catch (err) { st.textContent = "Could not load settings."; }
+}
+
+function proxyFormValues() {
+  const pw = document.getElementById("proxy-pass").value;
+  return {
+    enabled: document.getElementById("proxy-enabled").checked,
+    scheme: document.getElementById("proxy-scheme").value,
+    host: document.getElementById("proxy-host").value.trim(),
+    port: parseInt(document.getElementById("proxy-port").value, 10) || 0,
+    username: document.getElementById("proxy-user").value.trim(),
+    password: pw ? pw : null,   // null = keep the saved one
+  };
+}
+
+async function putNetwork(body) {
+  const r = await fetch("/api/settings/network", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.detail || "error");
+  return j;
+}
+
+function setupSettings() {
+  const form = document.getElementById("proxy-form");
+  if (!form) return;
+  const status = document.getElementById("proxy-status");
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    try {
+      await putNetwork({ proxy: proxyFormValues() });
+      status.textContent = "Saved.";
+      status.className = "status ok-text";
+      loadSettings();
+      loadDiagnostics();
+    } catch (err) { status.textContent = err.message; status.className = "status bad-text"; }
+  });
+  document.getElementById("proxy-test").addEventListener("click", async () => {
+    status.textContent = "Testing…";
+    status.className = "status";
+    const v = proxyFormValues();
+    try {
+      const r = await fetch("/api/settings/network/test", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(v.enabled ? { proxy: v } : {}) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.detail || "error");
+      status.textContent = j.ok ? `Public IP ${j.ip} (${j.via}, ${j.elapsed_s}s)` : `Failed (${j.via}): ${j.error}`;
+      status.className = "status " + (j.ok ? "ok-text" : "bad-text");
+    } catch (err) { status.textContent = err.message; status.className = "status bad-text"; }
+  });
+}
+
+// --- Modal ---------------------------------------------------------------------
+function showModal(title, bodyHtml, actions) {
+  const m = document.getElementById("modal");
+  document.getElementById("modal-title").textContent = title;
+  document.getElementById("modal-body").innerHTML = bodyHtml;
+  const box = document.getElementById("modal-actions");
+  box.innerHTML = "";
+  return new Promise((resolve) => {
+    actions.forEach((a) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "btn " + (a.primary ? "btn-primary" : "btn-ghost");
+      b.textContent = a.label;
+      b.addEventListener("click", () => { m.hidden = true; resolve(a.value); });
+      box.appendChild(b);
+    });
+    m.hidden = false;
+    box.querySelector("button:last-child").focus();
+  });
+}
+
+// Before anything goes to the Internet: proxy configured, or risk accepted once.
+async function ensureNetConsent() {
+  const n = await fetch("/api/settings/network").then((r) => r.json());
+  if (n.proxy_active || n.risk_accepted) return true;
+  const choice = await showModal("No proxy configured",
+    `<p>Network checks contact the URL, domain or IP being investigated. Without a proxy they leave from <b>this machine's public IP</b>, which the attacker can see (and may use to tell an analyst from a victim).</p>
+     <p>Configure a proxy (HTTP, HTTPS or SOCKS5/Tor) or continue under your own responsibility. You will not be asked again; you can change it in Settings.</p>`,
+    [{ label: "Cancel", value: "cancel" }, { label: "Configure proxy", value: "config" },
+     { label: "Continue at my own risk", value: "risk", primary: true }]);
+  if (choice === "config") { showTab("settings"); loadSettings(); return false; }
+  if (choice === "risk") { await putNetwork({ risk_accepted: true }); return true; }
+  return false;
+}
+
+// Queue a network check, wait for it, then reopen the case on the Checks tab.
+async function runNetCheck(analysisId, payload, btn) {
+  if (!(await ensureNetConsent())) return;
+  const label = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = "Queued…"; }
+  try {
+    const r = await fetch(`/api/cases/${encodeURIComponent(analysisId)}/netcheck`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || "error");
+    const tid = j.task.id;
+    startTaskPoller();
+    let t = {};
+    for (let i = 0; i < 900; i++) {
+      t = (await fetch("/api/tasks").then((x) => x.json())).tasks.find((x) => x.id === tid) || {};
+      if (["completed", "failed", "cancelled"].includes(t.state)) break;
+      if (btn) btn.textContent = t.state === "running" ? "Checking…" : "Queued…";
+      await new Promise((res) => setTimeout(res, 1000));
+    }
+    if (t.state !== "completed") throw new Error(t.error || t.state || "failed");
+    await openComponents(analysisId, "checks");
+  } catch (err) {
+    if (btn) { btn.disabled = false; btn.textContent = "Failed — retry"; btn.title = String(err.message || err); }
+    return;
+  }
+  if (btn) { btn.disabled = false; btn.textContent = label; }
+}
+
+function netKindOf(iocType) {
+  return { url: "url", domain: "domain", ipv4: "ip", ipv6: "ip" }[iocType] || null;
+}
+
+function netButton(kind, target, label) {
+  return `<button class="btn btn-ghost btn-sm net-btn" type="button" data-net-kind="${escapeHtml(kind)}" data-net-target="${escapeHtml(target)}">${escapeHtml(label || "Check")}</button>`;
+}
+
+function wireNet(root, analysisId) {
+  if (!analysisId) return;
+  root.querySelectorAll("[data-net-kind]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const p = { kind: btn.getAttribute("data-net-kind") };
+      if (btn.hasAttribute("data-net-target")) p.target = btn.getAttribute("data-net-target");
+      if (btn.hasAttribute("data-net-check")) p.check_id = btn.getAttribute("data-net-check");
+      if (btn.hasAttribute("data-net-form")) p.form = parseInt(btn.getAttribute("data-net-form"), 10);
+      runNetCheck(analysisId, p, btn);
+    });
+  });
+  const all = root.querySelector("[data-net-all]");
+  if (all) {
+    all.addEventListener("click", async () => {
+      if (!(await ensureNetConsent())) return;
+      const targets = JSON.parse(all.getAttribute("data-net-all"));
+      all.disabled = true;
+      const ids = [];
+      for (let i = 0; i < targets.length; i++) {
+        const [kind, target] = targets[i];
+        all.textContent = `Queuing ${i + 1}/${targets.length}…`;
+        const r = await fetch(`/api/cases/${encodeURIComponent(analysisId)}/netcheck`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind, target }) });
+        if (r.ok) ids.push((await r.json()).task.id);
+      }
+      startTaskPoller();
+      for (let n = 0; n < 1800; n++) {
+        const tasks = (await fetch("/api/tasks").then((x) => x.json())).tasks.filter((t) => ids.includes(t.id));
+        const done = tasks.filter((t) => ["completed", "failed", "cancelled"].includes(t.state)).length;
+        all.textContent = `Checking… ${done}/${ids.length}`;
+        if (done >= ids.length) break;
+        await new Promise((res) => setTimeout(res, 1000));
+      }
+      await openComponents(analysisId, "checks");
+    });
+  }
+  root.querySelectorAll("[data-preview]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const box = btn.parentElement.querySelector(".net-preview-box");
+      if (box.innerHTML) { box.innerHTML = ""; btn.textContent = "Safe preview"; return; }
+      const src = `/api/cases/${encodeURIComponent(analysisId)}/netcheck/asset?path=${encodeURIComponent(btn.getAttribute("data-preview"))}`;
+      box.innerHTML = `<iframe class="net-preview" sandbox="" referrerpolicy="no-referrer" src="${src}" title="Safe preview"></iframe>`;
+      btn.textContent = "Hide preview";
+    });
+  });
+}
+
+// --- Checks pane -----------------------------------------------------------------
+function netAsset(analysisId, rel) {
+  return `/api/cases/${encodeURIComponent(analysisId)}/netcheck/asset?path=${encodeURIComponent(rel)}`;
+}
+
+function kv(pairs) {
+  return `<div class="kv">${pairs.filter(([, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => `<div>${escapeHtml(k)}</div><div class="mono">${escapeHtml(String(v))}</div>`).join("")}</div>`;
+}
+
+function netFindingsList(fs) {
+  if (!fs.length) return `<p class="hint-line">No findings.</p>`;
+  return fs.map((f) => `<div class="nested-finding"><span class="badge badge-${SEV_CLASS[f.severity] || "warn"}">${escapeHtml(f.severity)}</span>
+    <span class="mono">${escapeHtml(f.rule)}</span> ${escapeHtml(f.detail)}${f.evidence ? `<div class="hint-line mono">${escapeHtml(f.evidence).slice(0, 600)}</div>` : ""}</div>`).join("");
+}
+
+function netViewHtml(analysisId, v, title, rec, isDesktop) {
+  if (!v) return "";
+  let h = `<div class="net-view"><h4>${escapeHtml(title)}</h4>`;
+  if (v.error) h += `<p class="bad-text">${escapeHtml(v.error)}</p>`;
+  h += kv([["Status", v.status], ["Final URL", v.final_url], ["Type", v.content_type], ["Size", v.size != null ? `${v.size} bytes${v.truncated ? " (truncated)" : ""}` : ""],
+    ["SHA-256", v.sha256], ["Time", v.elapsed_s != null ? `${v.elapsed_s}s` : ""], ["User-Agent", v.user_agent]]);
+  const hops = v.hops || [];
+  if (hops.length) {
+    h += `<p class="hint-line"><b>Redirect chain</b></p><ol class="hop-list">${hops.map((x) => `<li><span class="mono">${x.status}</span> ${escapeHtml(x.url)}${x.meta_refresh ? " (meta refresh)" : ""}${x.tls_error ? ' <span class="bad-text">invalid TLS</span>' : ""}</li>`).join("")}</ol>`;
+    const tls = hops.map((x) => x.tls).filter(Boolean).pop();
+    if (tls) h += `<p class="hint-line"><b>TLS certificate</b></p>` + kv([["Subject", tls.subject], ["Issuer", `${tls.issuer} (${tls.issuer_org})`], ["Valid", `${tls.not_before} → ${tls.not_after}`], ["SANs", (tls.sans || []).slice(0, 10).join(", ")]]);
+  }
+  const pg = v.page;
+  if (pg) {
+    h += `<p class="hint-line"><b>Page</b></p>` + kv([["Title", pg.title], ["Brands", (pg.brands || []).join(", ")], ["Meta refresh", pg.meta_refresh],
+      ["Scripts", `${(pg.inline_scripts || []).length} inline, ${(pg.scripts_src || []).length} external`], ["Iframes", (pg.iframes || []).join(", ")]]);
+    (pg.forms || []).forEach((f, i) => {
+      const fields = (f.inputs || []).filter((x) => x.type !== "hidden").map((x) => `${x.name || "?"}:${x.type}`).join(", ");
+      h += `<div class="ident-box"><b>Form #${i + 1}</b> ${f.has_password ? '<span class="badge badge-bad">password</span>' : ""} ${f.external ? '<span class="badge badge-warn">other host</span>' : ""}
+        <div class="mono">${escapeHtml(f.method)} ${escapeHtml(f.action)}</div><div class="hint-line">fields: ${escapeHtml(fields)} · hidden: ${(f.inputs || []).filter((x) => x.type === "hidden").length}</div>
+        ${isDesktop ? `<button class="btn btn-ghost btn-sm" type="button" data-net-kind="submit" data-net-check="${rec.id}" data-net-form="${i}" title="Sends the fake identity (never real data) through this form">Send fake credentials</button>` : ""}</div>`;
+    });
+    if ((pg.links || []).length) {
+      h += `<details class="disclose"><summary>Links (${pg.links.length})</summary><table class="cases"><tbody>${pg.links.slice(0, 60).map((l) =>
+        `<tr><td class="mono">${escapeHtml(l)}</td><td>${/^https?:/i.test(l) ? netButton("url", l) : ""}</td></tr>`).join("")}</tbody></table></details>`;
+    }
+    if ((v.scripts || []).length) {
+      h += `<details class="disclose"><summary>Inline scripts (${v.scripts.length}) — static analysis + V8 sandbox</summary>${v.scripts.map((sc) => {
+        const logs = ((sc.sandbox || {}).log || []).slice(0, 30);
+        return `<div style="margin:6px 0"><span class="hint-line">#${sc.id} · ${sc.size} chars · ${(sc.hits || []).map((x) => x.label).join(" · ")}</span>
+          ${logs.length ? table(["Event", "Name", "Args"], logs.map((e) => `<tr><td>${escapeHtml(e.kind)}</td><td class="mono">${escapeHtml(e.name)}</td><td class="mono">${escapeHtml((e.args || []).join(" | ").slice(0, 400))}</td></tr>`).join("")) : ""}
+          <pre class="text-sample">${escapeHtml((sc.code || "").slice(0, 4000))}</pre></div>`;
+      }).join("")}</details>`;
+    }
+  }
+  if (v.screenshot) {
+    h += v.screenshot.ok ? `<p class="hint-line"><b>Screenshot</b> — rendered from the downloaded HTML, JavaScript off, every request blocked</p><img class="net-shot" alt="screenshot" src="${netAsset(analysisId, v.screenshot.path)}">`
+      : `<p class="hint-line">Screenshot unavailable: ${escapeHtml(v.screenshot.error || "")}</p>`;
+  }
+  if (v.preview_path) {
+    h += `<div style="margin-top:8px"><button class="btn btn-ghost btn-sm" type="button" data-preview="${escapeHtml(v.preview_path)}">Safe preview</button>
+      ${v.html_path ? fileActions(v.html_path) : ""}<div class="net-preview-box"></div></div>`;
+  }
+  if (v.download) h += `<p class="hint-line"><b>File served:</b> ${escapeHtml(v.download.filename)} (${v.download.size} bytes) ${fileActions(v.download.path)}</p>`;
+  return h + `</div>`;
+}
+
+function netUrlCard(analysisId, c) {
+  const views = c.views || {};
+  let body = `<div class="ident-box"><b>Fake identity used:</b> <span class="mono">${escapeHtml(c.identity.email)}</span> · password <span class="mono">${escapeHtml(c.identity.password)}</span>
+    ${(c.replacements || []).length ? `<div class="hint-line">Victim data replaced in the URL: ${c.replacements.map((r) => `${escapeHtml(r.where)} (${escapeHtml(r.encoding)}): ${escapeHtml(r.original)} → ${escapeHtml(r.replacement)}`).join("<br>")}</div>
+      <div class="hint-line">Fetched: <span class="mono">${escapeHtml(c.fetched_url)}</span></div>` : '<div class="hint-line">No victim data found in the URL.</div>'}
+    ${c.referer ? `<div class="hint-line">Referer sent: ${escapeHtml(c.referer)} (link clicked from webmail)</div>` : ""}</div>`;
+  body += `<div class="net-views">${netViewHtml(analysisId, views.desktop, "Desktop — Edge on Windows", c, true)}${netViewHtml(analysisId, views.iphone, "Mobile — Safari on iPhone", c, false)}</div>`;
+  const live = c.live_screenshot;
+  body += `<div style="margin-top:10px"><button class="btn btn-ghost btn-sm" type="button" data-net-kind="shot_live" data-net-check="${c.id}" title="Loads the page with its images and CSS (JavaScript still off) — contacts the server again, through the proxy">Live screenshot (loads resources)</button></div>`;
+  if (live) {
+    body += live.ok ? `<p class="hint-line">Live screenshot · ${escapeHtml(live.taken_utc || "")} · ${escapeHtml(live.via || "")}</p><img class="net-shot" alt="live screenshot" src="${netAsset(analysisId, live.path)}">`
+      : `<p class="hint-line bad-text">Live screenshot failed: ${escapeHtml(live.error || "")}</p>`;
+  }
+  (c.submissions || []).forEach((s) => {
+    body += `<h4 style="margin:14px 0 4px">Submission #${s.n} — form #${s.form_index + 1} · ${escapeHtml(s.method)} ${escapeHtml(s.action)} · ${escapeHtml(s.submitted_utc)}</h4>
+      <div class="hint-line">Sent: <span class="mono">${escapeHtml(Object.entries(s.sent || {}).map(([k, v]) => `${k}=${v}`).join("  "))}</span></div>
+      <div class="net-views">${netViewHtml(analysisId, s.view, "Kit response", c, false)}</div>`;
+    if (s.nested && (s.nested.tree || []).length) body += paneNested(s.nested);
+  });
+  if (c.nested && (c.nested.tree || []).length) body += `<h4 style="margin:14px 0 4px">Files served by the URL</h4>` + paneNested(c.nested);
+  body += `<h4 style="margin:14px 0 4px">Findings (${(c.findings || []).length})</h4>` + netFindingsList(c.findings || []);
+  return body;
+}
+
+function netDomainCard(c) {
+  const d = c.data || {};
+  if (d.note) return `<p class="hint-line">${escapeHtml(d.note)}</p>` + netFindingsList(c.findings || []);
+  const dns = (d.dns || {}).records || {};
+  let h = `<div class="net-views"><div class="net-view"><h4>DNS</h4>${(d.dns || {}).nxdomain ? '<p class="bad-text">NXDOMAIN — does not resolve</p>' : ""}`
+    + kv(Object.entries(dns).map(([k, v]) => [k, v.join(", ")])) + `</div>`;
+  const r = d.rdap || {};
+  h += `<div class="net-view"><h4>RDAP (${escapeHtml(d.registrable || "")})</h4>${r.error ? `<p class="hint-line">${escapeHtml(r.error)}</p>` : kv([["Registrar", r.registrar], ["Created", r.created], ["Age", r.age_days != null ? `${r.age_days} days` : ""], ["Expires", r.expires], ["Updated", r.updated], ["Status", (r.status || []).join(", ")], ["Name servers", (r.nameservers || []).join(", ")], ["Abuse", r.abuse_email]])}</div>`;
+  const ct = d.ct || {};
+  h += `<div class="net-view"><h4>Certificate Transparency (crt.sh)</h4>${ct.error || ct.note ? `<p class="hint-line">${escapeHtml(ct.error || ct.note)}</p>` : kv([["Certificates", ct.count], ["First seen", ct.first_seen ? `${ct.first_seen} (${ct.first_seen_days} days ago)` : ""], ["Issuers", (ct.issuers || []).join(", ")]])
+    + ((ct.names || []).length ? `<details class="disclose"><summary>Names (${ct.names.length})</summary><p class="mono">${escapeHtml(ct.names.join("  "))}</p></details>` : "")}</div></div>`;
+  return h + `<h4 style="margin:14px 0 4px">Findings (${(c.findings || []).length})</h4>` + netFindingsList(c.findings || []);
+}
+
+function netIpCard(c) {
+  const d = c.data || {};
+  if (d.note) return `<p class="hint-line">${escapeHtml(d.note)}</p>`;
+  const o = d.offline || {};
+  const r = d.rdap || {};
+  return `<div class="net-views"><div class="net-view"><h4>Network owner</h4>` + kv([["ASN", o.asn ? `AS${o.asn}` : ""], ["AS organisation / ISP", o.as_org], ["Country", `${o.country || ""} ${o.country_name ? "(" + o.country_name + ")" : ""}`], ["Hosting / cloud", d.hosting || "no"], ["Reverse DNS", d.ptr], ["Tor exit", d.tor_exit === null ? "unknown" : (d.tor_exit ? "YES" : "no")], ["Source", o.source]])
+    + `<p class="hint-line">${escapeHtml(d.attribution || "")}</p></div>`
+    + `<div class="net-view"><h4>RDAP</h4>${r.error ? `<p class="hint-line">${escapeHtml(r.error)}</p>` : kv([["Network", r.network], ["Range", r.range], ["CIDR", r.cidr], ["Owner", r.org], ["Country", r.country], ["Type", r.type], ["Abuse contact", r.abuse_email]])}</div></div>`
+    + `<h4 style="margin:14px 0 4px">Findings (${(c.findings || []).length})</h4>` + netFindingsList(c.findings || []);
+}
+
+function paneChecks(analysisId, net) {
+  const checks = (net && net.checks) || [];
+  if (!checks.length) return `<p class="hint-line">No network checks yet. Use <b>Check</b> next to a URL, domain or IP in the IOCs tab.</p>`;
+  const order = { url: 0, domain: 1, ip: 2 };
+  return checks.slice().sort((a, b) => (order[a.kind] - order[b.kind]) || a.target.localeCompare(b.target)).map((c) => {
+    const fs = c.findings || [];
+    const sev = fs.some((f) => f.severity === "high") ? "bad" : (fs.length ? "warn" : "ok");
+    const body = c.kind === "url" ? netUrlCard(analysisId, c) : (c.kind === "domain" ? netDomainCard(c) : netIpCard(c));
+    return `<details class="net-card"${sev === "bad" ? " open" : ""}><summary>
+        <span class="badge badge-muted">${escapeHtml(c.kind)}</span><span class="mono">${escapeHtml(c.target)}</span>
+        <span class="badge badge-${sev}">${fs.length} finding(s)</span>
+        <span class="hint-line">${escapeHtml(c.checked_utc || "")} · ${escapeHtml(c.via || "")}${c.runs > 1 ? ` · run ${c.runs}` : ""}</span>
+        ${netButton(c.kind, c.target, "Re-check")}</summary><div class="net-body">${body}</div></details>`;
+  }).join("");
+}
+
 // --- Tab navigation ----------------------------------------------------------
 function setupTabs() {
   const tabs = document.querySelectorAll(".tab");
@@ -2028,6 +2374,7 @@ function setupTabs() {
       if (target === "tasks") loadTasks();
       if (target === "reports") loadReports(_openCaseId);
       if (target === "yara") loadYara();
+      if (target === "settings") loadSettings();
     });
   });
 }
@@ -2037,6 +2384,7 @@ if (diagRefresh) diagRefresh.addEventListener("click", loadDiagnostics);
 
 setupTabs();
 setupYara();
+setupSettings();
 renderFormats();
 loadDiagnostics(); // initial load to set the nav indicator
 loadCases();

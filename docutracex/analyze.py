@@ -424,6 +424,12 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         if "yara" not in ran:
             ran.append("yara")
         findings_total += prev_yara.get("counts", {}).get("findings", 0)
+    # Network checks (on demand, Checks tab) are evidence too: kept as well.
+    prev_net = read_json(paths.subresult("netcheck"))
+    if prev_net and prev_net.get("checks"):
+        if "netcheck" not in ran:
+            ran.append("netcheck")
+        findings_total += prev_net.get("counts", {}).get("findings", 0)
 
     overall_counts["findings"] = findings_total
 
@@ -477,7 +483,7 @@ _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto"
                "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole",
                "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules", "javascript", "rtf")
 # Modules whose findings feed the consolidated view (includes derived ones).
-_COLLECTABLE = _RERUNNABLE + ("nested",)
+_COLLECTABLE = _RERUNNABLE + ("nested", "netcheck")
 
 
 def _collect_modules(paths: CasePaths) -> dict[str, Any]:
@@ -506,6 +512,28 @@ def _recompute_derived(paths: CasePaths) -> tuple[int, int]:
     write_subresult(paths, "findings", {"findings": consolidated,
                                         "counts": {"total": len(consolidated)}})
     return ioc_result.get("counts", {}).get("total", 0), len(consolidated)
+
+
+def refresh_derived(paths: CasePaths, module: str) -> dict[str, Any]:
+    """After an on-demand module wrote its result (e.g. a network check):
+    recompute IOCs + consolidated findings and update the case summary."""
+    ioc_total, findings_total = _recompute_derived(paths)
+    summary = read_json(paths.summary) or {}
+    ran = summary.get("modules_run", [])
+    if module not in ran:
+        ran.append(module)
+    summary["modules_run"] = ran
+    summary.setdefault("counts", {})
+    summary["counts"]["iocs"] = ioc_total
+    summary["counts"]["findings"] = findings_total
+    summary["updated_utc"] = _now()
+    write_json(paths.summary, summary)
+    manifest = read_json(paths.manifest)
+    if manifest is not None:
+        manifest.setdefault("analysis", {})["modules_run"] = ran
+        manifest["analysis"]["updated_utc"] = _now()
+        write_json(paths.manifest, manifest)
+    return {"iocs": ioc_total, "findings": findings_total}
 
 
 def run_module(case_root: Path, module: str) -> dict[str, Any]:
