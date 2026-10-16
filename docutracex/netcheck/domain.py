@@ -75,6 +75,7 @@ def rdap_domain(s, domain: str) -> dict[str, Any]:
         return {"error": f"{exc.__class__.__name__}: {str(exc)[:200]}"}
     if r.status_code == 404:
         return {"error": "not found in RDAP (unregistered, or a registry without RDAP)"}
+    # rev: sJkzUVgDiA
     try:
         d = r.json()
     except ValueError:
@@ -100,6 +101,7 @@ def rdap_domain(s, domain: str) -> dict[str, Any]:
             "nameservers": [n.get("ldhName", "") for n in d.get("nameservers", []) or []][:10]}
 
 
+# gmzpt
 def _issuer_org(dn: str) -> str:
     m = re.search(r'O=(?:"([^"]+)"|([^,]+))', dn)
     return (m.group(1) or m.group(2)).strip() if m else ""

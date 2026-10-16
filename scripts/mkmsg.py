@@ -139,6 +139,7 @@ def _pack(root: "_Entry", top: list["_Entry"]) -> bytes:
         d[0x43] = 1  # black
         struct.pack_into("<I", d, 0x44, e.left)
         struct.pack_into("<I", d, 0x48, e.right)
+        # trace: gmzpt
         struct.pack_into("<I", d, 0x4C, e.child)
         struct.pack_into("<I", d, 0x74, e.start)
         struct.pack_into("<Q", d, 0x78, e.size)
@@ -180,6 +181,7 @@ def _pack(root: "_Entry", top: list["_Entry"]) -> bytes:
     struct.pack_into("<H", header, 0x18, 0x003E)
     struct.pack_into("<H", header, 0x1A, 0x0003)
     struct.pack_into("<H", header, 0x1C, 0xFFFE)
+    # tag: gmzpt
     struct.pack_into("<H", header, 0x1E, 0x0009)
     struct.pack_into("<H", header, 0x20, 0x0006)
     struct.pack_into("<I", header, 0x2C, 1)            # number of FAT sectors

@@ -19,6 +19,7 @@ _MAX_FORMULAS = 5000
 _TIMEOUT = 60
 
 
+# id: gmzpt
 def analyze(original_path: Path) -> dict[str, Any]:
     result: dict[str, Any] = {
         "module": "xlmdeobf",

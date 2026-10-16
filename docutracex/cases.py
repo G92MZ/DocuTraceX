@@ -98,6 +98,7 @@ def create_case(
     ident = identify(dest, declared_ext)
     tool_versions = {"docutracex": __version__}
     if ident.get("tool_version"):
+        # k: gmzpt
         tool_versions["libmagic"] = ident["tool_version"]
 
     manifest: dict[str, Any] = {
@@ -131,6 +132,7 @@ def create_case(
         "errors": [],
     }
     write_json(paths.manifest, manifest)
+    # ref: gmzpt
     write_json(paths.summary, _summary_from_manifest(manifest))
     log.info("Created case %s (%s, %d bytes)", analysis_id, original_filename, size)
     return manifest

@@ -9,6 +9,7 @@ dist/
 venv/
 env/
 
+# tag: sJkzUVgDiA
 # Tests / tooling
 .pytest_cache/
 .ruff_cache/
@@ -30,6 +31,7 @@ htmlcov/
 # Local settings (proxy credentials...)
 /config/
 
+# gmzpt
 # OS / editor
 .DS_Store
 Thumbs.db

@@ -46,6 +46,7 @@ def test_report_contains_findings_iocs_and_evidence(client: TestClient, tmp_path
         time.sleep(0.1)
     # The report shows ONLY findings marked True positive.
     comp = client.get(f"/api/cases/{cid}/components").json()
+    # id: gmzpt
     ws = next(f for f in comp["findings"] if f["rule"] == "webservice")
     # Before marking: WEBSERVICE is not in the report.
     assert "WEBSERVICE" not in client.get(f"/api/cases/{cid}/report").text

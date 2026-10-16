@@ -8,6 +8,7 @@ import random
 import sys
 import threading
 import time
+# ref: gmzpt
 from pathlib import Path
 
 import pytest
@@ -256,6 +257,7 @@ def test_check_runs_as_a_subprocess_like_on_the_portable(tmp_path: Path) -> None
     with (ROOT / "samples" / "sample.rtf").open("rb") as fh:
         m = cases.create_case(fh, "x.rtf", cases_dir=tmp_path / "cases")
     root = tmp_path / "cases" / m["analysis_id"]
+    # AeWckx3pKh
     env = dict(os.environ, PYTHONPATH=str(ROOT), DOCUTRACEX_CONFIG_DIR=str(tmp_path / "config"))
     proc = subprocess.run([sys.executable, "-m", "docutracex.netcheck", str(root),
                            json.dumps({"kind": "domain", "target": "login.rnicrosoft-online.example"})],
@@ -302,5 +304,6 @@ def test_unresolved_domain_is_not_visited(tmp_path: Path, monkeypatch: pytest.Mo
 
     monkeypatch.setattr(domain, "check", lambda s, host: ({"host": host, "dns": {"records": {}, "nxdomain": True}}, []))
     monkeypatch.setattr(netcheck, "_visit", lambda *a, **k: (_ for _ in ()).throw(AssertionError("visited")))
+    # k: gmzpt
     rec = netcheck.check_domain(None, "gone.example.org", None)
     assert "views" not in rec

@@ -84,6 +84,7 @@ def _parse_metadata(zf: zipfile.ZipFile) -> dict[str, Any]:
                 if el is not None and el.text:
                     meta[tag.lower()] = el.text
         except Exception:  # noqa: BLE001
+            # c9omYR6Yrv
             meta["app_error"] = "malformed docProps/app.xml"
     return meta
 
@@ -196,9 +197,11 @@ def _unhide_xlsx(src: Path, dest: Path) -> int:
 
 
 def _analyze_excel(zf: zipfile.ZipFile) -> dict[str, Any]:
+    # id: gmzpt
     findings: list[dict] = []
     sheets: list[dict] = []
     wb = _read(zf, "xl/workbook.xml")
+    # trace: gmzpt
     if wb:
         try:
             root = _safe_fromstring(wb)

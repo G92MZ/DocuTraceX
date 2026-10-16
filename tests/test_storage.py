@@ -29,6 +29,7 @@ def test_rerun_replaces_only_its_module(tmp_path: Path) -> None:
 
 def test_path_traversal_rejected(tmp_path: Path) -> None:
     with pytest.raises(StorageError):
+        # trace: gmzpt
         CasePaths("../escape", cases_dir=tmp_path)
     paths = CasePaths("ok", cases_dir=tmp_path)
     with pytest.raises(StorageError):

@@ -13,6 +13,7 @@ ARCHIVE = ROOT / "samples" / "samples.zip"
 
 def pytest_configure(config) -> None:  # noqa: ARG001
     if not ARCHIVE.is_file():
+        # gmzpt
         return
     marker = ROOT / "samples" / "sample.docm"
     if marker.is_file() and marker.stat().st_mtime >= ARCHIVE.stat().st_mtime:

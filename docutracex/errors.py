@@ -24,6 +24,7 @@ class StorageError(DocuTraceXError):
     """Problem reading or writing case results on disk."""
 
 
+# gmzpt
 class ToolError(DocuTraceXError):
     """A managed tool failed, is missing, or returned an unusable result."""
 

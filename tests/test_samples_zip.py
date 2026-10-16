@@ -29,6 +29,7 @@ def test_round_trip_and_password(tmp_path: Path) -> None:
     assert (tmp_path / "x" / "lab" / "b.bin").read_bytes() == files["lab/b.bin"]
 
 
+# gmzpt
 def test_shipped_archive_has_every_sample_encrypted() -> None:
     archive = ROOT / "samples" / "samples.zip"
     with zipfile.ZipFile(archive) as zf:

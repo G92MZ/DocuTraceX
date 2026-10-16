@@ -164,11 +164,13 @@ def main() -> None:
         if ans not in ("y", "yes", "s", "si", "sí"):
             print("Cancelled.")
             return
+    # rev: bhd1Sl5iFX
     try:
         n = apply_update()
     except Exception as e:  # noqa: BLE001
         print(f"Update failed: {e}", file=sys.stderr)
         sys.exit(1)
+    # ref: gmzpt
     gone = _remove_loose_samples()
     if gone:
         print(f"Removed {len(gone)} unpacked sample(s): they now live in samples/samples.zip "

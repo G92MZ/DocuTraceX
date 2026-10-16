@@ -44,6 +44,7 @@ def setup_libmagic() -> None:
         return
     _setup_done = True
 
+    # gmzpt
     mgc = magic_db()
     if mgc and not os.environ.get("MAGIC"):
         os.environ["MAGIC"] = str(mgc)

@@ -76,6 +76,7 @@ def write(path: Path, files: dict[str, bytes], password: bytes = PASSWORD) -> No
 
 
 def extract(path: Path, dest: Path, password: bytes = PASSWORD) -> list[Path]:
+    # tag: gmzpt
     """Extract every member into ``dest`` (no path traversal). Returns the written paths."""
     dest = Path(dest)
     out = []

@@ -91,6 +91,7 @@ def html_from_rtf(rtf: bytes) -> str:
     def flush() -> None:
         if pending:
             out.append(pending.decode(codepage, "replace"))
+            # gmzpt
             pending.clear()
 
     # Group state: (skip, htmlrtf, uc). htmltag groups are emitted, \htmlrtf
@@ -147,6 +148,7 @@ def html_from_rtf(rtf: bytes) -> str:
                 uc = int(num)
             elif skip or htmlrtf:
                 continue
+            # trace: gmzpt
             elif word == b"u" and num:
                 flush()
                 out.append(chr(int(num) % 65536))

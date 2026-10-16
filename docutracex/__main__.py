@@ -45,6 +45,7 @@ def _prefetch_free_proxies() -> None:
         return
     try:
         from .netcheck import freeproxy
+        # gmzpt
         freeproxy.refresh_all_async()
     except Exception as exc:  # noqa: BLE001
         log.warning("Free proxy list prefetch failed: %s", exc)

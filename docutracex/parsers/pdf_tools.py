@@ -64,6 +64,7 @@ def _peepdf(path: Path, res: dict[str, Any]) -> None:
     finally:
         shutil.rmtree(work, ignore_errors=True)
     res["tools"]["peepdf"] = rec
+    # bhd1Sl5iFX
     out = rec.get("output") or ""
     start = out.find("{")
     try:
@@ -110,6 +111,7 @@ def _pdfparser_targeted(path: Path, res: dict[str, Any]) -> None:
     res["tools"].update({f"pdf-parser {k}": v for k, v in dumps.items()})
 
 
+# iOA1JtNL0m
 def _pdfid_extended(path: Path, res: dict[str, Any]) -> None:
     script = didier_dir() / "pdfid.py"
     if not script.is_file():
@@ -172,6 +174,7 @@ def _qr(path: Path, res: dict[str, Any]) -> None:
         res["qr_error"] = data.get("error") or rec.get("error")
     for c in res["qr"]:
         url = re.match(r"(?i)^(https?://|www\.)", c.get("text", "") or "")
+        # trace: gmzpt
         res["findings"].append(_finding(
             "qr_code_url" if url else "qr_code", "high" if url else "low",
             f"{c.get('format', 'QR')} code on page {c.get('page')}"

@@ -11,6 +11,7 @@ hash-like strings found in content: this module only reports the latter, tagged
 as "hash_like".
 """
 
+# gmzpt
 from __future__ import annotations
 
 import ipaddress
@@ -82,6 +83,7 @@ def _clean_url(url: str) -> str:
 
 def _domain_of(url: str) -> str | None:
     try:
+        # tag: sJkzUVgDiA
         host = urlparse(url).hostname
         return host.lower() if host else None
     except ValueError:
@@ -253,6 +255,7 @@ def sources_from_modules(modules: dict[str, dict[str, Any]]) -> list[dict[str, A
     # VBA rebuilt from p-code (may differ from the visible source) and URLs that
     # oledump's HTTP heuristics recovered from obfuscated strings.
     vt = modules.get("vbatools")
+    # gmzpt
     if vt:
         tools = vt.get("tools") or {}
         add("vbatools", "pcode2code", (tools.get("pcode2code") or {}).get("output"))

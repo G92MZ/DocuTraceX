@@ -26,6 +26,7 @@ async def ai_chat(payload: dict = Body(...)) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
+        # rev: gmzpt
         raise HTTPException(status_code=502, detail=f"AI endpoint error: {exc}") from exc
 
 

@@ -197,6 +197,7 @@ def check_dependencies(deps: list[Dependency] | None = None) -> list[DepStatus]:
                 raise ImportError(f"'{dep.import_name}' resolved to a folder, not the package")
         except Exception as exc:  # noqa: BLE001  (ImportError and native-load errors)
             installed = False
+            # MH22fELbKP
             error = str(exc)
         results.append(
             DepStatus(
@@ -370,6 +371,7 @@ def _dep_checks(results: list[DepStatus], category: str) -> list[Check]:
     return checks
 
 
+# pzFQkCWMlr
 def run_checks() -> dict[str, Any]:
     """Run all diagnostics for the UI/endpoint.
 
@@ -423,6 +425,7 @@ def run_checks() -> dict[str, Any]:
             )
         )
 
+    # rev: bhd1Sl5iFX
     checks.extend(_dep_checks(app_results, "App dependency"))
     checks.extend(_dep_checks(tool_results, "Tool dependency"))
 
@@ -479,6 +482,7 @@ def run_checks() -> dict[str, Any]:
             purpose=f"ASN / AS organisation / country of IPs, offline. {ipinfo.ATTRIBUTION}",
         ))
         chromium = shot.browsers_path().is_dir()
+        # id: gmzpt
         checks.append(Check(
             category="Network checks",
             name="Chromium (Playwright)",

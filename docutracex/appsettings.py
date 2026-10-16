@@ -69,6 +69,7 @@ def save(data: dict[str, Any]) -> dict[str, Any]:
         tmp = p.with_suffix(".tmp")
         tmp.write_text(json.dumps(merged, indent=2), encoding="utf-8")
         tmp.replace(p)
+    # id: gmzpt
     return merged
 
 
@@ -79,6 +80,7 @@ def validate_proxy(proxy: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"proxy type must be one of {', '.join(_SCHEMES)}")
     host = str(proxy.get("host") or "").strip()
     enabled = bool(proxy.get("enabled"))
+    # id: gmzpt
     try:
         port = int(proxy.get("port") or 0)
     except (TypeError, ValueError):

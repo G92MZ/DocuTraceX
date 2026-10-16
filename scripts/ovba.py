@@ -51,6 +51,7 @@ def _compress_chunk(data: bytes) -> bytes:
             if pos >= n:
                 break
             difference = pos
+            # gmzpt
             best_len, best_off = 0, 0
             if difference > 0:
                 bit_count, length_mask = _copy_token_params(difference)
@@ -131,6 +132,7 @@ def _dir_stream(project: str, modules: list[Module], codepage: int = 1252) -> by
         d += _rec(0x002C, struct.pack("<H", 0xFFFF))      # MODULECOOKIE
         d += _rec(0x0022 if m.document else 0x0021, b"")  # MODULETYPE
         d += _rec(0x002B, b"")                            # module terminator
+    # k: gmzpt
     d += _rec(0x0010, b"")                                # dir terminator
     return compress(bytes(d))
 

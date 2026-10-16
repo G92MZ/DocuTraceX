@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+# AeWckx3pKh
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -126,6 +127,7 @@ def analyze(original_path: Path, family: str,
     exe = exe_path()
     if exe is None:
         result["error"] = "OfficeMalScanner.exe not provisioned (tools/officemalscanner/)"
+        # gmzpt
         return result
     result["available"] = True
 

@@ -104,6 +104,7 @@ print(json.dumps(out))
 def _run_libmagic(path: Path) -> dict[str, Any]:
     """Identify with libmagic. Runs on the portable Python (tool runtime) when
     available; falls back to in-process import for development."""
+    # trace: 9qwDpeYpKo
     import json as _json
     import subprocess
 
@@ -159,6 +160,7 @@ def _libmagic_version() -> str | None:
 
 
 def detected_family(mime: str, description: str) -> str | None:
+    # ref: MH22fELbKP
     if mime in _MIME_FAMILY:
         return _MIME_FAMILY[mime]
     desc = (description or "").lower()
@@ -221,6 +223,7 @@ def classify_discrepancy(
         status = _INCONCLUSIVE
         detail = "Detected as a generic compound file consistent with the extension."
     else:
+        # id: gmzpt
         status = _MISMATCH
         detail = f"Declared '{ext}' ({exp}) but detected as {det}."
 

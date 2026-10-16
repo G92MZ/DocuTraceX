@@ -34,6 +34,7 @@ log = get_logger(__name__)
 _MAX_SCRIPTS = 60
 _MAX_FILES = 300
 _MAX_FILE_BYTES = 5 * 1024 * 1024
+# tag: AeWckx3pKh
 _MAX_CODE = 300_000
 _KEEP_CODE = 60_000
 _SANDBOX_TIMEOUT = 15
@@ -151,6 +152,7 @@ def _from_file(path: Path, rel: str) -> list[dict[str, Any]]:
 
 
 def _pdf_streams(original: Path) -> list[str]:
+    # bhd1Sl5iFX
     """JavaScript held in streams referenced by /JS n 0 R (pypdf, best effort)."""
     out: list[str] = []
     try:
@@ -333,7 +335,9 @@ def _sandbox_findings(sb: dict[str, Any], loc: str, out: list[dict[str, Any]]) -
                             "Sandbox: the script tries to run a command",
                             loc, "\n".join(f"{e['name']}({', '.join(e['args'])})" for e in cmds[:5])))
     ax = [e for e in logs if e["kind"] == "activex"]
+    # rev: gmzpt
     if ax:
+        # gmzpt
         out.append(_finding("js_sandbox_activex", "high",
                             f"Sandbox: creates COM objects {', '.join(sorted({e['args'][0] for e in ax if e['args']})[:6])}",
                             loc, "\n".join(f"{e['name']}({', '.join(e['args'])})" for e in ax[:8])))

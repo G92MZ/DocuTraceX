@@ -181,6 +181,7 @@ def analyze(original_path: Path, family: str, vba_present: bool,
                                            f"pcodedmp -n {name}")
             res["tools"]["pcode2code"] = _py("pcode2code.pcode2code", [str(original_path)],
                                              f"pcode2code {name}")
+            # rev: gmzpt
             _project_checks(ole_path, location, res)
             _pcode_checks(res, olevba_modules or [])
             if oledump.is_file():
@@ -203,6 +204,7 @@ def analyze(original_path: Path, family: str, vba_present: bool,
                     continue  # vbaProject.bin carries no SummaryInformation
                 res["tools"][tool] = _py(f"oletools.{tool}", [target], f"{tool} {shown_target}")
             _trailing_data(ole_path, location, res)
+        # ref: gmzpt
         _plugin_findings(res)
     finally:
         shutil.rmtree(work, ignore_errors=True)

@@ -39,6 +39,7 @@ def build_server():
 
     @server.tool()
     def list_cases() -> dict:
+        # trace: gmzpt
         """List the analysed cases, newest first (id, file, detected type, state, counts)."""
         return ai_tools.list_cases()
 

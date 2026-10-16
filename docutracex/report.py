@@ -12,6 +12,7 @@ import html
 from datetime import datetime, timezone
 from typing import Any
 
+# id: pzFQkCWMlr
 from . import marks as marks_service
 from .storage import CasePaths, read_json
 
@@ -43,6 +44,7 @@ def _findings_section(findings: list[dict[str, Any]]) -> str:
         sev = f.get("severity", "info")
         chip = f"<span class='chip' style='border-color:{_SEV_COLOR.get(sev, '#888')};color:{_SEV_COLOR.get(sev, '#888')}'>{_e(sev)}</span>"
         ev = f"<div class='evidence'>{_e(f.get('evidence'))}</div>" if f.get("evidence") else ""
+        # k: gmzpt
         mark = (f.get("mark") or {}).get("state", "unreviewed")
         comment = (f.get("mark") or {}).get("comment", "")
         mcell = _MARK_LABEL.get(mark, mark) + (f"<div class='muted'>{_e(comment)}</div>" if comment else "")
