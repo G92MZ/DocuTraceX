@@ -14,11 +14,20 @@ carries the techniques real maldocs use.
 > inert placeholders (`MZ` + a text line, `MsgBox` scripts). The macros and
 > scripts reference those inert values only.
 
-Regenerate with:
+## Getting the files
+
+The samples are stored **compressed and encrypted** in `samples/samples.zip`
+with the customary password **`infected`**, so antivirus engines, mail gateways
+and Git hosting scanners do not flag or quarantine them (they would: the files
+carry real exploit *structures*, even if every payload is inert).
 
 ```bash
-python scripts/make_samples.py
+python scripts/make_samples.py --extract   # unpack into samples/ (git-ignored)
+python scripts/make_samples.py             # regenerate samples/samples.zip
 ```
+
+Or open the archive with 7-Zip, WinRAR or Windows Explorer (password `infected`).
+The test suite unpacks it on its own.
 
 ## Campaign indicators (all inert)
 
@@ -57,7 +66,7 @@ python scripts/make_samples.py
 
 ## Lab: test the network checks safely
 
-`samples/lab/phish_lab.eml` is the same campaign with its link and an attached login form pointing to a **local phishing-kit simulator**:
+`lab/phish_lab.eml` (inside the archive) is the same campaign with its link and an attached login form pointing to a **local phishing-kit simulator**:
 
 ```bash
 python scripts/phish_lab.py      # serves http://127.0.0.1:8808 (Ctrl+C to stop)

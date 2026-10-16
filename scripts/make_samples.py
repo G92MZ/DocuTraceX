@@ -35,13 +35,17 @@ Nothing here is executable malware.
 ``sample.xlsb`` is oletools' benign Excel 4.0 test file (BSD-2-Clause, see
 samples/README.md): pyxlsb2 can read XLSB but nothing can write it.
 
-Run:  python scripts/make_samples.py
+The samples are stored in ``samples/samples.zip``, encrypted with the usual
+password ``infected`` so antivirus engines do not flag them (the loose files are
+git-ignored).
+
+Run:  python scripts/make_samples.py             # regenerate samples/samples.zip
+      python scripts/make_samples.py --extract   # unpack it into samples/
 """
 
 from __future__ import annotations
 
 import base64
-import shutil
 import struct
 import sys
 from pathlib import Path
@@ -515,18 +519,47 @@ def build_all() -> dict[str, bytes]:
     return out
 
 
+ARCHIVE = SAMPLES / "samples.zip"
+
+
+def pack(files: dict[str, bytes]) -> None:
+    """Write the samples into samples/samples.zip, encrypted with the password
+    ``infected`` so antivirus engines and mail gateways do not flag them."""
+    import zipcrypto
+
+    zipcrypto.write(ARCHIVE, dict(sorted(files.items())))
+
+
+def extract(dest: Path = SAMPLES) -> list[Path]:
+    """Unpack samples/samples.zip (password ``infected``) into ``dest``."""
+    import zipcrypto
+
+    return zipcrypto.extract(ARCHIVE, dest)
+
+
 def main() -> None:
+    import argparse
+
+    ap = argparse.ArgumentParser(description="Build the DocuTraceX samples (samples/samples.zip, password 'infected').")
+    ap.add_argument("--extract", action="store_true", help="only unpack samples/samples.zip into samples/")
+    ap.add_argument("--loose", action="store_true", help="also write the generated files unpacked into samples/")
+    args = ap.parse_args()
     SAMPLES.mkdir(parents=True, exist_ok=True)
+    if args.extract:
+        got = extract()
+        print(f"Extracted {len(got)} samples into {SAMPLES} (git-ignored).")
+        return
     made = build_all()
-    for name, data in made.items():
-        (SAMPLES / name).write_bytes(data)
-    shutil.copyfile(ROOT / "tests" / "data" / "excel4_sample_macro.xlsb", SAMPLES / "sample.xlsb")
-    (SAMPLES / "lab").mkdir(exist_ok=True)
-    (SAMPLES / "lab" / "phish_lab.eml").write_bytes(lab_eml())
-    names = sorted([*made, "sample.xlsb"])
-    print(f"Generated {len(names)} samples in {SAMPLES}:")
-    for name in names:
-        print(f"  {name:14s} {(SAMPLES / name).stat().st_size:>8} bytes")
+    made["sample.xlsb"] = (ROOT / "tests" / "data" / "excel4_sample_macro.xlsb").read_bytes()
+    made["lab/phish_lab.eml"] = lab_eml()
+    pack(made)
+    if args.loose:
+        for name, data in made.items():
+            (SAMPLES / name).parent.mkdir(parents=True, exist_ok=True)
+            (SAMPLES / name).write_bytes(data)
+    print(f"Wrote {len(made)} samples to {ARCHIVE} (password: infected){' and unpacked them' if args.loose else ''}:")
+    for name in sorted(made):
+        print(f"  {name:20s} {len(made[name]):>8} bytes")
 
 
 if __name__ == "__main__":
