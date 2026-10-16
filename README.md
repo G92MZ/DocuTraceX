@@ -84,7 +84,7 @@ just works.
 | 🏷️ **Marks** | per-finding TP/FP/Suspicious/Informational + comment, manual marks on any IOC/header/attachment/JavaScript hit, sandbox event or decoded string, and free-text notes, kept separate from the evidence and **preserved across re-analysis** (stable finding IDs) |
 | 🧵 **Tasks** | a sequential queue with per-file **sub-step log** — every tool that ran, its status, timing and findings — plus isolated **re-run** of a single module |
 | 📊 **Report** | one self-contained HTML report of the confirmed findings, with evidence, IOCs and the nested tree |
-| ⚙️ **Settings** | the app-wide proxy for network checks (HTTP/HTTPS/SOCKS5, tested from the UI) |
+| ⚙️ **Settings** | the app-wide proxy for network checks (HTTP/HTTPS/SOCKS4/SOCKS5, tested from the UI), or a free public proxy picked and rotated automatically |
 | 🩺 **Diagnostics** | app vs. tool interpreters, every dependency, external tool, IP database, Chromium and the proxy checked in one place |
 
 ## 📦 Supported formats
@@ -104,9 +104,10 @@ Scripts and web pages found inside them (`.js` `.jse` `.vbs` `.hta` `.wsf` `.htm
 
 Checking an indicator means contacting the attacker's infrastructure, so DocuTraceX is careful about it:
 
-- **Nothing goes out unless you press Check.** Configure a proxy (HTTP, HTTPS or SOCKS5 — Tor works) in **Settings**; without one you are asked once and, if you accept the risk, checks leave from your own IP. The installer and the updater never use it.
+- **Nothing goes out unless you press Check.** Configure a proxy (HTTP, HTTPS, SOCKS4 or SOCKS5 — Tor works) in **Settings**, or press **Connect to free proxy** to pick a working one from the [ProxyScrape free list](https://proxyscrape.com/free-proxy-list) (downloaded at startup; random candidates tested in parallel; **Rotate** for another one; a dead one is replaced automatically before the next check); without one you are asked once and, if you accept the risk, checks leave from your own IP. The installer and the updater never use it.
 - **Looks like a victim's click.** Requests carry the full header set of a current browser (Edge on Windows and Safari on iPhone, with the webmail `Referer` for links from emails), so bot filters and cloaking kits serve the real page — and the two views are compared to detect cloaking.
 - **Never the real victim.** The victim's address in the link (plain, URL-encoded or Base64; query, path or fragment) and usernames are replaced by a random fake identity on mail.com / gmx.com / email.com / post.com / consultant.com / usa.com.
+- **Free proxies are untrusted:** through them an invalid TLS certificate is never accepted (so a proxy can't inject content into the evidence), a proxy is only accepted if a strictly verified HTTPS request through it works, and every check says it went through a free proxy. Kits often block public proxy IPs — if a page looks clean, rotate and re-check.
 - **Nothing runs.** No JavaScript runs and no images, CSS or scripts are downloaded; page scripts go through the V8 sandbox, the screenshot is rendered from the downloaded HTML with every request blocked, and the preview is sandboxed with a CSP that forbids any load. The optional *live screenshot* (with images/CSS, still no JavaScript) is the only exception, through the proxy.
 - **Forms only on request.** *Send fake credentials* posts the fake identity through a form (hidden fields and cookies kept) to show the kit's next stage — only when you press it.
 - **Domains** get DNS (your resolver), RDAP and crt.sh (through the proxy) and, when the name resolves, a visit to their website exactly like a URL check (HTTPS, then HTTP). **IPs** are never contacted: owner and ASN come from RDAP and a local database, plus the Tor list.

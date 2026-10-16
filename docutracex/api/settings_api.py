@@ -13,10 +13,10 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 @router.get("/network")
 async def get_network() -> dict:
-    from ..netcheck import ipinfo, shot
+    from ..netcheck import freeproxy, ipinfo, shot
 
     return {**appsettings.public_network(), "ipdb": ipinfo.db_status(),
-            "chromium": shot.browsers_path().is_dir()}
+            "chromium": shot.browsers_path().is_dir(), "free_lists": freeproxy.status()}
 
 
 @router.put("/network")
@@ -55,3 +55,22 @@ async def test_network(payload: dict = Body(default={})) -> dict:
     res = await asyncio.to_thread(http.egress_ip, proxy)
     res["via"] = "proxy" if proxy else "direct"
     return res
+
+
+@router.post("/network/free-proxy")
+async def free_proxy(payload: dict = Body(default={})) -> dict:
+    """Pick a working proxy from the ProxyScrape free list and make it the app's
+    proxy (``rotate``: skip the current one). Tests candidates in parallel."""
+    from ..netcheck import freeproxy
+
+    protocol = str(payload.get("protocol") or "http").lower()
+    country = str(payload.get("country") or "").strip()[:2]
+    try:
+        found = await asyncio.to_thread(freeproxy.connect, protocol, country, bool(payload.get("rotate")))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001  (list download failed, offline…)
+        raise HTTPException(status_code=502, detail=f"free proxy list unavailable: {exc}") from exc
+    return {"found": found, **appsettings.public_network()}

@@ -104,13 +104,25 @@ def api_headers(accept: str = "application/json") -> dict[str, str]:
             "Accept-Language": "es-ES,es;q=0.9,en;q=0.8"}
 
 
-def session(proxy: str | None):
+_STRICT_DEFAULT = False
+
+
+def set_strict_default(value: bool) -> None:
+    """Strict TLS for every session of this run (set when the proxy is a free one)."""
+    global _STRICT_DEFAULT
+    _STRICT_DEFAULT = bool(value)
+
+
+def session(proxy: str | None, strict_tls: bool | None = None):
     import requests
     import urllib3
 
     urllib3.disable_warnings()  # invalid certificates are reported, not warned about
     s = requests.Session()
     s.trust_env = False  # only the proxy configured in DocuTraceX, never env vars
+    # Through an untrusted (free) proxy an invalid certificate is never accepted:
+    # it could be the proxy intercepting TLS to alter the evidence.
+    s.dtx_strict_tls = _STRICT_DEFAULT if strict_tls is None else strict_tls
     s.headers.clear()
     # A TLS-inspecting corporate proxy needs its CA: DOCUTRACEX_CA_BUNDLE=<pem>.
     ca = os.environ.get("DOCUTRACEX_CA_BUNDLE")
@@ -183,6 +195,12 @@ def fetch(s, url: str, headers: dict[str, str], method: str = "GET",
                 r = s.request(method, cur, headers=headers, data=body_data, allow_redirects=False,
                               stream=True, timeout=TIMEOUT, verify=s.verify)
             except requests.exceptions.SSLError as exc:
+                if getattr(s, "dtx_strict_tls", False):
+                    hops.append({"url": cur, "method": method, "status": None, "headers": {}, "tls": None,
+                                 "tls_error": str(exc)[:300]})
+                    out["error"] = ("TLS certificate not valid through the free proxy — not fetched (the proxy "
+                                    "may be intercepting HTTPS); rotate the proxy and try again")
+                    break
                 tls_error = str(exc)[:300]
                 r = s.request(method, cur, headers=headers, data=body_data, allow_redirects=False,
                               stream=True, timeout=TIMEOUT, verify=False)
