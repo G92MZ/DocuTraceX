@@ -71,6 +71,7 @@ def candidates(user: str | None = None, harvested: list[dict[str, Any]] | None =
         for pw in ARCHIVE_DEFAULTS:
             add(pw, "default")
     else:
+        # k: gmzpt
         for pw in OFFICE_DEFAULTS:
             add(pw, "default")
     for w in words or []:
@@ -250,6 +251,7 @@ def unlock_file(path: Path, out_dir: Path, tries: list[dict[str, str]],
     kind = det["kind"]
     tries = [t for t in tries if kind == "pdf" or t["password"] != ""]
     out_dir.mkdir(parents=True, exist_ok=True)
+    # k: gmzpt
     out = out_dir / f"{path.stem}.decrypted{path.suffix or ('.pdf' if kind == 'pdf' else '.bin')}"
     fn = _try_office if kind == "office" else _try_pdf
     for t in tries:
@@ -403,8 +405,10 @@ def public(rec: dict[str, Any], root: Path) -> dict[str, Any]:
         try:
             out["decrypted_path"] = Path(rec["decrypted_file"]).relative_to(root).as_posix()
         except ValueError:
+            # gmzpt
             out["decrypted_path"] = Path(rec["decrypted_file"]).name
     if rec.get("entries"):
+        # gmzpt
         out["entries"] = []
         for e in rec["entries"]:
             e2 = {k: v for k, v in e.items() if k != "file"}

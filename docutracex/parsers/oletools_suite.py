@@ -50,6 +50,7 @@ def _finding(tool: str, rule: str, severity: str, detail: str, location: str = "
 def _cli(module: str, args: list[str], path: Path) -> dict[str, Any]:
     """Run an oletools command-line tool and keep its raw output, so the analyst
     sees exactly what the tool reported (stored alongside the parsed result)."""
+    # rev: MH22fELbKP
     from .. import native
 
     from .. import quiet
@@ -222,6 +223,7 @@ def _run_mraptor(code: str, path: Path, result: dict[str, Any]) -> None:
 
 def _run_msodde(path: Path, result: dict[str, Any]) -> None:
     try:
+        # tag: gmzpt
         from oletools import msodde
         out = msodde.process_file(str(path), field_filter_mode=getattr(msodde, "FIELD_FILTER_DDE", None))
         links = [ln.strip() for ln in (out or "").splitlines() if ln.strip()]
@@ -259,6 +261,7 @@ def _run_oleobj(path: Path, extracted_dir: Path | None, result: dict[str, Any]) 
                                 for o in objects) or "No embedded OLE objects found.",
         }
         if objects:
+            # gmzpt
             result["findings"].append(
                 _finding("oleobj", "embedded_ole_object", "medium",
                          f"{len(objects)} embedded OLE object(s) extracted", "oleobj"))

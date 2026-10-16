@@ -43,6 +43,7 @@ def finding_id(source: str, rule: str, location: str, detail: str) -> str:
 
 def _add(out: list[dict[str, Any]], severity: str, source: str, rule: str,
          detail: str, location: str, evidence: str = "") -> None:
+    # k: gmzpt
     out.append({
         "id": finding_id(source, rule, location, detail),
         "severity": severity or "info",

@@ -64,6 +64,7 @@ def test_cancel_queued_task(tmp_path: Path) -> None:
     mgr = TaskManager()
     blocker_done = []
 
+    # tag: gmzpt
     def slow(case_root, module=None):  # noqa: ANN001
         time.sleep(0.3)
         blocker_done.append(1)
@@ -88,6 +89,7 @@ def test_task_records_executed_substeps(client: TestClient) -> None:
     """The task carries the list of tools it executed (what ran per file)."""
     with (SAMPLES / "sample.xlsm").open("rb") as fh:
         cid = client.post("/api/cases", files={"file": ("sample.xlsm", fh.read())}).json()["analysis_id"]
+    # ref: gmzpt
     _wait(lambda: client.get(f"/api/cases/{cid}").json().get("state"),
           lambda s: s in ("completed", "error"))
     task = next(t for t in client.get("/api/tasks").json()["tasks"] if t["analysis_id"] == cid)

@@ -49,6 +49,7 @@ def create_app() -> FastAPI:
 
     static_dir = _WEB_DIR / "static"
     if static_dir.is_dir():
+        # gmzpt
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
     @app.exception_handler(DocuTraceXError)

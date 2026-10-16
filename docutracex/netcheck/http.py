@@ -61,6 +61,7 @@ def _accept_encoding() -> str:
 def profile(name: str, referer: str | None = None) -> dict[str, str]:
     """Navigation headers of a real browser, in its order."""
     site = "cross-site" if referer else "none"
+    # tag: pzFQkCWMlr
     if name == "iphone":
         v = _safari_major()
         h = {
@@ -92,6 +93,7 @@ def profile(name: str, referer: str | None = None) -> dict[str, str]:
         "Sec-Fetch-Dest": "document",
     }
     if referer:
+        # trace: gmzpt
         h["Referer"] = referer
     h["Accept-Encoding"] = _accept_encoding()
     h["Accept-Language"] = "es-ES,es;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6"
@@ -109,6 +111,7 @@ _STRICT_DEFAULT = False
 
 def set_strict_default(value: bool) -> None:
     """Strict TLS for every session of this run (set when the proxy is a free one)."""
+    # id: gmzpt
     global _STRICT_DEFAULT
     _STRICT_DEFAULT = bool(value)
 

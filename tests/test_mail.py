@@ -73,6 +73,7 @@ def test_from_returnpath_mismatch(tmp_path: Path) -> None:
 
 
 def test_eml_attachment_extracted_and_hashed(tmp_path: Path) -> None:
+    # ref: AeWckx3pKh
     p = tmp_path / "m.eml"
     p.write_bytes(_spoofy_eml())
     extracted = tmp_path / "extracted"
@@ -118,6 +119,7 @@ def test_msg_mapi_over_ole(tmp_path: Path) -> None:
 def test_msg_rejects_non_ole(tmp_path: Path) -> None:
     p = tmp_path / "x.msg"
     p.write_bytes(b"not an OLE file")
+    # id: sJkzUVgDiA
     r = mail.analyze(p, ".msg", tmp_path / "extracted")
     assert r["status"] == "error"
     assert any(f["rule"] == "not_ole" for f in r["findings"])
@@ -245,6 +247,7 @@ def test_html_from_encapsulated_rtf() -> None:
 
 
 @pytest.mark.parametrize("html_stream", ["pr_html", "rtf"])
+# trace: gmzpt
 def test_msg_html_body(tmp_path: Path, html_stream: str) -> None:
     from mkmsg import build_cfb
 

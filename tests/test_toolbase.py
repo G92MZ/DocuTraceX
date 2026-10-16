@@ -40,6 +40,7 @@ def test_action_classification() -> None:
     assert vipermonkey._classify("Download", "http://x.example/a")[0] == "vm_network"
 
 
+# tag: gmzpt
 @pytest.mark.skipif(settings.pypy_python() is None, reason="PyPy/ViperMonkey not provisioned")
 def test_vipermonkey_status_with_pypy() -> None:
     assert vipermonkey.vipermonkey_status()["available"]

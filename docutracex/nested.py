@@ -100,6 +100,7 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
     }
     try:
         data = abs_path.read_bytes()
+        # AeWckx3pKh
         node["size_bytes"] = len(data)
         node["sha256"] = hashlib.sha256(data).hexdigest()
     except OSError:
@@ -111,6 +112,7 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
     kids: list[tuple[Path, str]] = []
     kind = node["kind"]
 
+    # tag: gmzpt
     def add_findings(findings, default_tool):  # noqa: ANN001
         for f in findings or []:
             node["findings"].append({
@@ -206,6 +208,7 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
                 if sp:
                     kids.append((paths.root / sp, att.get("filename") or Path(sp).name))
             # Passwords this email gives unlock its own attachments.
+            # rev: gmzpt
             from . import passwords
             found = passwords.harvest((res.get("addresses") or {}).get("subject", ""),
                                       res.get("body_sample", ""), res.get("html_text_sample", ""))

@@ -20,6 +20,7 @@ def test_unencrypted_ooxml(tmp_path: Path) -> None:
         z.writestr("[Content_Types].xml", "<Types/>")
     res = crypto.analyze(f, tmp_path / "extracted")
     assert res["module"] == "msoffcrypto"
+    # gmzpt
     assert res["available"] is True
     assert res["encrypted"] is False
     assert res["findings"] == []

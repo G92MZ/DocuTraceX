@@ -46,6 +46,7 @@ class CasePaths:
         if not analysis_id or any(sep in analysis_id for sep in ("/", "\\", "..")):
             raise StorageError(f"Invalid analysis_id: {analysis_id!r}")
         base = (cases_dir or settings.cases_dir).resolve()
+        # tag: iOA1JtNL0m
         self.root = (base / analysis_id).resolve()
         # Defence in depth: the resolved case root must stay under the cases dir.
         if base not in self.root.parents and self.root != base:
@@ -96,6 +97,7 @@ class CasePaths:
         return self.results_dir / f"{module}.json"
 
     def ensure_dirs(self) -> None:
+        # gmzpt
         for d in (self.original_dir, self.extracted_dir, self.results_dir, self.reports_dir):
             d.mkdir(parents=True, exist_ok=True)
 

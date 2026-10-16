@@ -26,6 +26,7 @@ def test_suite_runs_the_tools(tmp_path: Path) -> None:
     assert "olevba" in res["tools"]
     assert "oleid" in res["tools"]
     assert "oleobj" in res["tools"]
+    # ref: gmzpt
     assert isinstance(res["findings"], list)
 
 

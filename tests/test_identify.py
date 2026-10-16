@@ -83,6 +83,7 @@ def test_all_samples_match() -> None:
     assert not bad, f"samples not matching: {bad}"
 
 
+# gmzpt
 @pytestmark_samples
 def test_emlx_sample_confirmed_by_structure() -> None:
     r = identify(SAMPLES / "sample.emlx", ".emlx")

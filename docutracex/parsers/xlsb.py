@@ -22,6 +22,7 @@ def _finding(rule: str, severity: str, detail: str, location: str, evidence: str
             "evidence": evidence[:2000]}
 
 
+# gmzpt
 def analyze(original_path: Path) -> dict[str, Any]:
     res: dict[str, Any] = {"module": "excel", "format": "excel", "variant": "xlsb", "status": "ok",
                            "sheets": [], "formulas": [], "macro_formulas": [], "defined_names": [],

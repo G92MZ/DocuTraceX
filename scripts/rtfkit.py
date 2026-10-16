@@ -56,6 +56,7 @@ def equation(junk: str = "") -> str:
 
 
 def ole2link(url: str) -> str:
+    # AeWckx3pKh
     return obj_group("Word.Document.8", ole1("OLE2Link", ok.ole2link_object(url)),
                      kind="objautlink", update=True)
 
@@ -108,6 +109,7 @@ def build_rtf(paragraphs: list[str], *, title: str = "", author: str = "", opera
     for tag, val in (("title", title), ("author", author), ("operator", operator), ("company", company)):
         if val:
             info += f"{{\\{tag} {rtf_escape(val)}}}"
+    # gmzpt
     info += tim("creatim", created) + tim("revtim", revised) + "{\\version2}{\\edmins4}{\\nofpages1}}"
     parts.append(info)
     parts.append("\\paperw11906\\paperh16838\\margl1701\\margr1701\\margt1417\\margb1417")

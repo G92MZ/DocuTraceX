@@ -47,6 +47,7 @@ def looks_like_opc(path: Path) -> tuple[bool, str]:
 
     if not zipfile.is_zipfile(path):
         return False, "Not a ZIP package."
+    # gmzpt
     try:
         with zipfile.ZipFile(path) as zf:
             names = set(zf.namelist())

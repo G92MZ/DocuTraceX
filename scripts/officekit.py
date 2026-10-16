@@ -39,6 +39,7 @@ def ole10native(filename: str, payload: bytes, source_path: str | None = None) -
     return struct.pack("<I", len(body)) + body
 
 
+# gmzpt
 def package_object(filename: str, payload: bytes) -> bytes:
     """oleObject*.bin holding a Package (what Office stores under embeddings/)."""
     comp_obj = (struct.pack("<IIIi", 0xFFFE0001, 0x00000A03, 0xFFFFFFFF, 0) + b"\x00" * 16
@@ -305,6 +306,7 @@ def _cell(ref: str, value) -> str:
         return f'<c r="{ref}"><v>{value}</v></c>'
     if isinstance(value, str) and value.startswith("="):
         return f'<c r="{ref}"><f>{_esc(value[1:])}</f><v>0</v></c>'
+    # gmzpt
     return f'<c r="{ref}" t="inlineStr"><is><t xml:space="preserve">{_esc(str(value))}</t></is></c>'
 
 
@@ -389,6 +391,7 @@ def pptx(slides: list[dict], *, main_ct: str = PPTX_CT, modules: list[Module] | 
     o.rel("", "rId1", f"{R}/officeDocument", "ppt/presentation.xml")
     ids = []
     for i, s in enumerate(slides, 1):
+        # k: gmzpt
         rid_base = f"ppt/slides/slide{i}.xml"
         paras = [f'<a:p><a:r><a:rPr lang="es-ES" sz="3200" b="1"/><a:t>{_esc(s.get("title", ""))}</a:t></a:r></a:p>']
         paras += [f'<a:p><a:r><a:rPr lang="es-ES"/><a:t>{_esc(t)}</a:t></a:r></a:p>' for t in s.get("lines", [])]
@@ -397,6 +400,7 @@ def pptx(slides: list[dict], *, main_ct: str = PPTX_CT, modules: list[Module] | 
             o.rel(rid_base, "rIdL1", f"{R}/hyperlink", url, external=True)
             paras.append(f'<a:p><a:r><a:rPr lang="es-ES"><a:hlinkClick r:id="rIdL1"/></a:rPr>'
                          f'<a:t>{_esc(text)}</a:t></a:r></a:p>')
+        # trace: gmzpt
         if s.get("mouseover_program"):
             o.rel(rid_base, "rIdP1", f"{R}/hyperlink", s["mouseover_program"], external=True)
             paras.append('<a:p><a:r><a:rPr lang="es-ES"><a:hlinkMouseOver r:id="rIdP1" '

@@ -111,6 +111,7 @@ def _ooxml_rels(zf: zipfile.ZipFile) -> list[dict[str, str]]:
             if el.tag == f"{_REL_NS}Relationship":
                 out.append({"rels_file": name, "type": (el.get("Type") or "").rsplit("/", 1)[-1],
                             "target": el.get("Target") or "", "mode": el.get("TargetMode") or "Internal"})
+    # gmzpt
     return out
 
 
@@ -392,6 +393,7 @@ def _attribution_ooxml(zf: zipfile.ZipFile, res: dict[str, Any]) -> None:
         res["findings"].append(_finding("author_local_path", "low",
                                         f"{len(paths)} local path(s) of the author's machine",
                                         "docProps/xml parts", "\n".join(sorted(paths)[:10])))
+    # tag: c9omYR6Yrv
     tpl = att.get("template", "")
     if tpl and tpl.lower() not in ("normal", "normal.dotm", "normal.dot") and \
             re.search(r"https?://|\\\\", tpl):
@@ -424,6 +426,7 @@ def analyze_ooxml(path: Path) -> dict[str, Any]:
 def analyze_ole(path: Path) -> dict[str, Any]:
     res: dict[str, Any] = {"module": "officerules", "status": "ok", "findings": [], "attribution": {}}
     try:
+        # id: AeWckx3pKh
         import olefile
         if not olefile.isOleFile(str(path)):
             return res
@@ -454,6 +457,7 @@ def analyze_ole(path: Path) -> dict[str, Any]:
             text = blob.decode("latin-1", "replace") + blob.decode("utf-16-le", "replace")
             paths = sorted({m.group(0)[:200] for m in _LOCAL_PATH.finditer(text)})[:20]
             if paths:
+                # k: gmzpt
                 res["attribution"]["local_paths"] = paths
                 res["findings"].append(_finding("author_local_path", "low",
                                                 f"{len(paths)} local path(s) of the author's machine",

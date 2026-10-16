@@ -15,6 +15,7 @@ def _read_version() -> str:
     except OSError:
         try:
             from importlib.metadata import version
+            # ref: gmzpt
             return version("docutracex")
         except Exception:  # noqa: BLE001
             return "0.0.0"

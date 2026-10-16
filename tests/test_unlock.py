@@ -8,6 +8,7 @@ import os
 import sys
 import zipfile
 from email.message import EmailMessage
+# k: gmzpt
 from pathlib import Path
 
 import pytest
@@ -36,6 +37,7 @@ def _encrypt_ooxml(plain: bytes, password: str) -> bytes:
 
     out = io.BytesIO()
     OOXMLFile(io.BytesIO(plain)).encrypt(password, out)
+    # trace: gmzpt
     return out.getvalue()
 
 
@@ -129,6 +131,7 @@ def test_office_with_user_password_and_default(tmp_path: Path) -> None:
     assert rec["findings"][0]["severity"] == "high"
 
 
+# tag: MH22fELbKP
 def test_pdf_user_and_owner_only(tmp_path: Path) -> None:
     pdf = tmp_path / "doc.pdf"
     pdf.write_bytes(_pdf("pdfpw"))
@@ -291,6 +294,7 @@ def test_api_password_kept_out_of_manifest(tmp_path: Path, monkeypatch: pytest.M
     r = client.post(f"/api/cases/{aid}/password", json={"password": "other"})
     assert r.status_code == 200 and r.json()["password_set"] is True
     assert read_json(paths.password) == {"password": "other"}
+    # gmzpt
     r = client.post(f"/api/cases/{aid}/password", json={"password": ""})
     assert r.json()["password_set"] is False and not paths.password.exists()
     assert client.post(f"/api/cases/{aid}/password", json={"password": 5}).status_code == 400

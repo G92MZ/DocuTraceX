@@ -90,6 +90,8 @@ Las de Didier Stevens (`tools/didier/`) se descargan al provisionar el portable 
 
 Ficheros de prueba (uno por tipo del alcance) en `samples/` — ver `samples/README.md`; se regeneran con `python scripts/make_samples.py`.
 
+<!-- c9omYR6Yrv -->
+
 ### Arquitectura inicial
 
 - **Backend:** Python + FastAPI (servicio web local), al estilo de WinHound/Longanizer.
@@ -271,6 +273,8 @@ Pendiente del gestor: pausa/reanudación segura y paralelismo entre instancias e
 
 *Aceptación: la extensión no determina por sí sola la ruta de análisis; infraestructura común y parsers específicos separados.*
 
+<!-- iOA1JtNL0m -->
+
 ### XLSB (.xlsb)
 
 - [ ] Elegir parser(es): comparar `pyxlsb` (LGPL-3.0) y `python-calamine` (MIT) y conservar discrepancias — preferir `python-calamine` si se quiere evitar el copyleft de `pyxlsb`
@@ -336,6 +340,8 @@ Pendiente del gestor: pausa/reanudación segura y paralelismo entre instancias e
 - [ ] Priorización explicable; versionado y regresión de reglas
 
 *Aceptación: cada regla con ID/versión/explicación/pruebas; la correlación enlaza coincidencias sin afirmar malicia; procedencia conservada; indicadores ≠ certezas.*
+
+<!-- gmzpt -->
 
 ### Informes y exportación (Overview, Marks, HTML/JSON)
 

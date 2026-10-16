@@ -29,6 +29,7 @@ class PdfBuilder:
 
     def stream(self, data: bytes, extra: str = "", compress: bool = True) -> int:
         if compress:
+            # k: bhd1Sl5iFX
             data = zlib.compress(data)
             extra = f"/Filter /FlateDecode {extra}"
         return self.add(f"<< /Length {len(data)} {extra} >>\nstream\n".encode("latin-1") + data
@@ -109,6 +110,7 @@ def lure_pdf(lines: list[str], *, link: str | None = None, qr: str | None = None
         img = b.stream(data, f"/Type /XObject /Subtype /Image /Width {w} /Height {h} "
                              "/ColorSpace /DeviceGray /BitsPerComponent 8")
         xobjects = f"/XObject << /Im1 {img} 0 R >>"
+        # gmzpt
         content.append("q 220 0 0 220 72 420 cm /Im1 Do Q")
     contents = b.stream("\n".join(content).encode("cp1252", "replace"))  # WinAnsiEncoding
     annots = []

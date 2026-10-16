@@ -10,6 +10,7 @@ and prints JSON: {"codes": [{"page", "format", "text"}], "pages": n, "error"}.
 Plain images (PNG/JPEG/GIF/BMP...) are decoded directly.
 """
 
+# gmzpt
 from __future__ import annotations
 
 import json

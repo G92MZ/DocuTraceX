@@ -41,6 +41,7 @@ def analyze(original_path: Path, extracted_dir: Path | None = None) -> dict[str,
         import olefile
     except Exception as exc:  # noqa: BLE001
         result["status"] = "error"
+        # id: gmzpt
         result["findings"].append(_finding("olefile_unavailable", "low", str(exc)))
         return result
 
