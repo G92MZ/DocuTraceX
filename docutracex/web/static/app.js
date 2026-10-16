@@ -2360,6 +2360,127 @@ function paneChecks(analysisId, net) {
   }).join("");
 }
 
+// --- AI tab: AI (API), AI (local), MCP ---------------------------------------------
+const AI_HIST = { api: [], local: [] };
+const AI_FIELDS = {
+  api: { base: "ai-api-base", model: "ai-api-model", key: "ai-api-key", user: "ai-api-user", hdr: "ai-api-hdr", q: "ai-api-q", out: "ai-api-out" },
+  local: { base: "ai-local-base", model: "ai-local-model", key: "ai-local-key", q: "ai-local-q", out: "ai-local-out" },
+};
+const aiVal = (id) => { const e = document.getElementById(id); return e ? e.value.trim() : ""; };
+const aiSet = (id, v) => { const e = document.getElementById(id); if (e && v) e.value = v; };
+
+function saveAiCfg(ns) {
+  const f = AI_FIELDS[ns];
+  const cfg = { base: aiVal(f.base), model: aiVal(f.model), key: aiVal(f.key),
+    user: f.user ? aiVal(f.user) : "", hdr: f.hdr ? aiVal(f.hdr) : "" };
+  try { localStorage.setItem("docutracex_ai_" + ns, JSON.stringify(cfg)); } catch (err) { /* storage blocked */ }
+  aiMsg(ns, "bot", "Config saved in this browser ✓");
+}
+
+function loadAiCfg(ns) {
+  const f = AI_FIELDS[ns];
+  let cfg = {};
+  try { cfg = JSON.parse(localStorage.getItem("docutracex_ai_" + ns) || "{}"); } catch (err) { cfg = {}; }
+  aiSet(f.base, cfg.base); aiSet(f.model, cfg.model); aiSet(f.key, cfg.key);
+  if (f.user) aiSet(f.user, cfg.user);
+  if (f.hdr) aiSet(f.hdr, cfg.hdr);
+}
+
+function aiMsg(ns, who, html, extra) {
+  const out = document.getElementById(AI_FIELDS[ns].out);
+  const div = document.createElement("div");
+  div.className = `ai-msg ${who}`;
+  div.innerHTML = html + (extra || "");
+  out.prepend(div);
+  return div;
+}
+
+function aiTrace(trace) {
+  if (!trace || !trace.length) return "";
+  return `<div class="ai-trace">${trace.map((t) => `· ${escapeHtml(t.tool)}(${escapeHtml(JSON.stringify(t.args))})${t.error ? " ⚠ " + escapeHtml(t.error) : ` → ${t.chars} chars`}`).join("\n")}</div>`;
+}
+
+async function askAi(ns) {
+  const f = AI_FIELDS[ns];
+  const q = aiVal(f.q);
+  if (!q) return;
+  const base = aiVal(f.base), model = aiVal(f.model);
+  if (!base || !model) { aiMsg(ns, "bot", '<span class="bad-text">Fill in base_url and model first.</span>'); return; }
+  let extra = null;
+  if (f.hdr && aiVal(f.hdr)) {
+    try { extra = JSON.parse(aiVal(f.hdr)); } catch (err) { aiMsg(ns, "bot", '<span class="bad-text">Extra headers are not valid JSON.</span>'); return; }
+  }
+  document.getElementById(f.q).value = "";
+  aiMsg(ns, "me", `<b>You:</b> ${escapeHtml(q)}`);
+  const pending = aiMsg(ns, "bot", "Thinking… (the model is reading the case with the tools)");
+  const body = { message: q, base_url: base, model, api_key: aiVal(f.key), history: AI_HIST[ns].slice(-8),
+    case_id: document.getElementById("ai-case").value || null };
+  if (f.user && aiVal(f.user)) body.user = aiVal(f.user);
+  if (extra) body.extra_headers = extra;
+  try {
+    const r = await fetch("/api/ai/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json();
+    pending.remove();
+    if (!r.ok) { aiMsg(ns, "bot", `<span class="bad-text">${escapeHtml(j.detail || "error")}</span>`); return; }
+    AI_HIST[ns].push({ role: "user", content: q }, { role: "assistant", content: j.reply || "" });
+    aiMsg(ns, "bot", `<b>AI</b> <span class="hint-line">(${escapeHtml(j.model || model)})</span>\n${escapeHtml(j.reply || "(no reply)")}`, aiTrace(j.tool_trace));
+  } catch (err) {
+    pending.remove();
+    aiMsg(ns, "bot", `<span class="bad-text">${escapeHtml(String(err))}</span>`);
+  }
+}
+
+async function loadAiCases() {
+  const sel = document.getElementById("ai-case");
+  if (!sel) return;
+  try {
+    const cases = await fetch("/api/cases").then((r) => r.json());
+    const current = _openCaseId || sel.value || (cases[0] && cases[0].analysis_id) || "";
+    sel.innerHTML = '<option value="">(no case — the AI will list them)</option>' + cases.map((c) =>
+      `<option value="${escapeHtml(c.analysis_id)}"${c.analysis_id === current ? " selected" : ""}>${escapeHtml(c.filename || "")} · ${escapeHtml(c.analysis_id)}</option>`).join("");
+  } catch (err) { /* keep previous options */ }
+}
+
+function mcpBlock(title, text) {
+  return `<h3 class="formats-title">${title}</h3><div class="mcp-block"><button class="btn btn-ghost btn-sm mcp-copy" type="button" data-copy="${escapeHtml(text)}">Copy</button><pre class="text-sample">${escapeHtml(text)}</pre></div>`;
+}
+
+async function loadMcpInfo() {
+  const el = document.getElementById("ai-mcp-body");
+  try {
+    const j = await fetch("/api/mcp/info").then((r) => r.json());
+    let h = `<p class="hint-line">The <b>MCP server</b> exposes your cases as <b>read-only</b> tools to an MCP client (Claude Desktop, Claude Code or another), so you can investigate them in natural language from your own client, without this web page. It reads the same cases folder (<span class="mono">${escapeHtml(j.cases_dir)}</span>) and never modifies a case or touches the network.</p>`;
+    if (!j.mcp_installed) h += `<p class="bad-text">The <span class="mono">mcp</span> package is not installed in ${escapeHtml(j.python)} — run scripts/setup_portable_python.py.</p>`;
+    h += mcpBlock("1 · Start the server (stdio) — to test it", (j.env ? Object.entries(j.env).map(([k, v]) => `${k}=${v}`).join(" ") + " " : "") + j.run);
+    h += mcpBlock("2 · Claude Desktop — Settings → Developer → Edit Config (claude_desktop_config.json)", j.claude_desktop);
+    h += mcpBlock("2 · (alternative) Claude Code", j.claude_code);
+    h += `<h3 class="formats-title">3 · Available tools</h3><ul class="hint-list">${(j.tools || []).map((t) => `<li><span class="mono">${escapeHtml(t.signature)}</span> — ${escapeHtml(t.description)}</li>`).join("")}</ul>`;
+    h += `<p class="hint-line">All read-only. Paths above are this installation's (portable Python ${escapeHtml(j.mcp_version ? "· mcp " + j.mcp_version : "")}).</p>`;
+    el.innerHTML = h;
+    el.querySelectorAll("[data-copy]").forEach((b) => b.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(b.getAttribute("data-copy")); b.textContent = "Copied ✓"; }
+      catch (err) { b.textContent = "Select and copy"; }
+    }));
+  } catch (err) { el.innerHTML = `<p class="bad-text">Could not load MCP info.</p>`; }
+}
+
+function showAiPane(name) {
+  document.querySelectorAll("#ai-subtabs .subtab").forEach((b) => b.classList.toggle("is-active", b.getAttribute("data-ai") === name));
+  document.querySelectorAll("[data-ai-pane]").forEach((p) => { p.hidden = p.getAttribute("data-ai-pane") !== name; });
+  if (name === "mcp") loadMcpInfo();
+}
+
+function setupAi() {
+  if (!document.getElementById("ai-subtabs")) return;
+  document.querySelectorAll("#ai-subtabs .subtab").forEach((b) => b.addEventListener("click", () => showAiPane(b.getAttribute("data-ai"))));
+  document.querySelectorAll("[data-ai-save]").forEach((b) => b.addEventListener("click", () => saveAiCfg(b.getAttribute("data-ai-save"))));
+  document.querySelectorAll("[data-ai-ask]").forEach((b) => b.addEventListener("click", () => askAi(b.getAttribute("data-ai-ask"))));
+  ["api", "local"].forEach((ns) => {
+    loadAiCfg(ns);
+    document.getElementById(AI_FIELDS[ns].q).addEventListener("keydown", (e) => { if (e.key === "Enter") askAi(ns); });
+  });
+}
+
 // --- Tab navigation ----------------------------------------------------------
 function setupTabs() {
   const tabs = document.querySelectorAll(".tab");
@@ -2375,6 +2496,7 @@ function setupTabs() {
       if (target === "reports") loadReports(_openCaseId);
       if (target === "yara") loadYara();
       if (target === "settings") loadSettings();
+      if (target === "ai") loadAiCases();
     });
   });
 }
@@ -2385,6 +2507,7 @@ if (diagRefresh) diagRefresh.addEventListener("click", loadDiagnostics);
 setupTabs();
 setupYara();
 setupSettings();
+setupAi();
 renderFormats();
 loadDiagnostics(); // initial load to set the nav indicator
 loadCases();

@@ -6,7 +6,8 @@ code from the default branch and updates the app files in place — no git
 required, using only the Python standard library (works on Windows and Linux).
 
 Your data is preserved: cases (``cases/``), the provisioned portable runtime and
-external tools (``tools/``) and your YARA rules (``yara/``) are never overwritten.
+external tools (``tools/``), your YARA rules (``yara/``) and your settings
+(``config/``) are never overwritten.
 
   python update.py            # check, then ask before updating
   python update.py --check    # only check, change nothing
@@ -31,7 +32,7 @@ REPO = "DocuTraceX"
 BRANCH = "main"
 
 # Top-level folders that are NEVER overwritten (your data + expensive runtime).
-PROTECTED = {"cases", "tools", "yara"}
+PROTECTED = {"cases", "tools", "yara", "config"}
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOKEN = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
