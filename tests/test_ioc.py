@@ -54,10 +54,46 @@ def test_sources_from_modules() -> None:
         ]},
         "excel": {"formulas": ['WEBSERVICE("http://feed.example/x")'], "metadata": {"creator": "bob"}},
     }
-    srcs = ioc.sources_from_modules(modules)
-    texts = " ".join(s["text"] for s in srcs)
-    assert "evil.example" in texts and "feed.example" in texts
-    assert "word/document.xml" not in texts  # internal rels not included
+    vals = {(i["type"], i["value"]) for i in ioc.extract(ioc.sources_from_modules(modules))["iocs"]}
+    assert ("domain", "evil.example") in vals and ("domain", "feed.example") in vals
+    # Internal part names (word/document.xml) are filenames, never domains.
+    assert not any(t == "domain" and v.endswith("document.xml") for t, v in vals)
+
+
+def test_scans_all_tool_output_not_just_findings() -> None:
+    # A whole-result sweep: an emulated-sandbox URL that lives deep in the
+    # JavaScript module (not in any finding) must still be extracted.
+    modules = {
+        "javascript": {"scripts": [
+            {"sandbox": {"log": [
+                {"kind": "url", "name": "fetch", "args": ["http://emulated.example/beacon"]},
+            ]}},
+        ]},
+    }
+    vals = {i["value"] for i in ioc.extract(ioc.sources_from_modules(modules))["iocs"]}
+    assert "http://emulated.example/beacon" in vals and "emulated.example" in vals
+
+
+def test_nested_child_evidence_is_scanned() -> None:
+    # The recursive 'nested' scan keeps each child finding's evidence; the
+    # extractor must mine it (read through the flattened findings).
+    modules = {"nested": {"findings": [
+        {"tool": "javascript", "rule": "js_sandbox_network", "severity": "high",
+         "detail": "[invoice.eml > a.js] Sandbox: the script opens/navigates to URLs",
+         "location": "nested:invoice.eml > a.js",
+         "evidence": "fetch http://child-emulated.example/x"},
+    ]}}
+    vals = {i["value"] for i in ioc.extract(ioc.sources_from_modules(modules))["iocs"]}
+    assert "http://child-emulated.example/x" in vals and "child-emulated.example" in vals
+
+
+def test_app_computed_hashes_not_treated_as_iocs() -> None:
+    # sha256/md5 the app computed to identify a component must not surface as
+    # hash_like IOCs (they are kept separate by design).
+    h = "44d88612fea8a8f36de82e1278abb02f44d88612fea8a8f36de82e1278abb02f"
+    modules = {"pdf": {"sha256": h, "text_sample": "nothing suspicious here"}}
+    types = {i["type"] for i in ioc.extract(ioc.sources_from_modules(modules))["iocs"]}
+    assert "hash_like" not in types
 
 
 def test_email_only_content_scanned() -> None:
