@@ -121,6 +121,10 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
                 "severity": f.get("severity", "info"),
                 "detail": f"[{this_chain}] {f.get('detail', '')}",
                 "location": f"nested:{this_chain}",
+                # Keep the evidence (emulated URLs, commands, decoded strings) so
+                # the common IOC extractor can mine a child's results, not just
+                # the finding headline.
+                "evidence": f.get("evidence", ""),
             })
 
     from . import unlock

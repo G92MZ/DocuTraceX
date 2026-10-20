@@ -206,144 +206,75 @@ def extract(sources: list[dict[str, Any]]) -> dict[str, Any]:
 
 # --- building sources from parser sub-results --------------------------------
 
-def sources_from_modules(modules: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    """Collect text sources to scan from each parser's sub-result."""
-    sources: list[dict[str, Any]] = []
+# Keys whose string values are digests/identifiers the app computed itself (not
+# content): scanning them would surface our own hashes as "hash_like" IOCs.
+_SKIP_KEYS = {
+    "sha1", "sha256", "sha512", "md5", "imphash", "ssdeep", "tlsh", "pehash",
+    "crc32", "digest", "checksum", "fingerprint", "entropy",
+}
 
-    def add(module: str, location: str, text: Any) -> None:
-        if isinstance(text, str) and text.strip():
-            sources.append({"module": module, "location": location, "text": text})
 
-    # OOXML engine: external relationship targets.
-    ooxml = modules.get("ooxml")
-    if ooxml:
-        for r in ooxml.get("relationships", []):
-            if r.get("mode") == "External" and r.get("target"):
-                add("ooxml", r.get("rels_file", "relationship"), r["target"])
+def _skip_key(key: Any) -> bool:
+    k = str(key).lower()
+    return k in _SKIP_KEYS or "hash" in k
 
-    # Office semantic parsers.
-    for mod_name in ("word", "excel", "powerpoint"):
-        mod = modules.get(mod_name)
-        if not mod:
-            continue
-        add(mod_name, "text", mod.get("text_sample"))
-        for fc in mod.get("field_codes", []) or []:
-            add(mod_name, "field_code", fc)
-        for fx in mod.get("formulas", []) or []:
-            add(mod_name, "formula", fx)
-        meta = mod.get("metadata") or {}
-        for k, v in meta.items():
-            if isinstance(v, str):
-                add(mod_name, f"metadata/{k}", v)
 
-    # oletools suite: VBA macro source and DDE links.
-    ole = modules.get("oletools")
-    if ole:
-        if ole.get("code_text"):
-            add("oletools", "vba_code", ole["code_text"])
-        for link in ole.get("dde_links", []) or []:
-            add("oletools", "dde_link", link)
+def _walk(node: Any, module: str, location: str, sources: list[dict[str, Any]]) -> None:
+    """Collect every non-empty string under ``node``, tagged with its key-path.
 
-    # ViperMonkey: what the emulated macro did (deobfuscated URLs, commands...).
-    vm = modules.get("vipermonkey")
-    if vm:
-        for a in vm.get("actions", []) or []:
-            add("vipermonkey", f"action/{a.get('action', '')}", a.get("parameters"))
-        for x in vm.get("potential_iocs", []) or []:
-            add("vipermonkey", "potential_ioc", x)
-
-    # VBA rebuilt from p-code (may differ from the visible source) and URLs that
-    # oledump's HTTP heuristics recovered from obfuscated strings.
-    vt = modules.get("vbatools")
-    # gmzpt
-    if vt:
-        tools = vt.get("tools") or {}
-        add("vbatools", "pcode2code", (tools.get("pcode2code") or {}).get("output"))
-        add("vbatools", "http_heuristics", (tools.get("oledump plugin_http_heuristics") or {}).get("output"))
-
-    # Own Office rules: external targets (templates, OLE objects, fields, add-ins).
-    rules = modules.get("officerules")
-    if rules:
-        for f in rules.get("findings", []) or []:
-            if f.get("rule") not in ("author_local_path", "vba_project_locked"):
-                add("officerules", f"{f.get('rule')}", f.get("evidence"))
-
-    # XLMMacroDeobfuscator: deobfuscated Excel 4.0 (XLM) formulas.
-    xlm = modules.get("xlmdeobf")
-    if xlm and xlm.get("code_text"):
-        add("xlmdeobf", "xlm_formula", xlm["code_text"])
-
-    # PDF: reconstructed text and the URIs found in the body/actions.
-    pdf = modules.get("pdf")
-    if pdf:
-        add("pdf", "text", pdf.get("text_sample"))
-        for u in pdf.get("uris", []) or []:
-            add("pdf", "uri", u)
-        for js in pdf.get("javascript", []) or []:
-            add("pdf", "javascript", js.get("code"))
-
-    # JavaScript: the code, what decoding revealed and what the sandbox recorded.
-    js = modules.get("javascript")
-    if js:
-        for sc in js.get("scripts", []) or []:
-            loc = sc.get("location", "script")
-            add("javascript", f"{loc}/code", sc.get("code"))
-            for d in sc.get("decoded", []) or []:
-                add("javascript", f"{loc}/decoded", d.get("decoded"))
-            for e in (sc.get("sandbox") or {}).get("log", []) or []:
-                add("javascript", f"{loc}/sandbox", " ".join(e.get("args") or []))
-
-    # Email rules: original destinations behind gateway-rewritten links, QR codes.
-    mr = modules.get("mailrules")
-    if mr:
-        for d in mr.get("decoded_urls", []) or []:
-            add("mailrules", "decoded_link", d.get("original"))
-        for c in mr.get("qr", []) or []:
-            add("mailrules", f"qr/{c.get('image')}", c.get("text"))
-
-    # RTF: visible text, field instructions (INCLUDEPICTURE/HYPERLINK...), the
-    # attached template and the targets the object rules recovered (OLE2Link).
-    rtf = modules.get("rtf")
-    if rtf:
-        add("rtf", "text", rtf.get("text"))
-        for i, fl in enumerate(rtf.get("fields", []) or [], 1):
-            add("rtf", f"field#{i}", fl.get("instr"))
-        add("rtf", "template", rtf.get("template"))
-        for f in rtf.get("findings", []) or []:
-            if f.get("rule") in ("ole2link", "remote_template", "unc_file_target"):
-                add("rtf", f.get("rule"), f.get("evidence"))
-
-    # Network checks: what the checks revealed (redirect hops, final URLs, form
-    # targets, served files) — not every link of the fetched page.
-    net = modules.get("netcheck")
-    if net:
-        for c in net.get("checks", []) or []:
-            if c.get("kind") != "url":
+    A full sweep of a parser's sub-result: new modules and every decoded/emulated
+    output are covered automatically, instead of a hand-kept list of fields.
+    """
+    if isinstance(node, str):
+        if node.strip():
+            sources.append({"module": module, "location": location or module, "text": node})
+    elif isinstance(node, dict):
+        for k, v in node.items():
+            if _skip_key(k):
                 continue
-            views = list((c.get("views") or {}).values()) + [s.get("view") or {} for s in c.get("submissions", []) or []]
-            for v in views:
-                for h in v.get("hops", []) or []:
-                    add("netcheck", f"{c['target']}/hop", h.get("url"))
-                for f in (v.get("page") or {}).get("forms", []) or []:
-                    add("netcheck", f"{c['target']}/form", f.get("action"))
-            for d in c.get("downloads", []) or []:
-                add("netcheck", f"{c['target']}/download", f"{d.get('url')} {d.get('sha256')}")
+            sub = f"{location}/{k}" if location else str(k)
+            _walk(v, module, sub, sources)
+    elif isinstance(node, (list, tuple)):
+        for i, v in enumerate(node):
+            sub = f"{location}[{i}]" if location else f"[{i}]"
+            _walk(v, module, sub, sources)
+    # numbers / bool / None are never indicators.
 
-    # PDF tools: decoded QR codes and the targets of the own PDF rules.
-    pt = modules.get("pdftools")
-    if pt:
-        for c in pt.get("qr", []) or []:
-            add("pdftools", f"qr/page {c.get('page')}", c.get("text"))
-        for f in pt.get("findings", []) or []:
-            if f.get("rule") in ("form_submits_externally", "launch_command"):
-                add("pdftools", f.get("rule"), f.get("evidence"))
 
-    # Email: message content only (plain-text body, HTML body as text and its links).
-    # Headers, Received hops and attachment names are deliberately not scanned.
-    email = modules.get("email")
-    if email:
-        add("email", "body", email.get("body_sample"))
-        add("email", "body_html", email.get("html_text_sample"))
-        for link in email.get("html_links", []) or []:
-            add("email", "body_html_link", link)
+def _email_sources(email: dict[str, Any], sources: list[dict[str, Any]]) -> None:
+    """Email is scanned for message content only. Headers, Received hops, sender
+    addresses and attachment names are deliberately left out (forged or benign
+    there); attachment *content* is covered by the recursive 'nested' scan."""
+    def add(location: str, text: Any) -> None:
+        if isinstance(text, str) and text.strip():
+            sources.append({"module": "email", "location": location, "text": text})
+
+    add("body", email.get("body_sample"))
+    add("body_html", email.get("html_text_sample"))
+    for link in email.get("html_links", []) or []:
+        add("body_html_link", link)
+
+
+def sources_from_modules(modules: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Text sources to scan from every parser/tool result.
+
+    A single recursive sweep of each module's whole sub-result — not only its
+    findings — so emulated/decoded output and any module added later are scanned
+    without touching this function. Two carve-outs: ``email`` keeps content-only
+    (its headers are analysed by the mail parser, never mined for IOCs), and the
+    ``nested`` tree is read through its flattened findings (where each child's
+    evidence lives) so a child's results are scanned exactly once.
+    """
+    sources: list[dict[str, Any]] = []
+    for name, data in modules.items():
+        if not isinstance(data, (dict, list)):
+            continue
+        if name == "email":
+            if isinstance(data, dict):
+                _email_sources(data, sources)
+        elif name == "nested":
+            _walk(data.get("findings") if isinstance(data, dict) else data,
+                  "nested", "", sources)
+        else:
+            _walk(data, name, "", sources)
     return sources
