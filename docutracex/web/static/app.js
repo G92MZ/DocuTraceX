@@ -634,7 +634,7 @@ function paneContent(sem, ole, xlm) {
   }
   if (xlm && xlm.xlm_macros) {
     const formulas = xlm.formulas || [];
-    html += `<p class="hint-line">Excel 4.0 (XLM) macros — ${formulas.length} deobfuscated formula(s)</p>
+    html += `<p class="hint-line">Excel 4.0 (XLM) macros — ${formulas.length} deobfuscated formula(s)${xlm.code_file ? " " + fileActions(xlm.code_file) : ""}</p>
       <pre class="text-sample">${escapeHtml(formulas.join("\n").slice(0, 8000))}</pre>`;
   }
   return html || `<p class="hint-line">No reconstructed content.</p>`;
@@ -688,7 +688,7 @@ function paneVba(ole, vt, vm) {
     html += toolOutputBlock("ViperMonkey output", vm.tool, false);
   }
 
-  html += `<h3 class="formats-title">VBA source (olevba)</h3>`;
+  html += `<h3 class="formats-title">VBA source (olevba)${ole && ole.code_file ? " " + fileActions(ole.code_file) : ""}</h3>`;
   modules.forEach((m) => {
     const name = m.vba_filename || m.stream || "module";
     const hidden = (proj.hidden_modules || []).some((h) => (m.stream || "").endsWith("/" + h));
@@ -1161,7 +1161,8 @@ function paneJavascript(js) {
         sc.decoded.map((d) => `<tr><td>${escapeHtml(d.method)}</td><td class="mono">${escapeHtml(d.decoded)}</td>
           <td>${addMarkCell("js_decoded", `JavaScript decoded (${d.method}): ${d.decoded}`.slice(0, 300), jsLoc, d.encoded || d.decoded)}</td></tr>`).join(""));
     }
-    body += `<details class="disclose"${hits.length ? " open" : ""}><summary>Code${sc.code_truncated ? " (truncated)" : ""}</summary><pre class="text-sample js-code">${codeHtml}</pre></details>`;
+    const jsTrunc = sc.code_truncated ? (sc.code_file ? ` (preview truncated — download has the full ${sc.size} chars)` : " (truncated)") : "";
+    body += `<details class="disclose"${hits.length ? " open" : ""}><summary>Code${jsTrunc}${sc.code_file ? " " + fileActions(sc.code_file) : ""}</summary><pre class="text-sample js-code">${codeHtml}</pre></details>`;
     if (sc.pretty) body += `<details class="disclose"><summary>Pretty-printed</summary><pre class="text-sample">${escapeHtml(sc.pretty)}</pre></details>`;
     html += `<details class="disclose js-card"${sev === "bad" ? " open" : ""}>
       <summary><span class="badge badge-${sev}">${hits.length} hit(s)</span>
@@ -1488,7 +1489,14 @@ function renderSubtabs() {
   const pane = (sec.render ? sec.render() : sec.html) || "";
   const bodyEl = document.getElementById("comp-body");
   const header = _compState.header ? `<div class="comp-header">${_compState.header}</div>` : "";
-  bodyEl.innerHTML = `${header}<div class="subtabs">${bar}</div><div class="subpane">${pane}</div>`;
+  const findBar = `<div class="code-find">
+      <input id="code-find-input" type="search" autocomplete="off" spellcheck="false"
+             placeholder="🔍 Find in code — VBA, JavaScript, formulas, decoded…" value="${escapeHtml(_compState.search || "")}">
+      <span id="code-find-count" class="hint-line"></span>
+      <button class="btn btn-ghost btn-sm" id="code-find-prev" type="button" title="Previous match">↑</button>
+      <button class="btn btn-ghost btn-sm" id="code-find-next" type="button" title="Next match">↓</button>
+    </div>`;
+  bodyEl.innerHTML = `${header}${findBar}<div class="subtabs">${bar}</div><div class="subpane">${pane}</div>`;
   bodyEl.querySelectorAll(".subtab").forEach((btn) => {
     btn.addEventListener("click", () => {
       _compState.active = btn.getAttribute("data-sub");
@@ -1505,6 +1513,150 @@ function renderSubtabs() {
   wirePivots(bodyEl);
   wireNet(bodyEl, _openCaseId);
   wireUnlock(bodyEl, _openCaseId);
+  wireFind(bodyEl);
+  applyFind();
+}
+
+// --- "Find in code" (lupa) --------------------------------------------------
+// Searches the code the parsers extracted (VBA, JavaScript, formulas, decoded
+// strings...). Matches in the open sub-tab are highlighted and navigable; the
+// other code tabs get a count badge so the analyst can see where else it hits.
+let _findMarks = [];
+let _findIndex = -1;
+let _findTotal = 0;
+let _findTimer = null;
+
+function findCorpus() {
+  if (_compState.corpus) return _compState.corpus;
+  const tmp = document.createElement("div");
+  const corpus = {};
+  (_compState.sections || []).forEach((s) => {
+    let html = s.html;
+    if (!html && s.render) { try { html = s.render(); } catch (e) { html = ""; } }
+    tmp.innerHTML = html || "";
+    corpus[s.id] = (tmp.textContent || "").toLowerCase();
+  });
+  _compState.corpus = corpus;
+  return corpus;
+}
+
+function _countIn(text, ql) {
+  if (!ql) return 0;
+  let n = 0, i = text.indexOf(ql);
+  while (i >= 0) { n++; i = text.indexOf(ql, i + ql.length); }
+  return n;
+}
+
+function _findQuery() {
+  const q = (_compState.search || "").trim();
+  return q.length >= 2 ? q.toLowerCase() : "";
+}
+
+function clearFindMarks(root) {
+  root.querySelectorAll("mark.find-hit").forEach((m) => {
+    const parent = m.parentNode;
+    parent.replaceChild(document.createTextNode(m.textContent), m);
+    parent.normalize();
+  });
+}
+
+function highlightContainer(el, ql, out) {
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+  const nodes = [];
+  let n;
+  while ((n = walker.nextNode())) nodes.push(n);
+  nodes.forEach((node) => {
+    const text = node.nodeValue;
+    const lower = text.toLowerCase();
+    let idx = lower.indexOf(ql);
+    if (idx < 0) return;
+    const frag = document.createDocumentFragment();
+    let pos = 0;
+    while (idx >= 0) {
+      if (idx > pos) frag.appendChild(document.createTextNode(text.slice(pos, idx)));
+      const mark = document.createElement("mark");
+      mark.className = "find-hit";
+      mark.textContent = text.slice(idx, idx + ql.length);
+      frag.appendChild(mark);
+      out.push(mark);
+      pos = idx + ql.length;
+      idx = lower.indexOf(ql, pos);
+    }
+    if (pos < text.length) frag.appendChild(document.createTextNode(text.slice(pos)));
+    node.parentNode.replaceChild(frag, node);
+  });
+}
+
+function updateFindBadges(ql) {
+  const corpus = ql ? findCorpus() : {};
+  document.querySelectorAll("#comp-body .subtab").forEach((btn) => {
+    const id = btn.getAttribute("data-sub");
+    let badge = btn.querySelector(".find-badge");
+    const count = ql ? _countIn(corpus[id] || "", ql) : 0;
+    if (count > 0) {
+      if (!badge) { badge = document.createElement("span"); badge.className = "find-badge"; btn.appendChild(badge); }
+      badge.textContent = count;
+    } else if (badge) { badge.remove(); }
+  });
+}
+
+function setFindCount() {
+  const el = document.getElementById("code-find-count");
+  if (!el) return;
+  if (!_findQuery()) { el.textContent = ""; return; }
+  if (_findMarks.length) {
+    el.textContent = `${_findIndex + 1}/${_findMarks.length} here`
+      + (_findTotal > _findMarks.length ? ` · ${_findTotal} in all tabs` : "");
+  } else {
+    el.textContent = _findTotal ? `0 here · ${_findTotal} in other tabs` : "no matches";
+  }
+}
+
+function focusFindMark() {
+  _findMarks.forEach((m, i) => m.classList.toggle("current", i === _findIndex));
+  const m = _findMarks[_findIndex];
+  if (m) m.scrollIntoView({ block: "center", behavior: "smooth" });
+  setFindCount();
+}
+
+function applyFind() {
+  const sub = document.querySelector("#comp-body .subpane");
+  if (!sub) return;
+  clearFindMarks(sub);
+  _findMarks = []; _findIndex = -1;
+  const ql = _findQuery();
+  updateFindBadges(ql);
+  if (!ql) { _findTotal = 0; setFindCount(); return; }
+  _findTotal = (() => { const c = findCorpus(); let t = 0; Object.keys(c).forEach((k) => { t += _countIn(c[k], ql); }); return t; })();
+  sub.querySelectorAll("pre, .mono, code").forEach((el) => highlightContainer(el, ql, _findMarks));
+  _findMarks.forEach((m) => {
+    let d = m.closest("details");
+    while (d) { d.open = true; d = d.parentElement ? d.parentElement.closest("details") : null; }
+  });
+  if (_findMarks.length) { _findIndex = 0; focusFindMark(); } else { setFindCount(); }
+}
+
+function stepFind(dir) {
+  if (!_findMarks.length) return;
+  _findIndex = (_findIndex + dir + _findMarks.length) % _findMarks.length;
+  focusFindMark();
+}
+
+function wireFind(root) {
+  const input = root.querySelector("#code-find-input");
+  if (!input) return;
+  input.addEventListener("input", () => {
+    _compState.search = input.value;
+    clearTimeout(_findTimer);
+    _findTimer = setTimeout(applyFind, 150);
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1); }
+  });
+  const next = root.querySelector("#code-find-next");
+  const prev = root.querySelector("#code-find-prev");
+  if (next) next.addEventListener("click", () => stepFind(1));
+  if (prev) prev.addEventListener("click", () => stepFind(-1));
 }
 
 async function openComponents(analysisId, keepTab) {

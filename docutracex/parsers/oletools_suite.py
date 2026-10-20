@@ -135,6 +135,7 @@ def _run_olevba(path: Path, result: dict[str, Any]) -> str:
                     if c:
                         parts.append(c)
                 code = "\n".join(parts)
+                info["_full_code"] = code  # complete VBA source, dumped to disk whole
                 decoded: dict[str, list[tuple[str, str]]] = {}
                 try:
                     from oletools.olevba import VBA_Scanner

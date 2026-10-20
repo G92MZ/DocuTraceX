@@ -211,12 +211,14 @@ def extract(sources: list[dict[str, Any]]) -> dict[str, Any]:
 _SKIP_KEYS = {
     "sha1", "sha256", "sha512", "md5", "imphash", "ssdeep", "tlsh", "pehash",
     "crc32", "digest", "checksum", "fingerprint", "entropy",
+    "code_file",  # path to the dumped code file (ours), not content
 }
 
 
 def _skip_key(key: Any) -> bool:
     k = str(key).lower()
-    return k in _SKIP_KEYS or "hash" in k
+    # Leading-underscore keys are internal scratch (e.g. _full_code), never content.
+    return k.startswith("_") or k in _SKIP_KEYS or "hash" in k
 
 
 def _walk(node: Any, module: str, location: str, sources: list[dict[str, Any]]) -> None:

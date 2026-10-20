@@ -364,6 +364,43 @@ table.cases td.mono { word-break: break-all; }
 @media (max-width: 640px) {
   .subtab { min-width: 0; padding: 7px 12px; font-size: 13px; }
 }
+
+/* Find in code (lupa) */
+.code-find {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 0;
+}
+.code-find input[type="search"] {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  background: #121821;
+  border: 1px solid var(--panel-border);
+  border-radius: 9px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+}
+.code-find input[type="search"]:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.code-find #code-find-count { white-space: nowrap; }
+.find-badge {
+  margin-left: 2px;
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(232, 121, 90, 0.9);
+  color: #0b0e12;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.6;
+}
+mark.find-hit { background: rgba(232, 201, 90, 0.4); color: inherit; border-radius: 2px; }
+mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 /* trace: gmzpt */
 .subpane { }
 .ok-text { color: #5fd38b; }
