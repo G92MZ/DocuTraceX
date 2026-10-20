@@ -1161,7 +1161,8 @@ function paneJavascript(js) {
         sc.decoded.map((d) => `<tr><td>${escapeHtml(d.method)}</td><td class="mono">${escapeHtml(d.decoded)}</td>
           <td>${addMarkCell("js_decoded", `JavaScript decoded (${d.method}): ${d.decoded}`.slice(0, 300), jsLoc, d.encoded || d.decoded)}</td></tr>`).join(""));
     }
-    body += `<details class="disclose"${hits.length ? " open" : ""}><summary>Code${sc.code_truncated ? " (truncated)" : ""}${sc.code_file ? " " + fileActions(sc.code_file) : ""}</summary><pre class="text-sample js-code">${codeHtml}</pre></details>`;
+    const jsTrunc = sc.code_truncated ? (sc.code_file ? ` (preview truncated — download has the full ${sc.size} chars)` : " (truncated)") : "";
+    body += `<details class="disclose"${hits.length ? " open" : ""}><summary>Code${jsTrunc}${sc.code_file ? " " + fileActions(sc.code_file) : ""}</summary><pre class="text-sample js-code">${codeHtml}</pre></details>`;
     if (sc.pretty) body += `<details class="disclose"><summary>Pretty-printed</summary><pre class="text-sample">${escapeHtml(sc.pretty)}</pre></details>`;
     html += `<details class="disclose js-card"${sev === "bad" ? " open" : ""}>
       <summary><span class="badge badge-${sev}">${hits.length} hit(s)</span>

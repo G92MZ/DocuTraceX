@@ -58,6 +58,7 @@ def analyze(original_path: Path) -> dict[str, Any]:
             result["xlm_macros"] = True
             result["formulas"] = records[:_MAX_FORMULAS]
             result["code_text"] = "\n".join(result["formulas"])
+            result["_full_code"] = "\n".join(records)  # all formulas, dumped whole
             result["findings"].append({
                 "tool": "xlmdeobf", "rule": "xlm_macros", "severity": "high",
                 "detail": f"{len(records)} deobfuscated Excel 4.0 (XLM) formula(s)",
