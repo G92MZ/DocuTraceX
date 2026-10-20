@@ -87,6 +87,25 @@ def test_nested_child_evidence_is_scanned() -> None:
     assert "http://child-emulated.example/x" in vals and "child-emulated.example" in vals
 
 
+def test_nested_child_full_material_is_scanned() -> None:
+    # Option 2: a child's full sub-results are reduced to ioc_sources at scan
+    # time, so IOCs beyond the finding-evidence caps are still mined. A child
+    # email in that material stays content-only (its headers are never mined).
+    modules = {"nested": {
+        "findings": [{"rule": "r", "evidence": "fetch http://headline.example/1"}],
+        "ioc_sources": [
+            {"module": "vipermonkey", "location": "doc.docm › vipermonkey/actions[9]",
+             "text": "Shell http://deep.example/payload9.exe"},
+            {"module": "email", "location": "doc.docm › email/body",
+             "text": "see http://childbody.example/x"},
+        ],
+    }}
+    vals = {i["value"] for i in ioc.extract(ioc.sources_from_modules(modules))["iocs"]}
+    assert "http://deep.example/payload9.exe" in vals and "deep.example" in vals
+    assert "http://headline.example/1" in vals  # findings still mined too
+    assert "childbody.example" in vals
+
+
 def test_app_computed_hashes_not_treated_as_iocs() -> None:
     # sha256/md5 the app computed to identify a component must not surface as
     # hash_like IOCs (they are kept separate by design).

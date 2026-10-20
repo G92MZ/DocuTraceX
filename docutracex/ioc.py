@@ -273,8 +273,18 @@ def sources_from_modules(modules: dict[str, dict[str, Any]]) -> list[dict[str, A
             if isinstance(data, dict):
                 _email_sources(data, sources)
         elif name == "nested":
-            _walk(data.get("findings") if isinstance(data, dict) else data,
-                  "nested", "", sources)
+            if isinstance(data, dict):
+                _walk(data.get("findings"), "nested", "", sources)
+                # Per-child IOC material: each embedded child's full sub-results,
+                # already reduced to {module, location, text} at scan time (so the
+                # caps on finding evidence don't limit a child). Consumed directly,
+                # not re-walked; the 'email' carve-out was applied when built.
+                for s in data.get("ioc_sources") or []:
+                    if isinstance(s, dict) and isinstance(s.get("text"), str) and s["text"].strip():
+                        sources.append({"module": s.get("module", "nested"),
+                                        "location": s.get("location", ""), "text": s["text"]})
+            else:
+                _walk(data, "nested", "", sources)
         else:
             _walk(data, name, "", sources)
     return sources

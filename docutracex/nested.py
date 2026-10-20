@@ -87,17 +87,21 @@ def _rel(paths: CasePaths, p: Path) -> str:
 
 
 def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
-              chain: str, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
+              chain: str, ctx: dict[str, Any] | None = None,
+              sources_out: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Analyze one child; return a node with its findings and children.
 
     ``ctx`` carries the passwords to try on encrypted children: the analyst's
     (``user``) and those given by an enclosing email (``harvested``)."""
     ctx = ctx or {}
+    if sources_out is None:
+        sources_out = []
     node: dict[str, Any] = {
         "filename": name, "kind": _kind(abs_path, name), "depth": depth,
         "stored_path": _rel(paths, abs_path),
         "findings": [], "children": [],
     }
+    mods: dict[str, Any] = {}
     try:
         data = abs_path.read_bytes()
         # AeWckx3pKh
@@ -156,6 +160,7 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
         elif kind in ("ooxml", "ole"):
             from .parsers import oletools_suite
             res = oletools_suite.analyze(abs_path, work)
+            mods["oletools"] = res
             add_findings(res.get("findings"), "oletools")
             for obj in res.get("tools", {}).get("oleobj", {}).get("objects", []) or []:
                 sp = obj.get("stored_path")
@@ -169,22 +174,28 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
                 else:
                     sem = office.analyze(abs_path, _ext(name), work)
                 if sem:
+                    mods["office"] = sem
                     add_findings(sem.get("findings"), kind)
                 xres = xlm.analyze(abs_path)
+                mods["xlmdeobf"] = xres
                 add_findings(xres.get("findings"), "xlmdeobf")
             # Own Office rules and, when there are macros, VBA emulation.
             from .parsers import office_rules, vipermonkey
             rules = (office_rules.analyze_ooxml(abs_path) if kind == "ooxml"
                      else office_rules.analyze_ole(abs_path))
+            mods["officerules"] = rules
             add_findings(rules.get("findings"), "officerules")
             if ((res.get("tools") or {}).get("olevba") or {}).get("macros"):
                 vm = vipermonkey.analyze(abs_path, work)
+                mods["vipermonkey"] = vm
                 add_findings(vm.get("findings"), "vipermonkey")
         elif kind == "rtf":
             from .parsers import oletools_suite, rtf
             r = rtf.analyze(abs_path, _ext(name), work)
+            mods["rtf"] = r
             add_findings(r.get("findings"), "rtf")
             res = oletools_suite.analyze(abs_path, work)
+            mods["oletools"] = res
             add_findings([f for f in res.get("findings") or [] if f.get("tool") == "msodde"], "oletools")
             for obj in r.get("objects") or []:
                 sp = obj.get("stored_path")
@@ -193,9 +204,12 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
         elif kind == "pdf":
             from .parsers import pdf
             res = pdf.analyze(abs_path, work)
+            mods["pdf"] = res
             add_findings(res.get("findings"), "pdf")
             from .parsers import pdf_tools
-            add_findings(pdf_tools.analyze(abs_path, res).get("findings"), "pdftools")
+            pt = pdf_tools.analyze(abs_path, res)
+            mods["pdftools"] = pt
+            add_findings(pt.get("findings"), "pdftools")
             for emb in res.get("embedded", []) or []:
                 sp = emb.get("stored_path")
                 if sp:
@@ -203,10 +217,12 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
         elif kind == "email":
             from .parsers import mail
             res = mail.analyze(abs_path, _ext(name), work)
+            mods["email"] = res
             add_findings(res.get("findings"), "email")
             from .parsers import mail_rules
-            add_findings(mail_rules.analyze(abs_path, _ext(name), res, paths.root).get("findings"),
-                         "mailrules")
+            mr = mail_rules.analyze(abs_path, _ext(name), res, paths.root)
+            mods["mailrules"] = mr
+            add_findings(mr.get("findings"), "mailrules")
             for att in res.get("attachments", []) or []:
                 sp = att.get("stored_path")
                 if sp:
@@ -226,6 +242,17 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
     except Exception as exc:  # noqa: BLE001
         node["error"] = str(exc)
 
+    # Full IOC material of THIS child: every analyzer sub-result gathered above,
+    # reduced to {module, location, text} by the common builder — so a child is
+    # mined as deeply as a top-level file, past the caps that finding evidence
+    # imposes. Accumulated into one flat list for the whole case; the 'email'
+    # content-only carve-out still applies here (child headers are never mined).
+    from . import ioc
+    for s in ioc.sources_from_modules(mods):
+        s = dict(s)
+        s["location"] = f"{this_chain} › {s.get('location') or s.get('module', '')}"
+        sources_out.append(s)
+
     if depth < MAX_DEPTH:
         for cpath, cname in kids[:MAX_CHILDREN]:
             if not cpath.is_file():
@@ -237,7 +264,8 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
                     alt = cpath
                 cpath = alt
             if cpath.is_file():
-                node["children"].append(_scan_one(cpath, cname, paths, depth + 1, this_chain, ctx))
+                node["children"].append(
+                    _scan_one(cpath, cname, paths, depth + 1, this_chain, ctx, sources_out))
     elif kids:
         node["truncated_children"] = len(kids)
     return node
@@ -253,11 +281,14 @@ def scan_children(items: list[dict[str, Any]], paths: CasePaths,
                   unlock_ctx: dict[str, Any] | None = None) -> dict[str, Any]:
     """Recursively scan a list of extracted children (``{path, filename}``).
     ``unlock_ctx`` = passwords for encrypted children (see ``_scan_one``)."""
-    result: dict[str, Any] = {"module": "nested", "tree": [], "findings": [], "status": "ok"}
+    result: dict[str, Any] = {"module": "nested", "tree": [], "findings": [],
+                              "ioc_sources": [], "status": "ok"}
+    isrc: list[dict[str, Any]] = result["ioc_sources"]
     for it in items[:MAX_CHILDREN]:
         p = Path(it["path"])
         if p.is_file():
-            result["tree"].append(_scan_one(p, it.get("filename") or p.name, paths, 1, "", unlock_ctx))
+            result["tree"].append(
+                _scan_one(p, it.get("filename") or p.name, paths, 1, "", unlock_ctx, isrc))
     flat: list[dict[str, Any]] = []
     _flatten(result["tree"], flat)
     result["findings"] = flat
