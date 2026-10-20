@@ -360,16 +360,18 @@ def _sandbox_findings(sb: dict[str, Any], loc: str, out: list[dict[str, Any]]) -
 def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> dict[str, Any]:
     res: dict[str, Any] = {"module": "javascript", "status": "ok", "scripts": [], "findings": []}
     for i, it in enumerate(collect(original, extracted_dir, modules), 1):
-        code = it["code"][:_MAX_CODE]
+        full = it["code"] or ""           # complete source (dumped to disk whole)
+        code = full[:_MAX_CODE]           # bounded copy for analysis / sandbox
         loc = it["location"]
         hits = static_hits(code)
         mets = metrics(code)
         decoded = decode_strings(code)
         sb = sandbox(code)
         script = {"id": i, "kind": it["kind"], "origin": it["origin"], "location": loc, "note": it.get("note"),
-                  "size": len(code), "code": code[:_KEEP_CODE], "code_truncated": len(code) > _KEEP_CODE,
+                  "size": len(full), "code": code[:_KEEP_CODE], "code_truncated": len(full) > _KEEP_CODE,
                   "pretty": _pretty(code)[:_KEEP_CODE] if mets["longest_line"] > 200 else "",
-                  "hits": hits, "metrics": mets, "decoded": decoded, "sandbox": sb}
+                  "hits": hits, "metrics": mets, "decoded": decoded, "sandbox": sb,
+                  "_full_code": full}
         res["scripts"].append(script)
         by_rule: dict[str, list[dict[str, Any]]] = {}
         for h in hits:
