@@ -25,7 +25,7 @@ from .storage import CasePaths
 
 log = get_logger(__name__)
 
-MAX_DEPTH = 3
+MAX_DEPTH = 5
 MAX_CHILDREN = 25
 
 _OOXML_EXT = {".docx", ".docm", ".dotx", ".dotm", ".xlsx", ".xlsm", ".xltx", ".xltm",
