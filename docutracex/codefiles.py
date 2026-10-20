@@ -43,44 +43,66 @@ def _write(paths: CasePaths, sub: str, name: str, text: Any) -> str | None:
     return dest.relative_to(paths.root).as_posix()
 
 
-def annotate(modules: dict[str, Any], paths: CasePaths) -> set[str]:
-    """Write code files and tag each item with its ``code_file``.
+def _pop_full(d: dict[str, Any], display_key: str) -> tuple[str | None, bool]:
+    """The complete source to write: the parser's internal ``_full_code`` when
+    present, else the (possibly truncated) display field. Returns the text and
+    whether a ``_full_code`` scratch key was removed (so the caller re-persists
+    a clean dict — the full source lives in the dumped file, never the JSON)."""
+    popped = "_full_code" in d
+    full = d.pop("_full_code", None)
+    return (full if isinstance(full, str) and full.strip() else d.get(display_key)), popped
 
-    Returns the set of module names whose sub-result dict changed, so the
-    caller can persist exactly those (nothing else is touched).
+
+def annotate(modules: dict[str, Any], paths: CasePaths) -> set[str]:
+    """Write the extracted code to files and tag each item with its ``code_file``.
+
+    The dumped file always holds the COMPLETE source (the parsers stash it as
+    ``_full_code`` before truncating for display); the UI stays bounded and
+    flags ``code_truncated``. Returns the set of module names whose sub-result
+    dict changed, so the caller persists exactly those.
     """
     changed: set[str] = set()
 
-    # VBA: olevba gives the full macro source as code_text (not truncated).
+    # VBA: full macro source (olevba _full_code), falling back to code_text.
     ole = modules.get("oletools")
     if isinstance(ole, dict):
-        rel = _write(paths, "vba", "vba_macros.vba", ole.get("code_text"))
-        if rel and ole.get("code_file") != rel:
-            ole["code_file"] = rel
+        olevba = ole.get("tools", {}).get("olevba") if isinstance(ole.get("tools"), dict) else None
+        if isinstance(olevba, dict):
+            text, popped = _pop_full(olevba, "")
+            text = text or ole.get("code_text")
+        else:
+            text, popped = ole.get("code_text"), False
+        rel = _write(paths, "vba", "vba_macros.vba", text)
+        if (rel and ole.get("code_file") != rel) or popped:
+            if rel:
+                ole["code_file"] = rel
             changed.add("oletools")
 
-    # JavaScript: one file per script (code as stored; may be truncated, which
-    # the UI already flags with code_truncated).
+    # JavaScript: one complete file per script.
     js = modules.get("javascript")
     if isinstance(js, dict):
         touched = False
         for i, sc in enumerate(js.get("scripts") or [], 1):
             if not isinstance(sc, dict):
                 continue
+            text, popped = _pop_full(sc, "code")
             label = _slug(sc.get("location") or sc.get("kind") or sc.get("origin"), f"script{i}")
-            rel = _write(paths, "js", f"{i:02d}_{label}.js", sc.get("code"))
-            if rel and sc.get("code_file") != rel:
-                sc["code_file"] = rel
+            rel = _write(paths, "js", f"{i:02d}_{label}.js", text)
+            if (rel and sc.get("code_file") != rel) or popped:
+                if rel:
+                    sc["code_file"] = rel
                 touched = True
         if touched:
             changed.add("javascript")
 
-    # Excel 4.0 (XLM): the deobfuscated formulas as a single listing.
+    # Excel 4.0 (XLM): all deobfuscated formulas.
     xlm = modules.get("xlmdeobf")
     if isinstance(xlm, dict):
-        rel = _write(paths, "xlm", "xlm_macros.txt", xlm.get("code_text"))
-        if rel and xlm.get("code_file") != rel:
-            xlm["code_file"] = rel
+        text, popped = _pop_full(xlm, "code_text")
+        rel = _write(paths, "xlm", "xlm_macros.txt", text)
+        if (rel and xlm.get("code_file") != rel) or popped:
+            if rel:
+                xlm["code_file"] = rel
             changed.add("xlmdeobf")
 
     return changed

@@ -51,6 +51,34 @@ def test_annotate_skips_empty_code(tmp_path) -> None:
     assert "code_file" not in modules["oletools"]
 
 
+def test_full_code_dumped_even_when_display_truncated(tmp_path) -> None:
+    # The parsers stash the complete source in _full_code; the display field
+    # (code / code_text) may be truncated. The dumped file must be the FULL
+    # source, and _full_code must not survive in the persisted dict.
+    cp = _case(tmp_path)
+    full_js = "A" * 90000  # > the 60k the UI keeps
+    modules = {
+        "javascript": {"scripts": [
+            {"kind": "html", "code": "A" * 60000, "code_truncated": True, "_full_code": full_js},
+        ]},
+        "oletools": {"code_text": "short display",
+                     "tools": {"olevba": {"_full_code": "Sub Full()\n" + "x" * 500000 + "\nEnd Sub"}}},
+        "xlmdeobf": {"code_text": "=A()", "_full_code": "=A()\n=B()\n=C()"},
+    }
+    codefiles.annotate(modules, cp)
+
+    js_file = cp.root / modules["javascript"]["scripts"][0]["code_file"]
+    assert js_file.read_text() == full_js  # complete, not the 60k display copy
+    vba_file = cp.root / modules["oletools"]["code_file"]
+    assert vba_file.read_text().startswith("Sub Full()") and len(vba_file.read_text()) > 400000
+    assert (cp.root / modules["xlmdeobf"]["code_file"]).read_text() == "=A()\n=B()\n=C()"
+
+    # Scratch key removed from every dict (never persisted / sent to the UI).
+    assert "_full_code" not in modules["javascript"]["scripts"][0]
+    assert "_full_code" not in modules["oletools"]["tools"]["olevba"]
+    assert "_full_code" not in modules["xlmdeobf"]
+
+
 def test_dumped_path_is_not_mined_as_ioc(tmp_path) -> None:
     from docutracex import ioc
     cp = _case(tmp_path)
