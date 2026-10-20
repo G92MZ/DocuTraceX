@@ -171,8 +171,11 @@ def install_deps() -> None:
     py = _portable_python()
     print("[>] Upgrading pip in the portable interpreter")
     subprocess.run([str(py), "-m", "pip", "install", "--upgrade", "pip"], check=False)
-    print("[>] Installing DocuTraceX and dependencies into the portable interpreter")
-    subprocess.run([str(py), "-m", "pip", "install", "-e", str(ROOT)], check=True)
+    print("[>] Installing DocuTraceX + the analysis toolchain into the portable interpreter")
+    # The [tools] extra carries every analysis dependency (oletools, YARA,
+    # STPyV8, Playwright, pikepdf, …) — they land ONLY on the portable, never on
+    # the user's Python. The web service deps come along as base requirements.
+    subprocess.run([str(py), "-m", "pip", "install", "-e", f"{ROOT}[tools]"], check=True)
 
 
 def install_libmagic_windows() -> None:

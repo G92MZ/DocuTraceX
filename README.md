@@ -25,20 +25,26 @@ read the case for you. **Nothing in the sample is ever executed.**
 ## 🚀 Quickstart
 
 ```bash
-pip install -e .
-python run.py                 # open http://127.0.0.1:8000
+python install.py             # once: sets everything up
+python run.py                 # from then on — open http://127.0.0.1:8000
 ```
 
 ```bash
 python run.py --port 8001     # run next to WinHound/Longanizer on another port
 ```
 
-The web app runs on **your** Python; the analysis tools run on a **portable**
-Python under `tools/`, provisioned automatically on first launch together with
-everything else the tools need (PyPy 2.7 for ViperMonkey, the Didier Stevens
-scripts, OfficeMalScanner, the IP database and Chromium for screenshots — see
-`scripts/setup_portable_python.py`). On Windows, point it at your FLARE-VM and it
-just works.
+**Two Pythons, on purpose.** `install.py` installs only the web service on
+**your** Python (`fastapi`/`uvicorn`/`jinja2`/`python-multipart` — nothing
+native or heavy), so your machine's Python is **never a constraint**. It then
+provisions a **portable** Python under `tools/` and installs the whole analysis
+toolchain into *that* (oletools, YARA, STPyV8, Playwright, pikepdf, ViperMonkey
+via PyPy 2.7, the Didier Stevens scripts, OfficeMalScanner, the IP database and
+Chromium for screenshots — see `scripts/setup_portable_python.py`). None of it
+touches your environment. On Windows, point it at your FLARE-VM and it just works.
+
+> Prefer pip? `pip install -r requirements.txt` installs the web service, and
+> `python run.py` heals the portable toolchain on start. `install.py --web-only`
+> does the former without the portable; `install.py --force` reprovisions it.
 
 > 🧪 **Try it now:** `samples/samples.zip` (password **`infected`**, so antivirus
 > engines leave it alone — open it with 7-Zip/Windows, or run

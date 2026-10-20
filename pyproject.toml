@@ -11,17 +11,30 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache-2.0" }
 authors = [{ name = "gmzpt" }]
+# Only what the WEB SERVICE needs — installed on the user's own Python. The
+# machine's Python is never a constraint: no native/heavy wheels here. Every
+# analysis tool lives in the `tools` extra below and is installed ONLY into the
+# portable Python under tools/ by scripts/setup_portable_python.py. See install.py.
 dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "jinja2>=3.1",
     "python-multipart>=0.0.9",
+]
+
+# gmzpt
+[project.optional-dependencies]
+# The analysis toolchain. Installed into the PORTABLE interpreter only
+# (`pip install -e ".[tools]"` at provisioning time), never onto the user's
+# Python. Heavy/native wheels (stpyv8, playwright, pikepdf…) and GPL/LGPL tools
+# (pcodedmp, pcode2code, peepdf-3, py7zr) stay off the host environment.
+tools = [
     # libmagic binding (primary identifier). On Windows the native libmagic DLL
     # must be bundled under tools/; identification degrades gracefully if absent.
     "python-magic>=0.4.27",
     # Safe XML parsing for the OOXML engine (no external entities / DTD fetch).
     "defusedxml>=0.7.1",
-    # External analysis tool: VBA macro extraction/analysis (runs on the portable).
+    # External analysis tool: VBA macro extraction/analysis.
     "oletools>=0.60",
     # Encrypted Office detection + default-password decryption (evasion check).
     "msoffcrypto-tool>=5.1",
@@ -32,8 +45,7 @@ dependencies = [
     "pdfminer.six>=20231228",
     # YARA rule matching engine (opt-in findings).
     "yara-python>=4.3",
-    # VBA p-code disassembly / decompilation (VBA stomping). GPL-3.0: installed
-    # into the portable at provisioning time, never shipped in this repository.
+    # VBA p-code disassembly / decompilation (VBA stomping). GPL-3.0.
     "pcodedmp>=1.2.6",
     "pcode2code>=0.1.1",
     # Excel binary workbooks (.xlsb): sheets, formulas, XLM macro sheets.
@@ -52,9 +64,7 @@ dependencies = [
     # JavaScript: V8 sandbox (no host bindings) for deobfuscation, pretty-printing.
     "stpyv8>=12.0",
     "jsbeautifier>=1.15",
-    # Network checks of IOCs (on demand, through the configured proxy):
-    # HTTP with SOCKS/brotli support, DNS, offline IP database (DB-IP Lite
-    # .mmdb), registrable domains, and Chromium screenshots without JavaScript.
+    # Network checks of IOCs (on demand, through the configured proxy).
     "requests>=2.31",
     "PySocks>=1.7.1",
     "brotli>=1.1",
@@ -62,18 +72,13 @@ dependencies = [
     "maxminddb>=2.5",
     "tldextract>=5.1",
     "playwright>=1.45",
-    # Encrypted documents/archives: PDF decryption keeping the objects as they
-    # are (pikepdf/qpdf), ZIP with WinZip AES (pyzipper), 7z (py7zr, LGPL-2.1:
-    # installed into the portable, never shipped in this repository).
+    # Encrypted documents/archives (pikepdf/qpdf, WinZip AES, 7z/LGPL-2.1).
     "pikepdf>=8.0",
     "pyzipper>=0.3.6",
     "py7zr>=0.20",
     # AI tab: MCP server (stdio) exposing the cases read-only to MCP clients.
     "mcp>=1.2",
 ]
-
-# gmzpt
-[project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "httpx>=0.27",
