@@ -611,6 +611,12 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         overall_counts["findings"] = len(consolidated)
         steps[-1]["findings"] = len(consolidated)
 
+        # Dump extracted code (VBA/JS/XLM) to files and persist the code_file
+        # tags, so the UI can offer Folder/Download on the code panes.
+        from . import codefiles
+        for m in codefiles.annotate(modules, paths):
+            write_subresult(paths, m, modules[m])
+
     # Update summary.json (fast-read view) and the manifest.
     summary = read_json(paths.summary) or {}
     summary["counts"] = overall_counts
@@ -663,6 +669,9 @@ def _recompute_derived(paths: CasePaths) -> tuple[int, int]:
     consolidated = findings_mod.consolidate(modules)
     write_subresult(paths, "findings", {"findings": consolidated,
                                         "counts": {"total": len(consolidated)}})
+    from . import codefiles
+    for m in codefiles.annotate(modules, paths):
+        write_subresult(paths, m, modules[m])
     return ioc_result.get("counts", {}).get("total", 0), len(consolidated)
 
 

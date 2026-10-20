@@ -211,6 +211,7 @@ def extract(sources: list[dict[str, Any]]) -> dict[str, Any]:
 _SKIP_KEYS = {
     "sha1", "sha256", "sha512", "md5", "imphash", "ssdeep", "tlsh", "pehash",
     "crc32", "digest", "checksum", "fingerprint", "entropy",
+    "code_file",  # path to the dumped code file (ours), not content
 }
 
 
