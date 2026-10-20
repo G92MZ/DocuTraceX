@@ -1,0 +1,13 @@
+# DocuTraceX — the web service only (runs on YOUR Python).
+#
+# This is the minimum to launch the app; your machine's Python is never a
+# constraint. Every ANALYSIS tool (oletools, YARA, STPyV8, Playwright, pikepdf,
+# ViperMonkey, …) runs on the portable Python under tools/, provisioned by
+# install.py — none of it is installed here.
+#
+#   python install.py     # first time: this + provisions the portable toolchain
+#   python run.py         # from then on
+fastapi>=0.110
+uvicorn[standard]>=0.29
+jinja2>=3.1
+python-multipart>=0.0.9
