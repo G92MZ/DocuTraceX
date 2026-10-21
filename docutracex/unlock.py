@@ -143,6 +143,21 @@ def detect(path: Path) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001  (OLE that msoffcrypto doesn't know: .msg, ...)
             return {"encrypted": False, "kind": None, "detail": str(exc)}
         return {"encrypted": False, "kind": "office", "detail": ""}
+    # Containers (never password-protected the way ZIP/7z are): tar(.gz/.bz2/.xz),
+    # Microsoft Cabinet, ISO9660/UDF optical images.
+    if head.startswith(b"MSCF"):
+        return {"encrypted": False, "kind": "cab", "detail": "Microsoft Cabinet"}
+    if head.startswith((b"\x1f\x8b", b"BZh", b"\xfd7zXZ\x00")):
+        return {"encrypted": False, "kind": "tar", "detail": "compressed stream / tarball"}
+    if len(head) >= 263 and head[257:263] in (b"ustar\x00", b"ustar "):
+        return {"encrypted": False, "kind": "tar", "detail": "tar archive"}
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0x8001)
+            if fh.read(5) == b"CD001":
+                return {"encrypted": False, "kind": "iso", "detail": "ISO9660 image"}
+    except OSError:
+        pass
     return {"encrypted": False, "kind": None, "detail": ""}
 
 
@@ -292,6 +307,11 @@ def _zip_open(path: Path):
         return zipfile.ZipFile(path)
 
 
+# Registry of archive/container extractors, keyed by detect() kind. Populated
+# at the end of the module, once every extractor function is defined.
+_ARCHIVE_EXTRACTORS: dict[str, Any] = {}
+
+
 def _zip_extract(path: Path, out_dir: Path, pw: str | None) -> list[dict[str, Any]]:
     """Extract (bounded); raises on a wrong password."""
     entries: list[dict[str, Any]] = []
@@ -346,18 +366,207 @@ def _7z_extract(path: Path, out_dir: Path, pw: str | None) -> list[dict[str, Any
     return entries
 
 
+def _tar_extract(path: Path, out_dir: Path, pw: str | None) -> list[dict[str, Any]]:
+    """Extract a tar(.gz/.bz2/.xz); a plain .gz/.bz2/.xz single stream becomes
+    one entry. Bounded against decompression bombs."""
+    import tarfile
+
+    entries: list[dict[str, Any]] = []
+    used: set[str] = set()
+    try:
+        tf = tarfile.open(path, "r:*")
+    except (tarfile.TarError, OSError, EOFError):
+        return _single_stream_extract(path, out_dir, used)
+    total = 0
+    with tf:
+        members = [m for m in tf.getmembers() if m.isfile()][:MAX_ENTRIES]
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for m in members:
+            if m.size > MAX_FILE or total + m.size > MAX_TOTAL:
+                entries.append({"name": m.name, "size": m.size, "skipped": "too large"})
+                continue
+            target = out_dir / _safe_name(m.name, used)
+            src = tf.extractfile(m)
+            if src is None:
+                continue
+            n = 0
+            with src, target.open("wb") as dst:
+                for chunk in iter(lambda: src.read(1 << 20), b""):
+                    n += len(chunk)
+                    if n > MAX_FILE:
+                        raise ValueError(f"entry {m.name!r} expands beyond the size limit")
+                    dst.write(chunk)
+            total += n
+            entries.append({"name": m.name, "size": n, "file": str(target)})
+    return entries
+
+
+def _single_stream_extract(path: Path, out_dir: Path, used: set[str]) -> list[dict[str, Any]]:
+    """A lone gzip/bzip2/xz (not a tarball): decompress to one entry."""
+    import bz2
+    import gzip
+    import lzma
+
+    head = path.read_bytes()[:6]
+    opener = (gzip.open if head.startswith(b"\x1f\x8b")
+              else bz2.open if head.startswith(b"BZh")
+              else lzma.open if head.startswith(b"\xfd7zXZ\x00") else None)
+    if opener is None:
+        raise ValueError("unsupported compressed stream")
+    name = path.stem or "payload"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    target = out_dir / _safe_name(name, used)
+    n = 0
+    with opener(path) as src, target.open("wb") as dst:
+        for chunk in iter(lambda: src.read(1 << 20), b""):
+            n += len(chunk)
+            if n > MAX_FILE:
+                raise ValueError("stream expands beyond the size limit")
+            dst.write(chunk)
+    return [{"name": name, "size": n, "file": str(target)}]
+
+
+def _cab_extract(path: Path, out_dir: Path, pw: str | None) -> list[dict[str, Any]]:
+    """Extract a Microsoft Cabinet (MSZIP / uncompressed). LZX/Quantum folders
+    are listed but skipped (rare; need a dedicated decompressor)."""
+    import struct as _s
+    import zlib
+
+    blob = path.read_bytes()
+    if blob[:4] != b"MSCF" or len(blob) < 36:
+        raise ValueError("not a cabinet")
+    coff_files, _r3, _vmin, _vmaj, c_folders, c_files, flags = _s.unpack_from("<IIBBHHH", blob, 16)
+    pos = 36
+    cb_folder_reserve = 0
+    if flags & 0x0004:  # RESERVE_PRESENT
+        cb_header, cb_folder_reserve, _cb_data = _s.unpack_from("<HBB", blob, pos)
+        pos += 4 + cb_header
+    if flags & 0x0001:  # PREV_CABINET: szCabinetPrev, szDiskPrev
+        for _ in range(2):
+            pos = blob.index(b"\x00", pos) + 1
+    if flags & 0x0002:  # NEXT_CABINET
+        for _ in range(2):
+            pos = blob.index(b"\x00", pos) + 1
+
+    folders = []
+    for _ in range(c_folders):
+        coff_start, c_cfdata, type_c = _s.unpack_from("<IHH", blob, pos)
+        pos += 8 + cb_folder_reserve
+        folders.append((coff_start, c_cfdata, type_c & 0x000f))
+
+    # Decompress each folder's data stream.
+    folder_data: list[bytes] = []
+    for coff_start, c_cfdata, comp in folders:
+        data = bytearray()
+        dpos = coff_start
+        history = b""
+        if len(data) > MAX_TOTAL:
+            break
+        for _ in range(c_cfdata):
+            _csum, cb_data, cb_uncomp = _s.unpack_from("<IHH", blob, dpos)
+            dpos += 8
+            raw = blob[dpos:dpos + cb_data]
+            dpos += cb_data
+            if comp == 0:          # uncompressed
+                out = raw
+            elif comp == 1:        # MSZIP: 'CK' + raw deflate, prev folder bytes as dict
+                if raw[:2] != b"CK":
+                    out = b""
+                else:
+                    d = zlib.decompressobj(-15, zdict=history[-32768:]) if history else zlib.decompressobj(-15)
+                    out = d.decompress(raw[2:]) + d.flush()
+            else:                  # LZX / Quantum: unsupported here
+                out = b""
+            data += out
+            history += out
+            if len(data) > MAX_TOTAL:
+                break
+        folder_data.append(bytes(data))
+
+    entries: list[dict[str, Any]] = []
+    used: set[str] = set()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    pos = coff_files
+    for _ in range(min(c_files, MAX_ENTRIES)):
+        if pos + 16 > len(blob):
+            break
+        cb_file, uoff, i_folder = _s.unpack_from("<IIH", blob, pos)
+        pos += 16
+        end = blob.index(b"\x00", pos)
+        fname = blob[pos:end].decode("latin-1", "replace")
+        pos = end + 1
+        if i_folder >= len(folder_data) or cb_file > MAX_FILE:
+            entries.append({"name": fname, "size": cb_file, "skipped": "unsupported/too large"})
+            continue
+        stream = folder_data[i_folder]
+        chunk = stream[uoff:uoff + cb_file]
+        if not chunk:
+            entries.append({"name": fname, "size": cb_file, "skipped": "compression unsupported"})
+            continue
+        target = out_dir / _safe_name(fname, used)
+        target.write_bytes(chunk)
+        entries.append({"name": fname, "size": len(chunk), "file": str(target)})
+    return entries
+
+
+def _iso_extract(path: Path, out_dir: Path, pw: str | None) -> list[dict[str, Any]]:
+    """Extract files from an ISO9660 / Joliet / UDF image (pycdlib), bounded."""
+    import pycdlib
+
+    iso = pycdlib.PyCdlib()
+    iso.open(str(path))
+    entries: list[dict[str, Any]] = []
+    used: set[str] = set()
+    total = 0
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # Prefer the richest namespace available.
+    if iso.has_udf():
+        walk_kw, get_kw = "udf_path", "udf_path"
+    elif iso.has_joliet():
+        walk_kw, get_kw = "joliet_path", "joliet_path"
+    elif iso.has_rock_ridge():
+        walk_kw, get_kw = "rr_path", "rr_path"
+    else:
+        walk_kw, get_kw = "iso_path", "iso_path"
+    try:
+        for dirpath, _dirs, files in iso.walk(**{walk_kw: "/"}):
+            for fn in files:
+                if len(entries) >= MAX_ENTRIES or total >= MAX_TOTAL:
+                    break
+                full = (dirpath.rstrip("/") + "/" + fn)
+                clean = fn.split(";")[0]  # drop the ISO9660 ";1" version
+                import io
+                bio = io.BytesIO()
+                try:
+                    iso.get_file_from_iso_fp(bio, **{get_kw: full})
+                except Exception:  # noqa: BLE001
+                    continue
+                data = bio.getvalue()[:MAX_FILE]
+                total += len(data)
+                target = out_dir / _safe_name(clean, used)
+                target.write_bytes(data)
+                entries.append({"name": clean, "size": len(data), "file": str(target)})
+    finally:
+        iso.close()
+    return entries
+
+
+_ARCHIVE_EXTRACTORS.update(zip=_zip_extract, **{"7z": _7z_extract},
+                           tar=_tar_extract, cab=_cab_extract, iso=_iso_extract)
+
+
 def extract_archive(path: Path, out_dir: Path, tries: list[dict[str, str]],
                     location: str = "document", name: str | None = None) -> dict[str, Any]:
-    """Extract a ZIP/7z (bounded), trying the candidates when it is encrypted."""
+    """Extract a ZIP/7z/tar/CAB/ISO (bounded), trying candidates when encrypted."""
     path = Path(path)
     det = detect(path)
     rec: dict[str, Any] = {"encrypted": bool(det["encrypted"]), "kind": det["kind"],
                            "detail": det["detail"], "decrypted": False, "entries": [],
                            "findings": [], "tried": 0}
-    if det["kind"] not in ("zip", "7z"):
-        rec["error"] = "not a ZIP/7z archive"
+    fn = _ARCHIVE_EXTRACTORS.get(det["kind"])
+    if fn is None:
+        rec["error"] = "not a supported archive/container"
         return rec
-    fn = _zip_extract if det["kind"] == "zip" else _7z_extract
     attempts = ([{"password": None, "source": "none"}] if not det["encrypted"]
                 else [t for t in tries if t["password"] != ""])
     last_err = ""

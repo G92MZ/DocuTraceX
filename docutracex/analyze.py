@@ -524,10 +524,11 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                 write_subresult(paths, "nested", nested_res)
                 ran.append("nested")
                 findings_total += nested_res.get("counts", {}).get("findings", 0)
-    elif family in ("zip", "7z"):
-        # Archive (a .zip/.7z upload, e.g. a malware drop): extract with bounds,
-        # with the analyst's password or the usual ones ("infected"...), and
-        # scan every entry recursively.
+    elif family in ("zip", "7z", "container"):
+        # Archive or container (.zip/.7z/.tar(.gz)/.cab/.iso/.img/.udf): extract
+        # with bounds (and the analyst's / usual passwords for encrypted ZIP/7z)
+        # and scan every entry recursively. Disk images are a common
+        # Mark-of-the-Web bypass carrying a LNK + payload.
         from . import nested
 
         def _archive() -> dict[str, Any]:
@@ -596,6 +597,28 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         write_subresult(paths, "java", jres)
         ran.append("java")
         findings_total += jres.get("counts", {}).get("findings", 0)
+        state = "completed"
+
+    elif family == "onenote":
+        # OneNote (.one/.onepkg): carve the embedded-file lures and scan them
+        # recursively (a fake "click to view" button hides an .hta/.vbs/.exe).
+        from . import nested
+        from .parsers import onenote
+
+        on = run("onenote: carve embedded FileDataStoreObject payloads",
+                 lambda: onenote.extract(original, paths.extracted_dir / "onenote"))
+        onfiles = on.pop("_files", [])
+        write_subresult(paths, "onenote", on)
+        ran.append("onenote")
+        findings_total += on.get("counts", {}).get("findings", 0)
+        items = [{"path": f, "filename": Path(n).name} for f, n in onfiles]
+        if items:
+            nres = run("nested: recursive scan of the embedded OneNote payloads",
+                       lambda: nested.scan_children(items, paths, unlock_ctx={"user": user_pw}))
+            if nres.get("tree"):
+                write_subresult(paths, "nested", nres)
+                ran.append("nested")
+                findings_total += nres.get("counts", {}).get("findings", 0)
         state = "completed"
 
     elif family == "shortcut":
@@ -795,7 +818,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto",
                "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole",
                "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules", "javascript", "rtf",
-               "powershell", "vbscript", "batch", "shortcut", "msi", "python", "java")
+               "powershell", "vbscript", "batch", "shortcut", "msi", "python", "java", "onenote")
 # Modules whose findings feed the consolidated view (includes derived ones).
 _COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file", "pyinstaller")
 
@@ -954,6 +977,10 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
     elif module == "java":
         from .parsers import java
         res = java.analyze(original, ed)
+    elif module == "onenote":
+        from .parsers import onenote
+        res = onenote.extract(original, ed / "onenote")
+        res.pop("_files", None)
     else:  # pragma: no cover
         raise ValueError(module)
 

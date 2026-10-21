@@ -108,6 +108,17 @@ Dropped/attached scripts whose intent only shows **after deobfuscation** — one
 
 > `.jar`/`.war`/`.ear` are ZIP packages, so they are extracted and every entry (including nested jars) is scanned recursively; loose `.class`/`.jsp` are analysed directly.
 
+## Containers and OneNote
+
+| File | What you should see |
+| --- | --- |
+| `sample_image.iso` | An ISO9660/Joliet disk image carrying `factura.pdf.lnk` + `instalar.bat` — the **Mark-of-the-Web bypass** pattern (mount, double-click the LNK). DocuTraceX extracts the image and scans both: the **Nested** tree shows the LNK (LOLBin + hidden window, its command through the scripting engine) and the batch dropper. |
+| `sample_cabinet.cab` | A Microsoft Cabinet holding the batch dropper and the PowerShell stage-2. The CAB is unpacked (stored/MSZIP) and each entry deobfuscated in **Nested** (Batch + PowerShell tabs). |
+| `sample_archive.tar.gz` | A gzip tarball of the obfuscated scripts — extracted and recursed like any archive. |
+| `sample_notes.one` | A **OneNote** section with two embedded `FileDataStoreObject` lures (an HTA and a VBS). The **OneNote** tab lists the carved payloads; they are then deobfuscated in **Nested** (VBScript/JavaScript/PowerShell). This is the "fake click-to-view button" technique. |
+
+> Containers (ISO/UDF images, CAB, tar/.gz/.bz2/.xz) and OneNote are all handled as **extract → recurse**: every carried file is scanned by the right engine, wherever it hides (standalone, in an email, or nested inside another container).
+
 ## Lab: test the network checks safely
 
 `lab/phish_lab.eml` (inside the archive) is the same campaign with its link and an attached login form pointing to a **local phishing-kit simulator**:

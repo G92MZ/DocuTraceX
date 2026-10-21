@@ -78,6 +78,8 @@ tools = [
     "pikepdf>=8.0",
     "pyzipper>=0.3.6",
     "py7zr>=0.20",
+    # Optical/disk images (ISO9660/Joliet/UDF) — Mark-of-the-Web bypass carriers.
+    "pycdlib>=1.14",
     # AI tab: MCP server (stdio) exposing the cases read-only to MCP clients.
     "mcp>=1.2",
 ]

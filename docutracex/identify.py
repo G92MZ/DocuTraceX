@@ -44,6 +44,13 @@ _EXT_FAMILY: dict[str, str] = {
     # Archives (attachments, malware drops): extracted and scanned recursively
     ".zip": "zip",
     ".7z": "7z",
+    # Containers: tarballs, Microsoft Cabinets and optical/disk images (ISO/UDF).
+    # Images especially are a Mark-of-the-Web bypass carrying a LNK + payload.
+    **{e: "container" for e in (
+        ".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz",  # tar / compressed streams
+        ".cab",                                                  # Microsoft Cabinet
+        ".iso", ".img", ".udf",                                  # optical / disk images
+    )},
     # Scripting files: analysed by the scripting engine (deobfuscation + rules)
     **{e: "scripting" for e in (
         ".js", ".jse", ".mjs",            # JScript / JavaScript
@@ -62,6 +69,9 @@ _EXT_FAMILY: dict[str, str] = {
     # Java archives and class/JSP files: ZIP containers extracted + recursed,
     # with Java-aware analysis (manifest, constant pool, JSP, signing).
     **{e: "java" for e in (".jar", ".war", ".ear", ".class", ".jsp", ".jspx", ".jspf")},
+    # OneNote: embedded-file lures carved out and scanned recursively.
+    ".one": "onenote",
+    ".onepkg": "onenote",
     # Windows binaries / installers: .msi gets real OLE analysis; PE images
     # (.exe/.dll/...) are categorised and triaged, not statically unpacked.
     **{e: "binary" for e in (
@@ -219,6 +229,12 @@ def detected_family(mime: str, description: str) -> str | None:
         return "java"
     if "compiled java class" in desc or "java class data" in desc:
         return "java"
+    if ("iso 9660" in desc or "udf filesystem" in desc or "microsoft cabinet" in desc
+            or "posix tar" in desc or "tar archive" in desc or "gzip compressed" in desc
+            or "bzip2 compressed" in desc or "xz compressed" in desc):
+        return "container"
+    if "onenote" in desc or "one note" in desc:
+        return "onenote"
     if mime.startswith("text/"):
         return "text"
     return None
@@ -285,6 +301,16 @@ def classify_discrepancy(
         # .jsp is text; libmagic sees text/* — consistent.
         status = _MATCH
         detail = "Text-based JSP consistent with the extension."
+    elif exp == "container" and det == "container":
+        status = _MATCH
+        detail = "Detected as a container consistent with the extension."
+    elif exp == "container" and (det in ("zip", "7z") or mime in _GENERIC):
+        status = _INCONCLUSIVE
+        detail = "Detected as a generic archive/container consistent with the extension."
+    elif exp == "onenote" and (det == "onenote" or mime in _GENERIC):
+        status = _MATCH if det == "onenote" else _INCONCLUSIVE
+        detail = ("Detected as a OneNote document." if det == "onenote"
+                  else "Detected as generic data consistent with a OneNote document.")
     else:
         # id: gmzpt
         status = _MISMATCH
