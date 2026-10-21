@@ -99,6 +99,15 @@ Dropped/attached scripts whose intent only shows **after deobfuscation** — one
 
 > `.exe`/`.dll` and other PE images are **categorised and triaged** (type, architecture, a "use a dedicated RE/AV tool" note) and keep the generic file record (hashes, YARA, report) — they are not statically unpacked.
 
+## Java
+
+| File | What you should see |
+| --- | --- |
+| `sample_app.jar` | An executable JAR. The **Java** tab shows the MANIFEST (`Main-Class`, and a `Premain-Class` → **Java agent** finding) and the bundled `Shell.class`, whose constant pool references `Runtime.exec`, `java.net.URL.openStream`, `ScriptEngineManager`, `defineClass`, `javax.crypto` and a stage URL — rules fire for exec/download/script-engine/defineClass/base64/crypto and the attack chain. With **CFR** + a JVM the class is decompiled to source; otherwise the constant pool carries the signal. The archive is also unpacked into the **Nested** tree. |
+| `sample_webshell.war` | A WAR with a **JSP webshell** (`request.getParameter("cmd")` → `Runtime.getRuntime().exec`), a `web.xml` servlet mapping and a bundled `Shell.class`. The **Java** tab flags the JSP input + exec and the web descriptor; entries are recursed in **Nested**. |
+
+> `.jar`/`.war`/`.ear` are ZIP packages, so they are extracted and every entry (including nested jars) is scanned recursively; loose `.class`/`.jsp` are analysed directly.
+
 ## Lab: test the network checks safely
 
 `lab/phish_lab.eml` (inside the archive) is the same campaign with its link and an attached login form pointing to a **local phishing-kit simulator**:

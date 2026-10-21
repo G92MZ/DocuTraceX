@@ -577,6 +577,28 @@ def run_checks() -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
 
+    # CFR (.class decompiler) — optional; the Java engine degrades to
+    # constant-pool mining when it, or a JVM, is absent.
+    try:
+        from .config import settings as _sj
+        cfr = _sj.cfr_jar()
+        java = _sj.java_executable()
+        ok = bool(cfr and java)
+        detail = ("CFR + JVM present" if ok else
+                  "CFR jar missing" if not cfr else "no JVM found to run CFR")
+        checks.append(Check(
+            category="External tools",
+            name="CFR (.class decompiler)",
+            status="ok" if ok else "warn",
+            detail=detail,
+            remedy="" if ok else
+                   "run scripts/setup_portable_python.py (downloads cfr.jar); needs a JVM on PATH/JAVA_HOME; "
+                   "without it .class is analysed from the constant pool, not decompiled",
+            purpose="Decompiles .class back to Java source (jar/war and loose classes)",
+        ))
+    except Exception:  # noqa: BLE001
+        pass
+
     # Didier Stevens oledump plugins (presence).
     try:
         from .parsers.didier import PLUGINS, didier_dir

