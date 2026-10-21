@@ -33,29 +33,9 @@ python run.py                 # from then on — open http://127.0.0.1:8000
 python run.py --port 8001     # run next to WinHound/Longanizer on another port
 ```
 
-**Two Pythons, on purpose.** `install.py` installs only the web service on
-**your** Python (`fastapi`/`uvicorn`/`jinja2`/`python-multipart` — nothing
-native or heavy), so your machine's Python is **never a constraint**. It then
-provisions a **portable** Python under `tools/` and installs the whole analysis
-toolchain into *that* (oletools, YARA, STPyV8, Playwright, pikepdf, ViperMonkey
-via PyPy 2.7, the Didier Stevens scripts, OfficeMalScanner, the IP database and
-Chromium for screenshots — see `scripts/setup_portable_python.py`). None of it
-touches your environment. On Windows, point it at your FLARE-VM and it just works.
-
 > Prefer pip? `pip install -r requirements.txt` installs the web service, and
 > `python run.py` heals the portable toolchain on start. `install.py --web-only`
 > does the former without the portable; `install.py --force` reprovisions it.
-
-> 🧪 **Try it now:** `samples/samples.zip` (password **`infected`**, so antivirus
-> engines leave it alone — open it with 7-Zip/Windows, or run
-> `python scripts/make_samples.py --extract`) holds one realistic, **benign** sample per
-> supported type, all telling the same story — an invoice-fraud campaign that
-> impersonates a supplier: a `.docm` with a VBA downloader + DDEAUTO, an `.xlsm`
-> with a very-hidden Excel 4.0 macro sheet, an RTF disguised as `.doc` with
-> Equation Editor / OLE2Link objects, a PDF with obfuscated JavaScript, a QR code
-> and an embedded macro document, and the phishing `.eml`/`.msg` that carries
-> them (broken DKIM, wrapped look-alike link, HTML smuggling…). Every indicator
-> is inert (`*.example`, RFC 5737 IPs). See [`samples/README.md`](samples/README.md).
 
 ## 🔄 Updating
 
@@ -71,6 +51,18 @@ python update.py --yes      # update without asking
 ```
 
 (Cloned with git? `git pull` works too.)
+
+## 🧪 Samples
+
+`samples/samples.zip` (password **`infected`**, so antivirus engines leave it
+alone — open it with 7-Zip/Windows, or run `python scripts/make_samples.py --extract`)
+holds one realistic, **benign** sample per supported type, all telling the same
+story: an invoice-fraud campaign impersonating a supplier — a `.docm` with a VBA
+downloader + DDEAUTO, an `.xlsm` with a very-hidden Excel 4.0 macro sheet, an RTF
+disguised as `.doc` with Equation Editor / OLE2Link objects, a PDF with obfuscated
+JavaScript, a QR code and an embedded macro document, and the phishing `.eml`/`.msg`
+that carries them (broken DKIM, wrapped look-alike link, HTML smuggling…). Every
+indicator is inert (`*.example`, RFC 5737 IPs). See [`samples/README.md`](samples/README.md).
 
 ## 🧭 How you use it
 
@@ -179,7 +171,7 @@ key is kept in your browser (localStorage), not on the server.
 - **Nothing runs for real.** No macro, formula, PDF action, link, media or attachment is ever executed by Office, a browser or the OS. The only exceptions are *emulation*: ViperMonkey (a VBA interpreter written in Python) and the STPyV8 sandbox (a bare V8 with no file system, network or processes, only recording stubs) — both in a separate process with a time limit.
 - **Offline unless you ask.** Analysis never touches the network. Network access happens only for the one-time provisioning, the **network checks you launch**, and the **AI endpoint you configure** when you ask it something.
 - **Your data lives in** `cases/` (per-case evidence, results, marks, report), `yara/` (your rules), `config/` (settings such as the proxy) and `tools/` (the portable runtime) — all git-ignored and preserved across updates.
-- **Two interpreters by design:** the web app on your Python, the analysis tools on the portable one (plus PyPy 2.7 just for ViperMonkey), so a messy tool dependency never touches your environment.
+- **Two interpreters by design:** `install.py` puts only the web service on **your** Python (`fastapi`/`uvicorn`/`jinja2`/`python-multipart` — nothing native or heavy), so your machine's Python is **never a constraint**, and provisions a **portable** Python under `tools/` for the whole analysis toolchain (oletools, YARA, STPyV8, Playwright, pikepdf, the Didier Stevens scripts, OfficeMalScanner, Chromium…), plus PyPy 2.7 just for ViperMonkey — see `scripts/setup_portable_python.py`. A messy tool dependency never touches your environment.
 - **Encrypted files:** nothing is brute-forced — only your password, the ones the carrying email gives, the empty PDF password and the well-known defaults are tried (plus every word of the email, only when you press the button). The decrypted copy goes to `extracted/decrypted/` (archives to `extracted/archive/`, with limits on entries and size against archive bombs); the password you type is kept in the case folder (`password.json`), never in `case.json`.
 - **Licences:** DocuTraceX is Apache-2.0 and ships no GPL code. GPL/LGPL tools (pcodedmp, peepdf-3, py7zr) are installed into the portable at provisioning time.
 
