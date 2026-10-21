@@ -522,6 +522,38 @@ def run_checks() -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
 
+    # webcrack (JS deobfuscation) on the portable Node.
+    try:
+        from .parsers.js_webcrack import status as webcrack_status
+        wc = webcrack_status()
+        checks.append(Check(
+            category="External tools",
+            name="webcrack (Node)",
+            status="ok" if wc["available"] else "warn",
+            detail=wc["detail"],
+            remedy="" if wc["available"] else
+                   "run scripts/setup_portable_python.py (portable Node + webcrack; isolated-vm needs build tools)",
+            purpose="JS deobfuscation: flattens obfuscator.io string-array/rotator and bundles",
+        ))
+    except Exception:  # noqa: BLE001
+        pass
+
+    # box-ps (PowerShell sandbox) on portable PowerShell Core.
+    try:
+        from .parsers.boxps import boxps_status
+        bp = boxps_status()
+        checks.append(Check(
+            category="External tools",
+            name="box-ps (PowerShell sandbox)",
+            status="ok" if bp["available"] else "warn",
+            detail=bp["detail"],
+            remedy="" if bp["available"] else
+                   "run scripts/setup_portable_python.py (PowerShell Core + box-ps)",
+            purpose="PowerShell emulation: commands, downloads and files the script would produce",
+        ))
+    except Exception:  # noqa: BLE001
+        pass
+
     # Didier Stevens oledump plugins (presence).
     try:
         from .parsers.didier import PLUGINS, didier_dir

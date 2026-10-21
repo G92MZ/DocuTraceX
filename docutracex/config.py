@@ -76,5 +76,51 @@ class Settings:
                 return c
         return None
 
+    def node_executable(self) -> Path | None:
+        """Portable Node.js under ``tools/node/`` (for webcrack — JS
+        deobfuscation). ``DOCUTRACEX_NODE`` overrides the location; a Node on
+        PATH is a last resort (handled by the caller, not here)."""
+        env = os.environ.get("DOCUTRACEX_NODE")
+        if env and Path(env).is_file():
+            return Path(env)
+        base = self.tools_dir / "node"
+        for c in (base / "node.exe", base / "bin" / "node", base / "node"):
+            if c.is_file():
+                return c
+        for pattern in ("node*/bin/node", "node*/node.exe"):
+            for p in sorted(base.glob(pattern)) + sorted(self.tools_dir.glob(pattern)):
+                if p.is_file():
+                    return p
+        return None
+
+    def webcrack_dir(self) -> Path | None:
+        """The webcrack install under ``tools/webcrack/`` (its node_modules).
+        ``DOCUTRACEX_WEBCRACK`` overrides the location."""
+        env = os.environ.get("DOCUTRACEX_WEBCRACK")
+        base = Path(env) if env else self.tools_dir / "webcrack"
+        return base if (base / "node_modules" / "webcrack").is_dir() else None
+
+    def pwsh_executable(self) -> Path | None:
+        """Portable PowerShell Core under ``tools/pwsh/`` (for the box-ps
+        PowerShell sandbox). ``DOCUTRACEX_PWSH`` overrides the location."""
+        env = os.environ.get("DOCUTRACEX_PWSH")
+        if env and Path(env).is_file():
+            return Path(env)
+        base = self.tools_dir / "pwsh"
+        for c in (base / "pwsh.exe", base / "pwsh", base / "bin" / "pwsh"):
+            if c.is_file():
+                return c
+        return None
+
+    def boxps_script(self) -> Path | None:
+        """box-ps entry script under ``tools/boxps/`` (GPL-3.0, provisioned at
+        setup, never shipped). ``DOCUTRACEX_BOXPS`` overrides the location."""
+        env = os.environ.get("DOCUTRACEX_BOXPS")
+        base = Path(env) if env else self.tools_dir / "boxps"
+        for c in (base / "box-ps.ps1", base / "BoxPS.ps1"):
+            if c.is_file():
+                return c
+        return None
+
 
 settings = Settings()

@@ -427,7 +427,7 @@ function pivotTarget(f, ids) {
   if (src === "pdf") return has("pdf") ? "pdf" : null;
   if (src === "pdftools") return has("pdftools") ? "pdftools" : null;
   if (src === "javascript") return has("javascript") ? "javascript" : null;
-  if (src === "powershell") return has("powershell") ? "powershell" : null;
+  if (src === "powershell" || src === "boxps") return has("powershell") ? "powershell" : null;
   if (src === "vbscript") return has("vbscript") ? "vbscript" : null;
   if (src === "batch") return has("batch") ? "batch" : null;
   if (src === "rtf") {
@@ -1237,6 +1237,17 @@ function paneCodeLanguage(mod, opts) {
         <td class="${h.severity === "high" ? "bad-text" : ""}">${escapeHtml(h.label)}</td>
         <td class="mono">${escapeHtml(h.line)}</td>
         <td>${addMarkCell(opts.markKind || "code_hit", `${escapeHtml(opts.label || "code")} (${sc.origin}): ${h.label} — line ${h.line_no}`, loc, h.line)}</td></tr>`).join(""));
+    }
+    if (sc.sandbox && (sc.sandbox.actions || []).length) {
+      body += `<p class="hint-line"><strong>Sandbox (box-ps)</strong> — emulated behaviour${sc.sandbox.error ? " · " + escapeHtml(sc.sandbox.error) : ""}</p>`;
+      body += table(["Behaviours", "Line"], sc.sandbox.actions.slice(0, 30).map((a) => `<tr>
+        <td class="${(a.behaviours || []).join(" ").match(/network|exec|file|inject|registry|persist/i) ? "bad-text" : ""}">${escapeHtml((a.behaviours || []).join(", "))}</td>
+        <td class="mono">${escapeHtml(a.line || "")}</td></tr>`).join(""));
+      if ((sc.sandbox.iocs || []).length) {
+        body += `<p class="hint-line">Sandbox IOCs</p><pre class="text-sample">${escapeHtml(sc.sandbox.iocs.join("\n"))}</pre>`;
+      }
+    } else if (sc.sandbox && sc.sandbox.error) {
+      body += `<p class="hint-line">Sandbox (box-ps): ${escapeHtml(sc.sandbox.error)}</p>`;
     }
     if (sc.code_is_deobfuscated) {
       const dTrunc = sc.code_truncated ? (sc.code_file_deob ? ` (preview truncated — download has the full ${sc.deob_size || 0} chars)` : " (truncated)") : "";
