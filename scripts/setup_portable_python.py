@@ -439,6 +439,226 @@ def _chromium_ok() -> bool:
     return PLAYWRIGHT_DIR.is_dir() and any(PLAYWRIGHT_DIR.glob("chromium*"))
 
 
+# --- Node.js + webcrack (JS deobfuscation) ----------------------------------
+NODE_DIR = TOOLS / "node"
+NODE_VERSION = "22.11.0"                       # LTS; MIT
+NODE_BASE = "https://nodejs.org/dist/"
+WEBCRACK_DIR = TOOLS / "webcrack"
+WEBCRACK_VERSION = "2.16.0"                     # MIT
+
+
+def _node_asset() -> tuple[str, str]:
+    arch = "x64" if _arch() == "x86_64" else "arm64"
+    v = NODE_VERSION
+    if sys.platform.startswith("win"):
+        name = f"node-v{v}-win-{arch}.zip"
+    elif sys.platform == "darwin":
+        name = f"node-v{v}-darwin-{arch}.tar.gz"
+    else:
+        name = f"node-v{v}-linux-{arch}.tar.xz"
+    return name, f"{NODE_BASE}v{v}/{name}"
+
+
+def node_executable() -> Path | None:
+    for c in (NODE_DIR / "node.exe", NODE_DIR / "bin" / "node", NODE_DIR / "node"):
+        if c.is_file():
+            return c
+    for p in sorted(NODE_DIR.glob("node*/bin/node")) + sorted(NODE_DIR.glob("node*/node.exe")):
+        if p.is_file():
+            return p
+    return None
+
+
+def _npm_cmd(node: Path) -> list[str]:
+    base = node.parent
+    cli = base / "node_modules" / "npm" / "bin" / "npm-cli.js"
+    if not cli.is_file():
+        cli = NODE_DIR / "lib" / "node_modules" / "npm" / "bin" / "npm-cli.js"
+    if cli.is_file():
+        return [str(node), str(cli)]
+    return [str(base / ("npm.cmd" if sys.platform.startswith("win") else "npm"))]
+
+
+def install_node() -> bool:
+    """Portable Node.js into tools/node/ (flattening its top-level folder)."""
+    if node_executable():
+        return True
+    name, url = _node_asset()
+    print(f"[>] Provisioning portable Node.js (for webcrack) into tools/node/: {name}")
+    try:
+        data = _get(url)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] Could not download Node ({exc}); webcrack stays disabled.")
+        return False
+    import io
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        try:
+            if name.endswith(".zip"):
+                with zipfile.ZipFile(io.BytesIO(data)) as z:
+                    z.extractall(tdp)
+            else:
+                mode = "r:xz" if name.endswith(".xz") else "r:gz"
+                with tarfile.open(fileobj=io.BytesIO(data), mode=mode) as t:
+                    try:
+                        t.extractall(tdp, filter="tar")
+                    except TypeError:
+                        t.extractall(tdp)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[!] Could not extract Node: {exc}")
+            return False
+        tops = [p for p in tdp.iterdir() if p.is_dir()]
+        if len(tops) != 1:
+            print("[!] Unexpected Node archive layout.")
+            return False
+        if NODE_DIR.exists():
+            shutil.rmtree(NODE_DIR)
+        shutil.move(str(tops[0]), str(NODE_DIR))
+    exe = node_executable()
+    if exe is None:
+        print("[!] Node extracted but its executable was not found.")
+        return False
+    print(f"[+] Node at {exe}")
+    return True
+
+
+def _webcrack_ok() -> bool:
+    return (WEBCRACK_DIR / "node_modules" / "webcrack").is_dir()
+
+
+def install_webcrack() -> bool:
+    """npm-install webcrack (MIT) into tools/webcrack/. It pulls isolated-vm,
+    which builds from source — needs Node build tools on the host; on failure
+    webcrack stays disabled and the pure-Python JS cascade is the fallback."""
+    if _webcrack_ok():
+        return True
+    node = node_executable()
+    if node is None and not install_node():
+        return False
+    node = node_executable()
+    WEBCRACK_DIR.mkdir(parents=True, exist_ok=True)
+    (WEBCRACK_DIR / "package.json").write_text('{"private":true}\n', encoding="utf-8")
+    print("[>] Installing webcrack into tools/webcrack/ (npm; builds isolated-vm)")
+    try:
+        r = subprocess.run(_npm_cmd(node) + ["install", "--no-audit", "--no-fund",
+                                             "--prefix", str(WEBCRACK_DIR),
+                                             f"webcrack@{WEBCRACK_VERSION}"],
+                           capture_output=True, text=True, timeout=900)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] webcrack install failed ({exc}); JS falls back to the Python cascade.")
+        return False
+    if r.returncode == 0 and _webcrack_ok():
+        print("[+] webcrack installed")
+        return True
+    print(f"[!] webcrack install failed (likely missing build tools for isolated-vm): "
+          f"{(r.stderr or '').strip()[-300:]}")
+    return False
+
+
+# --- PowerShell Core + box-ps (PowerShell sandbox) --------------------------
+PWSH_DIR = TOOLS / "pwsh"
+PWSH_VERSION = "7.4.6"                          # LTS; MIT
+PWSH_BASE = "https://github.com/PowerShell/PowerShell/releases/download/"
+BOXPS_DIR = TOOLS / "boxps"
+BOXPS_ZIP = "https://github.com/ConnorShride/box-ps/archive/refs/heads/master.zip"  # GPL-3.0
+
+
+def _pwsh_asset() -> str:
+    v, arch = PWSH_VERSION, ("x64" if _arch() == "x86_64" else "arm64")
+    if sys.platform.startswith("win"):
+        return f"PowerShell-{v}-win-{arch}.zip"
+    if sys.platform == "darwin":
+        return f"powershell-{v}-osx-{arch}.tar.gz"
+    return f"powershell-{v}-linux-{arch}.tar.gz"
+
+
+def pwsh_executable() -> Path | None:
+    for c in (PWSH_DIR / "pwsh.exe", PWSH_DIR / "pwsh", PWSH_DIR / "bin" / "pwsh"):
+        if c.is_file():
+            return c
+    return None
+
+
+def install_pwsh() -> bool:
+    """Portable PowerShell Core into tools/pwsh/ (self-contained, MIT)."""
+    if pwsh_executable():
+        return True
+    name = _pwsh_asset()
+    url = f"{PWSH_BASE}v{PWSH_VERSION}/{name}"
+    print(f"[>] Provisioning PowerShell Core (for box-ps) into tools/pwsh/: {name}")
+    try:
+        data = _get(url)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] Could not download PowerShell ({exc}); box-ps stays disabled.")
+        return False
+    import io
+    PWSH_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        if name.endswith(".zip"):
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                z.extractall(PWSH_DIR)
+        else:
+            with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as t:
+                try:
+                    t.extractall(PWSH_DIR, filter="tar")
+                except TypeError:
+                    t.extractall(PWSH_DIR)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] Could not extract PowerShell: {exc}")
+        return False
+    exe = pwsh_executable()
+    if exe is None:
+        print("[!] PowerShell extracted but pwsh was not found.")
+        return False
+    if not sys.platform.startswith("win"):
+        try:
+            exe.chmod(0o755)
+        except OSError:
+            pass
+    print(f"[+] pwsh at {exe}")
+    return True
+
+
+def _boxps_ok() -> bool:
+    return any((BOXPS_DIR / n).is_file() for n in ("box-ps.ps1", "BoxPS.ps1"))
+
+
+def install_boxps() -> bool:
+    """box-ps (GPL-3.0) into tools/boxps/. Provisioned here, never shipped in
+    this repository; invoked as a separate process by the pwsh runtime."""
+    if _boxps_ok():
+        return True
+    if pwsh_executable() is None and not install_pwsh():
+        return False
+    print("[>] Provisioning box-ps (PowerShell sandbox) into tools/boxps/")
+    try:
+        data = _get(BOXPS_ZIP)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] Could not download box-ps ({exc}); the PowerShell sandbox stays disabled.")
+        return False
+    import io
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                z.extractall(tdp)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[!] Could not extract box-ps: {exc}")
+            return False
+        tops = [p for p in tdp.iterdir() if p.is_dir()]
+        if len(tops) != 1:
+            print("[!] Unexpected box-ps archive layout.")
+            return False
+        if BOXPS_DIR.exists():
+            shutil.rmtree(BOXPS_DIR)
+        shutil.move(str(tops[0]), str(BOXPS_DIR))
+    if _boxps_ok():
+        print(f"[+] box-ps at {BOXPS_DIR}")
+        return True
+    print("[!] box-ps extracted but its entry script was not found.")
+    return False
+
+
 def verify() -> None:
     py = _portable_python()
     print("[>] Verifying the portable runtime")
@@ -477,6 +697,8 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
     install_vipermonkey()
     install_ipdb()
     install_chromium()
+    install_webcrack()   # portable Node + webcrack (JS deobfuscation)
+    install_boxps()      # PowerShell Core + box-ps (PowerShell sandbox)
     verify()
 
 
