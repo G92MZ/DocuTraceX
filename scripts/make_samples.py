@@ -836,9 +836,84 @@ def webshell_war() -> bytes:
     return buf.getvalue()
 
 
+def _build_cab(files: dict[str, bytes]) -> bytes:
+    """A minimal uncompressed (stored) Microsoft Cabinet with one folder."""
+    stream = b""
+    cffiles = b""
+    for name, data in files.items():
+        cffiles += struct.pack("<IIHHHH", len(data), len(stream), 0, 0, 0, 0) + name.encode() + b"\x00"
+        stream += data
+    cfdata = struct.pack("<IHH", 0, len(stream), len(stream)) + stream     # stored, single block
+    coff_files = 36 + 8
+    coff_data = coff_files + len(cffiles)
+    cffolder = struct.pack("<IHH", coff_data, 1, 0)                        # coffCabStart, cCFData, typeComp=0
+    total = coff_data + len(cfdata)
+    header = b"MSCF" + struct.pack("<IIII", 0, total, 0, coff_files) + \
+        struct.pack("<IBBHHHHH", 0, 3, 1, 1, len(files), 0, 0, 0)
+    return header + cffolder + cffiles + cfdata
+
+
+def cabinet_cab() -> bytes:
+    """A .cab carrying the batch dropper and the PowerShell stage-2."""
+    return _build_cab({"instalador.bat": dropper_bat(), "actualizador.ps1": stage2_ps1()})
+
+
+def optical_image_iso() -> bytes:
+    """An .iso (Joliet) carrying the shortcut lure and the batch dropper — the
+    Mark-of-the-Web bypass pattern (double-click the LNK on a mounted image)."""
+    import io
+
+    import pycdlib
+
+    iso = pycdlib.PyCdlib()
+    iso.new(joliet=3, vol_ident="FACTURA")
+    for iso_name, joliet_name, data in (
+        ("FACTURA.LNK;1", "/factura.pdf.lnk", shortcut_lnk()),
+        ("INSTALAR.BAT;1", "/instalar.bat", dropper_bat()),
+    ):
+        iso.add_fp(io.BytesIO(data), len(data), "/" + iso_name, joliet_path=joliet_name)
+    out = io.BytesIO()
+    iso.write_fp(out)
+    iso.close()
+    return out.getvalue()
+
+
+def tarball_tgz() -> bytes:
+    """A .tar.gz bundling the obfuscated scripts (gzip-compressed tarball)."""
+    import io
+    import tarfile
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name, data in (("actualizador.ps1", stage2_ps1()), ("factura.pdf.vbs", dropper_vbs())):
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+def onenote_one() -> bytes:
+    """A minimal OneNote (.one) section with two embedded FileDataStoreObject
+    lures (an HTA and a VBS) carved by the onenote parser. Ininert payloads."""
+    one_magic = bytes((0xE4, 0x52, 0x5C, 0x7B, 0x8C, 0xD8, 0xA7, 0x4D,
+                       0xAE, 0xB1, 0x53, 0x78, 0xD0, 0x29, 0x96, 0xD3))
+    guid_h = bytes((0xE7, 0x16, 0xE3, 0xBD, 0x65, 0x26, 0x11, 0x45,
+                    0xA4, 0xC4, 0x8D, 0x4D, 0x0B, 0x7A, 0x9E, 0xAC))
+    guid_f = bytes((0x22, 0xA7, 0xFB, 0x71, 0x79, 0x0F, 0x0B, 0x4A,
+                    0xBB, 0x13, 0x89, 0x92, 0x56, 0x42, 0x6B, 0x24))
+
+    def fds(data: bytes) -> bytes:
+        obj = guid_h + struct.pack("<Q", len(data)) + b"\x00" * 4 + b"\x00" * 8 + data
+        obj += b"\x00" * ((8 - len(obj) % 8) % 8)               # align to 8 bytes
+        return obj + guid_f
+
+    header = one_magic + b"\x00" * 1024                          # inert ONESTORE-ish prologue
+    return header + fds(loader_hta()) + fds(dropper_vbs())
+
+
 def dropper_bundle_zip() -> bytes:
-    """A plain .zip bundling the obfuscated scripts, shortcuts, Python and Java, to
-    exercise the nested (recursive) path: each child is parsed on its own."""
+    """A plain .zip bundling the obfuscated scripts, shortcuts, Python, Java and a
+    OneNote lure, to exercise the nested (recursive) path on every engine."""
     import io
     import zipfile
 
@@ -856,6 +931,7 @@ def dropper_bundle_zip() -> bytes:
         zf.writestr("visor.py", dropper_py())
         zf.writestr("visor.pyc", dropper_pyc())
         zf.writestr("plugin.jar", malicious_jar())
+        zf.writestr("notas.one", onenote_one())
     return buf.getvalue()
 
 
@@ -875,6 +951,8 @@ def build_all() -> dict[str, bytes]:
         "sample_dropper.py": dropper_py(), "sample_dropper.pyc": dropper_pyc(),
         "sample_pyinstaller.exe": pyinstaller_exe(),
         "sample_app.jar": malicious_jar(), "sample_webshell.war": webshell_war(),
+        "sample_cabinet.cab": cabinet_cab(), "sample_image.iso": optical_image_iso(),
+        "sample_archive.tar.gz": tarball_tgz(), "sample_notes.one": onenote_one(),
         "lab/dropper_bundle.zip": dropper_bundle_zip(),
     }
     for ext in X_CT:

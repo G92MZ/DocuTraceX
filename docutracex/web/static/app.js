@@ -11,7 +11,12 @@ const FORMATS = [
   { name: "PDF", color: "#c0392b", glyph: "PDF", exts: [".pdf"] },
   { name: "Email", color: "#7f93ad", glyph: "mail", exts: [".eml", ".emlx", ".msg"] },
   { name: "RTF", color: "#6c5ce7", glyph: "RTF", exts: [".rtf"] },
-  { name: "Archive", color: "#9a7b4f", glyph: "ZIP", exts: [".zip", ".7z"] },
+  { name: "Archive", color: "#9a7b4f", glyph: "ZIP",
+    exts: [".zip", ".7z", ".tar", ".gz", ".cab", ".iso", ".img"],
+    title: "Archives and containers — ZIP/7z, tar(.gz), Microsoft Cabinet and ISO/disk images (a Mark-of-the-Web bypass): extracted and scanned recursively" },
+  { name: "OneNote", color: "#7719aa", glyph: "ONE",
+    exts: [".one", ".onepkg"],
+    title: "OneNote notebooks: embedded-file lures (fake 'click to view' hiding an .hta/.vbs/.exe) carved out and scanned recursively" },
   { name: "Scripting files", color: "#d9a441", glyph: "SH",
     exts: [".js", ".jse", ".vbs", ".vbe", ".ps1", ".psm1", ".bat", ".cmd", ".hta", ".wsf", ".sct", ".html", ".svg", ".mht", ".py", ".pyc"],
     title: "JavaScript, VBScript, PowerShell, batch, HTA/WSF/HTML and Python (.py/.pyc: decompiled/disassembled): deobfuscated and scanned for malicious behaviour" },
@@ -441,6 +446,7 @@ function pivotTarget(f, ids) {
   if (src === "batch") return has("batch") ? "batch" : null;
   if (src === "python" || src === "pyinstaller") return has("python") ? "python" : (has("binary") ? "binary" : null);
   if (src === "java") return has("java") ? "java" : null;
+  if (src === "onenote") return has("onenote") ? "onenote" : null;
   if (src === "rtf") {
     if (loc.startsWith("object")) return has("rtfobjects") ? "rtfobjects" : null;
     if (loc.startsWith("field") || loc.includes("template") || loc.includes("docvar")) return has("rtftext") ? "rtftext" : null;
@@ -1571,6 +1577,18 @@ function paneMsi(msim) {
   return `<p class="hint-line">Windows Installer / PE binary analysis.</p>${parts}`;
 }
 
+function paneOnenote(onm) {
+  const rows = (onm.embedded || []).map((e) => `<tr>
+    <td class="mono">${escapeHtml(e.name || "")}</td>
+    <td>${escapeHtml(e.ext || "")}</td>
+    <td>${e.size != null ? escapeHtml(String(e.size)) : ""}</td></tr>`).join("");
+  const table = rows ? `<table class="cases"><thead><tr><th>Embedded file</th><th>Type</th><th>Size</th></tr></thead>
+    <tbody>${rows}</tbody></table>` : "";
+  return `<p class="hint-line">OneNote lure — embedded files carved from the notebook and scanned in the
+    <strong>Nested</strong> tree (a fake "click to view" button hides these).</p>
+    ${netFindingsList(onm.findings || [])}${table}`;
+}
+
 function paneJava(jvm) {
   const mf = jvm.manifest || {};
   const sign = jvm.signing || {};
@@ -1986,6 +2004,10 @@ async function openComponents(analysisId, keepTab) {
     const pim = mods.pyinstaller;
     if (pim && pim.is_pyinstaller) {
       sections.push({ id: "pyinstaller", label: "PyInstaller", html: panePyinstaller(pim) });
+    }
+    const onm = mods.onenote;
+    if (onm && onm.is_onenote) {
+      sections.push({ id: "onenote", label: `OneNote (${(onm.embedded || []).length})`, html: paneOnenote(onm) });
     }
     const jvm = mods.java;
     if (jvm && (jvm.kind || (jvm.scripts || []).length || (jvm.findings || []).length)) {

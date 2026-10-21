@@ -60,7 +60,7 @@ def test_bundle_zip_bundles_every_script_engine() -> None:
             "factura_visor.js", "visor_seguro.js", "actualizador.ps1",
             "factura.pdf.vbs", "instalador.bat", "factura.hta",
             "factura.pdf.lnk", "factura.url", "instalador.msi",
-            "visor.py", "visor.pyc", "plugin.jar",
+            "visor.py", "visor.pyc", "plugin.jar", "notas.one",
         }
 
 
