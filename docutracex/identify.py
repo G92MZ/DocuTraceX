@@ -53,6 +53,8 @@ _EXT_FAMILY: dict[str, str] = {
         ".html", ".htm", ".svg", ".mht", ".mhtml",  # markup carrying script
         ".ps1", ".psm1", ".psd1",         # PowerShell
         ".bat", ".cmd",                   # batch / cmd
+        ".py", ".pyw",                    # Python source
+        ".pyc", ".pyo",                   # Python byte-compiled
     )},
     # Windows shortcuts: analysed by the shortcut engine (target + metadata,
     # command fed to the scripting engine)
@@ -208,6 +210,8 @@ def detected_family(mime: str, description: str) -> str | None:
         return "shortcut"
     if "pe32" in desc or "ms-dos executable" in desc or "msi installer" in desc or "windows installer" in desc:
         return "binary"
+    if "python" in desc and ("byte-compiled" in desc or "script" in desc):
+        return "scripting"
     if mime.startswith("text/"):
         return "text"
     return None

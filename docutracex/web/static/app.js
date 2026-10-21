@@ -13,14 +13,14 @@ const FORMATS = [
   { name: "RTF", color: "#6c5ce7", glyph: "RTF", exts: [".rtf"] },
   { name: "Archive", color: "#9a7b4f", glyph: "ZIP", exts: [".zip", ".7z"] },
   { name: "Scripting files", color: "#d9a441", glyph: "SH",
-    exts: [".js", ".jse", ".vbs", ".vbe", ".ps1", ".psm1", ".bat", ".cmd", ".hta", ".wsf", ".sct", ".html", ".svg", ".mht"],
-    title: "JavaScript, VBScript, PowerShell, batch, HTA/WSF/HTML: deobfuscated and scanned for malicious behaviour" },
+    exts: [".js", ".jse", ".vbs", ".vbe", ".ps1", ".psm1", ".bat", ".cmd", ".hta", ".wsf", ".sct", ".html", ".svg", ".mht", ".py", ".pyc"],
+    title: "JavaScript, VBScript, PowerShell, batch, HTA/WSF/HTML and Python (.py/.pyc: decompiled/disassembled): deobfuscated and scanned for malicious behaviour" },
   { name: "Shortcuts", color: "#2aa198", glyph: "LNK",
     exts: [".lnk", ".url", ".website"],
     title: "Windows shortcuts: target, arguments and metadata parsed; the launched command runs through the scripting engine (LOLBins, hidden windows, UNC icon NTLM leaks, remote-file URLs)" },
   { name: "Binaries / PE", color: "#b58900", glyph: "MSI",
     exts: [".msi", ".exe", ".dll", ".scr", ".sys", ".ocx", ".cpl"],
-    title: "MSI installers get real analysis (CustomAction/sequence/Binary tables, string mining into the scripting engine, embedded CABs); PE images (.exe/.dll…) are categorised and triaged" },
+    title: "MSI installers get real analysis (CustomAction/sequence/Binary tables, string mining into the scripting engine, embedded CABs); PyInstaller EXEs are unpacked and their Python recovered; other PE images are categorised and triaged" },
   { name: "Any other file", color: "#5f6b7a", glyph: "BIN", exts: [".img", ".iso", ".bin", "…"],
     title: "Anything else (disk images, data...): YARA, marks and the report" },
 ];
@@ -436,6 +436,7 @@ function pivotTarget(f, ids) {
   if (src === "powershell" || src === "boxps") return has("powershell") ? "powershell" : null;
   if (src === "vbscript") return has("vbscript") ? "vbscript" : null;
   if (src === "batch") return has("batch") ? "batch" : null;
+  if (src === "python" || src === "pyinstaller") return has("python") ? "python" : (has("binary") ? "binary" : null);
   if (src === "rtf") {
     if (loc.startsWith("object")) return has("rtfobjects") ? "rtfobjects" : null;
     if (loc.startsWith("field") || loc.includes("template") || loc.includes("docvar")) return has("rtftext") ? "rtftext" : null;
@@ -1566,6 +1567,26 @@ function paneMsi(msim) {
   return `<p class="hint-line">Windows Installer / PE binary analysis.</p>${parts}`;
 }
 
+function panePyinstaller(pim) {
+  const _TYPES = { s: "entry script", m: "module", M: "package", z: "PYZ archive",
+                   Z: "PYZ archive", b: "binary", x: "data", d: "dependency" };
+  const rows = kv([
+    ["Python version", pim.python_version || "unknown"],
+    ["Bundled runtime", pim.pylib],
+    ["Archive entries", String((pim.entries || []).length)],
+    ["PYZ modules recovered", pim.pyz_modules != null ? String(pim.pyz_modules) : ""],
+  ]);
+  const entries = (pim.entries || []).slice(0, 60).map((e) => `<tr>
+    <td class="mono">${escapeHtml(e.name || "")}</td>
+    <td>${escapeHtml(_TYPES[e.type] || e.type || "")}</td>
+    <td>${e.size != null ? escapeHtml(String(e.size)) : ""}</td></tr>`).join("");
+  const table = entries ? `<table class="cases"><thead><tr><th>Entry</th><th>Type</th><th>Size</th></tr></thead>
+    <tbody>${entries}</tbody></table>` : "";
+  return `<p class="hint-line">PyInstaller-frozen executable — the CArchive and PYZ were unpacked and the
+    recovered Python is analysed in the <strong>Python</strong> tab and the <strong>Nested</strong> tree.</p>
+    ${rows}${netFindingsList(pim.findings || [])}${table}`;
+}
+
 function nestedNode(n) {
   const fcount = (n.findings || []).length;
   const badge = fcount
@@ -1930,6 +1951,15 @@ async function openComponents(analysisId, keepTab) {
     if (batm && (batm.scripts || []).length) {
       sections.push({ id: "batch", label: `Batch (${batm.scripts.length})`,
         html: paneCodeLanguage(batm, { label: "Batch", noun: "script", src: "batch", markKind: "bat_hit" }) });
+    }
+    const pym = mods.python;
+    if (pym && (pym.scripts || []).length) {
+      sections.push({ id: "python", label: `Python (${pym.scripts.length})`,
+        html: paneCodeLanguage(pym, { label: "Python", noun: "module", src: "python", markKind: "py_hit" }) });
+    }
+    const pim = mods.pyinstaller;
+    if (pim && pim.is_pyinstaller) {
+      sections.push({ id: "pyinstaller", label: "PyInstaller", html: panePyinstaller(pim) });
     }
     const scm = mods.shortcut;
     if (scm && (scm.items || []).length) {

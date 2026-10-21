@@ -27,7 +27,7 @@ log = get_logger(__name__)
 _SCRIPTING_EXT = {
     ".js", ".mjs", ".jse", ".vbs", ".vbe", ".wsf", ".wsc", ".sct", ".hta",
     ".html", ".htm", ".svg", ".mht", ".mhtml", ".ps1", ".psm1", ".psd1",
-    ".bat", ".cmd",
+    ".bat", ".cmd", ".py", ".pyw", ".pyc", ".pyo",
 }
 
 
@@ -588,6 +588,34 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                            lambda: _file_record(manifest, original))
             write_subresult(paths, "file", file_res)
             ran.append("file")
+
+            # PyInstaller-frozen PE: unpack the bundled Python (CArchive + PYZ)
+            # and analyse it with the Python engine (flat tab) and nested tree.
+            from .parsers import pyinstaller
+            try:
+                with open(original, "rb") as fh:
+                    fh.seek(max(0, original.stat().st_size - 4 * 1024 * 1024))
+                    tail = fh.read()
+            except OSError:
+                tail = b""
+            if pyinstaller.MAGIC in tail:
+                from . import nested
+                pi = run("pyinstaller: unpack CArchive/PYZ → Python engine",
+                         lambda: pyinstaller.extract(original, paths.extracted_dir / "pyinstaller"))
+                files = pi.pop("_files", [])
+                if pi.get("is_pyinstaller"):
+                    write_subresult(paths, "pyinstaller", pi)
+                    ran.append("pyinstaller")
+                    findings_total += pi.get("counts", {}).get("findings", 0)
+                items = [{"path": f, "filename": Path(n).name} for f, n in files]
+                if items:
+                    nres = run("nested: recursive scan of the unpacked Python modules",
+                               lambda: nested.scan_children(items, paths, unlock_ctx={"user": user_pw}))
+                    if nres.get("tree"):
+                        write_subresult(paths, "nested", nres)
+                        if "nested" not in ran:
+                            ran.append("nested")
+                        findings_total += nres.get("counts", {}).get("findings", 0)
         state = "completed"
 
     else:
@@ -646,6 +674,13 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             write_subresult(paths, "batch", bat_res)
             ran.append("batch")
             findings_total += bat_res.get("counts", {}).get("findings", 0)
+        from .parsers import python as python_parser
+        py_res = run("python: .py/.pyc · decompile (pycdc) / disassemble · behaviour rules",
+                     lambda: python_parser.analyze(original, paths.extracted_dir, code_mods))
+        if py_res.get("scripts"):
+            write_subresult(paths, "python", py_res)
+            ran.append("python")
+            findings_total += py_res.get("counts", {}).get("findings", 0)
 
     # YARA runs only on demand (YARA tab / re-run "yara"), never automatically.
     # A previous on-demand scan of this case is kept across full re-analyses.
@@ -718,9 +753,9 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto",
                "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole",
                "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules", "javascript", "rtf",
-               "powershell", "vbscript", "batch", "shortcut", "msi")
+               "powershell", "vbscript", "batch", "shortcut", "msi", "python")
 # Modules whose findings feed the consolidated view (includes derived ones).
-_COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file")
+_COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file", "pyinstaller")
 
 
 def _collect_modules(paths: CasePaths) -> dict[str, Any]:
@@ -871,6 +906,9 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
     elif module == "msi":
         from .parsers import msi
         res = msi.analyze(original, ed)
+    elif module == "python":
+        from .parsers import python
+        res = python.analyze(original, ed, {})
     else:  # pragma: no cover
         raise ValueError(module)
 

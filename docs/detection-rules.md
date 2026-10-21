@@ -2,12 +2,13 @@
 
 Behaviour-rule catalogue applied by the scripting engine over the **deobfuscated** code of every scripting language (JavaScript/JScript, PowerShell, VBScript, batch/cmd). Each rule is a finding you can mark, with its MITRE ATT&CK technique and the matching line as evidence. The catalogue lives in `docutracex/parsers/script_rules.py`; this file is a generated reference.
 
-Languages run through their own deobfuscator first: JS cascade (multi-pass decode, `eval`/`Function` unfolding, Dean Edwards/JSFuck/AAEncode/JJEncode), PowerShell layers (`-enc`, `FromBase64String`, backticks, `[char]`, `-f`, IEX), VBScript (`.vbe` decode, `Chr`/`&`/`StrReverse`/`Execute`), batch (caret escaping, `set` indirection, `%VAR:~%`, delayed expansion). The engine runs at the top level and inside the nested tree; the full source (original + deobfuscated) is dumped to `extracted/code/`.
+Languages run through their own deobfuscator first: JS cascade (multi-pass decode, `eval`/`Function` unfolding, Dean Edwards/JSFuck/AAEncode/JJEncode), PowerShell layers (`-enc`, `FromBase64String`, backticks, `[char]`, `-f`, IEX), VBScript (`.vbe` decode, `Chr`/`&`/`StrReverse`/`Execute`), batch (caret escaping, `set` indirection, `%VAR:~%`, delayed expansion), Python (`.py`: light `base64`/hex/`exec` decode; `.pyc`: decompiled with pycdc when provisioned, else dotted-call + string reconstruction from the bytecode, else raw string carving). The engine runs at the top level and inside the nested tree; the full source (original + deobfuscated) is dumped to `extracted/code/`.
 
 - **JS**: 25 rules
 - **PS**: 24 rules
 - **VBScript**: 16 rules
 - **Batch**: 9 rules
+- **Python**: 19 rules
 
 | Rule | Languages | Severity | ATT&CK | Behaviour |
 |---|---|---|---|---|
@@ -86,6 +87,7 @@ Beyond the static rules above, the scripting engine uses real analysis tools (pr
 
 - **webcrack** (JavaScript, portable Node): flattens obfuscator.io string-array/rotator and control-flow obfuscation and unpacks bundles, re-emitting readable code *before* the rules, the IOC scan and the STPyV8 sandbox run — so detections see the real payload. Falls back to the pure-Python cascade when not provisioned.
 - **box-ps** (PowerShell, portable PowerShell Core): emulates the deobfuscated PowerShell with overridden cmdlets and records behaviour. Its actions become findings — `boxps_network`, `boxps_file`, `boxps_exec`, `boxps_inject`, `boxps_registry`, `boxps_persist` — shown in the PowerShell tab's Sandbox section. This brings PowerShell to parity with JavaScript (STPyV8) and VBA (ViperMonkey).
+- **pycdc** (Python, built from source): decompiles `.pyc` back to readable source before the rules run. When it is not provisioned the Python engine still reconstructs dotted calls and strings from the bytecode, so detections keep working — the decompiler only improves readability.
 
 ## Shortcut and binary families
 
@@ -117,3 +119,36 @@ Two families carry executable intent in structure rather than in a script body; 
 | `msi_suspicious_api` | medium | T1059 | download/exec indicators in the installer strings |
 | `pe_image` | info | T1204.002 | PE image categorised/triaged (no static unpacking) |
 | `pe_not_pe` | medium | T1036 | PE extension without an `MZ` header (masquerade) |
+
+**PyInstaller** (a frozen `.exe` in the binary family), module `pyinstaller`: the CArchive and PYZ are unpacked and each module written back as a `.pyc` for the Python engine (flat **Python** tab) and the nested tree.
+
+| Rule | Severity | ATT&CK | Behaviour |
+|---|---|---|---|
+| `pyinstaller_bundle` | medium | — | PyInstaller-frozen executable (Python version, bundled runtime, entry count) |
+| `pyinstaller_entry_script` | medium | — | entry script(s) recovered and analysed as Python |
+
+## Python rules
+
+Applied by the Python engine to ``.py`` source and to ``.pyc`` recovered by decompilation/disassembly (loose files, and the modules unpacked from a PyInstaller `.exe`). `py_suspicious_imports` (medium) also fires when only raw strings survive and two or more risky modules are referenced; `py_pyc_recovered` (info) records how a `.pyc` was recovered.
+
+| Rule | Severity | ATT&CK | Behaviour |
+|---|---|---|---|
+| `py_exec` | high | T1059.006 | executes dynamic code (eval/exec/compile) |
+| `py_subprocess` | high | T1059.006 | spawns a process (subprocess/os) |
+| `py_lolbin` | high | T1218 | invokes a Windows LOLBin / shell |
+| `py_download` | high | T1105 | downloads / connects out (urllib/requests/http) |
+| `py_persist_registry` | high | T1547.001 | persistence (Run key / registry) |
+| `py_persist_os` | high | T1547 | persistence (startup / task / cron) |
+| `py_packed_code` | high | T1027 | loads packed/serialised code (marshal/pickle/zlib) |
+| `py_inject` | high | T1055 | memory injection via ctypes / WinAPI |
+| `py_shellcode` | high | T1055 | embedded shellcode blob (`\x` escapes) |
+| `py_credentials` | high | T1555 | credential access (DPAPI / browser stores) |
+| `py_disable_defender` | high | T1562.001 | disables AV / Defender |
+| `py_shell_true` | medium | T1059 | `shell=True` command execution |
+| `py_socket` | medium | T1095 | raw socket (possible C2) |
+| `py_b64` | medium | T1140 | base64 / hex decoding |
+| `py_dynamic_import` | medium | T1027 | dynamic import / attribute resolution |
+| `py_discovery` | medium | T1082 | host / user discovery |
+| `py_clr` | medium | T1620 | in-memory .NET load (pythonnet/CLR) |
+| `py_antivm` | medium | T1497.001 | VM / sandbox / debugger detection |
+| `py_sleep` | medium | T1497.003 | long sleep (sandbox evasion) |
