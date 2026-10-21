@@ -15,8 +15,11 @@ it is dead, another is picked automatically (same protocol/country).
 
 from __future__ import annotations
 
+import base64
 import json
 import random
+import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
@@ -37,9 +40,64 @@ def cache_path(protocol: str) -> Path:
     return settings.tools_dir / "cache" / f"freeproxies-{protocol}.json"
 
 
+# --- portable delegation -----------------------------------------------------
+# requests / PySocks live on the portable (the [tools] extra), not on the web
+# service's Python. The network operations (list download, proxy validation)
+# therefore run on the portable interpreter — like the main netcheck — and the
+# web service only reads the cache and saves the chosen proxy. When no portable
+# is bundled (or this IS the portable), the in-process body runs instead.
+def _portable_or_none() -> Path | None:
+    portable = settings.portable_python()
+    try:
+        same = portable is not None and portable.resolve() == Path(sys.executable).resolve()
+    except OSError:
+        same = False
+    return None if (portable is None or same) else portable
+
+
+def _delegate(args: list[str], timeout: int = 150) -> str | None:
+    """Run a free-proxy op on the portable; return stdout, or None to signal the
+    caller to run in-process (no portable / already on it). Raises on tool error."""
+    portable = _portable_or_none()
+    if portable is None:
+        return None
+    from .. import native
+    try:
+        proc = subprocess.run([str(portable), "-m", "docutracex.netcheck.freeproxy", *args],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=timeout, env=native.subprocess_env())
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("free-proxy operation timed out") from exc
+    if proc.returncode == 0:
+        return proc.stdout
+    raise RuntimeError((proc.stderr or "").strip()[-300:] or f"exit {proc.returncode}")
+
+
+def _enc_set(exclude: set[str] | None) -> str:
+    return base64.b64encode(json.dumps(sorted(exclude or [])).encode()).decode()
+
+
+def _dec_set(blob: str) -> set[str]:
+    try:
+        return set(json.loads(base64.b64decode(blob).decode()))
+    except Exception:  # noqa: BLE001
+        return set()
+
+
 def download(protocol: str) -> list[dict[str, Any]]:
-    """Fetch ProxyScrape's free list for ``protocol`` (direct connection: it is
-    just a public list) and cache it."""
+    """ProxyScrape's free list for ``protocol``, cached. Runs on the portable
+    (requests lives there); the web service reads the cache it writes."""
+    out = _delegate(["download", protocol])
+    if out is not None:
+        try:
+            return json.loads(cache_path(protocol).read_text(encoding="utf-8")).get("proxies", [])
+        except (OSError, ValueError):
+            return (json.loads(out).get("proxies", []) if out.strip() else [])
+    return _download_inproc(protocol)
+
+
+def _download_inproc(protocol: str) -> list[dict[str, Any]]:
+    """Fetch + cache the list in-process (runs on the portable)."""
     import requests
 
     r = requests.get(API, params={"request": "display_proxies", "protocol": protocol, "format": "json",
@@ -128,6 +186,13 @@ def find_working(protocol: str, country: str = "", exclude: set[str] | None = No
     """Test random candidates in parallel; return the first working one."""
     if protocol not in PROTOCOLS:
         raise ValueError(f"protocol must be one of {', '.join(PROTOCOLS)}")
+    # In production (no injected tester) the search — which needs requests/
+    # PySocks to validate proxies — runs on the portable.
+    if tester is None:
+        out = _delegate(["find", protocol, country, _enc_set(exclude)])
+        if out is not None:
+            out = out.strip()
+            return json.loads(out) if out and out != "null" else None
     tester = tester or test
     cands = [p for p in load(protocol) if not country or p.get("country", "").upper() == country.upper()]
     cands = [p for p in cands if f"{p['host']}:{p['port']}" not in (exclude or set())]
@@ -198,8 +263,37 @@ def ensure_alive(tester=None) -> str | None:
     url = appsettings.proxy_url(net)
     if not url or not p.get("free"):
         return url
-    tester = tester or test
-    if tester({"protocol": p["scheme"], "host": p["host"], "port": p["port"]}):
+    probe = {"protocol": p["scheme"], "host": p["host"], "port": p["port"]}
+    if tester is not None:
+        alive = bool(tester(probe))
+    else:
+        out = _delegate(["test", p["scheme"], p["host"], str(p["port"])])
+        alive = (out.strip() == "ok") if out is not None else bool(test(probe))
+    if alive:
         return url
     connect(p["scheme"], (p.get("free_info") or {}).get("country_filter", ""), rotate=True, tester=tester)
     return appsettings.proxy_url()
+
+
+def main(argv: list[str]) -> int:
+    """Portable-side entry: run the network op that needs requests/PySocks and
+    print the result as JSON/text for the web service to consume."""
+    op = argv[0] if argv else ""
+    if op == "download":
+        print(json.dumps({"proxies": _download_inproc(argv[1])}))
+    elif op == "find":
+        country = argv[2] if len(argv) > 2 else ""
+        exclude = _dec_set(argv[3]) if len(argv) > 3 else set()
+        found = find_working(argv[1], country, exclude)   # tester=None → in-process here
+        print(json.dumps(found) if found else "null")
+    elif op == "test":
+        ok = test({"protocol": argv[1], "host": argv[2], "port": int(argv[3])})
+        print("ok" if ok else "dead")
+    else:
+        print(f"unknown op: {op}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
