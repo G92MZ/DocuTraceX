@@ -737,6 +737,36 @@ def install_pycdc() -> bool:
     return False
 
 
+CFR_DIR = TOOLS / "cfr"
+CFR_VERSION = "0.152"                           # MIT
+CFR_URL = f"https://github.com/leibnitz27/cfr/releases/download/{CFR_VERSION}/cfr-{CFR_VERSION}.jar"
+
+
+def _cfr_ok() -> bool:
+    return CFR_DIR.is_dir() and any(CFR_DIR.glob("cfr*.jar"))
+
+
+def install_cfr() -> bool:
+    """CFR (MIT) Java decompiler jar into tools/cfr/ — optional. Just a download
+    (no build); run with any JVM on the host. Absent (or no JVM) → the Java
+    engine falls back to .class constant-pool mining."""
+    if _cfr_ok():
+        return True
+    print("[>] Downloading the CFR Java decompiler into tools/cfr/")
+    try:
+        data = _get(CFR_URL)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] Could not download CFR ({exc}); .class decompilation stays disabled.")
+        return False
+    CFR_DIR.mkdir(parents=True, exist_ok=True)
+    (CFR_DIR / f"cfr-{CFR_VERSION}.jar").write_bytes(data)
+    if _cfr_ok():
+        print(f"[+] CFR at {CFR_DIR}")
+        return True
+    print("[!] CFR download did not produce a jar.")
+    return False
+
+
 def verify() -> None:
     py = _portable_python()
     print("[>] Verifying the portable runtime")
@@ -778,9 +808,11 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
     _clear_mark("webcrack")   # an explicit full setup always retries these
     _clear_mark("boxps")
     _clear_mark("pycdc")
+    _clear_mark("cfr")
     install_webcrack()   # portable Node + webcrack (JS deobfuscation)
     install_boxps()      # PowerShell Core + box-ps (PowerShell sandbox)
     install_pycdc()      # pycdc (.pyc decompiler, built from source)
+    install_cfr()        # CFR (.class decompiler jar; run with the host JVM)
     verify()
 
 
@@ -849,7 +881,8 @@ def _ensure_optional() -> None:
     failing build on every start."""
     for name, ok, install in (("webcrack", _webcrack_ok, install_webcrack),
                               ("boxps", _boxps_ok, install_boxps),
-                              ("pycdc", _pycdc_ok, install_pycdc)):
+                              ("pycdc", _pycdc_ok, install_pycdc),
+                              ("cfr", _cfr_ok, install_cfr)):
         try:
             if ok():
                 _clear_mark(name)
