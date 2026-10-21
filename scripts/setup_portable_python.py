@@ -697,6 +697,8 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
     install_vipermonkey()
     install_ipdb()
     install_chromium()
+    _clear_mark("webcrack")   # an explicit full setup always retries these
+    _clear_mark("boxps")
     install_webcrack()   # portable Node + webcrack (JS deobfuscation)
     install_boxps()      # PowerShell Core + box-ps (PowerShell sandbox)
     verify()
@@ -734,6 +736,53 @@ def _tool_deps_ok(py: Path) -> bool:
         return False
 
 
+# Optional runtimes healed on start (webcrack, box-ps). A failed attempt writes
+# a marker so the (slow) install is not retried on every start — a full
+# ``setup_portable_python.py`` run clears the markers and retries.
+def _mark_path(name: str) -> Path:
+    return TOOLS / f".{name}_provision_failed"
+
+
+def _marked(name: str) -> bool:
+    return _mark_path(name).exists()
+
+
+def _mark_failed(name: str) -> None:
+    try:
+        TOOLS.mkdir(parents=True, exist_ok=True)
+        _mark_path(name).write_text(
+            "Provisioning failed. Delete this file, or run scripts/setup_portable_python.py, to retry.\n")
+    except OSError:
+        pass
+
+
+def _clear_mark(name: str) -> None:
+    try:
+        _mark_path(name).unlink()
+    except OSError:
+        pass
+
+
+def _ensure_optional() -> None:
+    """Heal the optional runtimes on start: install webcrack and box-ps when
+    missing, once (marker-guarded), so updates pick them up without hammering a
+    failing build on every start."""
+    for name, ok, install in (("webcrack", _webcrack_ok, install_webcrack),
+                              ("boxps", _boxps_ok, install_boxps)):
+        try:
+            if ok():
+                _clear_mark(name)
+            elif not _marked(name):
+                print(f"[>] Optional runtime '{name}' missing — attempting to provision it...")
+                if not install():
+                    _mark_failed(name)
+                    print(f"[!] '{name}' not provisioned; it will be skipped on future starts. "
+                          f"Run scripts/setup_portable_python.py to retry.")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[!] Optional runtime '{name}' provisioning errored: {exc}")
+            _mark_failed(name)
+
+
 def ensure(version: str = DEFAULT_VERSION) -> bool:
     """Make sure the portable exists AND has its tool dependencies. Best-effort.
 
@@ -751,6 +800,7 @@ def ensure(version: str = DEFAULT_VERSION) -> bool:
             vm_ok = _vipermonkey_ok()
             ipdb_ok = _ipdb_ok()
             chromium_ok = _chromium_ok()
+            _ensure_optional()   # webcrack + box-ps (optional; marker-guarded)
             if deps_ok and didier_ok and oms_ok and vm_ok and ipdb_ok and chromium_ok:
                 print(f"[=] Portable Python present with tools OK at {PY_DIR}")
                 return True
