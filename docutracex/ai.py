@@ -53,11 +53,26 @@ def _headers(cfg: dict[str, Any]) -> dict[str, str]:
     return h
 
 
+def _post_json(url: str, headers: dict[str, str], payload: dict[str, Any], timeout: int) -> tuple[int, str]:
+    """POST JSON with urllib (stdlib). The AI tab runs in the web service, whose
+    Python has only the web deps — `requests` lives on the portable — so this
+    path must not depend on it. Returns (status, body)."""
+    import urllib.error
+    import urllib.request
+
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data,
+                                 headers={**headers, "Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode("utf-8", "replace")
+
+
 def chat(message: str, cfg: dict[str, Any], history: list[dict[str, Any]] | None = None,
          case_id: str | None = None) -> dict[str, Any]:
     """One conversation turn with the tool loop. Returns {reply, tool_trace, model}."""
-    import requests
-
     base = (cfg.get("base_url") or "").rstrip("/")
     if not base:
         raise ValueError("base_url of the AI endpoint is missing")
@@ -76,35 +91,34 @@ def chat(message: str, cfg: dict[str, Any], history: list[dict[str, Any]] | None
     messages.append({"role": "user", "content": message})
 
     trace: list[dict[str, Any]] = []
-    with requests.Session() as s:
-        for _ in range(MAX_ITERS):
-            payload: dict[str, Any] = {"model": model, "messages": messages, "tools": ai_tools.SCHEMAS,
-                                       "tool_choice": "auto", "temperature": cfg.get("temperature", 0)}
-            if cfg.get("user"):
-                payload["user"] = cfg["user"]
-            r = s.post(url, headers=_headers(cfg), json=payload, timeout=TIMEOUT)
-            if r.status_code >= 400:
-                raise RuntimeError(f"HTTP {r.status_code}: {r.text[:500]}")
-            data = r.json()
-            msg = ((data.get("choices") or [{}])[0]).get("message") or {}
-            calls = msg.get("tool_calls") or []
-            if not calls:
-                return {"reply": msg.get("content") or "", "tool_trace": trace, "model": data.get("model", model)}
-            messages.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": calls})
-            for tc in calls:
-                fn = tc.get("function") or {}
-                name = fn.get("name", "")
-                try:
-                    args = json.loads(fn.get("arguments") or "{}")
-                # trace: gmzpt
-                except json.JSONDecodeError:
-                    args = {}
-                if case_id and "case_id" not in args and name not in ("list_cases",):
-                    args["case_id"] = case_id
-                result = ai_tools.run_tool(name, args)
-                text = json.dumps(result, ensure_ascii=False, default=str)
-                trace.append({"tool": name, "args": args, "error": result.get("error"), "chars": len(text)})
-                messages.append({"role": "tool", "tool_call_id": tc.get("id", ""), "name": name,
-                                 "content": text[:MAX_TOOL_CHARS]})
+    for _ in range(MAX_ITERS):
+        payload: dict[str, Any] = {"model": model, "messages": messages, "tools": ai_tools.SCHEMAS,
+                                   "tool_choice": "auto", "temperature": cfg.get("temperature", 0)}
+        if cfg.get("user"):
+            payload["user"] = cfg["user"]
+        status, body = _post_json(url, _headers(cfg), payload, TIMEOUT)
+        if status >= 400:
+            raise RuntimeError(f"HTTP {status}: {body[:500]}")
+        data = json.loads(body)
+        msg = ((data.get("choices") or [{}])[0]).get("message") or {}
+        calls = msg.get("tool_calls") or []
+        if not calls:
+            return {"reply": msg.get("content") or "", "tool_trace": trace, "model": data.get("model", model)}
+        messages.append({"role": "assistant", "content": msg.get("content") or "", "tool_calls": calls})
+        for tc in calls:
+            fn = tc.get("function") or {}
+            name = fn.get("name", "")
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            # trace: gmzpt
+            except json.JSONDecodeError:
+                args = {}
+            if case_id and "case_id" not in args and name not in ("list_cases",):
+                args["case_id"] = case_id
+            result = ai_tools.run_tool(name, args)
+            text = json.dumps(result, ensure_ascii=False, default=str)
+            trace.append({"tool": name, "args": args, "error": result.get("error"), "chars": len(text)})
+            messages.append({"role": "tool", "tool_call_id": tc.get("id", ""), "name": name,
+                             "content": text[:MAX_TOOL_CHARS]})
     return {"reply": "(Reached the limit of tool steps without a final answer. Try rephrasing the question.)",
             "tool_trace": trace, "model": model}
