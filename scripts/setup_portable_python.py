@@ -659,6 +659,84 @@ def install_boxps() -> bool:
     return False
 
 
+PYCDC_DIR = TOOLS / "pycdc"
+PYCDC_ZIP = "https://github.com/zrax/pycdc/archive/refs/heads/master.zip"  # MIT
+
+
+def _pycdc_ok() -> bool:
+    for c in (PYCDC_DIR / "pycdc.exe", PYCDC_DIR / "pycdc",
+              PYCDC_DIR / "build" / "pycdc", PYCDC_DIR / "build" / "Release" / "pycdc.exe"):
+        if c.is_file():
+            return True
+    return False
+
+
+def install_pycdc() -> bool:
+    """pycdc / Decompyle++ (MIT) into tools/pycdc/ — optional .pyc decompiler.
+    Built from source with CMake (like webcrack's native dep); when absent the
+    Python engine falls back to bytecode disassembly + string mining."""
+    if _pycdc_ok():
+        return True
+    if shutil.which("cmake") is None:
+        print("[!] cmake not found; skipping pycdc (the .pyc decompiler is optional — "
+              "the Python engine still disassembles and mines strings).")
+        return False
+    print("[>] Provisioning pycdc (.pyc decompiler) into tools/pycdc/ — building from source")
+    import io
+    try:
+        data = _get(PYCDC_ZIP)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] Could not download pycdc ({exc}); decompilation stays disabled.")
+        return False
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                z.extractall(tdp)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[!] Could not extract pycdc: {exc}")
+            return False
+        tops = [p for p in tdp.iterdir() if p.is_dir()]
+        if len(tops) != 1:
+            print("[!] Unexpected pycdc archive layout.")
+            return False
+        src = tops[0]
+        build = src / "build"
+        try:
+            subprocess.run(["cmake", "-S", str(src), "-B", str(build),
+                            "-DCMAKE_BUILD_TYPE=Release"], check=True)
+            subprocess.run(["cmake", "--build", str(build), "--target", "pycdc",
+                            "--config", "Release"], check=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[!] pycdc build failed ({exc}); decompilation stays disabled.")
+            return False
+        found = None
+        for c in (build / "pycdc", build / "Release" / "pycdc.exe", build / "pycdc.exe"):
+            if c.is_file():
+                found = c
+                break
+        if not found:
+            hits = list(build.rglob("pycdc*"))
+            found = next((h for h in hits if h.is_file() and h.suffix in ("", ".exe")), None)
+        if not found:
+            print("[!] pycdc built but the binary was not found.")
+            return False
+        if PYCDC_DIR.exists():
+            shutil.rmtree(PYCDC_DIR)
+        PYCDC_DIR.mkdir(parents=True, exist_ok=True)
+        dest = PYCDC_DIR / found.name
+        shutil.copy2(str(found), str(dest))
+        try:
+            dest.chmod(0o755)
+        except OSError:
+            pass
+    if _pycdc_ok():
+        print(f"[+] pycdc at {PYCDC_DIR}")
+        return True
+    print("[!] pycdc install did not produce a usable binary.")
+    return False
+
+
 def verify() -> None:
     py = _portable_python()
     print("[>] Verifying the portable runtime")
@@ -699,8 +777,10 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
     install_chromium()
     _clear_mark("webcrack")   # an explicit full setup always retries these
     _clear_mark("boxps")
+    _clear_mark("pycdc")
     install_webcrack()   # portable Node + webcrack (JS deobfuscation)
     install_boxps()      # PowerShell Core + box-ps (PowerShell sandbox)
+    install_pycdc()      # pycdc (.pyc decompiler, built from source)
     verify()
 
 
@@ -768,7 +848,8 @@ def _ensure_optional() -> None:
     missing, once (marker-guarded), so updates pick them up without hammering a
     failing build on every start."""
     for name, ok, install in (("webcrack", _webcrack_ok, install_webcrack),
-                              ("boxps", _boxps_ok, install_boxps)):
+                              ("boxps", _boxps_ok, install_boxps),
+                              ("pycdc", _pycdc_ok, install_pycdc)):
         try:
             if ok():
                 _clear_mark(name)

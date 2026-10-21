@@ -40,7 +40,8 @@ def test_shipped_archive_has_every_sample_encrypted() -> None:
             "potm", "ppsx", "ppsm", "ppam", "sldx", "sldm", "doc", "dot", "xls", "xlt", "xla", "ppt", "pot", "rtf",
             "pdf", "eml", "emlx", "msg"}
     deobf = {"sample_dropper.js", "sample_stage2.ps1", "sample_dropper.vbs", "lab/dropper_bundle.zip"}
-    binkind = {"sample_shortcut.pdf.lnk", "sample_shortcut.url", "sample_installer.msi"}
+    binkind = {"sample_shortcut.pdf.lnk", "sample_shortcut.url", "sample_installer.msi",
+               "sample_dropper.py", "sample_dropper.pyc", "sample_pyinstaller.exe"}
     assert {f"sample.{e}" for e in exts} | {"lab/phish_lab.eml"} | deobf | binkind <= names
 
 

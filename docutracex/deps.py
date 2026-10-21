@@ -559,6 +559,24 @@ def run_checks() -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
 
+    # pycdc (.pyc decompiler) — optional; the Python engine degrades to
+    # disassembly + string mining when it is absent.
+    try:
+        from .config import settings as _s
+        pycdc = _s.pycdc_executable()
+        checks.append(Check(
+            category="External tools",
+            name="pycdc (.pyc decompiler)",
+            status="ok" if pycdc else "warn",
+            detail=f"pycdc at {pycdc}" if pycdc else "not provisioned (optional)",
+            remedy="" if pycdc else
+                   "run scripts/setup_portable_python.py (built from source with CMake); "
+                   "without it .pyc is disassembled + string-mined, not decompiled",
+            purpose="Decompiles .pyc back to Python source (loose .pyc and unpacked PyInstaller)",
+        ))
+    except Exception:  # noqa: BLE001
+        pass
+
     # Didier Stevens oledump plugins (presence).
     try:
         from .parsers.didier import PLUGINS, didier_dir

@@ -128,7 +128,8 @@ def annotate(modules: dict[str, Any], paths: CasePaths) -> set[str]:
     for module_name, sub, ext in (("javascript", "js", "js"),
                                    ("powershell", "powershell", "ps1"),
                                    ("vbscript", "vbscript", "vbs"),
-                                   ("batch", "batch", "bat")):
+                                   ("batch", "batch", "bat"),
+                                   ("python", "python", "py")):
         mod = modules.get(module_name)
         if not isinstance(mod, dict):
             continue
