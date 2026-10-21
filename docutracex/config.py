@@ -122,5 +122,20 @@ class Settings:
                 return c
         return None
 
+    def pycdc_executable(self) -> Path | None:
+        """Portable pycdc (Decompyle++) under ``tools/pycdc/`` — optional .pyc
+        decompiler (MIT, built from source at setup). ``DOCUTRACEX_PYCDC``
+        overrides the location. Absent → the Python engine falls back to
+        bytecode disassembly + string mining."""
+        env = os.environ.get("DOCUTRACEX_PYCDC")
+        if env and Path(env).is_file():
+            return Path(env)
+        base = self.tools_dir / "pycdc"
+        for c in (base / "pycdc.exe", base / "pycdc", base / "bin" / "pycdc",
+                  base / "build" / "pycdc"):
+            if c.is_file():
+                return c
+        return None
+
 
 settings = Settings()
