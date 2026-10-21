@@ -22,7 +22,9 @@ import re
 from pathlib import Path
 from typing import Any
 
-from . import javascript, ps_deobf, script_rules
+from . import boxps, javascript, ps_deobf, script_rules
+
+_MAX_SANDBOX_RUNS = 12          # cap box-ps invocations per case (each is slow)
 
 _MAX_ITEMS = 60
 _MAX_FILES = 300
@@ -160,6 +162,9 @@ def collect(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> lis
 
 def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> dict[str, Any]:
     res: dict[str, Any] = {"module": "powershell", "status": "ok", "scripts": [], "findings": []}
+    sandbox_on = boxps.boxps_status().get("available", False)
+    res["sandbox_available"] = sandbox_on
+    sandbox_runs = 0
     for i, it in enumerate(collect(original, extracted_dir, modules), 1):
         full = it["code"] or ""
         orig_code = full[:_MAX_CODE]
@@ -181,6 +186,19 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> dic
                   "hits": hits, "metrics": mets, "_full_code": full}
         if deob["changed"]:
             script["_full_deob"] = deob_full
+
+        # box-ps behavioural sandbox: emulate the (deobfuscated) command and
+        # record what it would do. Capped per case; each run is slow.
+        if sandbox_on and sandbox_runs < _MAX_SANDBOX_RUNS and code.strip():
+            sandbox_runs += 1
+            sb = boxps.analyze(code, loc)
+            script["sandbox"] = {"available": sb.get("available"), "actions": sb.get("actions", [])[:50],
+                                 "iocs": sb.get("iocs", [])[:50], "error": sb.get("error")}
+            if sb.get("layers") and not deob["changed"]:
+                script["sandbox_layers"] = sb["layers"][:_KEEP_CODE]
+            for f in sb.get("findings", []):
+                f["detail"] = f"[{it['origin']}] {f['detail']}"
+                res["findings"].append(f)
         res["scripts"].append(script)
 
         by_rule: dict[str, list[dict[str, Any]]] = {}
