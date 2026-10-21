@@ -12,8 +12,11 @@ const FORMATS = [
   { name: "Email", color: "#7f93ad", glyph: "mail", exts: [".eml", ".emlx", ".msg"] },
   { name: "RTF", color: "#6c5ce7", glyph: "RTF", exts: [".rtf"] },
   { name: "Archive", color: "#9a7b4f", glyph: "ZIP", exts: [".zip", ".7z"] },
-  { name: "Any other file", color: "#5f6b7a", glyph: "BIN", exts: [".exe", ".dll", ".js", ".html", "…"],
-    title: "Anything else (executables, scripts, images...): YARA, marks and the report" },
+  { name: "Scripting files", color: "#d9a441", glyph: "SH",
+    exts: [".js", ".jse", ".vbs", ".vbe", ".ps1", ".psm1", ".bat", ".cmd", ".hta", ".wsf", ".sct", ".html", ".svg", ".mht"],
+    title: "JavaScript, VBScript, PowerShell, batch, HTA/WSF/HTML: deobfuscated and scanned for malicious behaviour" },
+  { name: "Any other file", color: "#5f6b7a", glyph: "BIN", exts: [".exe", ".dll", ".img", ".iso", "…"],
+    title: "Anything else (executables, images...): YARA, marks and the report" },
 ];
 
 // Playful document "character": page + eyes + smile, colored band + letter.
@@ -426,6 +429,7 @@ function pivotTarget(f, ids) {
   if (src === "javascript") return has("javascript") ? "javascript" : null;
   if (src === "powershell") return has("powershell") ? "powershell" : null;
   if (src === "vbscript") return has("vbscript") ? "vbscript" : null;
+  if (src === "batch") return has("batch") ? "batch" : null;
   if (src === "rtf") {
     if (loc.startsWith("object")) return has("rtfobjects") ? "rtfobjects" : null;
     if (loc.startsWith("field") || loc.includes("template") || loc.includes("docvar")) return has("rtftext") ? "rtftext" : null;
@@ -1856,6 +1860,11 @@ async function openComponents(analysisId, keepTab) {
     if (vbsm && (vbsm.scripts || []).length) {
       sections.push({ id: "vbscript", label: `VBScript (${vbsm.scripts.length})`,
         html: paneCodeLanguage(vbsm, { label: "VBScript", noun: "script", src: "vbscript", markKind: "vbs_hit" }) });
+    }
+    const batm = mods.batch;
+    if (batm && (batm.scripts || []).length) {
+      sections.push({ id: "batch", label: `Batch (${batm.scripts.length})`,
+        html: paneCodeLanguage(batm, { label: "Batch", noun: "script", src: "batch", markKind: "bat_hit" }) });
     }
     const vbat = mods.vbatools;
     const vmon = mods.vipermonkey;

@@ -291,7 +291,7 @@ def _scan_code_languages(abs_path: Path, paths: CasePaths, node: dict[str, Any],
     deobfuscated code is merged back into ``mods`` so the common IOC builder
     mines it, and the complete source is dumped under ``extracted/code/.../nested/``."""
     from . import codefiles
-    from .parsers import javascript, powershell, vbscript
+    from .parsers import batch, javascript, powershell, vbscript
 
     # A path that does not exist, so each collector's ``extracted_dir.rglob``
     # yields nothing and only the child file + its mods are scanned.
@@ -301,6 +301,7 @@ def _scan_code_languages(abs_path: Path, paths: CasePaths, node: dict[str, Any],
         ("javascript", lambda: javascript.analyze(abs_path, empty, mods, run_sandbox=False), "js", "js"),
         ("powershell", lambda: powershell.analyze(abs_path, empty, mods), "powershell", "ps1"),
         ("vbscript", lambda: vbscript.analyze(abs_path, empty, mods), "vbscript", "vbs"),
+        ("batch", lambda: batch.analyze(abs_path, empty, mods), "batch", "bat"),
     )
     for key, fn, sub, ext in specs:
         try:
