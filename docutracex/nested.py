@@ -59,6 +59,8 @@ def _kind(path: Path, name: str) -> str:
         return "email"
     if ext in (".lnk", ".url", ".website"):
         return "shortcut"
+    if ext in (".py", ".pyw", ".pyc", ".pyo"):
+        return "python"
     if ext in (".msi", ".msp", ".msm", ".exe", ".dll", ".scr", ".sys", ".ocx", ".cpl", ".com"):
         return "binary"
     try:
@@ -312,7 +314,7 @@ def _scan_code_languages(abs_path: Path, paths: CasePaths, node: dict[str, Any],
     deobfuscated code is merged back into ``mods`` so the common IOC builder
     mines it, and the complete source is dumped under ``extracted/code/.../nested/``."""
     from . import codefiles
-    from .parsers import batch, javascript, powershell, vbscript
+    from .parsers import batch, javascript, powershell, python, vbscript
 
     # A path that does not exist, so each collector's ``extracted_dir.rglob``
     # yields nothing and only the child file + its mods are scanned.
@@ -323,6 +325,7 @@ def _scan_code_languages(abs_path: Path, paths: CasePaths, node: dict[str, Any],
         ("powershell", lambda: powershell.analyze(abs_path, empty, mods), "powershell", "ps1"),
         ("vbscript", lambda: vbscript.analyze(abs_path, empty, mods), "vbscript", "vbs"),
         ("batch", lambda: batch.analyze(abs_path, empty, mods), "batch", "bat"),
+        ("python", lambda: python.analyze(abs_path, empty, mods), "python", "py"),
     )
     for key, fn, sub, ext in specs:
         try:

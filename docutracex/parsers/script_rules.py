@@ -23,7 +23,7 @@ import re
 from typing import Any
 
 # Language codes.
-JS, PS, VBS, BAT, VBA = "js", "ps", "vbs", "bat", "vba"
+JS, PS, VBS, BAT, VBA, PY = "js", "ps", "vbs", "bat", "vba", "py"
 
 _HITS_PER_RULE = 6
 
@@ -181,6 +181,51 @@ _RULES: list[tuple[str, set[str], str, str, str, str]] = [
     # ---- L/M. Destructive / DDE (batch & cross) ----------------------------
     ("bat_destructive", {BAT}, "high", "T1485", "destructive / inhibits recovery",
      r"\bdel\s+/[sfq]|\brd\s+/s|\bformat\s+[a-z]:|vssadmin\s+delete\s+shadows|\bbcdedit\b|wbadmin\s+delete"),
+
+    # ---- Python (.py / .pyc, incl. unpacked PyInstaller) -------------------
+    # Matched on deobfuscated / decompiled source and on the dotted-call listing
+    # reconstructed from .pyc bytecode; single-token presence is also flagged by
+    # the Python engine's import scan when only raw strings survive.
+    ("py_exec", {PY}, "high", "T1059.006", "executes dynamic code (eval/exec)",
+     r"\b(?:eval|exec|execfile)\s*\(|\bcompile\s*\([^)]*,\s*['\"]?\w*['\"]?\s*,\s*['\"]exec['\"]"),
+    ("py_subprocess", {PY}, "high", "T1059.006", "spawns a process (subprocess/os)",
+     r"\bsubprocess\.(?:Popen|call|run|check_output|check_call|getoutput)\b|\bos\.(?:system|popen|exec[lv]\w*|spawn\w*)\b|\bpty\.spawn\b"),
+    ("py_shell_true", {PY}, "medium", "T1059", "shell=True (shell command execution)",
+     r"shell\s*=\s*True"),
+    ("py_lolbin", {PY}, "high", "T1218", "invokes a Windows LOLBin / shell",
+     r"\b(?:powershell|pwsh|cmd\.exe|mshta|rundll32|regsvr32|certutil|bitsadmin|wscript|cscript|msiexec)\b"),
+    ("py_download", {PY}, "high", "T1105", "downloads / connects out",
+     r"\burllib\.request\b|\burlopen\s*\(|\burlretrieve\s*\(|\brequests\.(?:get|post|request)\b|"
+     r"\bhttp\.client\b|\bhttpx\.|\baiohttp\b|\bwget\.download\b"),
+    ("py_socket", {PY}, "medium", "T1095", "raw socket (possible C2)",
+     r"\bsocket\.socket\s*\(|\bsocket\.(?:AF_INET|SOCK_STREAM|SOCK_DGRAM)\b|\bconnect\s*\(\s*\(\s*['\"]"),
+    ("py_persist_registry", {PY}, "high", "T1547.001", "persistence (Run key / registry)",
+     r"\bwinreg\.|\b_winreg\b|HKEY_(?:CURRENT_USER|LOCAL_MACHINE)|CurrentVersion\\{1,2}Run"),
+    ("py_persist_os", {PY}, "high", "T1547", "persistence (startup / task / cron)",
+     r"schtasks|\bcrontab\b|Start Menu\\{1,2}Programs\\{1,2}Startup|LaunchAgents|/etc/rc\.local"),
+    ("py_b64", {PY}, "medium", "T1140", "base64 / hex decoding",
+     r"\bbase64\.(?:b(?:16|32|64|85)decode|urlsafe_b64decode)\b|\bbinascii\.(?:a2b_\w+|unhexlify)\b|\bcodecs\.decode\s*\("),
+    ("py_packed_code", {PY}, "high", "T1027", "loads packed/serialised code (marshal/pickle/zlib)",
+     r"\bmarshal\.loads\b|\bpickle\.loads\b|\bzlib\.decompress\b|\blzma\.decompress\b|\btypes\.(?:CodeType|FunctionType)\b"),
+    ("py_dynamic_import", {PY}, "medium", "T1027", "dynamic import / attribute resolution",
+     r"\b__import__\s*\(|\bimportlib\.import_module\s*\(|\bgetattr\s*\(\s*__import__"),
+    ("py_inject", {PY}, "high", "T1055", "memory injection via ctypes/WinAPI",
+     r"\bctypes\.(?:windll|cdll|CDLL|WinDLL)\b|VirtualAlloc(?:Ex)?|WriteProcessMemory|CreateRemoteThread|"
+     r"VirtualProtect|RtlMoveMemory|memmove\s*\(|SetThreadContext"),
+    ("py_shellcode", {PY}, "high", "T1055", "embedded shellcode blob (\\x escapes)",
+     r"(?:\\x[0-9a-fA-F]{2}){20,}|bytearray\s*\(\s*b?['\"](?:\\x[0-9a-fA-F]{2}){8,}"),
+    ("py_discovery", {PY}, "medium", "T1082", "host / user discovery",
+     r"\bplatform\.(?:system|node|uname|release)\b|\bsocket\.gethostname\b|\bos\.getlogin\b|\bgetpass\.getuser\b|\bos\.environ\b"),
+    ("py_credentials", {PY}, "high", "T1555", "credential access (DPAPI / browser stores)",
+     r"\bwin32crypt\b|CryptUnprotectData|\bkeyring\.|Login Data|(?:cookies|logins)\.sqlite|moz_cookies"),
+    ("py_clr", {PY}, "medium", "T1620", "in-memory .NET load (pythonnet/CLR)",
+     r"\bimport clr\b|\bpythonnet\b|System\.Reflection\.Assembly"),
+    ("py_antivm", {PY}, "medium", "T1497.001", "VM / sandbox / debugger detection",
+     r"\bvmware\b|\bvirtualbox\b|\bvbox\b|\bqemu\b|IsDebuggerPresent|\bwmic\b|GetSystemFirmwareTable|cpu_count\s*\(\s*\)\s*<"),
+    ("py_sleep", {PY}, "medium", "T1497.003", "long sleep (sandbox evasion)",
+     r"\btime\.sleep\s*\(\s*(?:[1-9]\d{2,}|\d+\s*\*\s*60)"),
+    ("py_disable_defender", {PY}, "high", "T1562.001", "disables AV / Defender",
+     r"Set-MpPreference|DisableRealtimeMonitoring|Add-MpPreference\s+-ExclusionPath|defender"),
 ]
 
 # Rules that, alone, are too noisy to raise by themselves (still shown as hits).
@@ -230,7 +275,8 @@ def risk_escalation(hits: list[dict[str, Any]]) -> dict[str, Any] | None:
     families = {r.split("_", 1)[1].split("_")[0] for r in highs}
     key = {"download", "exec", "iex", "shell", "lolbin", "shellcode", "run",
            "wscript", "reflection", "file", "download", "activex", "cred",
-           "persist", "wmi", "amsi", "bits", "service", "addtype"}
+           "persist", "wmi", "amsi", "bits", "service", "addtype",
+           "subprocess", "inject", "socket", "credentials", "packed"}
     hit_families = families & key
     if len(highs) >= 2 and len(hit_families) >= 2:
         return {"rule": "script_attack_chain", "severity": "high", "attack": "T1059",
