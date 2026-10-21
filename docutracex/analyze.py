@@ -556,6 +556,48 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                 write_subresult(paths, "nested", nested_res)
                 ran.append("nested")
                 findings_total += nested_res.get("counts", {}).get("findings", 0)
+    elif family == "java":
+        # Java archive (.jar/.war/.ear: ZIP → extracted + recursed) or a loose
+        # .class/.jsp. Java-aware analysis: manifest, constant pool, JSP, signing.
+        from . import nested
+        from .parsers import java
+
+        jext = original.suffix.lower()
+        if jext in (".jar", ".war", ".ear"):
+            def _jar() -> dict[str, Any]:
+                rec = unlock_mod.extract_archive(original, paths.extracted_dir / "java",
+                                                 unlock_mod.candidates(user_pw, kind="archive"))
+                out = unlock_mod.public(rec, paths.root)
+                out.update(module="archive", password_set=bool(user_pw),
+                           counts={"findings": len(rec["findings"]),
+                                   "entries": len([e for e in rec["entries"] if e.get("file")])},
+                           status="ok_with_findings" if rec["findings"] else "ok")
+                out["_files"] = [(e["file"], e["name"]) for e in rec["entries"] if e.get("file")]
+                return out
+
+            arc = run("archive: unpack the Java archive (bounded)", _jar) or {}
+            jfiles = arc.pop("_files", [])
+            if arc:
+                write_subresult(paths, "archive", arc)
+                ran.append("archive")
+                overall_counts["components"] = arc["counts"]["entries"]
+                findings_total += arc["counts"]["findings"]
+            items = [{"path": f, "filename": Path(n).name} for f, n in jfiles]
+            if items:
+                nested_res = run("nested: recursive scan of the archive entries",
+                                 lambda: nested.scan_children(items, paths, unlock_ctx={"user": user_pw}))
+                if nested_res.get("tree"):
+                    write_subresult(paths, "nested", nested_res)
+                    ran.append("nested")
+                    findings_total += nested_res.get("counts", {}).get("findings", 0)
+
+        jres = run("java: manifest · web.xml · signing · .class constant-pool / CFR · JSP rules",
+                   lambda: java.analyze(original, paths.extracted_dir))
+        write_subresult(paths, "java", jres)
+        ran.append("java")
+        findings_total += jres.get("counts", {}).get("findings", 0)
+        state = "completed"
+
     elif family == "shortcut":
         # Windows shortcut (.lnk/.url/.website): parse the target + metadata and
         # feed the launched command to the scripting engine.
@@ -753,7 +795,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto",
                "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole",
                "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules", "javascript", "rtf",
-               "powershell", "vbscript", "batch", "shortcut", "msi", "python")
+               "powershell", "vbscript", "batch", "shortcut", "msi", "python", "java")
 # Modules whose findings feed the consolidated view (includes derived ones).
 _COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file", "pyinstaller")
 
@@ -909,6 +951,9 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
     elif module == "python":
         from .parsers import python
         res = python.analyze(original, ed, {})
+    elif module == "java":
+        from .parsers import java
+        res = java.analyze(original, ed)
     else:  # pragma: no cover
         raise ValueError(module)
 

@@ -23,7 +23,7 @@ import re
 from typing import Any
 
 # Language codes.
-JS, PS, VBS, BAT, VBA, PY = "js", "ps", "vbs", "bat", "vba", "py"
+JS, PS, VBS, BAT, VBA, PY, JAVA = "js", "ps", "vbs", "bat", "vba", "py", "java"
 
 _HITS_PER_RULE = 6
 
@@ -226,6 +226,45 @@ _RULES: list[tuple[str, set[str], str, str, str, str]] = [
      r"\btime\.sleep\s*\(\s*(?:[1-9]\d{2,}|\d+\s*\*\s*60)"),
     ("py_disable_defender", {PY}, "high", "T1562.001", "disables AV / Defender",
      r"Set-MpPreference|DisableRealtimeMonitoring|Add-MpPreference\s+-ExclusionPath|defender"),
+
+    # ---- Java (.class constant pool / decompiled source / JSP) -------------
+    # Matched on decompiled source (CFR), on the slash-separated class/method
+    # refs mined from the .class constant pool, and on JSP scriptlet text.
+    ("java_exec", {JAVA}, "high", "T1059", "runs OS commands (Runtime/ProcessBuilder)",
+     r"\bRuntime\b[./\s]{0,8}(?:getRuntime[./\s(]{0,6})?[./\s]{0,8}exec\b|getRuntime\s*\(\s*\)\s*\.?\s*exec|"
+     r"\bProcessBuilder\b|java[./]lang[./]ProcessImpl"),
+    ("java_script_engine", {JAVA}, "high", "T1059.007", "dynamic script eval (ScriptEngine/Nashorn)",
+     r"ScriptEngineManager|javax[./]script|getEngineByName|\bNashorn\b"),
+    ("java_defineclass", {JAVA}, "high", "T1620", "in-memory class loading (defineClass/ClassLoader)",
+     r"\bdefineClass\b|URLClassLoader|\bClassLoader\b|sun[./]misc[./]Unsafe|\bUnsafe\b"),
+    ("java_reflection", {JAVA}, "medium", "T1620", "reflection (Class.forName / setAccessible)",
+     r"Class\.forName|java[./]lang[./]reflect|\.getDeclaredMethod\b|\.setAccessible\b|\.getMethod\b|invoke\b"),
+    ("java_download", {JAVA}, "high", "T1105", "network download / connection",
+     r"java[./]net[./](?:URL|HttpURLConnection|URLConnection)|openConnection|openStream|"
+     r"java[./]net[./]http[./]HttpClient|getInputStream\s*\("),
+    ("java_socket", {JAVA}, "medium", "T1095", "raw socket (possible C2)",
+     r"java[./]net[./]Socket|\bServerSocket\b|SocketChannel"),
+    ("java_jndi", {JAVA}, "high", "T1190", "JNDI lookup (Log4Shell / injection)",
+     r"\$\{jndi:|javax[./]naming|InitialContext|(?:ldap|rmi|dns|iiop)://"),
+    ("java_deserialization", {JAVA}, "high", "T1190", "Java deserialization (gadget)",
+     r"ObjectInputStream|readObject\b|readUnshared\b|InvokerTransformer|TemplatesImpl|"
+     r"CommonsCollections|\bysoserial\b"),
+    ("java_crypto", {JAVA}, "medium", "T1027", "crypto (payload decryption)",
+     r"javax[./]crypto|\bCipher\b|SecretKeySpec|IvParameterSpec"),
+    ("java_base64", {JAVA}, "medium", "T1140", "base64 decoding",
+     r"java[./]util[./]Base64|Base64\.(?:get\w*Decoder|decode)|BASE64Decoder"),
+    ("java_agent", {JAVA}, "high", "T1574", "Java agent (premain/Instrumentation)",
+     r"\bpremain\b|java[./]lang[./]instrument|\bInstrumentation\b|Launcher-Agent-Class"),
+    ("java_native_load", {JAVA}, "medium", "T1129", "loads native code (System.load/JNI)",
+     r"System\.load(?:Library)?\s*\(|\bRegisterNatives\b"),
+    ("java_disable_security", {JAVA}, "medium", "T1562", "disables the SecurityManager",
+     r"setSecurityManager\s*\(\s*null|System\.setSecurityManager"),
+    ("java_webshell_input", {JAVA}, "medium", "T1505.003", "reads attacker input (JSP/servlet)",
+     r"request\.get(?:Parameter|Header|InputStream|Reader|QueryString)\b|getParameterValues"),
+    ("java_jsp_scriptlet", {JAVA}, "medium", "T1505.003", "JSP scriptlet / expression",
+     r"<%[=@!]?\s|<jsp:|runtime\.exec|pageContext\b"),
+    ("java_file_write", {JAVA}, "medium", "T1105", "writes files (FileOutputStream)",
+     r"FileOutputStream|java[./]nio[./]file[./]Files\b|\.getBytes\s*\(\s*\)\s*\)|RandomAccessFile"),
 ]
 
 # Rules that, alone, are too noisy to raise by themselves (still shown as hits).
@@ -276,7 +315,8 @@ def risk_escalation(hits: list[dict[str, Any]]) -> dict[str, Any] | None:
     key = {"download", "exec", "iex", "shell", "lolbin", "shellcode", "run",
            "wscript", "reflection", "file", "download", "activex", "cred",
            "persist", "wmi", "amsi", "bits", "service", "addtype",
-           "subprocess", "inject", "socket", "credentials", "packed"}
+           "subprocess", "inject", "socket", "credentials", "packed",
+           "defineclass", "jndi", "deserialization", "webshell", "script"}
     hit_families = families & key
     if len(highs) >= 2 and len(hit_families) >= 2:
         return {"rule": "script_attack_chain", "severity": "high", "attack": "T1059",

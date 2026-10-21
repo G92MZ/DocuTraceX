@@ -59,6 +59,9 @@ _EXT_FAMILY: dict[str, str] = {
     # Windows shortcuts: analysed by the shortcut engine (target + metadata,
     # command fed to the scripting engine)
     **{e: "shortcut" for e in (".lnk", ".url", ".website")},
+    # Java archives and class/JSP files: ZIP containers extracted + recursed,
+    # with Java-aware analysis (manifest, constant pool, JSP, signing).
+    **{e: "java" for e in (".jar", ".war", ".ear", ".class", ".jsp", ".jspx", ".jspf")},
     # Windows binaries / installers: .msi gets real OLE analysis; PE images
     # (.exe/.dll/...) are categorised and triaged, not statically unpacked.
     **{e: "binary" for e in (
@@ -212,6 +215,10 @@ def detected_family(mime: str, description: str) -> str | None:
         return "binary"
     if "python" in desc and ("byte-compiled" in desc or "script" in desc):
         return "scripting"
+    if "java archive" in desc or ("jar" in desc and "archive" in desc):
+        return "java"
+    if "compiled java class" in desc or "java class data" in desc:
+        return "java"
     if mime.startswith("text/"):
         return "text"
     return None
@@ -270,6 +277,14 @@ def classify_discrepancy(
         # .msi is an OLE/CFB compound file; the generic compound signature fits.
         status = _INCONCLUSIVE
         detail = "Detected as a compound file consistent with a Windows Installer."
+    elif exp == "java" and (det == "zip" or mime in _GENERIC):
+        # .jar/.war/.ear are ZIP packages; a generic ZIP is consistent.
+        status = _INCONCLUSIVE
+        detail = "Detected as a ZIP package consistent with a Java archive."
+    elif exp == "java" and det == "text":
+        # .jsp is text; libmagic sees text/* — consistent.
+        status = _MATCH
+        detail = "Text-based JSP consistent with the extension."
     else:
         # id: gmzpt
         status = _MISMATCH
