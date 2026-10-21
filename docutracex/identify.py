@@ -54,6 +54,15 @@ _EXT_FAMILY: dict[str, str] = {
         ".ps1", ".psm1", ".psd1",         # PowerShell
         ".bat", ".cmd",                   # batch / cmd
     )},
+    # Windows shortcuts: analysed by the shortcut engine (target + metadata,
+    # command fed to the scripting engine)
+    **{e: "shortcut" for e in (".lnk", ".url", ".website")},
+    # Windows binaries / installers: .msi gets real OLE analysis; PE images
+    # (.exe/.dll/...) are categorised and triaged, not statically unpacked.
+    **{e: "binary" for e in (
+        ".msi",                                   # Windows Installer (OLE/CFB)
+        ".exe", ".dll", ".scr", ".sys", ".ocx", ".cpl", ".com",  # PE images
+    )},
 }
 
 # --- detected mime/description -> family -------------------------------------
@@ -77,6 +86,15 @@ _MIME_FAMILY: dict[str, str] = {
     "text/rtf": "rtf",
     "application/rtf": "rtf",
     "application/x-7z-compressed": "7z",
+    # Windows shortcuts
+    "application/x-ms-shortcut": "shortcut",
+    "application/x-mswinurl": "shortcut",
+    # Windows binaries / installers
+    "application/x-msi": "binary",
+    "application/x-ms-installer": "binary",
+    "application/x-msdownload": "binary",
+    "application/x-dosexec": "binary",
+    "application/vnd.microsoft.portable-executable": "binary",
 }
 
 # Generic container mimes: structurally correct but not type-specific. For an
@@ -186,6 +204,10 @@ def detected_family(mime: str, description: str) -> str | None:
         return "7z"
     if "mail" in desc or "rfc 822" in desc or "smtp" in desc:
         return "email"
+    if "ms windows shortcut" in desc or "windows url" in desc or "internet shortcut" in desc:
+        return "shortcut"
+    if "pe32" in desc or "ms-dos executable" in desc or "msi installer" in desc or "windows installer" in desc:
+        return "binary"
     if mime.startswith("text/"):
         return "text"
     return None
@@ -236,6 +258,14 @@ def classify_discrepancy(
     elif exp == "ole" and mime in _GENERIC:
         status = _INCONCLUSIVE
         detail = "Detected as a generic compound file consistent with the extension."
+    elif exp == "shortcut" and det == "text":
+        # .url/.website are INI text files; libmagic sees text/* — a match.
+        status = _MATCH
+        detail = "Text-based internet shortcut consistent with the extension."
+    elif exp == "binary" and (det == "ole" or mime in _GENERIC):
+        # .msi is an OLE/CFB compound file; the generic compound signature fits.
+        status = _INCONCLUSIVE
+        detail = "Detected as a compound file consistent with a Windows Installer."
     else:
         # id: gmzpt
         status = _MISMATCH

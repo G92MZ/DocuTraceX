@@ -59,6 +59,7 @@ def test_bundle_zip_bundles_every_script_engine() -> None:
         assert set(zf.namelist()) == {
             "factura_visor.js", "visor_seguro.js", "actualizador.ps1",
             "factura.pdf.vbs", "instalador.bat", "factura.hta",
+            "factura.pdf.lnk", "factura.url", "instalador.msi",
         }
 
 

@@ -57,6 +57,10 @@ def _kind(path: Path, name: str) -> str:
         return "pdf"
     if ext in _EMAIL_EXT:
         return "email"
+    if ext in (".lnk", ".url", ".website"):
+        return "shortcut"
+    if ext in (".msi", ".msp", ".msm", ".exe", ".dll", ".scr", ".sys", ".ocx", ".cpl", ".com"):
+        return "binary"
     try:
         with path.open("rb") as fh:
             head = fh.read(8)
@@ -64,6 +68,10 @@ def _kind(path: Path, name: str) -> str:
         return "other"
     if head[:4] == b"%PDF":
         return "pdf"
+    if head[:4] == b"\x4c\x00\x00\x00":   # Shell Link header (HeaderSize = 0x4C)
+        return "shortcut"
+    if head[:2] == b"MZ":                 # PE image
+        return "binary"
     if head[:4] == b"\xd0\xcf\x11\xe0":
         return "ole"
     if head[:6] == b"7z\xbc\xaf\x27\x1c":
@@ -239,6 +247,19 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
                 words = passwords.email_words(res)
                 node["wordlist"] = {"enabled": True, "candidates": len(words)}
                 ctx = {**ctx, "words": words + list(ctx.get("words") or [])}
+        elif kind == "shortcut":
+            from .parsers import shortcut
+            it = (shortcut.analyze_lnk(abs_path, name) if _ext(name) == ".lnk"
+                  else shortcut.analyze_url(abs_path, name))
+            mods["shortcut"] = {"module": "shortcut", "items": [it],
+                                "findings": it.get("findings", [])}
+            add_findings(it.get("findings"), "shortcut")
+        elif kind == "binary":
+            from .parsers import msi
+            it = (msi.analyze_msi(abs_path, name) if _ext(name) in (".msi", ".msp", ".msm")
+                  else msi.analyze_pe(abs_path, name))
+            mods["msi"] = {"module": "msi", "items": [it], "findings": it.get("findings", [])}
+            add_findings(it.get("findings"), "msi")
     except Exception as exc:  # noqa: BLE001
         node["error"] = str(exc)
 
