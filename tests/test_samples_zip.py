@@ -39,7 +39,8 @@ def test_shipped_archive_has_every_sample_encrypted() -> None:
     exts = {"docx", "docm", "dotx", "dotm", "xlsx", "xlsm", "xltx", "xltm", "xlam", "xlsb", "pptx", "pptm", "potx",
             "potm", "ppsx", "ppsm", "ppam", "sldx", "sldm", "doc", "dot", "xls", "xlt", "xla", "ppt", "pot", "rtf",
             "pdf", "eml", "emlx", "msg"}
-    assert {f"sample.{e}" for e in exts} | {"lab/phish_lab.eml"} <= names
+    deobf = {"sample_dropper.js", "sample_stage2.ps1", "sample_dropper.vbs", "lab/dropper_bundle.zip"}
+    assert {f"sample.{e}" for e in exts} | {"lab/phish_lab.eml"} | deobf <= names
 
 
 def test_update_removes_previously_shipped_loose_samples(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

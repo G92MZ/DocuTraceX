@@ -242,6 +242,16 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
     except Exception as exc:  # noqa: BLE001
         node["error"] = str(exc)
 
+    # Deobfuscation phase on THIS child: JavaScript / PowerShell / VBScript that
+    # hides inside the child's own structure (VBA JScript, PDF /JS, email body
+    # scripts, commands mined from VBA/DDE) is deobfuscated statically (no V8
+    # sandbox here). Results feed the child's findings, its IOC sources and a
+    # per-child full-code dump — the same _full_code/code_file plumbing.
+    try:
+        _scan_code_languages(abs_path, paths, node, this_chain, mods, add_findings)
+    except Exception as exc:  # noqa: BLE001
+        node.setdefault("code_error", str(exc))
+
     # Full IOC material of THIS child: every analyzer sub-result gathered above,
     # reduced to {module, location, text} by the common builder — so a child is
     # mined as deeply as a top-level file, past the caps that finding evidence
@@ -269,6 +279,57 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
     elif kids:
         node["truncated_children"] = len(kids)
     return node
+
+
+def _scan_code_languages(abs_path: Path, paths: CasePaths, node: dict[str, Any],
+                         this_chain: str, mods: dict[str, Any], add_findings) -> None:  # noqa: ANN001
+    """Run the JS / PowerShell / VBScript deobfuscation phase on one child.
+
+    Collection is scoped to the child file itself and the child's own module
+    results (``mods``) — NOT a rglob of the shared nested dir, which would pull
+    in siblings and files the top-level pass already handles. The recovered,
+    deobfuscated code is merged back into ``mods`` so the common IOC builder
+    mines it, and the complete source is dumped under ``extracted/code/.../nested/``."""
+    from . import codefiles
+    from .parsers import javascript, powershell, vbscript
+
+    # A path that does not exist, so each collector's ``extracted_dir.rglob``
+    # yields nothing and only the child file + its mods are scanned.
+    empty = paths.extracted_dir / "nested" / "__none__"
+    prefix = (node.get("sha256") or "child")[:12]
+    specs = (
+        ("javascript", lambda: javascript.analyze(abs_path, empty, mods, run_sandbox=False), "js", "js"),
+        ("powershell", lambda: powershell.analyze(abs_path, empty, mods), "powershell", "ps1"),
+        ("vbscript", lambda: vbscript.analyze(abs_path, empty, mods), "vbscript", "vbs"),
+    )
+    for key, fn, sub, ext in specs:
+        try:
+            res = fn()
+        except Exception:  # noqa: BLE001
+            continue
+        scripts = res.get("scripts") or []
+        if not scripts:
+            continue
+        for j, sc in enumerate(scripts, 1):
+            label = codefiles._slug(sc.get("location") or sc.get("kind") or sc.get("origin"), f"s{j}")
+            full = sc.pop("_full_code", None)
+            if isinstance(full, str) and full.strip():
+                rel = codefiles._write(paths, f"{sub}/nested", f"{prefix}_{j:02d}_{label}.{ext}", full)
+                if rel:
+                    sc["code_file"] = rel
+            deob = sc.pop("_full_deob", None)
+            if isinstance(deob, str) and deob.strip():
+                reld = codefiles._write(paths, f"{sub}/nested", f"{prefix}_{j:02d}_{label}.deobfuscated.{ext}", deob)
+                if reld:
+                    sc["code_file_deob"] = reld
+        # Merge into mods so ioc.sources_from_modules mines the recovered code,
+        # and surface the findings on this child's node (with its path chain).
+        mods[key] = res
+        add_findings(res.get("findings"), key)
+        node.setdefault("code", {})[key] = {
+            "scripts": len(scripts),
+            "deobfuscated": sum(1 for s in scripts if s.get("code_is_deobfuscated")),
+        }
 
 
 def _flatten(nodes: list[dict[str, Any]], out: list[dict[str, Any]]) -> None:

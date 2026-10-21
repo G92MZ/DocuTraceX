@@ -406,7 +406,7 @@ function pivotTarget(f, ids) {
   }
   if (["olevba", "oleid", "mraptor", "msodde", "oleobj", "oletools", "msoffcrypto"].includes(src)) return has("tools") ? "tools" : null;
   if (src === "officemalscanner") return has("oms") ? "oms" : null;
-  if (src === "vipermonkey" || src === "vbatools") {
+  if (src === "vipermonkey" || src === "vbatools" || src === "vba_deobf") {
     if (/xlm_very_hidden/.test(rule)) return has("tools") ? "tools" : null;
     return has("vba") ? "vba" : null;
   }
@@ -424,6 +424,8 @@ function pivotTarget(f, ids) {
   if (src === "pdf") return has("pdf") ? "pdf" : null;
   if (src === "pdftools") return has("pdftools") ? "pdftools" : null;
   if (src === "javascript") return has("javascript") ? "javascript" : null;
+  if (src === "powershell") return has("powershell") ? "powershell" : null;
+  if (src === "vbscript") return has("vbscript") ? "vbscript" : null;
   if (src === "rtf") {
     if (loc.startsWith("object")) return has("rtfobjects") ? "rtfobjects" : null;
     if (loc.startsWith("field") || loc.includes("template") || loc.includes("docvar")) return has("rtftext") ? "rtftext" : null;
@@ -688,6 +690,12 @@ function paneVba(ole, vt, vm) {
     html += toolOutputBlock("ViperMonkey output", vm.tool, false);
   }
 
+  if (olevba.deobfuscated) {
+    const dTrunc = olevba.deob_truncated ? (ole.code_file_deob ? ` (preview truncated — download has the full source)` : " (truncated)") : "";
+    html += `<h3 class="formats-title">Deobfuscated VBA (static string resolver)${ole && ole.code_file_deob ? " " + fileActions(ole.code_file_deob) : ""}</h3>`;
+    html += `<p class="hint-line"><span class="badge badge-warn">deobfuscated</span> ${escapeHtml((olevba.deob_methods || []).join(", ") || "string resolver")}${escapeHtml(dTrunc)}</p>`;
+    html += `<pre class="text-sample js-code">${escapeHtml(olevba.deobfuscated)}</pre>`;
+  }
   html += `<h3 class="formats-title">VBA source (olevba)${ole && ole.code_file ? " " + fileActions(ole.code_file) : ""}</h3>`;
   modules.forEach((m) => {
     const name = m.vba_filename || m.stream || "module";
@@ -1185,6 +1193,60 @@ function paneJavascript(js) {
       <summary><span class="badge badge-${sev}">${hits.length} hit(s)</span>
         <span class="mono">${escapeHtml(sc.origin)}</span>
         <span class="badge badge-muted">${escapeHtml(sc.kind)}</span>
+        <span class="hint-line">${escapeHtml(rules.slice(0, 4).join(" · "))}</span></summary>
+      <div style="padding:8px 10px">${body}</div></details>`;
+  });
+  return html;
+}
+
+// Generic code-language pane (PowerShell, VBScript, …): same pattern as the
+// JavaScript tab — suspicious lines, a Deobfuscated view (hits highlighted) and
+// an Original view, each with Folder/Download of the complete file. No V8
+// sandbox table (that is JavaScript-specific).
+function paneCodeLanguage(mod, opts) {
+  opts = opts || {};
+  const scripts = (mod && mod.scripts) || [];
+  const noun = opts.noun || "command";
+  if (!scripts.length) return `<p class="hint-line">No ${escapeHtml(opts.label || "code")} found.</p>`;
+  let html = `<p class="hint-line">${scripts.length} ${escapeHtml(noun)}(s). Collected from the case and deobfuscated statically (nothing is executed).</p>`;
+  html += '<div class="row" style="margin:4px 0 10px"><button class="btn btn-ghost btn-sm" type="button" onclick="this.closest(\'.subpane\').querySelectorAll(\'details.js-card\').forEach(e=>e.open=true)">Expand all</button> <button class="btn btn-ghost btn-sm" type="button" onclick="this.closest(\'.subpane\').querySelectorAll(\'details.js-card\').forEach(e=>e.open=false)">Collapse all</button></div>';
+  scripts.forEach((sc) => {
+    const hits = sc.hits || [];
+    const sev = hits.some((h) => h.severity === "high") ? "bad" : (hits.length ? "warn" : "ok");
+    const rules = [...new Set(hits.map((h) => h.label))];
+    const m = sc.metrics || {};
+    const hitLines = new Set(hits.map((h) => h.line_no));
+    const codeHtml = (sc.code || "").split("\n").map((ln, i) => {
+      const t = escapeHtml(ln);
+      return hitLines.has(i + 1) ? `<mark>${t}</mark>` : t;
+    }).join("\n");
+    const loc = sc.location || `${opts.src}:${sc.id}`;
+    let body = "";
+    if (sc.note) body += `<p class="hint-line">${escapeHtml(sc.note)}</p>`;
+    body += `<p class="hint-line">${m.lines || 0} lines · ${sc.size} chars · longest line ${m.longest_line || 0} · entropy ${m.entropy || 0} · obfuscation score ${m.obfuscation_score || 0}</p>`;
+    if (sc.code_is_deobfuscated) {
+      const methods = (sc.deob_methods || []).join(", ");
+      body += `<p class="hint-line"><span class="badge badge-warn">deobfuscated</span> Recovered ${escapeHtml(noun)} analysed below (${escapeHtml(methods || "static decoding")}).</p>`;
+    }
+    if (hits.length) {
+      body += table(["Line", "Why", "Code", "Mark"], hits.map((h) => `<tr><td>${h.line_no}</td>
+        <td class="${h.severity === "high" ? "bad-text" : ""}">${escapeHtml(h.label)}</td>
+        <td class="mono">${escapeHtml(h.line)}</td>
+        <td>${addMarkCell(opts.markKind || "code_hit", `${escapeHtml(opts.label || "code")} (${sc.origin}): ${h.label} — line ${h.line_no}`, loc, h.line)}</td></tr>`).join(""));
+    }
+    if (sc.code_is_deobfuscated) {
+      const dTrunc = sc.code_truncated ? (sc.code_file_deob ? ` (preview truncated — download has the full ${sc.deob_size || 0} chars)` : " (truncated)") : "";
+      body += `<details class="disclose"${hits.length ? " open" : ""}><summary>Deobfuscated${dTrunc}${sc.code_file_deob ? " " + fileActions(sc.code_file_deob) : ""}</summary><pre class="text-sample js-code">${codeHtml}</pre></details>`;
+      const oTrunc = sc.original_truncated ? (sc.code_file ? ` (preview truncated — download has the full ${sc.size} chars)` : " (truncated)") : "";
+      body += `<details class="disclose"><summary>Original (obfuscated)${oTrunc}${sc.code_file ? " " + fileActions(sc.code_file) : ""}</summary><pre class="text-sample js-code">${escapeHtml(sc.original_code || "")}</pre></details>`;
+    } else {
+      const jsTrunc = sc.code_truncated ? (sc.code_file ? ` (preview truncated — download has the full ${sc.size} chars)` : " (truncated)") : "";
+      body += `<details class="disclose"${hits.length ? " open" : ""}><summary>Code${jsTrunc}${sc.code_file ? " " + fileActions(sc.code_file) : ""}</summary><pre class="text-sample js-code">${codeHtml}</pre></details>`;
+    }
+    html += `<details class="disclose js-card"${sev === "bad" ? " open" : ""}>
+      <summary><span class="badge badge-${sev}">${hits.length} hit(s)</span>
+        <span class="mono">${escapeHtml(sc.origin)}</span>
+        ${sc.code_is_deobfuscated ? '<span class="badge badge-warn">deobfuscated</span>' : ""}
         <span class="hint-line">${escapeHtml(rules.slice(0, 4).join(" · "))}</span></summary>
       <div style="padding:8px 10px">${body}</div></details>`;
   });
@@ -1784,6 +1846,16 @@ async function openComponents(analysisId, keepTab) {
     const jsm = mods.javascript;
     if (jsm && (jsm.scripts || []).length) {
       sections.push({ id: "javascript", label: `JavaScript (${jsm.scripts.length})`, html: paneJavascript(jsm) });
+    }
+    const psm = mods.powershell;
+    if (psm && (psm.scripts || []).length) {
+      sections.push({ id: "powershell", label: `PowerShell (${psm.scripts.length})`,
+        html: paneCodeLanguage(psm, { label: "PowerShell", noun: "command", src: "powershell", markKind: "ps_hit" }) });
+    }
+    const vbsm = mods.vbscript;
+    if (vbsm && (vbsm.scripts || []).length) {
+      sections.push({ id: "vbscript", label: `VBScript (${vbsm.scripts.length})`,
+        html: paneCodeLanguage(vbsm, { label: "VBScript", noun: "script", src: "vbscript", markKind: "vbs_hit" }) });
     }
     const vbat = mods.vbatools;
     const vmon = mods.vipermonkey;
