@@ -49,3 +49,21 @@ def test_main_test_op(monkeypatch, capsys) -> None:
 def test_enc_dec_exclude_roundtrip() -> None:
     s = {"1.2.3.4:80", "5.6.7.8:1080"}
     assert fp._dec_set(fp._enc_set(s)) == s
+
+
+def test_refresh_forces_download_each_start(monkeypatch) -> None:
+    called = {"download": [], "load": []}
+    monkeypatch.setattr(fp, "download", lambda p: called["download"].append(p) or [])
+    monkeypatch.setattr(fp, "load", lambda p, max_age=fp.MAX_AGE: called["load"].append(p) or [])
+    fp.refresh_all_async(force=True).join(5)
+    assert set(called["download"]) == set(fp.PROTOCOLS)
+    assert called["load"] == []
+
+
+def test_refresh_non_force_only_loads_stale(monkeypatch) -> None:
+    called = {"download": [], "load": []}
+    monkeypatch.setattr(fp, "download", lambda p: called["download"].append(p) or [])
+    monkeypatch.setattr(fp, "load", lambda p, max_age=fp.MAX_AGE: called["load"].append(p) or [])
+    fp.refresh_all_async(force=False).join(5)
+    assert set(called["load"]) == set(fp.PROTOCOLS)
+    assert called["download"] == []

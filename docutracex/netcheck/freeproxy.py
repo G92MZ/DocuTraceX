@@ -1,7 +1,8 @@
 """Free public proxies (ProxyScrape) for the network checks.
 
-The list is downloaded from ProxyScrape's free API at startup (cached for a day
-under ``tools/cache``). "Connect to free proxy" shuffles the list for the chosen
+The list is downloaded from ProxyScrape's free API and refreshed on every
+``run.py`` start (so it never goes stale), cached under ``tools/cache`` for
+on-demand use between starts. "Connect to free proxy" shuffles the list for the chosen
 protocol (and country, if any), tests candidates in parallel and keeps the
 first that works. A candidate only passes if a **strictly verified HTTPS**
 request through it returns the expected answer — a proxy that intercepts TLS
@@ -142,15 +143,21 @@ def status() -> dict[str, Any]:
     return out
 
 
-def refresh_all_async() -> None:
-    """Startup prefetch (non-blocking): refresh stale lists in the background."""
+def refresh_all_async(force: bool = True) -> threading.Thread:
+    """Startup prefetch (non-blocking): refresh the free-proxy lists from the
+    source so they never go stale. ``force`` (the default, used on every run.py
+    start) re-downloads even a still-fresh cache; ``force=False`` downloads only
+    when the cache is missing or older than ``MAX_AGE``. Runs in the background
+    and delegates to the portable, so startup is never blocked or broken."""
     def run() -> None:
         for proto in PROTOCOLS:
             try:
-                load(proto)
+                download(proto) if force else load(proto)
             except Exception:  # noqa: BLE001  (offline / API down: try again on demand)
                 pass
-    threading.Thread(target=run, name="dtx-freeproxy-prefetch", daemon=True).start()
+    t = threading.Thread(target=run, name="dtx-freeproxy-prefetch", daemon=True)
+    t.start()
+    return t
 
 
 def proxy_url(p: dict[str, Any]) -> str:
