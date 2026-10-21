@@ -358,20 +358,36 @@ def _sandbox_findings(sb: dict[str, Any], loc: str, out: list[dict[str, Any]]) -
 
 
 def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> dict[str, Any]:
+    from . import js_deobf
+
     res: dict[str, Any] = {"module": "javascript", "status": "ok", "scripts": [], "findings": []}
     for i, it in enumerate(collect(original, extracted_dir, modules), 1):
-        full = it["code"] or ""           # complete source (dumped to disk whole)
-        code = full[:_MAX_CODE]           # bounded copy for analysis / sandbox
+        full = it["code"] or ""           # complete original source (dumped whole)
+        orig_code = full[:_MAX_CODE]      # bounded original for metrics / display
         loc = it["location"]
+
+        # --- deobfuscation FIRST: everything below analyses the clean artifact.
+        deob = js_deobf.deobfuscate(full)
+        deob_full = deob["code"]
+        code = deob_full[:_MAX_CODE] if deob["changed"] else orig_code
+
         hits = static_hits(code)
-        mets = metrics(code)
+        mets = metrics(orig_code)          # how obfuscated the ORIGINAL was
+        mets_deob = metrics(code) if deob["changed"] else None
         decoded = decode_strings(code)
-        sb = sandbox(code)
+        sb = sandbox(code)                 # re-analyse the deobfuscated payload
         script = {"id": i, "kind": it["kind"], "origin": it["origin"], "location": loc, "note": it.get("note"),
-                  "size": len(full), "code": code[:_KEEP_CODE], "code_truncated": len(full) > _KEEP_CODE,
-                  "pretty": _pretty(code)[:_KEEP_CODE] if mets["longest_line"] > 200 else "",
-                  "hits": hits, "metrics": mets, "decoded": decoded, "sandbox": sb,
+                  "size": len(full), "code": code[:_KEEP_CODE], "code_truncated": len(deob_full) > _KEEP_CODE,
+                  "code_is_deobfuscated": deob["changed"],
+                  "original_code": orig_code[:_KEEP_CODE] if deob["changed"] else "",
+                  "original_truncated": deob["changed"] and len(full) > _KEEP_CODE,
+                  "deob_methods": deob["methods"], "deob_layers": deob["layers"], "deob_schemes": deob["schemes"],
+                  "deob_size": len(deob_full) if deob["changed"] else 0,
+                  "pretty": _pretty(code)[:_KEEP_CODE] if metrics(code)["longest_line"] > 200 else "",
+                  "hits": hits, "metrics": mets, "metrics_deob": mets_deob, "decoded": decoded, "sandbox": sb,
                   "_full_code": full}
+        if deob["changed"]:
+            script["_full_deob"] = deob_full
         res["scripts"].append(script)
         by_rule: dict[str, list[dict[str, Any]]] = {}
         for h in hits:
@@ -386,6 +402,17 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> dic
                                             f"[{it['origin']}] Heavily obfuscated script (score {mets['obfuscation_score']})",
                                             loc, f"longest line {mets['longest_line']}, {mets['escapes']} escapes, "
                                                  f"entropy {mets['entropy']}, {mets['long_strings']} long encoded strings"))
+        if deob["changed"]:
+            methods = ", ".join(deob["methods"]) or "static decoding"
+            scheme_note = f"; packer scheme(s): {', '.join(deob['schemes'])}" if deob["schemes"] else ""
+            res["findings"].append(_finding("js_deobfuscated", "medium",
+                                            f"[{it['origin']}] Deobfuscated before analysis ({methods}){scheme_note} — "
+                                            f"findings below are from the recovered payload",
+                                            loc, (code[:600] or "").strip()))
+        elif deob["schemes"]:
+            res["findings"].append(_finding("js_obfuscated", "high",
+                                            f"[{it['origin']}] Obfuscation scheme detected ({', '.join(deob['schemes'])}) — "
+                                            f"left for the sandbox to unfold", loc, deob["schemes"][0]))
         _sandbox_findings(sb, loc, res["findings"])
     res["counts"] = {"findings": len(res["findings"]), "scripts": len(res["scripts"])}
     if res["findings"]:
