@@ -78,19 +78,35 @@ def annotate(modules: dict[str, Any], paths: CasePaths) -> set[str]:
                 ole["code_file"] = rel
             changed.add("oletools")
 
-    # JavaScript: one complete file per script.
+    # JavaScript: one complete file per script, plus the deobfuscated artifact
+    # (when the deobfuscation cascade recovered a cleaner payload).
     js = modules.get("javascript")
     if isinstance(js, dict):
         touched = False
         for i, sc in enumerate(js.get("scripts") or [], 1):
             if not isinstance(sc, dict):
                 continue
-            text, popped = _pop_full(sc, "code")
             label = _slug(sc.get("location") or sc.get("kind") or sc.get("origin"), f"script{i}")
-            rel = _write(paths, "js", f"{i:02d}_{label}.js", text)
-            if (rel and sc.get("code_file") != rel) or popped:
+            # The original source. Prefer _full_code; fall back to the display
+            # field only when the script was NOT deobfuscated (otherwise `code`
+            # already holds the deobfuscated artifact, dumped separately below).
+            orig = sc.pop("_full_code", None)
+            orig_popped = orig is not None
+            if not (isinstance(orig, str) and orig.strip()):
+                orig = "" if sc.get("code_is_deobfuscated") else sc.get("code")
+            rel = _write(paths, "js", f"{i:02d}_{label}.js", orig)
+            if (rel and sc.get("code_file") != rel) or orig_popped:
                 if rel:
                     sc["code_file"] = rel
+                touched = True
+            deob = sc.pop("_full_deob", None)
+            deob_popped = deob is not None
+            if not (isinstance(deob, str) and deob.strip()):
+                deob = None
+            rel_d = _write(paths, "js", f"{i:02d}_{label}.deobfuscated.js", deob)
+            if (rel_d and sc.get("code_file_deob") != rel_d) or deob_popped:
+                if rel_d:
+                    sc["code_file_deob"] = rel_d
                 touched = True
         if touched:
             changed.add("javascript")
