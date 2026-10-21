@@ -63,6 +63,10 @@ def _kind(path: Path, name: str) -> str:
         return "python"
     if ext in (".class", ".jsp", ".jspx", ".jspf"):
         return "java"
+    if ext in (".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz", ".cab", ".iso", ".img", ".udf"):
+        return "archive"
+    if ext in (".one", ".onepkg"):
+        return "onenote"
     if ext in (".msi", ".msp", ".msm", ".exe", ".dll", ".scr", ".sys", ".ocx", ".cpl", ".com"):
         return "binary"
     try:
@@ -80,6 +84,8 @@ def _kind(path: Path, name: str) -> str:
         return "ole"
     if head[:6] == b"7z\xbc\xaf\x27\x1c":
         return "archive"
+    if head[:4] == b"MSCF" or head[:2] in (b"\x1f\x8b", b"BZh") or head[:5] == b"\xfd7zXZ":
+        return "archive"  # Cabinet / gzip / bzip2 / xz (tar or single stream)
     if head[:4] == b"PK\x03\x04":
         try:
             with zipfile.ZipFile(path) as zf:
@@ -271,6 +277,12 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
             mods["java"] = {"module": "java", "scripts": [sc] if sc else [],
                             "findings": it.get("findings", [])}
             add_findings(it.get("findings"), "java")
+        elif kind == "onenote":
+            from .parsers import onenote
+            on = onenote.extract(abs_path, work / "onenote" / node["sha256"][:12])
+            add_findings(on.get("findings"), "onenote")
+            for fp, fn in on.get("_files", []):
+                kids.append((Path(fp), Path(fn).name))
     except Exception as exc:  # noqa: BLE001
         node["error"] = str(exc)
 

@@ -98,6 +98,11 @@ TOOL_DEPS: list[Dependency] = [
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
     ),
     Dependency(
+        "pycdlib", "pycdlib", "Optical/disk image (ISO/UDF) extraction",
+        required=False,
+        install_hint="run scripts/setup_portable_python.py (installed into the portable)",
+    ),
+    Dependency(
         "msoffcrypto", "msoffcrypto-tool", "Encrypted Office detection/decryption",
         required=False,
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
