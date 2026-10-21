@@ -9,6 +9,7 @@ Languages run through their own deobfuscator first: JS cascade (multi-pass decod
 - **VBScript**: 16 rules
 - **Batch**: 9 rules
 - **Python**: 19 rules
+- **Java**: 16 rules
 
 | Rule | Languages | Severity | ATT&CK | Behaviour |
 |---|---|---|---|---|
@@ -88,6 +89,7 @@ Beyond the static rules above, the scripting engine uses real analysis tools (pr
 - **webcrack** (JavaScript, portable Node): flattens obfuscator.io string-array/rotator and control-flow obfuscation and unpacks bundles, re-emitting readable code *before* the rules, the IOC scan and the STPyV8 sandbox run — so detections see the real payload. Falls back to the pure-Python cascade when not provisioned.
 - **box-ps** (PowerShell, portable PowerShell Core): emulates the deobfuscated PowerShell with overridden cmdlets and records behaviour. Its actions become findings — `boxps_network`, `boxps_file`, `boxps_exec`, `boxps_inject`, `boxps_registry`, `boxps_persist` — shown in the PowerShell tab's Sandbox section. This brings PowerShell to parity with JavaScript (STPyV8) and VBA (ViperMonkey).
 - **pycdc** (Python, built from source): decompiles `.pyc` back to readable source before the rules run. When it is not provisioned the Python engine still reconstructs dotted calls and strings from the bytecode, so detections keep working — the decompiler only improves readability.
+- **CFR** (Java, a jar run with any host JVM): decompiles suspicious `.class` files to readable Java before the rules run; decompilation is budgeted to classes that already look suspicious from the constant pool. Without CFR (or a JVM) the Java engine matches on the constant pool's class/method references and strings, so detections keep working.
 
 ## Shortcut and binary families
 
@@ -152,3 +154,26 @@ Applied by the Python engine to ``.py`` source and to ``.pyc`` recovered by deco
 | `py_clr` | medium | T1620 | in-memory .NET load (pythonnet/CLR) |
 | `py_antivm` | medium | T1497.001 | VM / sandbox / debugger detection |
 | `py_sleep` | medium | T1497.003 | long sleep (sandbox evasion) |
+
+## Java rules
+
+Applied by the Java engine to `.class` files (matched on the constant pool — referenced classes/methods and string literals — and, with **CFR** provisioned, on the decompiled source) and to JSP scriptlet text. `.jar`/`.war`/`.ear` are unpacked and recursed; the module also surfaces `java_main_class`/`java_signed`/`java_web_descriptor` (info), `java_serialized_object` (high, `AC ED 00 05` stream magic) and the MANIFEST/web.xml/signing metadata.
+
+| Rule | Severity | ATT&CK | Behaviour |
+|---|---|---|---|
+| `java_exec` | high | T1059 | runs OS commands (Runtime/ProcessBuilder) |
+| `java_script_engine` | high | T1059.007 | dynamic script eval (ScriptEngine/Nashorn) |
+| `java_defineclass` | high | T1620 | in-memory class loading (defineClass/ClassLoader/Unsafe) |
+| `java_download` | high | T1105 | network download / connection |
+| `java_jndi` | high | T1190 | JNDI lookup (Log4Shell / injection) |
+| `java_deserialization` | high | T1190 | Java deserialization gadget |
+| `java_agent` | high | T1574 | Java agent (premain / Instrumentation) |
+| `java_reflection` | medium | T1620 | reflection (Class.forName / setAccessible) |
+| `java_socket` | medium | T1095 | raw socket (possible C2) |
+| `java_crypto` | medium | T1027 | crypto (payload decryption) |
+| `java_base64` | medium | T1140 | base64 decoding |
+| `java_native_load` | medium | T1129 | loads native code (System.load / JNI) |
+| `java_disable_security` | medium | T1562 | disables the SecurityManager |
+| `java_webshell_input` | medium | T1505.003 | reads attacker input (JSP/servlet) |
+| `java_jsp_scriptlet` | medium | T1505.003 | JSP scriptlet / expression |
+| `java_file_write` | medium | T1105 | writes files (FileOutputStream/Files) |

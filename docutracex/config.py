@@ -137,5 +137,40 @@ class Settings:
                 return c
         return None
 
+    def java_executable(self) -> Path | None:
+        """A JVM to run CFR with: a portable one under ``tools/jre/`` if present,
+        else ``JAVA_HOME``/``java`` or ``java`` on PATH. ``DOCUTRACEX_JAVA``
+        overrides. Used only by the optional Java decompiler."""
+        import shutil
+
+        env = os.environ.get("DOCUTRACEX_JAVA")
+        if env and Path(env).is_file():
+            return Path(env)
+        for c in (self.tools_dir / "jre" / "bin" / "java.exe",
+                  self.tools_dir / "jre" / "bin" / "java"):
+            if c.is_file():
+                return c
+        jh = os.environ.get("JAVA_HOME")
+        if jh:
+            for c in (Path(jh) / "bin" / "java.exe", Path(jh) / "bin" / "java"):
+                if c.is_file():
+                    return c
+        found = shutil.which("java")
+        return Path(found) if found else None
+
+    def cfr_jar(self) -> Path | None:
+        """CFR decompiler jar under ``tools/cfr/`` (MIT, downloaded at setup).
+        ``DOCUTRACEX_CFR`` overrides. Absent (or no JVM) → the Java engine falls
+        back to constant-pool mining."""
+        env = os.environ.get("DOCUTRACEX_CFR")
+        if env and Path(env).is_file():
+            return Path(env)
+        base = self.tools_dir / "cfr"
+        if base.is_dir():
+            for p in sorted(base.glob("cfr*.jar")):
+                if p.is_file():
+                    return p
+        return None
+
 
 settings = Settings()

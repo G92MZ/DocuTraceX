@@ -61,6 +61,8 @@ def _kind(path: Path, name: str) -> str:
         return "shortcut"
     if ext in (".py", ".pyw", ".pyc", ".pyo"):
         return "python"
+    if ext in (".class", ".jsp", ".jspx", ".jspf"):
+        return "java"
     if ext in (".msi", ".msp", ".msm", ".exe", ".dll", ".scr", ".sys", ".ocx", ".cpl", ".com"):
         return "binary"
     try:
@@ -262,6 +264,13 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
                   else msi.analyze_pe(abs_path, name))
             mods["msi"] = {"module": "msi", "items": [it], "findings": it.get("findings", [])}
             add_findings(it.get("findings"), "msi")
+        elif kind == "java":
+            from .parsers import java
+            it = java.analyze_one(abs_path, name)
+            sc = it.get("script")
+            mods["java"] = {"module": "java", "scripts": [sc] if sc else [],
+                            "findings": it.get("findings", [])}
+            add_findings(it.get("findings"), "java")
     except Exception as exc:  # noqa: BLE001
         node["error"] = str(exc)
 

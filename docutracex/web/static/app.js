@@ -18,6 +18,9 @@ const FORMATS = [
   { name: "Shortcuts", color: "#2aa198", glyph: "LNK",
     exts: [".lnk", ".url", ".website"],
     title: "Windows shortcuts: target, arguments and metadata parsed; the launched command runs through the scripting engine (LOLBins, hidden windows, UNC icon NTLM leaks, remote-file URLs)" },
+  { name: "Java", color: "#e76f51", glyph: "JAR",
+    exts: [".jar", ".war", ".ear", ".class", ".jsp"],
+    title: "Java archives and classes: MANIFEST, web.xml, signing, nested jars, and .class/JSP scanned for malicious behaviour (constant pool, or decompiled with CFR); JSP webshells, JNDI/Log4Shell, deserialization" },
   { name: "Binaries / PE", color: "#b58900", glyph: "MSI",
     exts: [".msi", ".exe", ".dll", ".scr", ".sys", ".ocx", ".cpl"],
     title: "MSI installers get real analysis (CustomAction/sequence/Binary tables, string mining into the scripting engine, embedded CABs); PyInstaller EXEs are unpacked and their Python recovered; other PE images are categorised and triaged" },
@@ -437,6 +440,7 @@ function pivotTarget(f, ids) {
   if (src === "vbscript") return has("vbscript") ? "vbscript" : null;
   if (src === "batch") return has("batch") ? "batch" : null;
   if (src === "python" || src === "pyinstaller") return has("python") ? "python" : (has("binary") ? "binary" : null);
+  if (src === "java") return has("java") ? "java" : null;
   if (src === "rtf") {
     if (loc.startsWith("object")) return has("rtfobjects") ? "rtfobjects" : null;
     if (loc.startsWith("field") || loc.includes("template") || loc.includes("docvar")) return has("rtftext") ? "rtftext" : null;
@@ -1567,6 +1571,28 @@ function paneMsi(msim) {
   return `<p class="hint-line">Windows Installer / PE binary analysis.</p>${parts}`;
 }
 
+function paneJava(jvm) {
+  const mf = jvm.manifest || {};
+  const sign = jvm.signing || {};
+  const web = jvm.web_xml || {};
+  const meta = kv([
+    ["Kind", jvm.kind],
+    ["Main-Class", mf["Main-Class"]],
+    ["Premain-Class", mf["Premain-Class"] || mf["Launcher-Agent-Class"] || mf["Agent-Class"]],
+    ["Class-Path", mf["Class-Path"]],
+    ["Signed", sign.signed ? (sign.signer || "yes") : (jvm.kind === "jar" || jvm.kind === "war" ? "no" : "")],
+    ["Servlets", (web.servlets || []).join(", ")],
+    ["Classes scanned", jvm.classes != null ? String(jvm.classes) : ""],
+    ["JSP scanned", jvm.jsp != null ? String(jvm.jsp) : ""],
+  ]);
+  const head = `<p class="hint-line">Java analysis — MANIFEST, web.xml, signing and the flagged
+    <code>.class</code>/JSP (constant pool, or decompiled with CFR when a JVM is present).</p>${meta}`;
+  const code = (jvm.scripts || []).length
+    ? paneCodeLanguage(jvm, { label: "Java", noun: "class/JSP", src: "java", markKind: "java_hit" })
+    : `<p class="hint-line">No flagged classes or JSP to display.</p>${netFindingsList(jvm.findings || [])}`;
+  return head + code;
+}
+
 function panePyinstaller(pim) {
   const _TYPES = { s: "entry script", m: "module", M: "package", z: "PYZ archive",
                    Z: "PYZ archive", b: "binary", x: "data", d: "dependency" };
@@ -1960,6 +1986,11 @@ async function openComponents(analysisId, keepTab) {
     const pim = mods.pyinstaller;
     if (pim && pim.is_pyinstaller) {
       sections.push({ id: "pyinstaller", label: "PyInstaller", html: panePyinstaller(pim) });
+    }
+    const jvm = mods.java;
+    if (jvm && (jvm.kind || (jvm.scripts || []).length || (jvm.findings || []).length)) {
+      const n = (jvm.classes || 0) + (jvm.jsp || 0);
+      sections.push({ id: "java", label: n ? `Java (${n})` : "Java", html: paneJava(jvm) });
     }
     const scm = mods.shortcut;
     if (scm && (scm.items || []).length) {
