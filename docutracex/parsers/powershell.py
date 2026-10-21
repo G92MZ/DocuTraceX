@@ -113,6 +113,15 @@ def _sources_from_modules(modules: dict[str, Any]) -> list[tuple[str, str, str]]
             ev = str(f.get("evidence") or "")
             if _PS_MARKER.search(ev) or re.search(r"(?i)powershell", ev):
                 blobs.append((f"{name} field", name, ev))
+
+    # Shortcuts and MSI installers surface their launched command in `_full_code`
+    # (and per-item): give any PowerShell there a real layered-deobfuscation tab.
+    for name in ("shortcut", "msi"):
+        mod = modules.get(name) or {}
+        for it in mod.get("items") or []:
+            cmd = str(it.get("_full_code") or it.get("command") or "")
+            if cmd and re.search(r"(?i)powershell|pwsh", cmd):
+                blobs.append((f"{name} command", it.get("file") or name, cmd))
     return blobs
 
 
