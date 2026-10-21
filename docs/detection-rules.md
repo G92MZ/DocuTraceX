@@ -79,3 +79,10 @@ Languages run through their own deobfuscator first: JS cascade (multi-pass decod
 | `vbs_obfusc` | VBScript | medium | T1027 | obfuscation primitives |
 
 Plus `script_attack_chain` (high, T1059): emitted when a single script combines two or more distinct high-risk behaviour families (e.g. download + execution), and the per-language `*_deobfuscated` finding noting the script was deobfuscated before analysis.
+
+## Emulation / deobfuscation engines
+
+Beyond the static rules above, the scripting engine uses real analysis tools (provisioned on the portables, invoked as separate processes):
+
+- **webcrack** (JavaScript, portable Node): flattens obfuscator.io string-array/rotator and control-flow obfuscation and unpacks bundles, re-emitting readable code *before* the rules, the IOC scan and the STPyV8 sandbox run — so detections see the real payload. Falls back to the pure-Python cascade when not provisioned.
+- **box-ps** (PowerShell, portable PowerShell Core): emulates the deobfuscated PowerShell with overridden cmdlets and records behaviour. Its actions become findings — `boxps_network`, `boxps_file`, `boxps_exec`, `boxps_inject`, `boxps_registry`, `boxps_persist` — shown in the PowerShell tab's Sandbox section. This brings PowerShell to parity with JavaScript (STPyV8) and VBA (ViperMonkey).
