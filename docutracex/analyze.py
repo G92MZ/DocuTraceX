@@ -186,6 +186,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     ran: list[str] = []
     overall_counts: dict[str, int] = {"components": 0, "findings": 0, "iocs": 0}
     state = "completed"
+    pe_binary = False  # a PE image (.exe/.dll/...): categorised, not run through the scripting engine
 
     findings_total = 0
     steps: list[dict[str, Any]] = []
@@ -555,9 +556,43 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                 write_subresult(paths, "nested", nested_res)
                 ran.append("nested")
                 findings_total += nested_res.get("counts", {}).get("findings", 0)
+    elif family == "shortcut":
+        # Windows shortcut (.lnk/.url/.website): parse the target + metadata and
+        # feed the launched command to the scripting engine.
+        from .parsers import shortcut
+
+        sc_res = run("shortcut: parse target/metadata · command → scripting engine",
+                     lambda: shortcut.analyze(original, paths.extracted_dir))
+        if sc_res.get("items"):
+            write_subresult(paths, "shortcut", sc_res)
+            ran.append("shortcut")
+            findings_total += sc_res.get("counts", {}).get("findings", 0)
+        state = "completed"
+
+    elif family == "binary":
+        # Windows Installer (.msi: real OLE analysis, strings → scripting engine)
+        # or PE image (.exe/.dll/...: categorised/triaged, not statically unpacked).
+        from .parsers import msi
+
+        msi_res = run("binary: MSI tables/strings → scripting engine · PE triage",
+                      lambda: msi.analyze(original, paths.extracted_dir))
+        if msi_res.get("items"):
+            write_subresult(paths, "msi", msi_res)
+            ran.append("msi")
+            findings_total += msi_res.get("counts", {}).get("findings", 0)
+        if original.suffix.lower() not in (".msi", ".msp", ".msm"):
+            # A PE is still a first-class case: keep the generic file record
+            # (hashes, YARA on demand, marks, report) exactly as any other binary.
+            pe_binary = True
+            file_res = run("file: generic record (type, size, hashes) — YARA, marks and report",
+                           lambda: _file_record(manifest, original))
+            write_subresult(paths, "file", file_res)
+            ran.append("file")
+        state = "completed"
+
     else:
-        # Any other file (exe, dll, script, image...): no family parser, but it is
-        # still a case — a basic file record, YARA on demand, marks and report.
+        # Any other file (image, data...): no family parser, but it is still a
+        # case — a basic file record, YARA on demand, marks and report.
         file_res = run("file: generic record (type, size, hashes) — YARA, marks and report",
                        lambda: _file_record(manifest, original))
         write_subresult(paths, "file", file_res)
@@ -569,7 +604,9 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     # scripting file — so a standalone .js/.ps1/.vbs/.bat/.hta is analysed too.
     from .parsers import javascript
     scripting_file = original.suffix.lower() in _SCRIPTING_EXT
-    other_ran = [m for m in ran if m != "file"]
+    # A PE's "msi" categorisation does not feed the scripting engine (it carries
+    # no script); an MSI's string-mined command does.
+    other_ran = [m for m in ran if m != "file" and not (pe_binary and m == "msi")]
 
     # JavaScript / JScript (PDF /JS, HTML body, attachments, OLE, nested, VBA).
     if other_ran or scripting_file:
@@ -589,7 +626,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         from .parsers import batch, powershell, vbscript
         code_mods = {m: read_json(paths.subresult(m))
                      for m in ("oletools", "vipermonkey", "javascript", "word", "excel",
-                               "powerpoint", "rtf", "email")}
+                               "powerpoint", "rtf", "email", "shortcut", "msi")}
         code_mods = {k: v for k, v in code_mods.items() if v}
         ps_res = run("powershell: extraction · layered deobfuscation",
                      lambda: powershell.analyze(original, paths.extracted_dir, code_mods))
@@ -681,7 +718,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto",
                "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole",
                "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules", "javascript", "rtf",
-               "powershell", "vbscript", "batch")
+               "powershell", "vbscript", "batch", "shortcut", "msi")
 # Modules whose findings feed the consolidated view (includes derived ones).
 _COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file")
 
@@ -808,7 +845,7 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
         from .parsers import batch, powershell, vbscript
         mods = {m: read_json(paths.subresult(m))
                 for m in ("oletools", "vipermonkey", "javascript", "word", "excel",
-                          "powerpoint", "rtf", "email")}
+                          "powerpoint", "rtf", "email", "shortcut", "msi")}
         mods = {k: v for k, v in mods.items() if v}
         mod = {"powershell": powershell, "vbscript": vbscript, "batch": batch}[module]
         res = mod.analyze(original, ed, mods)
@@ -828,6 +865,12 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
     elif module == "ole":
         from .parsers import ole_legacy
         res = ole_legacy.analyze(original, ed)
+    elif module == "shortcut":
+        from .parsers import shortcut
+        res = shortcut.analyze(original, ed)
+    elif module == "msi":
+        from .parsers import msi
+        res = msi.analyze(original, ed)
     else:  # pragma: no cover
         raise ValueError(module)
 

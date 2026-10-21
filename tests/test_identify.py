@@ -102,6 +102,25 @@ def test_scripting_family() -> None:
     assert classify_discrepancy(".js", "application/pdf", "PDF document")["status"] == "mismatch"
 
 
+def test_shortcut_family() -> None:
+    # .lnk is a binary with its own signature; .url/.website are INI text.
+    d = classify_discrepancy(".lnk", "application/x-ms-shortcut", "MS Windows shortcut")
+    assert d["declared_family"] == "shortcut" and d["status"] == "match"
+    d2 = classify_discrepancy(".url", "text/plain", "ASCII text")
+    assert d2["declared_family"] == "shortcut" and d2["status"] == "match"
+
+
+def test_binary_family() -> None:
+    # MSI is an OLE compound file (inconclusive by the generic signature);
+    # a PE image is a straight match.
+    d = classify_discrepancy(".msi", "application/x-ole-storage", "Composite Document File V2")
+    assert d["declared_family"] == "binary" and d["status"] == "inconclusive"
+    d2 = classify_discrepancy(".exe", "application/x-dosexec", "PE32 executable")
+    assert d2["declared_family"] == "binary" and d2["status"] == "match"
+    # A .exe that is not actually a PE is a mismatch (masquerade).
+    assert classify_discrepancy(".exe", "application/pdf", "PDF document")["status"] == "mismatch"
+
+
 @pytestmark_samples
 def test_create_case_fills_detected_format(tmp_path: Path) -> None:
     sample = SAMPLES / "sample.pdf"

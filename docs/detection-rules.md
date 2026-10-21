@@ -86,3 +86,34 @@ Beyond the static rules above, the scripting engine uses real analysis tools (pr
 
 - **webcrack** (JavaScript, portable Node): flattens obfuscator.io string-array/rotator and control-flow obfuscation and unpacks bundles, re-emitting readable code *before* the rules, the IOC scan and the STPyV8 sandbox run — so detections see the real payload. Falls back to the pure-Python cascade when not provisioned.
 - **box-ps** (PowerShell, portable PowerShell Core): emulates the deobfuscated PowerShell with overridden cmdlets and records behaviour. Its actions become findings — `boxps_network`, `boxps_file`, `boxps_exec`, `boxps_inject`, `boxps_registry`, `boxps_persist` — shown in the PowerShell tab's Sandbox section. This brings PowerShell to parity with JavaScript (STPyV8) and VBA (ViperMonkey).
+
+## Shortcut and binary families
+
+Two families carry executable intent in structure rather than in a script body; they are parsed for that structure and **their embedded command line is fed to the scripting engine above** (deobfuscated and matched against the full catalogue), so a shortcut or MSI that launches PowerShell lights up the same `ps_*` rules as a standalone script.
+
+**Shortcuts** (`.lnk` via LnkParse3; `.url`/`.website` as INI text), module `shortcut`:
+
+| Rule | Severity | ATT&CK | Behaviour |
+|---|---|---|---|
+| `shortcut_double_extension` | high | T1036.007 | name disguised as a document (`invoice.pdf.lnk`) |
+| `lnk_lolbin_target` | high | T1204.002 | shortcut target is a LOLBin / shell |
+| `lnk_hidden_window` | medium | T1564.003 | hidden/minimised window |
+| `lnk_icon_spoof` | high | T1036.008 | icon disguises the shortcut as a document |
+| `lnk_appended_payload` | high | T1027.009 | unusually large `.lnk` (possible appended payload) |
+| `url_remote_file_target` | high | T1105 | `.url` points to a remote file (WebDAV/SMB) |
+| `url_protocol_handler` | high | T1218 | abused protocol handler (`search-ms:`, `ms-…:`…) |
+| `url_unc_icon_ntlm` | high | T1187 | `IconFile` on a UNC path (forced SMB auth / NTLM theft) |
+| `url_executable_target` | high | T1204.001 | points to an executable/script payload |
+
+**Binaries / PE** (`.msi` via olefile; PE images triaged), module `msi`:
+
+| Rule | Severity | ATT&CK | Behaviour |
+|---|---|---|---|
+| `msi_custom_action` | high | T1218.007 | `CustomAction` table — runs code during install |
+| `msi_install_sequence` | medium | — | install-sequence tables schedule custom actions |
+| `msi_embedded_binary` | high | T1027.009 | embedded `Binary`/stream payload(s) |
+| `msi_embedded_cab` | medium | T1027 | embedded CAB archive(s) |
+| `msi_lolbin_string` | high | T1218.007 | installer string references a LOLBin / shell |
+| `msi_suspicious_api` | medium | T1059 | download/exec indicators in the installer strings |
+| `pe_image` | info | T1204.002 | PE image categorised/triaged (no static unpacking) |
+| `pe_not_pe` | medium | T1036 | PE extension without an `MZ` header (masquerade) |
