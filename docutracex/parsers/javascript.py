@@ -357,7 +357,8 @@ def _sandbox_findings(sb: dict[str, Any], loc: str, out: list[dict[str, Any]]) -
                             loc, "\n".join(" ".join(e["args"]) for e in exports[:5])))
 
 
-def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> dict[str, Any]:
+def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
+            run_sandbox: bool = True) -> dict[str, Any]:
     from . import js_deobf
 
     res: dict[str, Any] = {"module": "javascript", "status": "ok", "scripts": [], "findings": []}
@@ -375,7 +376,9 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> dic
         mets = metrics(orig_code)          # how obfuscated the ORIGINAL was
         mets_deob = metrics(code) if deob["changed"] else None
         decoded = decode_strings(code)
-        sb = sandbox(code)                 # re-analyse the deobfuscated payload
+        # The STPyV8 sandbox is skipped on nested children (run_sandbox=False):
+        # the static deobfuscation still runs, which is what nested needs.
+        sb = sandbox(code) if run_sandbox else {"log": [], "error": None, "available": None, "timed_out": False}
         script = {"id": i, "kind": it["kind"], "origin": it["origin"], "location": loc, "note": it.get("note"),
                   "size": len(full), "code": code[:_KEEP_CODE], "code_truncated": len(deob_full) > _KEEP_CODE,
                   "code_is_deobfuscated": deob["changed"],

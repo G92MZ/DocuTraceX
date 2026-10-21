@@ -136,6 +136,27 @@ def _run_olevba(path: Path, result: dict[str, Any]) -> str:
                         parts.append(c)
                 code = "\n".join(parts)
                 info["_full_code"] = code  # complete VBA source, dumped to disk whole
+                # Deobfuscate-first fallback: resolve VBA string tricks statically
+                # (works even when ViperMonkey is absent/fails) so the detector and
+                # IOC scan see the real strings.
+                if code:
+                    try:
+                        from . import vba_deobf
+                        dv = vba_deobf.deobfuscate(code)
+                    except Exception:  # noqa: BLE001
+                        dv = {"changed": False}
+                    if dv.get("changed"):
+                        info["deobfuscated"] = dv["code"][:_MODULE_BOUND]
+                        info["deob_truncated"] = len(dv["code"]) > _MODULE_BOUND
+                        info["deob_methods"] = dv["methods"]
+                        info["_full_deob"] = dv["code"]
+                        result["findings"].append(_finding(
+                            "vba_deobf", "vba_deobfuscated", "medium",
+                            f"VBA deobfuscated statically ({', '.join(dv['methods']) or 'string resolver'})",
+                            evidence=dv["code"][:600].strip()))
+                        for h in vba_deobf.static_hits(dv["code"]):
+                            result["findings"].append(_finding(
+                                "vba_deobf", h["rule"], h["severity"], h["label"], evidence=h["line"]))
                 decoded: dict[str, list[tuple[str, str]]] = {}
                 try:
                     from oletools.olevba import VBA_Scanner

@@ -53,6 +53,39 @@ def _pop_full(d: dict[str, Any], display_key: str) -> tuple[str | None, bool]:
     return (full if isinstance(full, str) and full.strip() else d.get(display_key)), popped
 
 
+def _dump_script_list(scripts: list, paths: CasePaths, sub: str, ext: str) -> bool:
+    """Dump the original (``code_file``) and, when present, the deobfuscated
+    (``code_file_deob``) source for each script in ``scripts``. Returns True if
+    any tag was (re)written. Shared by the JS / PowerShell / VBScript modules."""
+    touched = False
+    for i, sc in enumerate(scripts, 1):
+        if not isinstance(sc, dict):
+            continue
+        label = _slug(sc.get("location") or sc.get("kind") or sc.get("origin"), f"script{i}")
+        # Original source: prefer _full_code; fall back to the display field
+        # only when the script was NOT deobfuscated (otherwise `code` already
+        # holds the deobfuscated artifact, dumped separately below).
+        orig = sc.pop("_full_code", None)
+        orig_popped = orig is not None
+        if not (isinstance(orig, str) and orig.strip()):
+            orig = "" if sc.get("code_is_deobfuscated") else sc.get("code")
+        rel = _write(paths, sub, f"{i:02d}_{label}.{ext}", orig)
+        if (rel and sc.get("code_file") != rel) or orig_popped:
+            if rel:
+                sc["code_file"] = rel
+            touched = True
+        deob = sc.pop("_full_deob", None)
+        deob_popped = deob is not None
+        if not (isinstance(deob, str) and deob.strip()):
+            deob = None
+        rel_d = _write(paths, sub, f"{i:02d}_{label}.deobfuscated.{ext}", deob)
+        if (rel_d and sc.get("code_file_deob") != rel_d) or deob_popped:
+            if rel_d:
+                sc["code_file_deob"] = rel_d
+            touched = True
+    return touched
+
+
 def annotate(modules: dict[str, Any], paths: CasePaths) -> set[str]:
     """Write the extracted code to files and tag each item with its ``code_file``.
 
@@ -77,39 +110,29 @@ def annotate(modules: dict[str, Any], paths: CasePaths) -> set[str]:
             if rel:
                 ole["code_file"] = rel
             changed.add("oletools")
-
-    # JavaScript: one complete file per script, plus the deobfuscated artifact
-    # (when the deobfuscation cascade recovered a cleaner payload).
-    js = modules.get("javascript")
-    if isinstance(js, dict):
-        touched = False
-        for i, sc in enumerate(js.get("scripts") or [], 1):
-            if not isinstance(sc, dict):
-                continue
-            label = _slug(sc.get("location") or sc.get("kind") or sc.get("origin"), f"script{i}")
-            # The original source. Prefer _full_code; fall back to the display
-            # field only when the script was NOT deobfuscated (otherwise `code`
-            # already holds the deobfuscated artifact, dumped separately below).
-            orig = sc.pop("_full_code", None)
-            orig_popped = orig is not None
-            if not (isinstance(orig, str) and orig.strip()):
-                orig = "" if sc.get("code_is_deobfuscated") else sc.get("code")
-            rel = _write(paths, "js", f"{i:02d}_{label}.js", orig)
-            if (rel and sc.get("code_file") != rel) or orig_popped:
-                if rel:
-                    sc["code_file"] = rel
-                touched = True
-            deob = sc.pop("_full_deob", None)
+        # Deobfuscated VBA (static string resolver), when present.
+        if isinstance(olevba, dict):
+            deob = olevba.pop("_full_deob", None)
             deob_popped = deob is not None
             if not (isinstance(deob, str) and deob.strip()):
                 deob = None
-            rel_d = _write(paths, "js", f"{i:02d}_{label}.deobfuscated.js", deob)
-            if (rel_d and sc.get("code_file_deob") != rel_d) or deob_popped:
+            rel_d = _write(paths, "vba", "vba_macros.deobfuscated.vba", deob)
+            if (rel_d and ole.get("code_file_deob") != rel_d) or deob_popped:
                 if rel_d:
-                    sc["code_file_deob"] = rel_d
-                touched = True
-        if touched:
-            changed.add("javascript")
+                    ole["code_file_deob"] = rel_d
+                changed.add("oletools")
+
+    # Code-with-scripts modules (JavaScript / PowerShell / VBScript): one
+    # complete file per script, plus the deobfuscated artifact when the
+    # deobfuscation cascade recovered a cleaner payload.
+    for module_name, sub, ext in (("javascript", "js", "js"),
+                                   ("powershell", "powershell", "ps1"),
+                                   ("vbscript", "vbscript", "vbs")):
+        mod = modules.get(module_name)
+        if not isinstance(mod, dict):
+            continue
+        if _dump_script_list(mod.get("scripts") or [], paths, sub, ext):
+            changed.add(module_name)
 
     # Excel 4.0 (XLM): all deobfuscated formulas.
     xlm = modules.get("xlmdeobf")
