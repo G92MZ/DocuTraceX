@@ -15,8 +15,14 @@ const FORMATS = [
   { name: "Scripting files", color: "#d9a441", glyph: "SH",
     exts: [".js", ".jse", ".vbs", ".vbe", ".ps1", ".psm1", ".bat", ".cmd", ".hta", ".wsf", ".sct", ".html", ".svg", ".mht"],
     title: "JavaScript, VBScript, PowerShell, batch, HTA/WSF/HTML: deobfuscated and scanned for malicious behaviour" },
-  { name: "Any other file", color: "#5f6b7a", glyph: "BIN", exts: [".exe", ".dll", ".img", ".iso", "…"],
-    title: "Anything else (executables, images...): YARA, marks and the report" },
+  { name: "Shortcuts", color: "#2aa198", glyph: "LNK",
+    exts: [".lnk", ".url", ".website"],
+    title: "Windows shortcuts: target, arguments and metadata parsed; the launched command runs through the scripting engine (LOLBins, hidden windows, UNC icon NTLM leaks, remote-file URLs)" },
+  { name: "Binaries / PE", color: "#b58900", glyph: "MSI",
+    exts: [".msi", ".exe", ".dll", ".scr", ".sys", ".ocx", ".cpl"],
+    title: "MSI installers get real analysis (CustomAction/sequence/Binary tables, string mining into the scripting engine, embedded CABs); PE images (.exe/.dll…) are categorised and triaged" },
+  { name: "Any other file", color: "#5f6b7a", glyph: "BIN", exts: [".img", ".iso", ".bin", "…"],
+    title: "Anything else (disk images, data...): YARA, marks and the report" },
 ];
 
 // Playful document "character": page + eyes + smile, colored band + letter.
@@ -1512,6 +1518,54 @@ function paneArchive(arc) {
     : `<p class="hint-line">No entries extracted.</p>`);
 }
 
+function paneShortcut(scm) {
+  const parts = (scm.items || []).map((it) => {
+    let rows;
+    if (it.kind === "lnk") {
+      rows = kv([
+        ["File", it.file], ["Target", it.target], ["Arguments", it.arguments],
+        ["Command", it.command], ["Working dir", it.working_directory],
+        ["Icon", it.icon_location], ["Show", it.show_command],
+        ["Size", it.file_size != null ? `${it.file_size} bytes` : ""],
+        ["Description", it.description], ["Creating machine ID", it.machine_id],
+      ]);
+    } else {
+      rows = kv([
+        ["File", it.file], ["URL", it.url], ["Icon file", it.icon_file],
+        ["Working dir", it.working_directory],
+      ]);
+    }
+    const err = it.error ? `<p class="bad-text">${escapeHtml(it.error)}</p>` : "";
+    return `<div class="sub-item"><div class="hint-line">${escapeHtml(it.kind === "lnk" ? "Shell Link (.lnk)" : "Internet shortcut (.url)")}</div>
+      ${rows}${err}${netFindingsList(it.findings || [])}</div>`;
+  }).join("");
+  return `<p class="hint-line">Windows shortcut — target and metadata parsed; the launched command is run through the scripting engine.</p>${parts}`;
+}
+
+function paneMsi(msim) {
+  const parts = (msim.items || []).map((it) => {
+    if (it.kind === "pe") {
+      const rows = kv([
+        ["File", it.file], ["Extension", it.ext], ["Size", it.size != null ? `${it.size} bytes` : ""],
+        ["Looks like PE", it.is_pe ? "yes (MZ)" : "no"], ["Architecture", it.machine],
+      ]);
+      const err = it.error ? `<p class="bad-text">${escapeHtml(it.error)}</p>` : "";
+      return `<div class="sub-item"><div class="hint-line">PE image — categorised/triaged (no static unpacking).</div>${rows}${err}${netFindingsList(it.findings || [])}</div>`;
+    }
+    const meta = it.metadata || {};
+    const rows = kv([
+      ["File", it.file],
+      ["Tables", (it.tables || []).join(", ")],
+      ["Embedded streams", (it.binary_streams || []).join(", ")],
+      ["Command", it._full_code || ""],
+      ...Object.keys(meta).map((k) => [`meta:${k}`, meta[k]]),
+    ]);
+    const err = it.error ? `<p class="bad-text">${escapeHtml(it.error)}</p>` : "";
+    return `<div class="sub-item"><div class="hint-line">Windows Installer (.msi) — OLE tables decoded, strings mined into the scripting engine.</div>${rows}${err}${netFindingsList(it.findings || [])}</div>`;
+  }).join("");
+  return `<p class="hint-line">Windows Installer / PE binary analysis.</p>${parts}`;
+}
+
 function nestedNode(n) {
   const fcount = (n.findings || []).length;
   const badge = fcount
@@ -1876,6 +1930,16 @@ async function openComponents(analysisId, keepTab) {
     if (batm && (batm.scripts || []).length) {
       sections.push({ id: "batch", label: `Batch (${batm.scripts.length})`,
         html: paneCodeLanguage(batm, { label: "Batch", noun: "script", src: "batch", markKind: "bat_hit" }) });
+    }
+    const scm = mods.shortcut;
+    if (scm && (scm.items || []).length) {
+      sections.push({ id: "shortcut", label: `Shortcut (${scm.items.length})`, html: paneShortcut(scm) });
+    }
+    const msim = mods.msi;
+    if (msim && (msim.items || []).length) {
+      const isPe = (msim.items[0] || {}).kind === "pe";
+      sections.push({ id: "msi", label: isPe ? "Binary" : `MSI (${((msim.items[0] || {}).tables || []).length} tables)`,
+        html: paneMsi(msim) });
     }
     const vbat = mods.vbatools;
     const vmon = mods.vipermonkey;
