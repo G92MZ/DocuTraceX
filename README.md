@@ -57,6 +57,21 @@ touches your environment. On Windows, point it at your FLARE-VM and it just work
 > them (broken DKIM, wrapped look-alike link, HTML smuggling…). Every indicator
 > is inert (`*.example`, RFC 5737 IPs). See [`samples/README.md`](samples/README.md).
 
+## 🔄 Updating
+
+<!-- rev: gmzpt -->
+
+Grab the latest version without git — the updater checks GitHub and updates the
+app in place, **keeping your cases, rules, settings and tools**:
+
+```bash
+python update.py            # check for a new version and update (asks first)
+python update.py --check    # only check, change nothing
+python update.py --yes      # update without asking
+```
+
+(Cloned with git? `git pull` works too.)
+
 ## 🧭 How you use it
 
 1. **📥 Upload** — drop a file (and its **password**, if it is encrypted and you know it). The original is copied, hashed and never modified; the analysis is **queued** (one per instance) and runs in the background.
@@ -167,21 +182,6 @@ key is kept in your browser (localStorage), not on the server.
 - **Two interpreters by design:** the web app on your Python, the analysis tools on the portable one (plus PyPy 2.7 just for ViperMonkey), so a messy tool dependency never touches your environment.
 - **Encrypted files:** nothing is brute-forced — only your password, the ones the carrying email gives, the empty PDF password and the well-known defaults are tried (plus every word of the email, only when you press the button). The decrypted copy goes to `extracted/decrypted/` (archives to `extracted/archive/`, with limits on entries and size against archive bombs); the password you type is kept in the case folder (`password.json`), never in `case.json`.
 - **Licences:** DocuTraceX is Apache-2.0 and ships no GPL code. GPL/LGPL tools (pcodedmp, peepdf-3, py7zr) are installed into the portable at provisioning time.
-
-## 🔄 Updating
-
-<!-- rev: gmzpt -->
-
-Grab the latest version without git — the updater checks GitHub and updates the
-app in place, **keeping your cases, rules, settings and tools**:
-
-```bash
-python update.py            # check for a new version and update (asks first)
-python update.py --check    # only check, change nothing
-python update.py --yes      # update without asking
-```
-
-(Cloned with git? `git pull` works too.)
 
 ## 🧭 Roadmap
 
