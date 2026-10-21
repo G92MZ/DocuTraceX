@@ -1138,6 +1138,13 @@ function paneJavascript(js) {
     let body = "";
     if (sc.note) body += `<p class="hint-line">${escapeHtml(sc.note)}</p>`;
     body += `<p class="hint-line">${m.lines || 0} lines · ${sc.size} chars · longest line ${m.longest_line || 0} · entropy ${m.entropy || 0} · obfuscation score ${m.obfuscation_score || 0}</p>`;
+    if (sc.code_is_deobfuscated) {
+      const methods = (sc.deob_methods || []).join(", ");
+      const schemes = (sc.deob_schemes || []).length ? ` · scheme(s): ${(sc.deob_schemes || []).join(", ")}` : "";
+      body += `<p class="hint-line"><span class="badge badge-warn">deobfuscated</span> Recovered payload analysed below (${escapeHtml(methods || "static decoding")}${escapeHtml(schemes)}).</p>`;
+    } else if ((sc.deob_schemes || []).length) {
+      body += `<p class="hint-line"><span class="badge badge-bad">obfuscated</span> Scheme detected: ${escapeHtml((sc.deob_schemes || []).join(", "))} — unfolded by the sandbox.</p>`;
+    }
     const jsLoc = sc.location || `javascript:${sc.id}`;
     if (hits.length) {
       body += table(["Line", "Why", "Code", "Mark"], hits.map((h) => `<tr><td>${h.line_no}</td>
@@ -1161,8 +1168,18 @@ function paneJavascript(js) {
         sc.decoded.map((d) => `<tr><td>${escapeHtml(d.method)}</td><td class="mono">${escapeHtml(d.decoded)}</td>
           <td>${addMarkCell("js_decoded", `JavaScript decoded (${d.method}): ${d.decoded}`.slice(0, 300), jsLoc, d.encoded || d.decoded)}</td></tr>`).join(""));
     }
-    const jsTrunc = sc.code_truncated ? (sc.code_file ? ` (preview truncated — download has the full ${sc.size} chars)` : " (truncated)") : "";
-    body += `<details class="disclose"${hits.length ? " open" : ""}><summary>Code${jsTrunc}${sc.code_file ? " " + fileActions(sc.code_file) : ""}</summary><pre class="text-sample js-code">${codeHtml}</pre></details>`;
+    if (sc.code_is_deobfuscated) {
+      // Primary view = the recovered (deobfuscated) payload; the original stays
+      // one click away. Downloads: the deobfuscated artifact and the original.
+      const dTrunc = sc.code_truncated ? (sc.code_file_deob ? ` (preview truncated — download has the full ${sc.deob_size || 0} chars)` : " (truncated)") : "";
+      body += `<details class="disclose"${hits.length ? " open" : ""}><summary>Deobfuscated code${dTrunc}${sc.code_file_deob ? " " + fileActions(sc.code_file_deob) : ""}</summary><pre class="text-sample js-code">${codeHtml}</pre></details>`;
+      const oTrunc = sc.original_truncated ? (sc.code_file ? ` (preview truncated — download has the full ${sc.size} chars)` : " (truncated)") : "";
+      const origHtml = escapeHtml(sc.original_code || "");
+      body += `<details class="disclose"><summary>Original (obfuscated)${oTrunc}${sc.code_file ? " " + fileActions(sc.code_file) : ""}</summary><pre class="text-sample js-code">${origHtml}</pre></details>`;
+    } else {
+      const jsTrunc = sc.code_truncated ? (sc.code_file ? ` (preview truncated — download has the full ${sc.size} chars)` : " (truncated)") : "";
+      body += `<details class="disclose"${hits.length ? " open" : ""}><summary>Code${jsTrunc}${sc.code_file ? " " + fileActions(sc.code_file) : ""}</summary><pre class="text-sample js-code">${codeHtml}</pre></details>`;
+    }
     if (sc.pretty) body += `<details class="disclose"><summary>Pretty-printed</summary><pre class="text-sample">${escapeHtml(sc.pretty)}</pre></details>`;
     html += `<details class="disclose js-card"${sev === "bad" ? " open" : ""}>
       <summary><span class="badge badge-${sev}">${hits.length} hit(s)</span>
