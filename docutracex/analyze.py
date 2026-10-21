@@ -569,6 +569,28 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             ran.append("javascript")
             findings_total += js_res.get("counts", {}).get("findings", 0)
 
+    # PowerShell / VBScript: dropped files and commands mined from the other
+    # modules (VBA, DDE, the JS sandbox log...), deobfuscated and given their
+    # own code tabs. Run last so they can consume the results above.
+    if [m for m in ran if m != "file"] or original.suffix.lower() in {".ps1", ".psm1", ".vbs", ".vbe"}:
+        from .parsers import powershell, vbscript
+        code_mods = {m: read_json(paths.subresult(m))
+                     for m in ("oletools", "vipermonkey", "javascript", "word", "excel",
+                               "powerpoint", "rtf", "email")}
+        code_mods = {k: v for k, v in code_mods.items() if v}
+        ps_res = run("powershell: extraction · layered deobfuscation",
+                     lambda: powershell.analyze(original, paths.extracted_dir, code_mods))
+        if ps_res.get("scripts"):
+            write_subresult(paths, "powershell", ps_res)
+            ran.append("powershell")
+            findings_total += ps_res.get("counts", {}).get("findings", 0)
+        vbs_res = run("vbscript: extraction · .vbe decode · string deobfuscation",
+                      lambda: vbscript.analyze(original, paths.extracted_dir, code_mods))
+        if vbs_res.get("scripts"):
+            write_subresult(paths, "vbscript", vbs_res)
+            ran.append("vbscript")
+            findings_total += vbs_res.get("counts", {}).get("findings", 0)
+
     # YARA runs only on demand (YARA tab / re-run "yara"), never automatically.
     # A previous on-demand scan of this case is kept across full re-analyses.
     prev_yara = read_json(paths.subresult("yara"))
@@ -639,7 +661,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 # Modules that can be re-run in isolation over an existing case.
 _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto",
                "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole",
-               "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules", "javascript", "rtf")
+               "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules", "javascript", "rtf",
+               "powershell", "vbscript")
 # Modules whose findings feed the consolidated view (includes derived ones).
 _COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file")
 
@@ -762,6 +785,14 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
         from .parsers import javascript
         mods = {m: read_json(paths.subresult(m)) for m in ("pdf", "email", "oletools")}
         res = javascript.analyze(original, ed, {k: v for k, v in mods.items() if v})
+    elif module in ("powershell", "vbscript"):
+        from .parsers import powershell, vbscript
+        mods = {m: read_json(paths.subresult(m))
+                for m in ("oletools", "vipermonkey", "javascript", "word", "excel",
+                          "powerpoint", "rtf", "email")}
+        mods = {k: v for k, v in mods.items() if v}
+        mod = powershell if module == "powershell" else vbscript
+        res = mod.analyze(original, ed, mods)
     elif module == "mailrules":
         # gmzpt
         from .parsers import mail_rules
