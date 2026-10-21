@@ -406,7 +406,7 @@ function pivotTarget(f, ids) {
   }
   if (["olevba", "oleid", "mraptor", "msodde", "oleobj", "oletools", "msoffcrypto"].includes(src)) return has("tools") ? "tools" : null;
   if (src === "officemalscanner") return has("oms") ? "oms" : null;
-  if (src === "vipermonkey" || src === "vbatools") {
+  if (src === "vipermonkey" || src === "vbatools" || src === "vba_deobf") {
     if (/xlm_very_hidden/.test(rule)) return has("tools") ? "tools" : null;
     return has("vba") ? "vba" : null;
   }
@@ -690,6 +690,12 @@ function paneVba(ole, vt, vm) {
     html += toolOutputBlock("ViperMonkey output", vm.tool, false);
   }
 
+  if (olevba.deobfuscated) {
+    const dTrunc = olevba.deob_truncated ? (ole.code_file_deob ? ` (preview truncated — download has the full source)` : " (truncated)") : "";
+    html += `<h3 class="formats-title">Deobfuscated VBA (static string resolver)${ole && ole.code_file_deob ? " " + fileActions(ole.code_file_deob) : ""}</h3>`;
+    html += `<p class="hint-line"><span class="badge badge-warn">deobfuscated</span> ${escapeHtml((olevba.deob_methods || []).join(", ") || "string resolver")}${escapeHtml(dTrunc)}</p>`;
+    html += `<pre class="text-sample js-code">${escapeHtml(olevba.deobfuscated)}</pre>`;
+  }
   html += `<h3 class="formats-title">VBA source (olevba)${ole && ole.code_file ? " " + fileActions(ole.code_file) : ""}</h3>`;
   modules.forEach((m) => {
     const name = m.vba_filename || m.stream || "module";

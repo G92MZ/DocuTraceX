@@ -110,6 +110,17 @@ def annotate(modules: dict[str, Any], paths: CasePaths) -> set[str]:
             if rel:
                 ole["code_file"] = rel
             changed.add("oletools")
+        # Deobfuscated VBA (static string resolver), when present.
+        if isinstance(olevba, dict):
+            deob = olevba.pop("_full_deob", None)
+            deob_popped = deob is not None
+            if not (isinstance(deob, str) and deob.strip()):
+                deob = None
+            rel_d = _write(paths, "vba", "vba_macros.deobfuscated.vba", deob)
+            if (rel_d and ole.get("code_file_deob") != rel_d) or deob_popped:
+                if rel_d:
+                    ole["code_file_deob"] = rel_d
+                changed.add("oletools")
 
     # Code-with-scripts modules (JavaScript / PowerShell / VBScript): one
     # complete file per script, plus the deobfuscated artifact when the
