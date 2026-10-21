@@ -51,9 +51,26 @@ def test_vbs_dropper_sample_is_deobfuscated(tmp_path: Path) -> None:
     assert any(STAGE2 in s["code"] for s in res["scripts"])
 
 
-def test_bundle_zip_is_a_valid_archive_of_the_three() -> None:
+def test_bundle_zip_bundles_every_script_engine() -> None:
     import io
     import zipfile
 
     with zipfile.ZipFile(io.BytesIO(ms.dropper_bundle_zip())) as zf:
-        assert set(zf.namelist()) == {"factura_visor.js", "actualizador.ps1", "factura.pdf.vbs"}
+        assert set(zf.namelist()) == {
+            "factura_visor.js", "visor_seguro.js", "actualizador.ps1",
+            "factura.pdf.vbs", "instalador.bat", "factura.hta",
+        }
+
+
+def test_obfuscatorio_sample_is_obfuscated_js() -> None:
+    # The committed obfuscator.io sample decodes to real JS and looks obfuscated
+    # (hex identifiers, a string array) — the case webcrack flattens.
+    code = ms.obf_obfuscatorio_js().decode("utf-8", "replace")
+    assert "_0x" in code and ("function" in code or "var " in code)
+
+
+def test_bat_and_hta_samples_build() -> None:
+    bat = ms.dropper_bat().decode()
+    assert "set a=power" in bat and "^" in bat
+    hta = ms.loader_hta().decode()
+    assert "VBScript" in hta and "JScript" in hta
