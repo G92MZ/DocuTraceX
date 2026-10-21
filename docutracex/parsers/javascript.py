@@ -27,6 +27,7 @@ from typing import Any
 
 from .. import quiet, toolrun
 from ..logging_config import get_logger
+from . import script_rules
 from .didier import didier_dir
 
 log = get_logger(__name__)
@@ -38,38 +39,11 @@ _MAX_FILE_BYTES = 5 * 1024 * 1024
 _MAX_CODE = 300_000
 _KEEP_CODE = 60_000
 _SANDBOX_TIMEOUT = 15
-_SCRIPT_EXT = {".js", ".jse", ".wsf", ".hta", ".html", ".htm", ".shtml", ".xhtml", ".svg", ".mht",
-               ".mhtml", ".xsl", ".sct", ".wsc"}
+_SCRIPT_EXT = {".js", ".mjs", ".jse", ".wsf", ".hta", ".html", ".htm", ".shtml", ".xhtml", ".svg",
+               ".mht", ".mhtml", ".xsl", ".sct", ".wsc"}
 
-# rule, severity, regex, label
-PATTERNS: list[tuple[str, str, str, str]] = [
-    ("js_eval", "medium", r"\beval\s*\(", "eval() of dynamic code"),
-    ("js_function_ctor", "medium", r"\bnew\s+Function\s*\(|\bFunction\s*\(\s*['\"]", "Function constructor"),
-    ("js_unescape", "medium", r"\bunescape\s*\(|\bdecodeURIComponent\s*\(\s*['\"]%", "unescape()/percent-decoding"),
-    ("js_atob", "medium", r"\batob\s*\(", "base64 decoding (atob)"),
-    ("js_fromcharcode", "medium", r"String\.fromCharCode\s*\(", "String.fromCharCode"),
-    ("js_document_write", "medium", r"document\.write(?:ln)?\s*\(", "document.write"),
-    ("js_activex", "high", r"\bnew\s+ActiveXObject\s*\(|\bGetObject\s*\(", "ActiveXObject/GetObject"),
-    ("js_wscript_shell", "high", r"WScript\.Shell|Shell\.Application|\.ShellExecute\s*\(|\.Run\s*\(|\.Exec\s*\(",
-     "runs commands (WScript.Shell/ShellExecute/Run)"),
-    ("js_file_write", "high", r"ADODB\.Stream|Scripting\.FileSystemObject|\.SaveToFile\s*\(|\.CreateTextFile\s*\(",
-     "writes files (ADODB.Stream/FileSystemObject)"),
-    ("js_download", "high", r"MSXML2\.(?:Server)?XMLHTTP|WinHttp\.WinHttpRequest|Microsoft\.XMLHTTP|\bfetch\s*\(|XMLHttpRequest",
-     "network request"),
-    ("js_lolbin", "high", r"(?i)powershell|cmd(?:\.exe)?\s*/c|mshta|regsvr32|rundll32|certutil|bitsadmin|wmic|schtasks|curl\s+-",
-     "invokes a LOLBin / shell"),
-    ("js_html_smuggling", "high", r"new\s+Blob\s*\(|createObjectURL|msSaveOrOpenBlob", "builds a file in the browser (HTML smuggling)"),
-    ("js_redirect", "medium", r"(?:window\.|document\.)?location(?:\.href)?\s*=|location\.(?:replace|assign)\s*\(|window\.open\s*\(",
-     "navigates / redirects"),
-    ("js_credential_exfil", "high", r"(?i)(?:password|passwd|pwd)[^;\n]{0,80}(?:fetch|XMLHttpRequest|\.send\s*\(|ajax|\$\.post)",
-     "sends a password field"),
-    ("pdf_js_export_launch", "high", r"exportDataObject\s*\([^)]*nLaunch", "PDF: extracts and launches an attachment"),
-    ("pdf_js_launch_url", "medium", r"app\.launchURL|this\.getURL|submitForm", "PDF: opens a URL / submits data"),
-    ("pdf_js_exploit_api", "high", r"util\.printf|getAnnots\s*\(|Collab\.(?:collectEmailInfo|getIcon)|media\.newPlayer|spell\.customDictionaryOpen",
-     "PDF: API used by known Reader exploits"),
-    ("js_heap_spray", "high", r"(?i)(?:%u0c0c%u0c0c|%u9090|\\u0c0c|nop\s*sled|\.substr\(0,\s*\w+\.length\s*/\s*2\))",
-     "heap-spray / shellcode pattern"),
-]
+# Behaviour patterns live in the shared catalogue (script_rules); this module
+# keeps only the JS-specific noise rule used to drop single-hit medium findings.
 _MEDIUM_ONLY_IS_NOISE = {"js_redirect"}
 
 
@@ -119,12 +93,41 @@ def _decode_jse(path: Path) -> str:
     return "" if out.strip() == "No encoded script found!" else out
 
 
+def decode_mht(raw: bytes) -> str:
+    """Return the HTML of an MHT/MHTML (MIME) container, decoding quoted-printable
+    and base64 parts so scripts hidden by MIME encoding become visible."""
+    try:
+        import email
+        msg = email.message_from_bytes(raw)
+        parts: list[str] = []
+        for part in msg.walk():
+            ctype = (part.get_content_type() or "").lower()
+            if ctype in ("text/html", "text/plain", "application/octet-stream") or "html" in ctype:
+                payload = part.get_payload(decode=True)
+                if payload:
+                    parts.append(payload.decode("utf-8", "replace"))
+        if parts:
+            return "\n".join(parts)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import quopri
+        return quopri.decodestring(raw).decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001
+        return raw.decode("utf-8", "replace")
+
+
 def _from_file(path: Path, rel: str) -> list[dict[str, Any]]:
     ext = path.suffix.lower()
     try:
         raw = path.read_bytes()[:_MAX_FILE_BYTES]
     except OSError:
         return []
+    if ext in (".mht", ".mhtml"):
+        html = decode_mht(raw)
+        items = [{"kind": "mht", "code": code, "origin": rel, "location": f"file:{rel}"}
+                 for code in scripts_from_html(html)]
+        return items
     text = raw.decode("utf-8", "replace")
     if ext not in _SCRIPT_EXT:
         head = text[:65536].lower()
@@ -289,17 +292,8 @@ def decode_strings(code: str) -> list[dict[str, str]]:
 
 
 def static_hits(code: str) -> list[dict[str, Any]]:
-    hits = []
-    lines = code.splitlines()
-    for rule, sev, rx, label in PATTERNS:
-        r = re.compile(rx)
-        for no, ln in enumerate(lines, 1):
-            if r.search(ln):
-                hits.append({"rule": rule, "severity": sev, "label": label, "line_no": no,
-                             "line": ln.strip()[:300]})
-                if sum(1 for h in hits if h["rule"] == rule) >= 5:
-                    break
-    return sorted(hits, key=lambda h: (h["line_no"], h["rule"]))
+    """Behaviour hits from the shared catalogue (JScript/JavaScript rules)."""
+    return script_rules.scan(code, script_rules.JS)
 
 
 def _pretty(code: str) -> str:

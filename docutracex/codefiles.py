@@ -127,7 +127,8 @@ def annotate(modules: dict[str, Any], paths: CasePaths) -> set[str]:
     # deobfuscation cascade recovered a cleaner payload.
     for module_name, sub, ext in (("javascript", "js", "js"),
                                    ("powershell", "powershell", "ps1"),
-                                   ("vbscript", "vbscript", "vbs")):
+                                   ("vbscript", "vbscript", "vbs"),
+                                   ("batch", "batch", "bat")):
         mod = modules.get(module_name)
         if not isinstance(mod, dict):
             continue
