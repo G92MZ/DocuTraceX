@@ -22,6 +22,14 @@ from .storage import CasePaths, read_json, write_json, write_subresult
 
 log = get_logger(__name__)
 
+# Scripting-file extensions: a standalone one of these gets the scripting engine
+# (deobfuscation + behaviour rules) even though it has no family parser.
+_SCRIPTING_EXT = {
+    ".js", ".mjs", ".jse", ".vbs", ".vbe", ".wsf", ".wsc", ".sct", ".hta",
+    ".html", ".htm", ".svg", ".mht", ".mhtml", ".ps1", ".psm1", ".psd1",
+    ".bat", ".cmd",
+}
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -556,10 +564,15 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         ran.append("file")
         state = "completed"
 
-    # JavaScript: extracted from every place it can hide (PDF, HTML body,
-    # attachments, OLE packages, nested children...), analysed and sandboxed.
+    # Scripting engine (deobfuscation + behaviour rules). It runs whenever a
+    # family parser ran (scripts hide inside those) or the case file itself is a
+    # scripting file — so a standalone .js/.ps1/.vbs/.bat/.hta is analysed too.
     from .parsers import javascript
-    if [m for m in ran if m != "file"] or original.suffix.lower() in javascript._SCRIPT_EXT:
+    scripting_file = original.suffix.lower() in _SCRIPTING_EXT
+    other_ran = [m for m in ran if m != "file"]
+
+    # JavaScript / JScript (PDF /JS, HTML body, attachments, OLE, nested, VBA).
+    if other_ran or scripting_file:
         js_mods = {m: read_json(paths.subresult(m)) for m in ("pdf", "email", "oletools")}
         js_res = run("javascript: extraction · static analysis · STPyV8 sandbox",
                      lambda: javascript.analyze(original, paths.extracted_dir,
@@ -569,11 +582,11 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             ran.append("javascript")
             findings_total += js_res.get("counts", {}).get("findings", 0)
 
-    # PowerShell / VBScript: dropped files and commands mined from the other
-    # modules (VBA, DDE, the JS sandbox log...), deobfuscated and given their
-    # own code tabs. Run last so they can consume the results above.
-    if [m for m in ran if m != "file"] or original.suffix.lower() in {".ps1", ".psm1", ".vbs", ".vbe"}:
-        from .parsers import powershell, vbscript
+    # PowerShell / VBScript / batch: dropped files and commands mined from the
+    # other modules (VBA, DDE, the JS sandbox log...), deobfuscated and given
+    # their own code tabs. Run last so they can consume the results above.
+    if other_ran or scripting_file:
+        from .parsers import batch, powershell, vbscript
         code_mods = {m: read_json(paths.subresult(m))
                      for m in ("oletools", "vipermonkey", "javascript", "word", "excel",
                                "powerpoint", "rtf", "email")}
@@ -590,6 +603,12 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             write_subresult(paths, "vbscript", vbs_res)
             ran.append("vbscript")
             findings_total += vbs_res.get("counts", {}).get("findings", 0)
+        bat_res = run("batch: extraction · caret/set deobfuscation",
+                      lambda: batch.analyze(original, paths.extracted_dir, code_mods))
+        if bat_res.get("scripts"):
+            write_subresult(paths, "batch", bat_res)
+            ran.append("batch")
+            findings_total += bat_res.get("counts", {}).get("findings", 0)
 
     # YARA runs only on demand (YARA tab / re-run "yara"), never automatically.
     # A previous on-demand scan of this case is kept across full re-analyses.
@@ -662,7 +681,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto",
                "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole",
                "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules", "javascript", "rtf",
-               "powershell", "vbscript")
+               "powershell", "vbscript", "batch")
 # Modules whose findings feed the consolidated view (includes derived ones).
 _COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file")
 
@@ -785,13 +804,13 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
         from .parsers import javascript
         mods = {m: read_json(paths.subresult(m)) for m in ("pdf", "email", "oletools")}
         res = javascript.analyze(original, ed, {k: v for k, v in mods.items() if v})
-    elif module in ("powershell", "vbscript"):
-        from .parsers import powershell, vbscript
+    elif module in ("powershell", "vbscript", "batch"):
+        from .parsers import batch, powershell, vbscript
         mods = {m: read_json(paths.subresult(m))
                 for m in ("oletools", "vipermonkey", "javascript", "word", "excel",
                           "powerpoint", "rtf", "email")}
         mods = {k: v for k, v in mods.items() if v}
-        mod = powershell if module == "powershell" else vbscript
+        mod = {"powershell": powershell, "vbscript": vbscript, "batch": batch}[module]
         res = mod.analyze(original, ed, mods)
     elif module == "mailrules":
         # gmzpt

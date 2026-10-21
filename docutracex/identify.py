@@ -44,6 +44,16 @@ _EXT_FAMILY: dict[str, str] = {
     # Archives (attachments, malware drops): extracted and scanned recursively
     ".zip": "zip",
     ".7z": "7z",
+    # Scripting files: analysed by the scripting engine (deobfuscation + rules)
+    **{e: "scripting" for e in (
+        ".js", ".jse", ".mjs",            # JScript / JavaScript
+        ".vbs", ".vbe",                   # VBScript (plain / Script-Encoder)
+        ".wsf", ".wsc", ".sct",           # Windows Script / COM scriptlets
+        ".hta",                           # HTML Application
+        ".html", ".htm", ".svg", ".mht", ".mhtml",  # markup carrying script
+        ".ps1", ".psm1", ".psd1",         # PowerShell
+        ".bat", ".cmd",                   # batch / cmd
+    )},
 }
 
 # --- detected mime/description -> family -------------------------------------
@@ -219,6 +229,10 @@ def classify_discrepancy(
         # EML/EMLX are text-based; libmagic may not recognise EMLX specifically.
         status = _INCONCLUSIVE
         detail = "Detected as text; email formats are text-based (no specific signature)."
+    elif exp == "scripting" and det == "text":
+        # Scripts are text; libmagic sees text/* (e.g. text/x-msdos-batch) — a match.
+        status = _MATCH
+        detail = "Text-based script consistent with the extension."
     elif exp == "ole" and mime in _GENERIC:
         status = _INCONCLUSIVE
         detail = "Detected as a generic compound file consistent with the extension."

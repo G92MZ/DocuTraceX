@@ -22,7 +22,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from . import javascript, ps_deobf
+from . import javascript, ps_deobf, script_rules
 
 _MAX_ITEMS = 60
 _MAX_FILES = 300
@@ -32,28 +32,7 @@ _KEEP_CODE = 60_000
 _PS_FILE_EXT = {".ps1", ".psm1", ".psd1"}
 _SHELL_FILE_EXT = {".bat", ".cmd"}
 
-# rule, severity, regex, label
-PATTERNS: list[tuple[str, str, str, str]] = [
-    ("ps_encoded", "high", r"(?i)-e(?:c|nc|ncod|ncodedcommand)?\s+[A-Za-z0-9+/=]{16,}|FromBase64String",
-     "base64-encoded command"),
-    ("ps_download", "high",
-     r"(?i)DownloadString|DownloadFile|DownloadData|Invoke-WebRequest|\biwr\b|Invoke-RestMethod|\birm\b|Net\.WebClient|Start-BitsTransfer|System\.Net\.Sockets",
-     "downloads / connects out"),
-    ("ps_iex", "high", r"(?i)Invoke-Expression|\biex\b|\.Invoke\(\)|\bICM\b|Invoke-Command",
-     "executes a dynamic string (IEX)"),
-    ("ps_hidden", "medium",
-     r"(?i)-w(?:indowstyle)?\s+hidden|-nop\b|-noni\b|-noprofile\b|-noninteractive\b|-ep\s+bypass|-exec(?:utionpolicy)?\s+bypass",
-     "stealth execution flags"),
-    ("ps_exec", "high",
-     r"(?i)Start-Process|Invoke-Item|\bsaps\b|New-Object\s+Net|\[Reflection\.Assembly\]|System\.Reflection|VirtualAlloc|CreateThread|memset",
-     "process / in-memory execution"),
-    ("ps_amsi", "high", r"(?i)amsiUtils|amsiInitFailed|AmsiScanBuffer|System\.Management\.Automation\.AmsiUtils",
-     "AMSI bypass"),
-    ("ps_lolbin", "high", r"(?i)\brundll32\b|\bregsvr32\b|\bmshta\b|\bcertutil\b|\bbitsadmin\b|\bwmic\b|\bschtasks\b|\bmsiexec\b",
-     "invokes a LOLBin"),
-    ("ps_persist", "medium", r"(?i)New-ItemProperty|Set-ItemProperty|CurrentVersion\\Run|Register-ScheduledTask|schtasks\s+/create",
-     "persistence (registry / scheduled task)"),
-]
+# Behaviour patterns live in the shared catalogue (script_rules).
 
 # A powershell.exe invocation taken to the end of the line / statement.
 _INVOKE = re.compile(
@@ -72,17 +51,8 @@ def _finding(rule: str, severity: str, detail: str, location: str, evidence: str
 
 
 def static_hits(code: str) -> list[dict[str, Any]]:
-    hits = []
-    lines = code.splitlines() or [""]
-    for rule, sev, rx, label in PATTERNS:
-        r = re.compile(rx)
-        for no, ln in enumerate(lines, 1):
-            if r.search(ln):
-                hits.append({"rule": rule, "severity": sev, "label": label, "line_no": no,
-                             "line": ln.strip()[:300]})
-                if sum(1 for h in hits if h["rule"] == rule) >= 5:
-                    break
-    return sorted(hits, key=lambda h: (h["line_no"], h["rule"]))
+    """Behaviour hits from the shared catalogue (PowerShell rules)."""
+    return script_rules.scan(code, script_rules.PS)
 
 
 def _candidates(text: str, whole: bool) -> list[str]:
@@ -219,6 +189,10 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> dic
         for rule, hs in by_rule.items():
             res["findings"].append(_finding(rule, hs[0]["severity"], f"[{it['origin']}] {hs[0]['label']}", loc,
                                             "\n".join(f"line {h['line_no']}: {h['line']}" for h in hs[:5])))
+        chain = script_rules.risk_escalation(hits)
+        if chain:
+            res["findings"].append(_finding(chain["rule"], chain["severity"],
+                                            f"[{it['origin']}] {chain['label']}", loc, chain["detail"]))
         if deob["changed"]:
             methods = ", ".join(deob["methods"]) or "static decoding"
             res["findings"].append(_finding("ps_deobfuscated", "medium",

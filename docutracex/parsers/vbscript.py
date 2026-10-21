@@ -20,7 +20,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from . import javascript
+from . import javascript, script_rules
 
 _MAX_ITEMS = 60
 _MAX_FILES = 300
@@ -32,19 +32,7 @@ _MAX_PASSES = 25
 _SCRIPT_TAG = re.compile(r"<script\b([^>]*)>(.*?)</script\s*>", re.IGNORECASE | re.DOTALL)
 _HTML_EXT = {".hta", ".htm", ".html", ".wsf", ".wsc", ".sct", ".mht", ".mhtml"}
 
-PATTERNS: list[tuple[str, str, str, str]] = [
-    ("vbs_exec", "high", r"(?i)\bExecuteGlobal\b|\bExecute\b|\bEval\b", "executes a dynamic string"),
-    ("vbs_shell", "high", r"(?i)WScript\.Shell|Shell\.Application|\.Run\s*\(|\.Exec\s*\(|\.ShellExecute\s*\(",
-     "runs commands (WScript.Shell/Run)"),
-    ("vbs_activex", "high", r"(?i)CreateObject\s*\(|GetObject\s*\(", "creates/uses a COM object"),
-    ("vbs_download", "high", r"(?i)MSXML2\.(?:Server)?XMLHTTP|WinHttp\.WinHttpRequest|Microsoft\.XMLHTTP|ADODB\.Stream",
-     "network request / stream"),
-    ("vbs_file", "high", r"(?i)Scripting\.FileSystemObject|\.SaveToFile\s*\(|\.CreateTextFile\s*\(|\.WriteLine\b",
-     "writes files"),
-    ("vbs_lolbin", "high", r"(?i)powershell|cmd(?:\.exe)?\s*/c|mshta|regsvr32|rundll32|certutil|bitsadmin|wmic|schtasks",
-     "invokes a LOLBin / shell"),
-    ("vbs_obfusc", "medium", r"(?i)StrReverse\s*\(|Chr[W]?\s*\(|&\s*H[0-9a-fA-F]{2}", "obfuscation primitives"),
-]
+# Behaviour patterns live in the shared catalogue (script_rules).
 
 
 def _finding(rule: str, severity: str, detail: str, location: str, evidence: str = "") -> dict:
@@ -148,17 +136,8 @@ def deobfuscate(code: str) -> dict[str, Any]:
 
 
 def static_hits(code: str) -> list[dict[str, Any]]:
-    hits = []
-    lines = code.splitlines() or [""]
-    for rule, sev, rx, label in PATTERNS:
-        r = re.compile(rx)
-        for no, ln in enumerate(lines, 1):
-            if r.search(ln):
-                hits.append({"rule": rule, "severity": sev, "label": label, "line_no": no,
-                             "line": ln.strip()[:300]})
-                if sum(1 for h in hits if h["rule"] == rule) >= 5:
-                    break
-    return sorted(hits, key=lambda h: (h["line_no"], h["rule"]))
+    """Behaviour hits from the shared catalogue (VBScript rules)."""
+    return script_rules.scan(code, script_rules.VBS)
 
 
 # --- extraction ---------------------------------------------------------------
@@ -205,9 +184,11 @@ def collect(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> lis
             continue
         if ext in _HTML_EXT:
             try:
-                text = p.read_bytes()[:_MAX_FILE_BYTES].decode("utf-8", "replace")
+                raw = p.read_bytes()[:_MAX_FILE_BYTES]
             except OSError:
                 continue
+            text = (javascript.decode_mht(raw) if ext in (".mht", ".mhtml")
+                    else raw.decode("utf-8", "replace"))
             if "#@~^" in text[:4096]:  # encoded VBScript inside HTML
                 dec = javascript._decode_jse(p)
                 if dec.strip():
@@ -261,6 +242,10 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> dic
         for rule, hs in by_rule.items():
             res["findings"].append(_finding(rule, hs[0]["severity"], f"[{it['origin']}] {hs[0]['label']}", loc,
                                             "\n".join(f"line {h['line_no']}: {h['line']}" for h in hs[:5])))
+        chain = script_rules.risk_escalation(hits)
+        if chain:
+            res["findings"].append(_finding(chain["rule"], chain["severity"],
+                                            f"[{it['origin']}] {chain['label']}", loc, chain["detail"]))
         if deob["changed"]:
             methods = ", ".join(deob["methods"]) or "static decoding"
             res["findings"].append(_finding("vbs_deobfuscated", "medium",

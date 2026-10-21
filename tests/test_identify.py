@@ -91,6 +91,17 @@ def test_emlx_sample_confirmed_by_structure() -> None:
     assert r["discrepancy"]["status"] == "match"
 
 
+def test_scripting_family() -> None:
+    # Scripting extensions map to the 'scripting' family and, seen as text by
+    # libmagic, are a match (not an unknown/out-of-scope file).
+    for ext in (".js", ".vbs", ".ps1", ".bat", ".hta", ".wsf"):
+        r = classify_discrepancy(ext, "text/plain", "ASCII text")
+        assert r["declared_family"] == "scripting", ext
+        assert r["status"] == "match", ext
+    # A scripting extension whose content is really another family is a mismatch.
+    assert classify_discrepancy(".js", "application/pdf", "PDF document")["status"] == "mismatch"
+
+
 @pytestmark_samples
 def test_create_case_fills_detected_format(tmp_path: Path) -> None:
     sample = SAMPLES / "sample.pdf"
