@@ -157,18 +157,21 @@ def _reconstruct(code_obj: Any) -> list[str]:
     return out
 
 
-def recover_pyc(path: Path, blob: bytes) -> tuple[str, str, str, str]:
-    """Recover a ``.pyc`` for display and for scanning.
+_INCOMPLETE_MARKERS = ("decompyle incomplete", "could not", "unsupported opcode", "unsupported node")
 
-    Returns (display_code, scan_text, source_kind, py_version). The *display*
-    prefers pycdc's decompiled source (nicest to read); the *scan_text* is the
-    union of the decompiled source AND the bytecode reconstruction, so detection
-    never depends on the decompiler being complete — pycdc lags new CPython and
-    often emits only the imports/globals with "# WARNING: Decompyle incomplete",
-    dropping the function body where the real calls live.
+
+def recover_pyc(path: Path, blob: bytes) -> tuple[str, str, str]:
+    """Recover a ``.pyc`` into one text that is BOTH shown and scanned (so the
+    findings' line numbers always match the displayed code).
+
+    Returns (code, source_kind, py_version). pycdc lags new CPython and often
+    emits only the imports/globals with "# WARNING: Decompyle incomplete",
+    dropping the function body. When that happens the calls reconstructed from
+    the bytecode are appended below the partial source — so the dropped
+    ``subprocess.Popen``/``urlopen``/… are both detected and visible.
     """
     ver = _pyc_version(blob)
-    # Always reconstruct dotted calls + strings from the bytecode (version-matched).
+    # Reconstruct dotted calls + strings from the bytecode (version-matched).
     recon = ""
     header = 16 if ver not in ("3.3", "3.4", "3.5", "3.6", "unknown") else 12
     for hdr in (header, 16, 12, 8):
@@ -182,17 +185,19 @@ def recover_pyc(path: Path, blob: bytes) -> tuple[str, str, str, str]:
         except Exception:  # noqa: BLE001
             continue
     src = _decompile(path)                     # pycdc, optional (may be partial)
-    strings = "\n".join(_carve_strings(blob))
+    complete = bool(src) and not any(m in src.lower() for m in _INCOMPLETE_MARKERS)
 
+    if complete:
+        return src, "decompiled", ver
+    if src and recon:
+        joined = (src.rstrip() + "\n\n# --- DocuTraceX: calls recovered from the bytecode "
+                  "(the decompiler stopped early) ---\n" + recon)
+        return joined, "decompiled + bytecode", ver
+    if recon:
+        return recon, "disassembled", ver
     if src:
-        display, kind = src, "decompiled"
-    elif recon:
-        display, kind = recon, "disassembled"
-    else:
-        display, kind = strings, "strings"
-    # Scan the richest combination available; fall back to the raw strings.
-    scan_text = "\n".join(t for t in (src, recon) if t) or strings
-    return display, scan_text, kind, ver
+        return src, "decompiled", ver
+    return "\n".join(_carve_strings(blob)), "strings", ver
 
 
 def _decompile(path: Path) -> str:
@@ -269,11 +274,12 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any] | None 
         deob_methods: list[str] = []
         orig_code = ""
 
-        scan_text = ""
         if is_pyc:
-            display, scan_text, source_kind, pyver = recover_pyc(it["path"], it["raw"])
+            # One text is both shown and scanned, so the findings' line numbers
+            # match the displayed code (the bytecode-recovered calls are appended
+            # when pycdc stops early).
+            display, source_kind, pyver = recover_pyc(it["path"], it["raw"])
             code = display[:_MAX_CODE]
-            scan_text = scan_text[:_MAX_CODE * 2]
         else:
             src = it["raw"].decode("utf-8", "replace")
             orig_code = src[:_MAX_CODE]
@@ -281,9 +287,7 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any] | None 
             deob_methods = deob["methods"]
             code = (deob["code"] if deob["changed"] else src)[:_MAX_CODE]
 
-        # For a .pyc, scan the union of decompiled source + bytecode reconstruction
-        # so an incomplete pycdc decompile never hides the function body.
-        hits = static_hits(scan_text or code)
+        hits = static_hits(code)
         mets = javascript.metrics(code)
         script = {
             "id": i, "kind": "python", "origin": origin, "location": loc,

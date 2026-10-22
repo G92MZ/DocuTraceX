@@ -103,9 +103,16 @@ def test_pyc_incomplete_decompile_still_detects(tmp_path: Path, monkeypatch) -> 
         "import urllib.request as urllib\n# WARNING: Decompyle incomplete\n"))
     r = python.analyze(tmp_path / "d.pyc", tmp_path / "none")
     sc = r["scripts"][0]
-    assert sc["source"] == "decompiled" and "Decompyle incomplete" in sc["code"]
+    # The partial source is shown AND the bytecode-recovered calls are appended,
+    # so the findings' line numbers map to the displayed code.
+    assert sc["source"] == "decompiled + bytecode"
+    assert "Decompyle incomplete" in sc["code"] and "recovered from the bytecode" in sc["code"]
     rules = {f["rule"] for f in r["findings"]}
-    assert {"py_subprocess", "py_download"} <= rules  # recovered from the bytecode, not the partial source
+    assert {"py_subprocess", "py_download"} <= rules
+    # every finding's line number points at a real line of the displayed code
+    lines = sc["code"].split("\n")
+    for h in sc["hits"]:
+        assert 1 <= h["line_no"] <= len(lines)
 
 
 def test_py_light_deob(tmp_path: Path) -> None:
