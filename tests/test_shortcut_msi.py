@@ -129,11 +129,13 @@ def test_msi_tables_and_strings(tmp_path: Path) -> None:
 
 
 def test_pe_is_categorised_not_unpacked(tmp_path: Path) -> None:
+    # An MZ stub with no valid PE header: pefile reports it as malformed (more
+    # accurate than the old blanket "pe_image"); a real PE is exercised in test_pe.py.
     p = tmp_path / "t.exe"
     p.write_bytes(b"MZ\x90\x00" + b"\x00" * 0x3c + b"\x00\x00\x00\x00")
     res = msi.analyze(p)
     assert res["items"][0]["kind"] == "pe" and res["items"][0]["is_pe"]
-    assert any(f["rule"] == "pe_image" for f in res["findings"])
+    assert any(f["rule"] in ("pe_image", "pe_malformed") for f in res["findings"])
 
 
 def test_fake_pe_masquerade(tmp_path: Path) -> None:

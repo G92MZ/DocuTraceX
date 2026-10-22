@@ -97,7 +97,9 @@ Dropped/attached scripts whose intent only shows **after deobfuscation** — one
 | `sample_shortcut.url` | An Internet Shortcut whose `URL=` points to a **remote executable** over `file://203.0.113.47/…` (WebDAV/SMB) and whose `IconFile=` sits on a **UNC path** (forces SMB auth → NTLM hash theft). The **Shortcut** tab lists the URL/icon; rules fire for the remote-file target, the UNC-icon NTLM leak and the executable payload. |
 | `sample_installer.msi` | A Windows Installer (OLE/CFB). DocuTraceX decodes the mangled stream names, flags the **CustomAction**, **InstallExecuteSequence** and **Binary** tables, finds the **embedded Binary stream** (inert `MZ` stub), and mines `_StringData` — the PowerShell downloader it carries runs through the scripting engine (`IEX … DownloadString(…)`). **MSI** tab. |
 
-> `.exe`/`.dll` and other PE images are **categorised and triaged** (type, architecture, a "use a dedicated RE/AV tool" note) and keep the generic file record (hashes, YARA, report) — they are not statically unpacked.
+| `sample_packed.exe` | A valid PE32+ that **looks packed**: two `UPX`-named sections (one high-entropy, writable+executable) and no import table. The **Binary** tab shows the pefile triage (type, arch, subsystem, sections with entropy) and rules fire for the packer sections, the high entropy, the W+X flags and the entry point outside `.text`. Inert — it carries no code. |
+
+> `.exe`/`.dll` and other PE images get **static triage with pefile** (header, sections/entropy, imports grouped by behaviour, resources, signing, packer detection) and keep the generic file record (hashes, YARA, report). They are not disassembled or unpacked — deep RE stays with a dedicated tool. With **FLOSS** provisioned, decoded strings are mined for IOCs.
 
 ## Java
 

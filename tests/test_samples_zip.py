@@ -43,7 +43,8 @@ def test_shipped_archive_has_every_sample_encrypted() -> None:
     binkind = {"sample_shortcut.pdf.lnk", "sample_shortcut.url", "sample_installer.msi",
                "sample_dropper.py", "sample_dropper.pyc", "sample_pyinstaller.exe",
                "sample_app.jar", "sample_webshell.war",
-               "sample_cabinet.cab", "sample_image.iso", "sample_archive.tar.gz", "sample_notes.one"}
+               "sample_cabinet.cab", "sample_image.iso", "sample_archive.tar.gz", "sample_notes.one",
+               "sample_packed.exe"}
     assert {f"sample.{e}" for e in exts} | {"lab/phish_lab.eml"} | deobf | binkind <= names
 
 

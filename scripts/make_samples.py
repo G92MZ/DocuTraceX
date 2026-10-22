@@ -911,6 +911,52 @@ def onenote_one() -> bytes:
     return header + fds(loader_hta()) + fds(dropper_vbs())
 
 
+def packed_pe_exe() -> bytes:
+    """A minimal but valid PE32+ that looks packed: two UPX-named sections
+    (one high-entropy, writable+executable) and no import table. Exercises the
+    pefile analysis — packer-section, high-entropy, W+X and entry-point rules.
+    Inert: it carries no code and never runs."""
+    import random
+
+    FA, SA = 0x200, 0x1000
+
+    def al(n: int, a: int) -> int:
+        return (n + a - 1) & ~(a - 1)
+
+    random.seed(20260187)
+    secdata = [("UPX0", b"\x00" * 0x200),
+               ("UPX1", bytes(random.randrange(256) for _ in range(0x400)))]
+    nsec = len(secdata)
+    e_lfanew = 0x80
+    opt_size = 240
+    size_headers = al(e_lfanew + 4 + 20 + opt_size + nsec * 40, FA)
+    secs = []
+    rawptr, va = size_headers, SA
+    for name, data in secdata:
+        raw = al(len(data), FA)
+        secs.append((name, va, len(data), rawptr, raw, data))
+        rawptr += raw
+        va = al(va + max(len(data), SA), SA)
+    size_image = al(va, SA)
+    ep = secs[0][1]
+    dos = b"MZ" + b"\x00" * 0x3a + struct.pack("<I", e_lfanew) + b"\x00" * (e_lfanew - 0x40)
+    coff = struct.pack("<HHIIIHH", 0x8664, nsec, 0, 0, 0, opt_size, 0x2022)
+    opt = struct.pack("<HBBIIIII", 0x20b, 14, 0, 0x200, 0x400, 0, ep, 0)
+    opt += struct.pack("<Q", 0x140000000)
+    opt += struct.pack("<IIHHHHHHIIIIHH", SA, FA, 6, 0, 0, 0, 6, 0, 0, size_image, size_headers, 0, 2, 0)
+    opt += struct.pack("<QQQQ", 0x100000, 0x1000, 0x100000, 0x1000)
+    opt += struct.pack("<II", 0, 16) + b"\x00" * (16 * 8)
+    opt = opt[:opt_size].ljust(opt_size, b"\x00")
+    sectbl = b""
+    for name, va, vsize, rawptr, raw, data in secs:
+        sectbl += name.encode().ljust(8, b"\x00") + struct.pack("<IIII", vsize, va, raw, rawptr)
+        sectbl += struct.pack("<IIHHI", 0, 0, 0, 0, 0xE0000020)
+    body = (dos + b"PE\x00\x00" + coff + opt + sectbl).ljust(size_headers, b"\x00")
+    for name, va, vsize, rawptr, raw, data in secs:
+        body = body.ljust(rawptr, b"\x00") + data.ljust(raw, b"\x00")
+    return body
+
+
 def dropper_bundle_zip() -> bytes:
     """A plain .zip bundling the obfuscated scripts, shortcuts, Python, Java and a
     OneNote lure, to exercise the nested (recursive) path on every engine."""
@@ -953,6 +999,7 @@ def build_all() -> dict[str, bytes]:
         "sample_app.jar": malicious_jar(), "sample_webshell.war": webshell_war(),
         "sample_cabinet.cab": cabinet_cab(), "sample_image.iso": optical_image_iso(),
         "sample_archive.tar.gz": tarball_tgz(), "sample_notes.one": onenote_one(),
+        "sample_packed.exe": packed_pe_exe(),
         "lab/dropper_bundle.zip": dropper_bundle_zip(),
     }
     for ext in X_CT:
