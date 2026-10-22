@@ -138,8 +138,9 @@ const fileInput = document.getElementById("file-input");
 const fileName = document.getElementById("file-name");
 
 fileInput.addEventListener("change", () => {
-  if (fileInput.files.length) {
-    fileName.textContent = fileInput.files[0].name;
+  const n = fileInput.files.length;
+  if (n) {
+    fileName.textContent = n === 1 ? fileInput.files[0].name : `${n} files selected`;
     fileName.classList.add("has-file");
   } else {
     fileName.textContent = "No file selected";
@@ -150,27 +151,82 @@ fileInput.addEventListener("change", () => {
 document.getElementById("upload-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const status = document.getElementById("upload-status");
-  if (!fileInput.files.length) return;
-  const data = new FormData();
-  data.append("file", fileInput.files[0]);
+  const files = Array.from(fileInput.files || []);
+  if (!files.length) return;
   const pwInput = document.getElementById("upload-password");
-  if (pwInput && pwInput.value) data.append("password", pwInput.value);
-  status.textContent = "Uploading…";
-  try {
-    const resp = await fetch("/api/cases", { method: "POST", body: data });
-    if (!resp.ok) throw new Error("upload failed");
-    const manifest = await resp.json();
-    status.textContent = "Case queued for analysis: " + manifest.analysis_id;
-    fileInput.value = "";
-    if (pwInput) pwInput.value = "";
-    fileName.textContent = "No file selected";
-    fileName.classList.remove("has-file");
-    loadCases();
-    startTaskPoller();
-  } catch (err) {
-    status.textContent = "Upload failed.";
+  const pw = pwInput && pwInput.value ? pwInput.value : "";
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  if (submitBtn) submitBtn.disabled = true;
+
+  let ok = 0;
+  const failed = [];
+  // Upload sequentially so the browser isn't flooded; the backend queue then
+  // analyses them a couple at a time (see the Tasks tab).
+  for (let i = 0; i < files.length; i++) {
+    status.textContent = files.length === 1
+      ? "Uploading…" : `Uploading ${i + 1}/${files.length}: ${files[i].name}`;
+    const data = new FormData();
+    data.append("file", files[i]);
+    if (pw) data.append("password", pw);
+    try {
+      const resp = await fetch("/api/cases", { method: "POST", body: data });
+      if (!resp.ok) throw new Error("upload failed");
+      await resp.json();
+      ok++;
+      loadCases();
+    } catch (err) {
+      failed.push(files[i].name);
+    }
   }
+
+  if (failed.length) {
+    status.textContent = `${ok} queued, ${failed.length} failed (${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "…" : ""}).`;
+  } else if (ok === 1) {
+    status.textContent = "Case queued for analysis.";
+  } else {
+    status.textContent = `${ok} files queued — analysed a couple at a time (see Tasks).`;
+  }
+  fileInput.value = "";
+  if (pwInput) pwInput.value = "";
+  fileName.textContent = "No file selected";
+  fileName.classList.remove("has-file");
+  if (submitBtn) submitBtn.disabled = false;
+  loadCases();
+  startTaskPoller();
 });
+
+// --- concurrency control (how many files analysed at once) -------------------
+const concInput = document.getElementById("conc-input");
+const concStatus = document.getElementById("conc-status");
+
+async function loadConcurrency() {
+  if (!concInput) return;
+  try {
+    const d = await fetch("/api/settings/analysis").then((r) => r.json());
+    concInput.value = d.concurrency;
+    concInput.min = d.min;
+    concInput.max = d.max;
+  } catch (err) { /* leave the input as-is */ }
+}
+
+if (concInput) {
+  concInput.addEventListener("change", async () => {
+    const n = Math.max(1, Math.min(8, parseInt(concInput.value, 10) || 1));
+    concInput.value = n;
+    concStatus.textContent = "Saving…";
+    try {
+      const d = await fetch("/api/settings/analysis", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ concurrency: n }),
+      }).then((r) => r.json());
+      concInput.value = d.concurrency;
+      concStatus.textContent = `Saved — ${d.concurrency} at a time.`;
+      setTimeout(() => { concStatus.textContent = ""; }, 2500);
+    } catch (err) {
+      concStatus.textContent = "Could not save.";
+    }
+  });
+}
 
 const STATUS_CLASS = { ok: "ok", warn: "warn", fail: "bad" };
 
@@ -3144,3 +3200,4 @@ setupAi();
 renderFormats();
 loadDiagnostics(); // initial load to set the nav indicator
 loadCases();
+loadConcurrency();
