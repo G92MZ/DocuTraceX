@@ -37,9 +37,9 @@ _MAX_BYTES = 64 * 1024 * 1024
 
 # External static tools (FLOSS / capa): per-run time limits and output caps.
 FLOSS_TIMEOUT = 120
-CAPA_TIMEOUT = 180
-_FLOSS_MAX_STRINGS = 200
-_CAPA_MAX_RULES = 300
+CAPA_TIMEOUT = 1800
+_FLOSS_MAX_STRINGS = 2000
+_CAPA_MAX_RULES = 700
 # PyInstaller CArchive cookie (same as parsers.pyinstaller.MAGIC), searched in
 # the file tail like analyze.py does.
 _PYI_MAGIC = b"MEI\014\013\012\013\016"
