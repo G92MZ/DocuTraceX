@@ -28,7 +28,7 @@ const FORMATS = [
     title: "Java archives and classes: MANIFEST, web.xml, signing, nested jars, and .class/JSP scanned for malicious behaviour (constant pool, or decompiled with CFR); JSP webshells, JNDI/Log4Shell, deserialization" },
   { name: "Binaries / PE", color: "#b58900", glyph: "MSI",
     exts: [".msi", ".exe", ".dll", ".scr", ".sys", ".ocx", ".cpl"],
-    title: "MSI installers get real analysis (CustomAction/sequence/Binary tables, string mining into the scripting engine, embedded CABs); PyInstaller EXEs are unpacked and their Python recovered; other PE images are categorised and triaged" },
+    title: "MSI installers get real analysis (CustomAction/sequence/Binary tables, string mining, embedded CABs); PyInstaller EXEs are unpacked and their Python recovered; other PE images get static triage (sections/entropy, imports, resources, signing, packer detection) with pefile" },
   { name: "Any other file", color: "#5f6b7a", glyph: "BIN", exts: [".img", ".iso", ".bin", "…"],
     title: "Anything else (disk images, data...): YARA, marks and the report" },
 ];
@@ -1556,12 +1556,24 @@ function paneShortcut(scm) {
 function paneMsi(msim) {
   const parts = (msim.items || []).map((it) => {
     if (it.kind === "pe") {
+      const secs = (it.sections || []).map((s) => `<tr><td class="mono">${escapeHtml(s.name || "")}</td>
+        <td>${s.rawsize != null ? escapeHtml(String(s.rawsize)) : ""}</td>
+        <td>${s.entropy != null ? escapeHtml(String(s.entropy)) : ""}</td>
+        <td>${s.wx ? "W+X" : ""}</td></tr>`).join("");
+      const secTable = secs ? `<table class="cases"><thead><tr><th>Section</th><th>Raw</th><th>Entropy</th><th></th></tr></thead>
+        <tbody>${secs}</tbody></table>` : "";
       const rows = kv([
-        ["File", it.file], ["Extension", it.ext], ["Size", it.size != null ? `${it.size} bytes` : ""],
-        ["Looks like PE", it.is_pe ? "yes (MZ)" : "no"], ["Architecture", it.machine],
+        ["File", it.file], ["Size", it.size != null ? `${it.size} bytes` : ""],
+        ["Looks like PE", it.is_pe ? "yes (MZ)" : "no"],
+        ["Type", it.is_dll ? "DLL" : (it.is_pe ? "EXE" : "")], ["Architecture", it.machine],
+        ["Subsystem", it.subsystem], ["Compiled", it.compiled], ["Entry point", it.entrypoint],
+        ["Imports", it.imports_count != null ? `${it.imports_count} (${(it.imports_dll || []).slice(0, 5).join(", ")})` : ""],
+        ["Exports", (it.exports || []).slice(0, 8).join(", ")],
+        ["Signed", it.signed ? "yes (Authenticode)" : (it.is_pe ? "no" : "")],
+        ["FLOSS strings", it.floss_strings ? String(it.floss_strings.length) : ""],
       ]);
       const err = it.error ? `<p class="bad-text">${escapeHtml(it.error)}</p>` : "";
-      return `<div class="sub-item"><div class="hint-line">PE image — categorised/triaged (no static unpacking).</div>${rows}${err}${netFindingsList(it.findings || [])}</div>`;
+      return `<div class="sub-item"><div class="hint-line">PE static triage (pefile) — header, sections/entropy, imports and resources. Deep RE stays with a dedicated tool.</div>${rows}${err}${netFindingsList(it.findings || [])}${secTable}</div>`;
     }
     const meta = it.metadata || {};
     const rows = kv([

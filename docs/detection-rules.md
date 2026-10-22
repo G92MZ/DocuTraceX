@@ -119,8 +119,34 @@ Two families carry executable intent in structure rather than in a script body; 
 | `msi_embedded_cab` | medium | T1027 | embedded CAB archive(s) |
 | `msi_lolbin_string` | high | T1218.007 | installer string references a LOLBin / shell |
 | `msi_suspicious_api` | medium | T1059 | download/exec indicators in the installer strings |
-| `pe_image` | info | T1204.002 | PE image categorised/triaged (no static unpacking) |
+PE images (`.exe`/`.dll`/…) get static triage with **pefile** (header, sections/entropy, imports, resources, signing) — not disassembly or unpacking:
+
+| Rule | Severity | ATT&CK | Behaviour |
+|---|---|---|---|
+| `pe_image` | info | T1204.002 | PE triaged (type, arch, subsystem, compile date) |
 | `pe_not_pe` | medium | T1036 | PE extension without an `MZ` header (masquerade) |
+| `pe_malformed` | medium | T1027 | PE header present but malformed (anti-analysis) |
+| `pe_packed` | high | T1027.002 | high-entropy sections — likely packed/encrypted |
+| `pe_packer_section` | high | T1027.002 | known packer section name (UPX/ASPack/…) |
+| `pe_section_wx` | medium | T1027 | section writable AND executable (self-modifying) |
+| `pe_entrypoint_section` | medium | T1027 | entry point outside `.text` (packer/anomaly) |
+| `pe_inject_imports` | high | T1055 | process-injection APIs (VirtualAlloc/WriteProcessMemory/…) |
+| `pe_net_imports` | high | T1105 | network/download APIs (URLDownloadToFile/WinHTTP/…) |
+| `pe_exec_imports` | high | T1106 | process/command execution APIs (WinExec/CreateProcess/…) |
+| `pe_dynamic_resolve` | medium | T1027 | dynamic API resolution (LoadLibrary+GetProcAddress) |
+| `pe_crypto_imports` | medium | T1027 | crypto APIs (payload decryption) |
+| `pe_antidebug_imports` | medium | T1622 | anti-debug APIs (IsDebuggerPresent/…) |
+| `pe_persist_imports` | medium | T1547.001 | registry/persistence APIs |
+| `pe_cred_imports` | high | T1555 | credential-access APIs (CryptUnprotectData/…) |
+| `pe_no_imports` | medium | T1027.002 | no readable imports (packed / shellcode stub) |
+| `pe_tls_callback` | medium | T1574 | TLS callback (runs before the entry point) |
+| `pe_embedded_pe` | high | T1027.009 | an embedded PE in resources (dropper carrying a payload) |
+| `pe_overlay` | low | — | overlay data appended after the last section |
+| `pe_signed` | info | — | carries an Authenticode signature (not verified) |
+| `pe_timestamp_anomaly` | low | — | zero / future / pre-2000 compile timestamp |
+| `pe_masquerade` | medium | T1036 | version-info OriginalFilename ≠ the file name |
+
+With **FLOSS** provisioned (optional) the obfuscated/stack strings it decodes are mined for IOCs (`pe_floss_strings`).
 
 **PyInstaller** (a frozen `.exe` in the binary family), module `pyinstaller`: the CArchive and PYZ are unpacked and each module written back as a `.pyc` for the Python engine (flat **Python** tab) and the nested tree.
 
