@@ -609,6 +609,31 @@ def run_checks() -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
 
+    # Mandiant FLOSS / capa (standalone binaries) — optional; PE triage reports
+    # them as not provisioned in the Binary tab when absent.
+    for _name, _getter, _purpose in (
+        ("FLOSS (PE obfuscated strings)", "floss_executable",
+         "Decodes obfuscated / stack / tight strings of PE files (mined for IOCs)"),
+        ("capa (PE capabilities)", "capa_executable",
+         "Identifies PE capabilities with ATT&CK / MBC mapping (embedded rules)"),
+    ):
+        try:
+            from .config import settings as _sm
+            exe = getattr(_sm, _getter)()
+            checks.append(Check(
+                category="External tools",
+                name=_name,
+                status="ok" if exe else "warn",
+                detail=f"at {exe}" if exe else "not provisioned (optional)",
+                remedy="" if exe else
+                       "run scripts/setup_portable_python.py (Windows: downloads the pinned, "
+                       "SHA-256-verified release), or point DOCUTRACEX_FLOSS / DOCUTRACEX_CAPA "
+                       "at an existing floss.exe / capa.exe (e.g. FLARE-VM's)",
+                purpose=_purpose,
+            ))
+        except Exception:  # noqa: BLE001
+            pass
+
     # Didier Stevens oledump plugins (presence).
     try:
         from .parsers.didier import PLUGINS, didier_dir
