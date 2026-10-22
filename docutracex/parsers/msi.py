@@ -25,7 +25,6 @@ about what static triage can and cannot say about a compiled binary.
 from __future__ import annotations
 
 import re
-import struct
 from pathlib import Path
 from typing import Any
 
@@ -229,34 +228,9 @@ def analyze_msi(path: Path, rel: str) -> dict[str, Any]:
 
 
 def analyze_pe(path: Path, rel: str) -> dict[str, Any]:
-    """Categorise/triage a PE image — no static unpacking (see module docstring)."""
-    item: dict[str, Any] = {"kind": "pe", "file": rel, "findings": []}
-    loc = f"file:{rel}"
-    try:
-        blob = path.read_bytes()
-    except OSError as exc:
-        item["error"] = str(exc)
-        return item
-    size = len(blob)
-    is_pe = blob[:2] == b"MZ"
-    machine = ""
-    if is_pe and len(blob) > 0x40:
-        try:
-            pe_off = struct.unpack_from("<I", blob, 0x3c)[0]
-            if blob[pe_off:pe_off + 4] == b"PE\x00\x00":
-                machine = {0x14c: "x86", 0x8664: "x64", 0x1c0: "ARM", 0xaa64: "ARM64"}.get(
-                    struct.unpack_from("<H", blob, pe_off + 4)[0], "unknown")
-        except (struct.error, IndexError):
-            pass
-    item.update(ext=path.suffix.lower(), size=size, is_pe=is_pe, machine=machine)
-    if is_pe:
-        item["findings"].append(_finding("pe_image", "info",
-            f"PE binary ({machine or 'unknown arch'}, {size} bytes) — categorised; "
-            "use a dedicated RE/AV tool for deep analysis", loc, "", "T1204.002"))
-    else:
-        item["findings"].append(_finding("pe_not_pe", "medium",
-            f"'{path.suffix}' is not a PE image (no MZ header) — possible masquerade", loc, "", "T1036"))
-    return item
+    """PE image static triage (pefile) — delegated to :mod:`pe`."""
+    from . import pe as pe_mod
+    return pe_mod.analyze(path, rel)
 
 
 def analyze(original: Path, extracted_dir: Path | None = None,
