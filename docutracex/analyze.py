@@ -1043,7 +1043,7 @@ def run_analysis(case_root: Path, module: str | None = None) -> None:
         cmd = [str(portable), "-m", "docutracex.analyze", str(case_root)]
         if module:
             cmd += ["--module", module]
-                try:
+        try:
             proc = subprocess.run(
                 cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
                 # Generous: every tool (incl. ViperMonkey emulation) runs per case;
