@@ -500,7 +500,9 @@ function pivotTarget(f, ids) {
   if (src === "powershell" || src === "boxps") return has("powershell") ? "powershell" : null;
   if (src === "vbscript") return has("vbscript") ? "vbscript" : null;
   if (src === "batch") return has("batch") ? "batch" : null;
-  if (src === "python" || src === "pyinstaller") return has("python") ? "python" : (has("binary") ? "binary" : null);
+  // The Binary tab's id is "msi" (MSI and PE share it; label "Binary" for a PE).
+  if (src === "python" || src === "pyinstaller") return has("python") ? "python" : (has("msi") ? "msi" : null);
+  if (src === "pe" || src === "msi") return has("msi") ? "msi" : null;
   if (src === "java") return has("java") ? "java" : null;
   if (src === "onenote") return has("onenote") ? "onenote" : null;
   if (src === "rtf") {
@@ -1609,6 +1611,42 @@ function paneShortcut(scm) {
   return `<p class="hint-line">Windows shortcut — target and metadata parsed; the launched command is run through the scripting engine.</p>${parts}`;
 }
 
+// FLOSS / capa (Binary tab): one status line each, so a missing result always
+// says why (skipped for PyInstaller, not provisioned, timeout, error).
+function peToolLine(t) {
+  if (!t) return "";
+  const st = { ok: "ran", skipped: "skipped", not_provisioned: "not provisioned",
+               timeout: "timed out", error: "error" }[t.status] || t.status || "";
+  const dur = t.duration_s != null && t.status === "ok" ? ` · ${t.duration_s}s` : "";
+  const ver = t.version ? ` · v${t.version}` : "";
+  return `${st}${t.detail ? ` — ${t.detail}` : ""}${ver}${dur}`;
+}
+
+function paneCapa(c) {
+  if (!c || c.status !== "ok") return "";
+  const caps = c.capabilities || [];
+  if (!caps.length) return `<p class="hint-line">capa: no capabilities matched.</p>`;
+  const rows = caps.map((x) => `<tr><td>${escapeHtml(x.name || "")}</td>
+      <td class="mono">${escapeHtml(x.namespace || "")}</td>
+      <td class="mono">${escapeHtml((x.attack || []).map((a) => a.id).filter(Boolean).join(", "))}</td>
+      <td class="mono">${escapeHtml((x.mbc || []).join(", "))}</td>
+      <td>${escapeHtml(String(x.matches || 0))}</td></tr>`).join("");
+  const more = (c.total || 0) > caps.length ? ` (showing ${caps.length} of ${c.total})` : "";
+  return `<details class="disclose"><summary>capa capabilities — ${escapeHtml(String(c.total || caps.length))}${escapeHtml(more)}
+      · ATT&amp;CK: ${escapeHtml((c.attack_ids || []).join(", ") || "none")}</summary>
+    <table class="cases"><thead><tr><th>Capability</th><th>Namespace</th><th>ATT&amp;CK</th><th>MBC</th><th>Matches</th></tr></thead>
+    <tbody>${rows}</tbody></table></details>`;
+}
+
+function paneFloss(it) {
+  const fl = it.floss;
+  const ss = it.floss_strings || [];
+  if (!fl || fl.status !== "ok") return "";
+  if (!ss.length) return `<p class="hint-line">FLOSS: no decoded / stack / tight strings.</p>`;
+  return `<details class="disclose"><summary>FLOSS decoded / stack / tight strings — ${escapeHtml(String(ss.length))}</summary>
+    <pre class="text-sample">${escapeHtml(ss.join("\n"))}</pre></details>`;
+}
+
 function paneMsi(msim) {
   const parts = (msim.items || []).map((it) => {
     if (it.kind === "pe") {
@@ -1626,10 +1664,11 @@ function paneMsi(msim) {
         ["Imports", it.imports_count != null ? `${it.imports_count} (${(it.imports_dll || []).slice(0, 5).join(", ")})` : ""],
         ["Exports", (it.exports || []).slice(0, 8).join(", ")],
         ["Signed", it.signed ? "yes (Authenticode)" : (it.is_pe ? "no" : "")],
-        ["FLOSS strings", it.floss_strings ? String(it.floss_strings.length) : ""],
+        ["FLOSS", peToolLine(it.floss)],
+        ["capa", peToolLine(it.capa)],
       ]);
       const err = it.error ? `<p class="bad-text">${escapeHtml(it.error)}</p>` : "";
-      return `<div class="sub-item"><div class="hint-line">PE static triage (pefile) — header, sections/entropy, imports and resources. Deep RE stays with a dedicated tool.</div>${rows}${err}${netFindingsList(it.findings || [])}${secTable}</div>`;
+      return `<div class="sub-item"><div class="hint-line">PE static triage (pefile) — header, sections/entropy, imports and resources. Deep RE stays with a dedicated tool.</div>${rows}${err}${netFindingsList(it.findings || [])}${secTable}${paneCapa(it.capa)}${paneFloss(it)}</div>`;
     }
     const meta = it.metadata || {};
     const rows = kv([

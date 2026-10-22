@@ -813,6 +813,81 @@ def install_cfr() -> bool:
     return False
 
 
+# --- Mandiant FLOSS + capa (standalone Windows binaries) --------------------------
+# Official self-contained builds (PyInstaller, Apache-2.0): no Python deps, so no
+# clash with the portable 3.13 (flare-floss needs binary2strings, which has no
+# cp313 Windows wheel). capa's rules and FLIRT signatures are embedded. Pinned
+# version + SHA-256 of the release zip: the download is verified before extracting.
+# Windows only; elsewhere the PE triage just reports them as not provisioned.
+FLOSS_DIR = TOOLS / "floss"
+FLOSS_VERSION = "3.2.0"
+FLOSS_URL = (f"https://github.com/mandiant/flare-floss/releases/download/"
+             f"v{FLOSS_VERSION}/floss-v{FLOSS_VERSION}-windows.zip")
+FLOSS_SHA256 = "c0c73bb99d043fedd8e913038b65d1591fd6308cd938d8a91df87b733b369af5"
+CAPA_DIR = TOOLS / "capa"
+CAPA_VERSION = "10.0.0"
+CAPA_URL = (f"https://github.com/mandiant/capa/releases/download/"
+            f"v{CAPA_VERSION}/capa-v{CAPA_VERSION}-windows.zip")
+CAPA_SHA256 = "8712991044321dbb2a5b0d60f7a5327a50c9c30a295e7ddb5c1088cb17fb59df"
+
+
+def _floss_ok() -> bool:
+    return (FLOSS_DIR / "floss.exe").is_file()
+
+
+def _capa_ok() -> bool:
+    return (CAPA_DIR / "capa.exe").is_file()
+
+
+def _install_mandiant_exe(name: str, url: str, sha256: str, dest: Path, exe: str) -> bool:
+    """Download a pinned release zip, verify its SHA-256, extract only ``exe``."""
+    import hashlib
+    import io
+
+    if not sys.platform.startswith("win"):
+        print(f"[=] {name}: Windows-only standalone build; skipped on this platform.")
+        return False
+    print(f"[>] Downloading {name} into {dest.relative_to(ROOT)}/")
+    try:
+        data = _get(url)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] Could not download {name} ({exc}); it stays disabled. "
+              f"Drop {exe} into {dest} manually (or set DOCUTRACEX_{name.upper()}).")
+        return False
+    got = hashlib.sha256(data).hexdigest()
+    if got != sha256:
+        print(f"[!] {name}: SHA-256 mismatch (got {got}, expected {sha256}) — NOT installed.")
+        return False
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            member = next((m for m in z.namelist() if Path(m).name.lower() == exe.lower()), None)
+            if member is None:
+                print(f"[!] {name}: {exe} not found in the release zip.")
+                return False
+            dest.mkdir(parents=True, exist_ok=True)
+            with z.open(member) as src, (dest / exe).open("wb") as dst:
+                shutil.copyfileobj(src, dst)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] {name}: could not extract ({exc}).")
+        return False
+    print(f"[+] {name} {exe} at {dest}")
+    return True
+
+
+def install_floss() -> bool:
+    """Mandiant FLOSS (decoded/stack/tight strings of PE files) — optional."""
+    if _floss_ok():
+        return True
+    return _install_mandiant_exe("floss", FLOSS_URL, FLOSS_SHA256, FLOSS_DIR, "floss.exe")
+
+
+def install_capa() -> bool:
+    """Mandiant capa (capabilities + ATT&CK of PE files, embedded rules) — optional."""
+    if _capa_ok():
+        return True
+    return _install_mandiant_exe("capa", CAPA_URL, CAPA_SHA256, CAPA_DIR, "capa.exe")
+
+
 def verify() -> None:
     py = _portable_python()
     print("[>] Verifying the portable runtime")
@@ -855,10 +930,14 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
     _clear_mark("boxps")
     _clear_mark("pycdc")
     _clear_mark("cfr")
+    _clear_mark("floss")
+    _clear_mark("capa")
     install_webcrack()   # portable Node + webcrack (JS deobfuscation)
     install_boxps()      # PowerShell Core + box-ps (PowerShell sandbox)
     install_pycdc()      # pycdc (.pyc decompiler, built from source)
     install_cfr()        # CFR (.class decompiler jar; run with the host JVM)
+    install_floss()      # Mandiant FLOSS standalone (PE obfuscated strings; Windows)
+    install_capa()       # Mandiant capa standalone (PE capabilities/ATT&CK; Windows)
     verify()
 
 
@@ -928,7 +1007,11 @@ def _ensure_optional() -> None:
     for name, ok, install in (("webcrack", _webcrack_ok, install_webcrack),
                               ("boxps", _boxps_ok, install_boxps),
                               ("pycdc", _pycdc_ok, install_pycdc),
-                              ("cfr", _cfr_ok, install_cfr)):
+                              ("cfr", _cfr_ok, install_cfr),
+                              ("floss", _floss_ok, install_floss),
+                              ("capa", _capa_ok, install_capa)):
+        if name in ("floss", "capa") and not sys.platform.startswith("win"):
+            continue  # Windows-only standalone builds
         try:
             if ok():
                 _clear_mark(name)
