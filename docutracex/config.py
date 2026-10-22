@@ -28,6 +28,9 @@ class Settings:
     host: str = os.environ.get("DOCUTRACEX_HOST", "127.0.0.1")
     port: int = int(os.environ.get("DOCUTRACEX_PORT", "8000"))
     log_level: str = os.environ.get("DOCUTRACEX_LOG_LEVEL", "INFO")
+    # How many analyses run at once; the rest wait in the queue. Batch uploads
+    # are processed this many at a time. Clamped to 1..8.
+    max_concurrent_analyses: int = max(1, min(8, int(os.environ.get("DOCUTRACEX_MAX_CONCURRENCY", "2"))))
 
     def ensure_dirs(self) -> None:
         """Create the writable working directories if they do not exist yet."""
