@@ -171,19 +171,20 @@ def recover_pyc(path: Path, blob: bytes) -> tuple[str, str, str]:
     ``subprocess.Popen``/``urlopen``/… are both detected and visible.
     """
     ver = _pyc_version(blob)
-    # Reconstruct dotted calls + strings from the bytecode (version-matched).
+    # Reconstruct dotted calls + strings from the bytecode ONLY when it was
+    # produced by this very interpreter. marshal/dis do not validate bytecode:
+    # code objects from another CPython version (or read at a wrong header
+    # offset) can crash the interpreter natively (0xC0000005 / SIGSEGV), which
+    # no try/except can catch. Foreign versions fall back to pycdc + strings.
+    import importlib.util
     recon = ""
-    header = 16 if ver not in ("3.3", "3.4", "3.5", "3.6", "unknown") else 12
-    for hdr in (header, 16, 12, 8):
+    if len(blob) >= 16 and blob[:4] == importlib.util.MAGIC_NUMBER:
         try:
-            code_obj = marshal.loads(blob[hdr:])
+            code_obj = marshal.loads(blob[16:])
             if hasattr(code_obj, "co_code"):
-                toks = _reconstruct(code_obj)
-                if toks:
-                    recon = "\n".join(toks)
-                    break
+                recon = "\n".join(_reconstruct(code_obj))
         except Exception:  # noqa: BLE001
-            continue
+            recon = ""
     src = _decompile(path)                     # pycdc, optional (may be partial)
     complete = bool(src) and not any(m in src.lower() for m in _INCOMPLETE_MARKERS)
 
