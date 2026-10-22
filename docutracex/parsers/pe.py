@@ -13,9 +13,14 @@ header and tables already tell you, so a compiled binary is more than an opaque
 - TLS callbacks (early / anti-debug execution), Authenticode presence, and a
   version-info masquerade check (OriginalFilename vs the real name).
 
-With **FLOSS** provisioned (optional, portable) the obfuscated/stack strings it
-decodes are mined for IOCs too. Deep RE stays with the analyst's dedicated tools;
-nothing is executed.
+With **FLOSS** and **capa** provisioned (optional; Mandiant's standalone
+binaries under ``tools/floss/`` and ``tools/capa/``) the obfuscated/stack/tight
+strings FLOSS decodes are mined for IOCs, and capa's matched capabilities become
+findings with their ATT&CK technique. Both are skipped for PyInstaller bundles
+(they would only see the bootloader; the payload is in the Python tab). Each run
+leaves a status record (ok / skipped / not provisioned / timeout / error) so a
+missing result is never silent. Deep RE stays with the analyst's dedicated
+tools; nothing is executed — both tools are static.
 """
 
 from __future__ import annotations
@@ -24,7 +29,21 @@ import math
 from pathlib import Path
 from typing import Any
 
+from ..logging_config import get_logger
+
+log = get_logger(__name__)
+
 _MAX_BYTES = 64 * 1024 * 1024
+
+# External static tools (FLOSS / capa): per-run time limits and output caps.
+FLOSS_TIMEOUT = 120
+CAPA_TIMEOUT = 180
+_FLOSS_MAX_STRINGS = 200
+_CAPA_MAX_RULES = 300
+# PyInstaller CArchive cookie (same as parsers.pyinstaller.MAGIC), searched in
+# the file tail like analyze.py does.
+_PYI_MAGIC = b"MEI\014\013\012\013\016"
+_PYI_TAIL = 4 * 1024 * 1024
 
 _PACKER_SECTIONS = ("upx", "aspack", "petite", "nspack", "mpress", "themida",
                     "vmp", ".enigma", "pebundle", "mew", "fsg", "molebox")
@@ -229,14 +248,36 @@ def analyze(path: Path, rel: str, run_tools: bool = True) -> dict[str, Any]:
         if v:
             strings_for_ioc.append(v)
 
-    # --- optional FLOSS strings (deobfuscated) ---
+    # --- optional external static tools: FLOSS (strings) + capa (capabilities) ---
     if run_tools:
-        floss_strings = _run_floss(path)
-        if floss_strings:
-            item["floss_strings"] = floss_strings[:200]
-            strings_for_ioc.extend(floss_strings)
-            f.append(_finding("pe_floss_strings", "info",
-                f"FLOSS decoded {len(floss_strings)} obfuscated/stack string(s)", loc))
+        if _is_pyinstaller(path):
+            why = ("PyInstaller bundle: FLOSS/capa would only see the bootloader — "
+                   "the payload logic is in the Python tab")
+            item["floss"] = {"status": "skipped", "detail": why}
+            item["capa"] = {"status": "skipped", "detail": why}
+        else:
+            floss = _run_floss(path)
+            floss_strings = floss.pop("strings", [])
+            item["floss"] = floss
+            if floss_strings:
+                item["floss_strings"] = floss_strings[:_FLOSS_MAX_STRINGS]
+                strings_for_ioc.extend(floss_strings)
+                f.append(_finding("pe_floss_strings", "info",
+                    f"FLOSS decoded {len(floss_strings)} obfuscated/stack/tight string(s)", loc))
+
+            capa = _run_capa(path)
+            item["capa"] = capa
+            # Only capabilities that matter for triage become findings (low+);
+            # the full list (incl. "info" ones) is shown in the Binary tab.
+            for cap in capa.get("capabilities", []):
+                sev = _capa_severity(cap)
+                if sev == "info":
+                    continue
+                attack = ", ".join(a["id"] for a in cap.get("attack", []) if a.get("id"))
+                f.append(_finding("pe_capa_capability", sev,
+                    f"capa: {cap['name']}"
+                    + (f" [{cap['namespace']}]" if cap.get("namespace") else ""),
+                    loc, f"{cap.get('matches', 0)} match(es)", attack))
 
     item["_strings_sample"] = strings_for_ioc[:200]
     try:
@@ -290,33 +331,146 @@ def _version_string(pe: Any, key: str) -> str:
     return ""
 
 
-def _run_floss(path: Path) -> list[str]:
-    """Run FLOSS on the portable interpreter (optional, bounded). Returns the
-    decoded/stack/tight strings, or [] when FLOSS is not provisioned."""
-    import json
+def _is_pyinstaller(path: Path) -> bool:
+    """True if the PyInstaller CArchive cookie is in the file tail (same check
+    as analyze.py). FLOSS/capa are skipped then: they only see the bootloader."""
+    try:
+        size = path.stat().st_size
+        with open(path, "rb") as fh:
+            fh.seek(max(0, size - _PYI_TAIL))
+            return _PYI_MAGIC in fh.read()
+    except OSError:
+        return False
+
+
+def _run_tool(name: str, exe: Path | None, args: list[str], path: Path,
+              timeout: int) -> tuple[dict[str, Any], str]:
+    """Run a standalone tool binary on ``path``. Returns (status record, stdout).
+
+    The record always has ``status`` (ok / not_provisioned / timeout / error)
+    and a human ``detail``, so the Binary tab can say why a result is missing.
+    Failures are logged; never raises.
+    """
     import subprocess
+    import time
+
+    if exe is None:
+        return ({"status": "not_provisioned",
+                 "detail": f"{name} not provisioned (tools/{name}/) — run "
+                           f"scripts/setup_portable_python.py"}, "")
+    t0 = time.perf_counter()
+    try:
+        proc = subprocess.run([str(exe), *args, str(path)], capture_output=True,
+                              text=True, encoding="utf-8", errors="replace",
+                              timeout=timeout, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        log.warning("%s timed out after %ss on %s", name, timeout, path.name)
+        return ({"status": "timeout", "detail": f"{name} timed out after {timeout}s",
+                 "duration_s": timeout}, "")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("%s could not run on %s: %s", name, path.name, exc)
+        return {"status": "error", "detail": f"{name} could not run: {exc}"}, ""
+    dur = round(time.perf_counter() - t0, 2)
+    rec: dict[str, Any] = {"status": "ok", "returncode": proc.returncode, "duration_s": dur}
+    if proc.returncode != 0 or not (proc.stdout or "").strip():
+        err = (proc.stderr or "").strip()[-400:]
+        log.warning("%s failed on %s (exit %s): %s", name, path.name, proc.returncode, err)
+        rec.update(status="error",
+                   detail=f"{name} exited {proc.returncode}" + (f": {err}" if err else ""))
+        return rec, ""
+    return rec, proc.stdout
+
+
+def _run_floss(path: Path) -> dict[str, Any]:
+    """FLOSS (standalone binary): decoded / stack / tight strings, no static
+    strings (pe.py already has those). Returns a status record plus
+    ``strings`` (list[str]) when it ran."""
+    import json
 
     from ..config import settings
 
-    portable = settings.portable_python()
-    if portable is None:
-        return []
+    rec, out = _run_tool("floss", settings.floss_executable(),
+                         ["--json", "--no", "static", "--quiet"], path, FLOSS_TIMEOUT)
+    if rec["status"] != "ok":
+        return rec
     try:
-        from . import native
-        proc = subprocess.run(
-            [str(portable), "-m", "floss", "--json", "--no", "static", "--quiet", str(path)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=120, env=native.subprocess_env())
-        if proc.returncode != 0 or not proc.stdout.strip():
-            return []
-        data = json.loads(proc.stdout)
-        out: list[str] = []
-        strings = (data.get("strings") or {})
-        for key in ("decoded_strings", "stack_strings", "tight_strings"):
-            for s in strings.get(key, []) or []:
-                val = s.get("string") if isinstance(s, dict) else s
-                if isinstance(val, str) and val.strip():
-                    out.append(val)
-        return out
-    except Exception:  # noqa: BLE001
-        return []
+        data = json.loads(out)
+    except ValueError as exc:
+        log.warning("floss returned non-JSON output on %s: %s", path.name, exc)
+        rec.update(status="error", detail=f"floss output is not JSON ({exc})")
+        return rec
+    strings: list[str] = []
+    counts: dict[str, int] = {}
+    block = data.get("strings") or {}
+    for key in ("decoded_strings", "stack_strings", "tight_strings"):
+        vals = [s.get("string") if isinstance(s, dict) else s for s in (block.get(key) or [])]
+        vals = [v for v in vals if isinstance(v, str) and v.strip()]
+        counts[key.split("_")[0]] = len(vals)
+        strings.extend(vals)
+    rec["counts"] = counts
+    rec["version"] = str((data.get("metadata") or {}).get("version") or "")
+    rec["detail"] = (f"{len(strings)} string(s): {counts.get('decoded', 0)} decoded, "
+                     f"{counts.get('stack', 0)} stack, {counts.get('tight', 0)} tight")
+    rec["strings"] = strings
+    return rec
+
+
+def _run_capa(path: Path) -> dict[str, Any]:
+    """capa (standalone binary, embedded rules): matched capabilities with their
+    namespace, ATT&CK and MBC ids. Returns a status record plus
+    ``capabilities`` (list of dicts) when it ran."""
+    import json
+
+    from ..config import settings
+
+    rec, out = _run_tool("capa", settings.capa_executable(), ["-j", "-q"], path, CAPA_TIMEOUT)
+    if rec["status"] != "ok":
+        return rec
+    try:
+        data = json.loads(out)
+    except ValueError as exc:
+        log.warning("capa returned non-JSON output on %s: %s", path.name, exc)
+        rec.update(status="error", detail=f"capa output is not JSON ({exc})")
+        return rec
+    caps: list[dict[str, Any]] = []
+    for name, rm in (data.get("rules") or {}).items():
+        meta = (rm or {}).get("meta") or {}
+        # capa's JSON uses field names (lib, is_subscope_rule, attack); accept
+        # the rule-file aliases too in case a future version dumps by alias.
+        if (meta.get("lib") or meta.get("is_subscope_rule")
+                or meta.get("capa/subscope-rule")):
+            continue  # helper rules, not capabilities
+        attack = [{"id": a.get("id", ""), "tactic": a.get("tactic", ""),
+                   "technique": a.get("technique", ""), "subtechnique": a.get("subtechnique", "")}
+                  for a in (meta.get("attack") or meta.get("att&ck") or []) if isinstance(a, dict)]
+        mbc = [m.get("id", "") for m in (meta.get("mbc") or []) if isinstance(m, dict)]
+        caps.append({"name": meta.get("name") or name,
+                     "namespace": meta.get("namespace") or "",
+                     "attack": attack, "mbc": [m for m in mbc if m],
+                     "matches": len((rm or {}).get("matches") or [])})
+    caps.sort(key=lambda c: (c["namespace"], c["name"]))
+    meta = data.get("meta") or {}
+    rec["version"] = str(meta.get("version") or "")
+    rec["total"] = len(caps)
+    rec["attack_ids"] = sorted({a["id"] for c in caps for a in c["attack"] if a["id"]})
+    rec["capabilities"] = caps[:_CAPA_MAX_RULES]
+    rec["detail"] = (f"{len(caps)} capabilit{'y' if len(caps) == 1 else 'ies'}, "
+                     f"{len(rec['attack_ids'])} ATT&CK technique(s)")
+    return rec
+
+
+# Namespaces whose capabilities are worth more than "info" in triage.
+_CAPA_HIGH_NS = ("anti-analysis", "host-interaction/process/inject", "persistence",
+                 "collection/keylog", "impact", "load-code/shellcode")
+_CAPA_MEDIUM_NS = ("communication", "host-interaction/process/create", "data-manipulation/encryption",
+                   "load-code", "linking/runtime-linking", "executable/installer",
+                   "host-interaction/registry", "host-interaction/service")
+
+
+def _capa_severity(cap: dict[str, Any]) -> str:
+    ns = (cap.get("namespace") or "").lower()
+    if any(ns.startswith(p) for p in _CAPA_HIGH_NS):
+        return "medium"
+    if any(ns.startswith(p) for p in _CAPA_MEDIUM_NS) or cap.get("attack"):
+        return "low"
+    return "info"
