@@ -1043,7 +1043,7 @@ def run_analysis(case_root: Path, module: str | None = None) -> None:
         cmd = [str(portable), "-m", "docutracex.analyze", str(case_root)]
         if module:
             cmd += ["--module", module]
-        try:
+                try:
             proc = subprocess.run(
                 cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
                 # Generous: every tool (incl. ViperMonkey emulation) runs per case;
@@ -1051,12 +1051,19 @@ def run_analysis(case_root: Path, module: str | None = None) -> None:
                 timeout=None if case_wordlist(CasePaths(case_root.name, cases_dir=case_root.parent)) else 1800,
                 env=native.subprocess_env(),
             )
+        except Exception as exc:  # noqa: BLE001
+            # The portable could not be launched at all: fall back to in-process.
+            log.warning("Could not run analysis on portable: %s", exc)
+        else:
             if proc.returncode == 0:
                 return
-            log.warning("Analysis on portable failed (%s): %s",
-                        proc.returncode, proc.stderr.strip()[:300])
-        except Exception as exc:  # noqa: BLE001
-            log.warning("Could not run analysis on portable: %s", exc)
+            # The portable ran and died (e.g. 0xC0000005 native crash). Do NOT
+            # repeat the same analysis inside the web server: the same input
+            # would crash it too and close the whole app. Fail only this task.
+            msg = (f"Analysis on portable failed (exit {proc.returncode} / "
+                   f"0x{proc.returncode & 0xFFFFFFFF:08X}): {proc.stderr.strip()[-300:]}")
+            log.warning(msg)
+            raise RuntimeError(msg)
         # fall through to in-process
 
     try:
