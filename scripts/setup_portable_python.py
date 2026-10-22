@@ -526,10 +526,50 @@ def _webcrack_ok() -> bool:
     return (WEBCRACK_DIR / "node_modules" / "webcrack").is_dir()
 
 
+def _node_version(node: Path) -> str:
+    """The portable Node's version string (e.g. '22.11.0'), for node-gyp target."""
+    try:
+        r = subprocess.run([str(node), "-p", "process.versions.node"],
+                           capture_output=True, text=True, timeout=30)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _webcrack_build_env(node: Path) -> dict:
+    """Pin node-gyp to the portable Node's version and a local, fresh header
+    cache. Without this, node-gyp can reuse a stale header cache from another
+    Node (e.g. AppData\\...\\node-gyp\\Cache\\20.7.0) and compile isolated-vm
+    against the wrong V8 API — the 'v8::SourceLocation is not a member' /
+    'PostTaskImpl did not override' errors. Building against headers that match
+    the running Node 22 fixes it."""
+    import os
+
+    env = dict(os.environ)
+    # Drop any inherited node-gyp pins that would point elsewhere.
+    for k in list(env):
+        if k.lower().startswith("npm_config_") and k.lower() in (
+                "npm_config_target", "npm_config_nodedir", "npm_config_devdir",
+                "npm_config_target_arch", "npm_config_runtime", "npm_config_arch"):
+            env.pop(k, None)
+    ver = _node_version(node)
+    if ver:
+        env["npm_config_target"] = ver            # build headers for THIS Node
+    env["npm_config_runtime"] = "node"
+    env["npm_config_arch"] = "arm64" if _arch() == "aarch64" else "x64"
+    env["npm_config_target_arch"] = env["npm_config_arch"]
+    # A fresh, project-local header cache, never the user's shared one.
+    env["npm_config_devdir"] = str((TOOLS / ".node-gyp").resolve())
+    return env
+
+
 def install_webcrack() -> bool:
     """npm-install webcrack (MIT) into tools/webcrack/. It pulls isolated-vm,
     which builds from source — needs Node build tools on the host; on failure
-    webcrack stays disabled and the pure-Python JS cascade is the fallback."""
+    webcrack stays disabled and the pure-Python JS cascade is the fallback.
+
+    node-gyp is pinned (``_webcrack_build_env``) to the portable Node's version
+    and a local header cache so isolated-vm compiles against the matching V8."""
     if _webcrack_ok():
         return True
     node = node_executable()
@@ -538,20 +578,26 @@ def install_webcrack() -> bool:
     node = node_executable()
     WEBCRACK_DIR.mkdir(parents=True, exist_ok=True)
     (WEBCRACK_DIR / "package.json").write_text('{"private":true}\n', encoding="utf-8")
-    print("[>] Installing webcrack into tools/webcrack/ (npm; builds isolated-vm)")
+    ver = _node_version(node)
+    print(f"[>] Installing webcrack into tools/webcrack/ (npm; builds isolated-vm "
+          f"against Node {ver or '?'} headers)")
     try:
         r = subprocess.run(_npm_cmd(node) + ["install", "--no-audit", "--no-fund",
                                              "--prefix", str(WEBCRACK_DIR),
                                              f"webcrack@{WEBCRACK_VERSION}"],
-                           capture_output=True, text=True, timeout=900)
+                           capture_output=True, text=True, timeout=900,
+                           env=_webcrack_build_env(node))
     except Exception as exc:  # noqa: BLE001
         print(f"[!] webcrack install failed ({exc}); JS falls back to the Python cascade.")
         return False
     if r.returncode == 0 and _webcrack_ok():
         print("[+] webcrack installed")
         return True
-    print(f"[!] webcrack install failed (likely missing build tools for isolated-vm): "
-          f"{(r.stderr or '').strip()[-300:]}")
+    # node-gyp writes the real cause to stdout as often as stderr; show both tails.
+    tail = ((r.stdout or "")[-800:] + "\n" + (r.stderr or "")[-800:]).strip()
+    print(f"[!] webcrack install failed. isolated-vm builds from source and needs "
+          f"the Visual Studio C++ Build Tools (and network access to fetch the Node "
+          f"headers). Last output:\n{tail}")
     return False
 
 
