@@ -157,14 +157,19 @@ def _reconstruct(code_obj: Any) -> list[str]:
     return out
 
 
-def recover_pyc(path: Path, blob: bytes) -> tuple[str, str, str]:
-    """Return (text, source_kind, py_version) for a ``.pyc``."""
+def recover_pyc(path: Path, blob: bytes) -> tuple[str, str, str, str]:
+    """Recover a ``.pyc`` for display and for scanning.
+
+    Returns (display_code, scan_text, source_kind, py_version). The *display*
+    prefers pycdc's decompiled source (nicest to read); the *scan_text* is the
+    union of the decompiled source AND the bytecode reconstruction, so detection
+    never depends on the decompiler being complete — pycdc lags new CPython and
+    often emits only the imports/globals with "# WARNING: Decompyle incomplete",
+    dropping the function body where the real calls live.
+    """
     ver = _pyc_version(blob)
-    # 1) pycdc decompilation (optional tool).
-    src = _decompile(path)
-    if src:
-        return src, "decompiled", ver
-    # 2) unmarshal + reconstruct from bytecode.
+    # Always reconstruct dotted calls + strings from the bytecode (version-matched).
+    recon = ""
     header = 16 if ver not in ("3.3", "3.4", "3.5", "3.6", "unknown") else 12
     for hdr in (header, 16, 12, 8):
         try:
@@ -172,11 +177,22 @@ def recover_pyc(path: Path, blob: bytes) -> tuple[str, str, str]:
             if hasattr(code_obj, "co_code"):
                 toks = _reconstruct(code_obj)
                 if toks:
-                    return "\n".join(toks), "disassembled", ver
+                    recon = "\n".join(toks)
+                    break
         except Exception:  # noqa: BLE001
             continue
-    # 3) carve printable strings.
-    return "\n".join(_carve_strings(blob)), "strings", ver
+    src = _decompile(path)                     # pycdc, optional (may be partial)
+    strings = "\n".join(_carve_strings(blob))
+
+    if src:
+        display, kind = src, "decompiled"
+    elif recon:
+        display, kind = recon, "disassembled"
+    else:
+        display, kind = strings, "strings"
+    # Scan the richest combination available; fall back to the raw strings.
+    scan_text = "\n".join(t for t in (src, recon) if t) or strings
+    return display, scan_text, kind, ver
 
 
 def _decompile(path: Path) -> str:
@@ -253,9 +269,11 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any] | None 
         deob_methods: list[str] = []
         orig_code = ""
 
+        scan_text = ""
         if is_pyc:
-            text, source_kind, pyver = recover_pyc(it["path"], it["raw"])
-            code = text[:_MAX_CODE]
+            display, scan_text, source_kind, pyver = recover_pyc(it["path"], it["raw"])
+            code = display[:_MAX_CODE]
+            scan_text = scan_text[:_MAX_CODE * 2]
         else:
             src = it["raw"].decode("utf-8", "replace")
             orig_code = src[:_MAX_CODE]
@@ -263,7 +281,9 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any] | None 
             deob_methods = deob["methods"]
             code = (deob["code"] if deob["changed"] else src)[:_MAX_CODE]
 
-        hits = static_hits(code)
+        # For a .pyc, scan the union of decompiled source + bytecode reconstruction
+        # so an incomplete pycdc decompile never hides the function body.
+        hits = static_hits(scan_text or code)
         mets = javascript.metrics(code)
         script = {
             "id": i, "kind": "python", "origin": origin, "location": loc,
