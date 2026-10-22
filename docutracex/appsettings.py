@@ -37,7 +37,7 @@ DEFAULTS: dict[str, Any] = {
     "analysis": {
         # How many files are analysed at once (the rest queue). Editable from the
         # UI; env ``DOCUTRACEX_MAX_CONCURRENCY`` sets the initial default.
-        "concurrency": max(1, min(8, int(os.environ.get("DOCUTRACEX_MAX_CONCURRENCY", "4")))),
+        "concurrency": max(1, min(8, int(os.environ.get("DOCUTRACEX_MAX_CONCURRENCY", "1")))),
     },
 }
 
@@ -46,9 +46,9 @@ MIN_CONCURRENCY, MAX_CONCURRENCY = 1, 8
 
 def analysis_concurrency() -> int:
     try:
-        n = int(load().get("analysis", {}).get("concurrency", 4))
+        n = int(load().get("analysis", {}).get("concurrency", 1))
     except (TypeError, ValueError):
-        n = 4
+        n = 1
     return max(MIN_CONCURRENCY, min(MAX_CONCURRENCY, n))
 
 
