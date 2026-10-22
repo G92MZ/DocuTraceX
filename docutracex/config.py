@@ -175,5 +175,31 @@ class Settings:
                     return p
         return None
 
+    def floss_executable(self) -> Path | None:
+        """Mandiant FLOSS standalone binary under ``tools/floss/`` (Apache-2.0,
+        downloaded at setup; self-contained, no Python deps). ``DOCUTRACEX_FLOSS``
+        overrides (e.g. FLARE-VM's own floss.exe). Absent → PE triage skips it."""
+        env = os.environ.get("DOCUTRACEX_FLOSS")
+        if env and Path(env).is_file():
+            return Path(env)
+        base = self.tools_dir / "floss"
+        for c in (base / "floss.exe", base / "floss"):
+            if c.is_file():
+                return c
+        return None
+
+    def capa_executable(self) -> Path | None:
+        """Mandiant capa standalone binary under ``tools/capa/`` (Apache-2.0,
+        rules and FLIRT signatures embedded). ``DOCUTRACEX_CAPA`` overrides (e.g.
+        FLARE-VM's own capa.exe). Absent → PE triage skips it."""
+        env = os.environ.get("DOCUTRACEX_CAPA")
+        if env and Path(env).is_file():
+            return Path(env)
+        base = self.tools_dir / "capa"
+        for c in (base / "capa.exe", base / "capa"):
+            if c.is_file():
+                return c
+        return None
+
 
 settings = Settings()

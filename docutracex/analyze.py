@@ -1048,7 +1048,7 @@ def run_analysis(case_root: Path, module: str | None = None) -> None:
                 cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
                 # Generous: every tool (incl. ViperMonkey emulation) runs per case;
                 # no limit when trying every word of an email as a password.
-                timeout=None if case_wordlist(CasePaths(case_root.name, cases_dir=case_root.parent)) else 1800,
+                timeout=None if case_wordlist(CasePaths(case_root.name, cases_dir=case_root.parent)) else 3600,
                 env=native.subprocess_env(),
             )
         except Exception as exc:  # noqa: BLE001
