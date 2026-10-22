@@ -93,6 +93,21 @@ def test_pyc_disassembled(tmp_path: Path) -> None:
     assert "py_download" in {f["rule"] for f in r["findings"]}
 
 
+def test_pyc_incomplete_decompile_still_detects(tmp_path: Path, monkeypatch) -> None:
+    # pycdc lags new CPython and often emits only imports/globals with
+    # "Decompyle incomplete"; the body detections must still come from the
+    # bytecode reconstruction.
+    (tmp_path / "d.pyc").write_bytes(_pyc(_SRC))
+    monkeypatch.setattr(python, "_decompile", lambda path: (
+        "# Source Generated with Decompyle++\nimport subprocess\n"
+        "import urllib.request as urllib\n# WARNING: Decompyle incomplete\n"))
+    r = python.analyze(tmp_path / "d.pyc", tmp_path / "none")
+    sc = r["scripts"][0]
+    assert sc["source"] == "decompiled" and "Decompyle incomplete" in sc["code"]
+    rules = {f["rule"] for f in r["findings"]}
+    assert {"py_subprocess", "py_download"} <= rules  # recovered from the bytecode, not the partial source
+
+
 def test_py_light_deob(tmp_path: Path) -> None:
     src = "import base64\nexec(base64.b64decode('cHJpbnQoImhpIik='))\n"
     (tmp_path / "e.py").write_text(src)
