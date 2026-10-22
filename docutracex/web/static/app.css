@@ -141,6 +141,9 @@ body {
 .file-name { color: var(--text-dim); font-size: 13px; }
 .file-name.has-file { color: var(--text); }
 .status { color: var(--text-dim); font-size: 13px; }
+.upload-conc { display: flex; align-items: center; gap: 8px; margin-top: 10px;
+               color: var(--text-dim); font-size: 13px; }
+.conc-input { width: 54px; padding: 4px 6px; }
 
 /* Supported-formats grid (upload section only) */
 .formats-title {

@@ -46,6 +46,12 @@
           <button type="submit" class="btn btn-primary">Analyze</button>
           <span id="upload-status" class="status"></span>
         </form>
+        <div class="upload-conc">
+          <label for="conc-input">Analyze at a time:</label>
+          <input type="number" id="conc-input" min="1" max="8" step="1" class="conc-input"
+                 title="How many files are analysed at once; the rest wait in the queue. Higher = faster but more CPU/RAM." />
+          <span id="conc-status" class="status"></span>
+        </div>
 
         <h3 class="formats-title">Supported formats</h3>
         <!-- rev: 9qwDpeYpKo -->

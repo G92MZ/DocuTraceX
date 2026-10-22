@@ -11,6 +11,26 @@ from .. import appsettings
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 
+@router.get("/analysis")
+async def get_analysis() -> dict:
+    return {"concurrency": appsettings.analysis_concurrency(),
+            "min": appsettings.MIN_CONCURRENCY, "max": appsettings.MAX_CONCURRENCY}
+
+
+@router.put("/analysis")
+async def put_analysis(payload: dict = Body(...)) -> dict:
+    if "concurrency" not in payload:
+        raise HTTPException(status_code=400, detail="concurrency is required")
+    try:
+        n = int(payload["concurrency"])
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="concurrency must be a number") from exc
+    n = appsettings.set_concurrency(n)
+    from ..tasks import manager
+    manager.reconcile()
+    return {"concurrency": n, "min": appsettings.MIN_CONCURRENCY, "max": appsettings.MAX_CONCURRENCY}
+
+
 @router.get("/network")
 async def get_network() -> dict:
     from ..netcheck import freeproxy, ipinfo, shot

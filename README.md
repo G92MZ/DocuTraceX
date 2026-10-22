@@ -66,7 +66,7 @@ indicator is inert (`*.example`, RFC 5737 IPs). See [`samples/README.md`](sample
 
 ## 🧭 How you use it
 
-1. **📥 Upload** — drop one or more files (and a **password**, if they are encrypted and you know it). Each original is copied, hashed and never modified; the analyses are **queued** and run in the background, a couple at a time (set with `DOCUTRACEX_MAX_CONCURRENCY`, default 2).
+1. **📥 Upload** — drop one or more files (and a **password**, if they are encrypted and you know it). Each original is copied, hashed and never modified; the analyses are **queued** and run in the background, a few at a time (default **4**, editable right under the upload box or with `DOCUTRACEX_MAX_CONCURRENCY`).
 2. **🔬 Identify** — libmagic + structural recognizers decide the *real* family and flag extension/type **discrepancies** (that `.doc` that is really RTF, that `.pdf` that is an OLE container).
 3. **🧩 Inspect** — **Components**: a sub-tab per analysis — Findings (with the exact **evidence** and a ↗ pivot to where it lives), IOCs, VBA, JavaScript, PDF tools, email Authentication/Headers/Body/Attachments, RTF Objects/Structure, the recursive **Nested** tree, every tool's raw output…
 4. **🌐 Check** — press **Check** on a URL, domain or IP in the IOCs tab: DocuTraceX visits it as a real browser through your proxy (see [Network checks](#-network-checks-and-opsec)).
@@ -97,7 +97,7 @@ indicator is inert (`*.example`, RFC 5737 IPs). See [`samples/README.md`](sample
 | 🛡️ **YARA** | your rules by upload (`.yar`/`.yara`/`.zip`/`.tar.gz`) or **server path**, compiled on demand with streaming progress; matches with the rule source, the matched bytes in context and the file path — every hit a finding you mark |
 | 🤖 **AI & MCP** | **AI (API)**: any OpenAI-compatible endpoint (your company's LiteLLM, a provider's API); **AI (local)**: Ollama / LM Studio / llama.cpp on your machine; **MCP**: a stdio server for Claude Desktop / Claude Code — all three use the same **read-only** tools over the case |
 | 🏷️ **Marks** | per-finding TP/FP/Suspicious/Informational + comment, manual marks on any IOC/header/attachment/JavaScript hit, sandbox event or decoded string, and free-text notes, kept separate from the evidence and **preserved across re-analysis** (stable finding IDs) |
-| 🧵 **Tasks** | the analysis queue (a couple run at once) with per-file **sub-step log** — every tool that ran, its status, timing and findings — plus isolated **re-run** of a single module |
+| 🧵 **Tasks** | the analysis queue (a few run at once, configurable) with per-file **sub-step log** — every tool that ran, its status, timing and findings — plus isolated **re-run** of a single module |
 | 📊 **Report** | one self-contained HTML report of the confirmed findings, with evidence, IOCs and the nested tree |
 | ⚙️ **Settings** | the app-wide proxy for network checks (HTTP/HTTPS/SOCKS4/SOCKS5, tested from the UI), or a free public proxy picked and rotated automatically |
 | 🩺 **Diagnostics** | app vs. tool interpreters, every dependency, external tool, IP database, Chromium and the proxy checked in one place |

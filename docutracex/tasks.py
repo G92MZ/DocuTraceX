@@ -137,10 +137,17 @@ class TaskManager:
         self._max_workers = max_workers
 
     def _worker_count(self) -> int:
-        n = self._max_workers if self._max_workers is not None else settings.max_concurrent_analyses
-        return max(1, min(8, int(n)))
+        if self._max_workers is not None:        # pinned (tests)
+            return max(1, min(8, int(self._max_workers)))
+        try:
+            from . import appsettings
+            return appsettings.analysis_concurrency()
+        except Exception:  # noqa: BLE001
+            return max(1, min(8, int(settings.max_concurrent_analyses)))
 
     def _ensure_workers(self) -> None:
+        """Spawn workers up to the current concurrency (called on submit and when
+        the setting is raised). Shrinking is handled by workers exiting in _run."""
         with self._lock:
             self._workers = [w for w in self._workers if w.is_alive()]
             while len(self._workers) < self._worker_count():
@@ -148,6 +155,12 @@ class TaskManager:
                                      daemon=True)
                 self._workers.append(w)
                 w.start()
+
+    def reconcile(self) -> int:
+        """Apply a changed concurrency setting now: top up the pool (increase);
+        a decrease takes effect as running workers finish. Returns the target."""
+        self._ensure_workers()
+        return self._worker_count()
 
     def submit(self, type: str, analysis_id: str, filename: str, target: str = "full",
                cases_dir: Path | None = None, params: dict[str, Any] | None = None) -> Task:
@@ -198,6 +211,7 @@ class TaskManager:
     # --- worker --------------------------------------------------------------
 
     def _run(self) -> None:
+        me = threading.current_thread()
         while True:
             tid = self._queue.get()
             try:
@@ -212,6 +226,12 @@ class TaskManager:
                         t.finished_utc = _now()
             finally:
                 self._queue.task_done()
+            # Honour a lowered concurrency setting: a surplus worker retires.
+            with self._lock:
+                self._workers = [w for w in self._workers if w.is_alive()]
+                if me in self._workers and len(self._workers) > self._worker_count():
+                    self._workers.remove(me)
+                    return
 
     def _process(self, tid: str) -> None:
         with self._lock:

@@ -113,6 +113,28 @@ def test_workers_run_concurrently(tmp_path: Path) -> None:
     assert len(mgr._workers) == 2
 
 
+def test_worker_count_follows_app_setting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import docutracex.appsettings as aps
+    mgr = TaskManager()   # not pinned -> reads the app setting
+    monkeypatch.setattr(aps, "analysis_concurrency", lambda: 3)
+    assert mgr._worker_count() == 3
+    monkeypatch.setattr(aps, "analysis_concurrency", lambda: 1)
+    assert mgr._worker_count() == 1
+
+
+def test_concurrency_setting_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import docutracex.appsettings as aps
+    monkeypatch.setattr(aps, "config_dir", lambda: tmp_path)
+    monkeypatch.setattr(settings, "cases_dir", tmp_path / "cases")
+    (tmp_path / "cases").mkdir()
+    client = TestClient(create_app())
+    assert client.get("/api/settings/analysis").json()["concurrency"] == 4   # default
+    assert client.put("/api/settings/analysis", json={"concurrency": 6}).json()["concurrency"] == 6
+    assert client.get("/api/settings/analysis").json()["concurrency"] == 6    # persisted
+    assert client.put("/api/settings/analysis", json={"concurrency": 99}).json()["concurrency"] == 8  # clamped
+    assert client.put("/api/settings/analysis", json={"concurrency": "x"}).status_code == 400
+
+
 # --- API integration ---------------------------------------------------------
 
 @has_samples
