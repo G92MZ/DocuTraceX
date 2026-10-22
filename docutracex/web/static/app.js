@@ -195,6 +195,39 @@ document.getElementById("upload-form").addEventListener("submit", async (e) => {
   startTaskPoller();
 });
 
+// --- concurrency control (how many files analysed at once) -------------------
+const concInput = document.getElementById("conc-input");
+const concStatus = document.getElementById("conc-status");
+
+async function loadConcurrency() {
+  if (!concInput) return;
+  try {
+    const d = await fetch("/api/settings/analysis").then((r) => r.json());
+    concInput.value = d.concurrency;
+    concInput.min = d.min;
+    concInput.max = d.max;
+  } catch (err) { /* leave the input as-is */ }
+}
+
+if (concInput) {
+  concInput.addEventListener("change", async () => {
+    const n = Math.max(1, Math.min(8, parseInt(concInput.value, 10) || 1));
+    concInput.value = n;
+    concStatus.textContent = "Saving…";
+    try {
+      const d = await fetch("/api/settings/analysis", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ concurrency: n }),
+      }).then((r) => r.json());
+      concInput.value = d.concurrency;
+      concStatus.textContent = `Saved — ${d.concurrency} at a time.`;
+      setTimeout(() => { concStatus.textContent = ""; }, 2500);
+    } catch (err) {
+      concStatus.textContent = "Could not save.";
+    }
+  });
+}
+
 const STATUS_CLASS = { ok: "ok", warn: "warn", fail: "bad" };
 
 async function loadDiagnostics() {
@@ -3167,3 +3200,4 @@ setupAi();
 renderFormats();
 loadDiagnostics(); // initial load to set the nav indicator
 loadCases();
+loadConcurrency();
