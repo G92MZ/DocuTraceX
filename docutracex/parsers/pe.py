@@ -1,8 +1,11 @@
 """PE binaries (``.exe``/``.dll``/``.sys``/…): static triage with pefile.
 
-Not a disassembler or an unpacker — a *static triage* that surfaces what the PE
-header and tables already tell you, so a compiled binary is more than an opaque
-"use another tool" note:
+Not a disassembler — a *static triage* that surfaces what the PE header and
+tables already tell you, so a compiled binary is more than an opaque "use
+another tool" note. First step: packer / installer detection and STATIC
+unpacking (UPX, AutoIt, Inno, NSIS/SFX, Nuitka, Enigma VB — see
+:mod:`unpack`); the unpacked files are analysed as children (Nested tab).
+Then:
 
 - header: machine, subsystem, DLL flag, compile timestamp (and anomalies);
 - sections: size, Shannon entropy (packing), write+exec flags, packer names;
@@ -17,10 +20,11 @@ With **FLOSS** and **capa** provisioned (optional; Mandiant's standalone
 binaries under ``tools/floss/`` and ``tools/capa/``) the obfuscated/stack/tight
 strings FLOSS decodes are mined for IOCs, and capa's matched capabilities become
 findings with their ATT&CK technique. Both are skipped for PyInstaller bundles
-(they would only see the bootloader; the payload is in the Python tab). Each run
-leaves a status record (ok / skipped / not provisioned / timeout / error) so a
-missing result is never silent. Deep RE stays with the analyst's dedicated
-tools; nothing is executed — both tools are static.
+and packed/protected PEs (they would only see the stub; when unpacked, they run
+on the unpacked file instead). Each run leaves a status record (ok / skipped /
+not provisioned / timeout / error) so a missing result is never silent. The
+sample never runs natively: capa is static; FLOSS emulates decoding routines
+(vivisect) to recover strings.
 """
 
 from __future__ import annotations
@@ -36,10 +40,13 @@ log = get_logger(__name__)
 _MAX_BYTES = 64 * 1024 * 1024
 
 # External static tools (FLOSS / capa): per-run time limits and output caps.
-FLOSS_TIMEOUT = 120
-CAPA_TIMEOUT = 1800
-_FLOSS_MAX_STRINGS = 20000
-_CAPA_MAX_RULES = 700
+import os as _os
+
+FLOSS_TIMEOUT = int(_os.environ.get("DOCUTRACEX_FLOSS_TIMEOUT", "120"))
+FLOSS_MAX_FILE = 16 * 1024 * 1024   # FLOSS refuses larger files without --large-file
+CAPA_TIMEOUT = int(_os.environ.get("DOCUTRACEX_CAPA_TIMEOUT", "1800"))   # 30 min
+_FLOSS_MAX_STRINGS = 200
+_CAPA_MAX_RULES = 300
 # PyInstaller CArchive cookie (same as parsers.pyinstaller.MAGIC), searched in
 # the file tail like analyze.py does.
 _PYI_MAGIC = b"MEI\014\013\012\013\016"
@@ -97,7 +104,14 @@ def _entropy(data: bytes) -> float:
     return round(ent, 2)
 
 
-def analyze(path: Path, rel: str, run_tools: bool = True) -> dict[str, Any]:
+def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | None = None,
+            tools_budget_ok: bool = True) -> dict[str, Any]:
+    """Static PE triage. ``run_tools`` enables the external tools (DIE, the
+    unpackers, FLOSS, capa); ``unpack_dir`` is where a packed/installer PE is
+    unpacked (its files come back in ``item["_unpacked_files"]`` — the caller
+    pops them and scans them as children). ``tools_budget_ok=False`` skips
+    FLOSS/capa (used for the Nth nested PE so a big installer can't eat the
+    whole case time limit)."""
     item: dict[str, Any] = {"kind": "pe", "file": rel, "findings": []}
     loc = f"file:{rel}"
     try:
@@ -248,13 +262,43 @@ def analyze(path: Path, rel: str, run_tools: bool = True) -> dict[str, Any]:
         if v:
             strings_for_ioc.append(v)
 
+    # --- packer / installer: detect, then unpack STATICALLY (first, so the real
+    # code is what FLOSS/capa/YARA/IOCs see). PyInstaller has its own pipeline.
+    is_pyi = _is_pyinstaller(path)
+    up: dict[str, Any] = {}
+    if not is_pyi:
+        from . import unpack
+        try:
+            up = unpack.process(path, blob, pe, unpack_dir if run_tools else None,
+                                use_die=run_tools)
+        except Exception as exc:  # noqa: BLE001  (never break the PE triage)
+            log.warning("packer detection/unpacking failed on %s: %s", rel, exc)
+            up = {"status": "error", "detail": str(exc), "detected": [], "findings": []}
+        files = up.pop("_files", [])
+        if files:
+            item["_unpacked_files"] = files
+        for x in up.get("findings", []):
+            x["location"] = loc
+            f.append(x)
+        item["unpack"] = {k: v for k, v in up.items() if k != "findings"}
+
     # --- optional external static tools: FLOSS (strings) + capa (capabilities) ---
     if run_tools:
-        if _is_pyinstaller(path):
-            why = ("PyInstaller bundle: FLOSS/capa would only see the bootloader — "
-                   "the payload logic is in the Python tab")
-            item["floss"] = {"status": "skipped", "detail": why}
-            item["capa"] = {"status": "skipped", "detail": why}
+        skip_why = ""
+        if is_pyi:
+            skip_why = ("PyInstaller bundle: FLOSS/capa would only see the bootloader — "
+                        "the payload logic is in the Python tab")
+        elif up.get("status") == "unpacked":
+            skip_why = (f"packed ({up.get('detail', '')}): FLOSS/capa run on the unpacked "
+                        f"file(s) instead — see the Nested tab")
+        elif up.get("status") in ("detected", "failed", "not_provisioned", "no_static"):
+            skip_why = (f"packed/protected and not unpacked ({up.get('detail', '')}): "
+                        f"FLOSS/capa would only see the stub")
+        elif not tools_budget_ok:
+            skip_why = "skipped: FLOSS/capa budget for this case already used (nested PE)"
+        if skip_why:
+            item["floss"] = {"status": "skipped", "detail": skip_why}
+            item["capa"] = {"status": "skipped", "detail": skip_why}
         else:
             floss = _run_floss(path)
             floss_strings = floss.pop("strings", [])
@@ -351,34 +395,30 @@ def _run_tool(name: str, exe: Path | None, args: list[str], path: Path,
     and a human ``detail``, so the Binary tab can say why a result is missing.
     Failures are logged; never raises.
     """
-    import subprocess
-    import time
+    from ..proctools import run_bounded
 
     if exe is None:
         return ({"status": "not_provisioned",
                  "detail": f"{name} not provisioned (tools/{name}/) — run "
                            f"scripts/setup_portable_python.py"}, "")
-    t0 = time.perf_counter()
-    try:
-        proc = subprocess.run([str(exe), *args, str(path)], capture_output=True,
-                              text=True, encoding="utf-8", errors="replace",
-                              timeout=timeout, stdin=subprocess.DEVNULL)
-    except subprocess.TimeoutExpired:
+    # Hard limit + whole-tree kill: floss.exe / capa.exe are PyInstaller onefile
+    # (bootloader + child); a plain subprocess.run could hang on the orphan.
+    r = run_bounded([str(exe), *args, str(path)], timeout)
+    if r.get("timed_out"):
         log.warning("%s timed out after %ss on %s", name, timeout, path.name)
         return ({"status": "timeout", "detail": f"{name} timed out after {timeout}s",
-                 "duration_s": timeout}, "")
-    except Exception as exc:  # noqa: BLE001
-        log.warning("%s could not run on %s: %s", name, path.name, exc)
-        return {"status": "error", "detail": f"{name} could not run: {exc}"}, ""
-    dur = round(time.perf_counter() - t0, 2)
-    rec: dict[str, Any] = {"status": "ok", "returncode": proc.returncode, "duration_s": dur}
-    if proc.returncode != 0 or not (proc.stdout or "").strip():
-        err = (proc.stderr or "").strip()[-400:]
-        log.warning("%s failed on %s (exit %s): %s", name, path.name, proc.returncode, err)
+                 "duration_s": r.get("duration_s", timeout)}, "")
+    if r.get("error"):
+        log.warning("%s could not run on %s: %s", name, path.name, r["error"])
+        return {"status": "error", "detail": f"{name} could not run: {r['error']}"}, ""
+    rec: dict[str, Any] = {"status": "ok", "returncode": r["rc"], "duration_s": r["duration_s"]}
+    if r["rc"] != 0 or not (r.get("out") or "").strip():
+        err = (r.get("err") or "").strip()[-400:]
+        log.warning("%s failed on %s (exit %s): %s", name, path.name, r["rc"], err)
         rec.update(status="error",
-                   detail=f"{name} exited {proc.returncode}" + (f": {err}" if err else ""))
+                   detail=f"{name} exited {r['rc']}" + (f": {err}" if err else ""))
         return rec, ""
-    return rec, proc.stdout
+    return rec, r["out"]
 
 
 def _run_floss(path: Path) -> dict[str, Any]:
@@ -389,6 +429,14 @@ def _run_floss(path: Path) -> dict[str, Any]:
 
     from ..config import settings
 
+    try:
+        fsize = path.stat().st_size
+    except OSError:
+        fsize = 0
+    if fsize > FLOSS_MAX_FILE:   # FLOSS's own limit (floss/const.py MAX_FILE_SIZE)
+        return {"status": "skipped",
+                "detail": f"file too large for FLOSS ({fsize // (1024 * 1024)} MB > "
+                          f"{FLOSS_MAX_FILE // (1024 * 1024)} MB)"}
     rec, out = _run_tool("floss", settings.floss_executable(),
                          ["--json", "--no", "static", "--quiet"], path, FLOSS_TIMEOUT)
     if rec["status"] != "ok":
