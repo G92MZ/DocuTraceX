@@ -1,7 +1,7 @@
 """FLOSS / capa integration in the PE triage (standalone binaries, mocked).
 
-No real floss.exe / capa.exe is run: subprocess.run is replaced with canned
-JSON shaped like FLOSS 3.2.0 and capa 10.0.0 output.
+No real floss.exe / capa.exe is run: proctools.run_bounded is replaced with
+canned JSON shaped like FLOSS 3.2.0 and capa 10.0.0 output.
 """
 
 from __future__ import annotations
@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -59,15 +58,20 @@ def _fake_exe(tmp_path: Path, name: str) -> Path:
 def _patch_run(monkeypatch, outputs: dict[str, object]) -> list[list[str]]:
     calls: list[list[str]] = []
 
-    def fake_run(cmd, **kw):
+    def fake_run(cmd, timeout, cwd=None, env=None):
         calls.append(cmd)
         out = outputs[Path(cmd[0]).stem]
+        if isinstance(out, subprocess.TimeoutExpired):
+            return {"rc": None, "out": "", "err": "", "timed_out": True, "duration_s": timeout}
         if isinstance(out, BaseException):
-            raise out
+            return {"rc": None, "out": "", "err": "", "timed_out": False, "error": str(out),
+                    "duration_s": 0.0}
         rc, text = out
-        return SimpleNamespace(returncode=rc, stdout=text, stderr="boom" if rc else "")
+        return {"rc": rc, "out": text, "err": "boom" if rc else "", "timed_out": False,
+                "duration_s": 0.1}
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    from docutracex import proctools
+    monkeypatch.setattr(proctools, "run_bounded", fake_run)
     return calls
 
 
@@ -158,7 +162,11 @@ def test_analyze_capa_findings(tmp_path, monkeypatch) -> None:
     import make_samples as ms
 
     p = tmp_path / "plain.exe"
-    p.write_bytes(ms.packed_pe_exe())
+    # Same inert PE with the UPX section names changed: no packer detected, so
+    # FLOSS/capa are not skipped (a packed PE would skip them — see test_unpack).
+    p.write_bytes(ms.packed_pe_exe().replace(b"UPX0", b".text").replace(b"UPX1", b".data"))
+    from docutracex.parsers import unpack
+    monkeypatch.setattr(unpack, "run_die", lambda path: {"status": "not_provisioned"})
     caps = [{"name": "check for debugger via API", "namespace": "anti-analysis/anti-debugging",
              "attack": [{"id": "T1622"}], "mbc": [], "matches": 1},
             {"name": "contain obfuscated stackstrings", "namespace": "", "attack": [],
