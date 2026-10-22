@@ -38,7 +38,7 @@ def _wait(fn, ok, tries: int = 1200, delay: float = 0.1):
 
 def test_queue_runs_sequentially_and_records(tmp_path: Path) -> None:
     order: list[str] = []
-    mgr = TaskManager()
+    mgr = TaskManager(max_workers=1)
 
     def fake_run_analysis(case_root, module=None):  # noqa: ANN001
         order.append(f"{Path(case_root).name}:{module}")
@@ -61,7 +61,7 @@ def test_queue_runs_sequentially_and_records(tmp_path: Path) -> None:
 
 
 def test_cancel_queued_task(tmp_path: Path) -> None:
-    mgr = TaskManager()
+    mgr = TaskManager(max_workers=1)
     blocker_done = []
 
     # tag: gmzpt
@@ -80,6 +80,37 @@ def test_cancel_queued_task(tmp_path: Path) -> None:
         assert mgr.get(queued.id)["state"] == "cancelled"
     finally:
         az.run_analysis = orig
+
+
+def test_workers_run_concurrently(tmp_path: Path) -> None:
+    # With a 2-worker pool, two analyses run at once (batch uploads are paced,
+    # not strictly one-by-one).
+    import threading
+    live = 0
+    peak = 0
+    lk = threading.Lock()
+    mgr = TaskManager(max_workers=2)
+
+    def busy(case_root, module=None):  # noqa: ANN001
+        nonlocal live, peak
+        with lk:
+            live += 1
+            peak = max(peak, live)
+        time.sleep(0.15)
+        with lk:
+            live -= 1
+
+    import docutracex.analyze as az
+    orig = az.run_analysis
+    az.run_analysis = busy
+    try:
+        ids = [mgr.submit("analyze", f"c{i}", f"f{i}", cases_dir=tmp_path).id for i in range(4)]
+        for tid in ids:
+            _wait(lambda t=tid: mgr.get(t)["state"], lambda s: s in ("completed", "partial", "failed"), tries=100)
+    finally:
+        az.run_analysis = orig
+    assert peak == 2, f"expected 2 concurrent workers, saw peak {peak}"
+    assert len(mgr._workers) == 2
 
 
 # --- API integration ---------------------------------------------------------

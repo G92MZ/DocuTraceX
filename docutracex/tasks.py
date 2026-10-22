@@ -1,7 +1,9 @@
-"""In-app task manager and sequential analysis queue (the Tasks tab).
+"""In-app task manager and analysis queue (the Tasks tab).
 
-One analysis runs per instance; the rest wait in a FIFO queue, processed by a
-single daemon worker. Each task carries a live state (queued, running,
+A few analyses run at once (``settings.max_concurrent_analyses``, default 2);
+the rest wait in a FIFO queue, drained by a small pool of daemon workers — so a
+batch upload of many files is processed a couple at a time. Each task carries a
+live state (queued, running,
 cancelling, cancelled, completed, failed), a coarse phase and an
 optional progress (``None`` means *unknown*, deliberately distinct from 0%).
 
@@ -119,32 +121,42 @@ def _append_attempt(paths: CasePaths, task: Task) -> None:
 
 
 class TaskManager:
-    """Thread-safe, single-worker FIFO queue of analysis tasks."""
+    """Thread-safe FIFO queue of analysis tasks, drained by a small pool of
+    daemon workers. ``settings.max_concurrent_analyses`` (default 2) analyses
+    run at once; the rest wait in the queue — so a batch upload of many files is
+    processed a few at a time instead of all at once or strictly one by one."""
 
-    def __init__(self) -> None:
+    def __init__(self, max_workers: int | None = None) -> None:
         self._lock = threading.Lock()
         self._tasks: dict[str, Task] = {}
         self._order: list[str] = []
         self._queue: queue.Queue[str] = queue.Queue()
         self._cancel: set[str] = set()
         self._counter = itertools.count(1)
-        self._worker: threading.Thread | None = None
+        self._workers: list[threading.Thread] = []
+        self._max_workers = max_workers
 
-    def _ensure_worker(self) -> None:
+    def _worker_count(self) -> int:
+        n = self._max_workers if self._max_workers is not None else settings.max_concurrent_analyses
+        return max(1, min(8, int(n)))
+
+    def _ensure_workers(self) -> None:
         with self._lock:
-            if self._worker is None or not self._worker.is_alive():
-                self._worker = threading.Thread(target=self._run, name="dtx-task-worker",
-                                                daemon=True)
-                self._worker.start()
+            self._workers = [w for w in self._workers if w.is_alive()]
+            while len(self._workers) < self._worker_count():
+                w = threading.Thread(target=self._run, name=f"dtx-task-worker-{len(self._workers) + 1}",
+                                     daemon=True)
+                self._workers.append(w)
+                w.start()
 
     def submit(self, type: str, analysis_id: str, filename: str, target: str = "full",
                cases_dir: Path | None = None, params: dict[str, Any] | None = None) -> Task:
-        self._ensure_worker()
-        tid = f"task-{next(self._counter):04d}"
-        task = Task(id=tid, type=type, analysis_id=analysis_id, filename=filename,
-                    target=target or "full",
-                    cases_dir=str(cases_dir) if cases_dir else None, params=dict(params or {}))
+        self._ensure_workers()
         with self._lock:
+            tid = f"task-{next(self._counter):04d}"
+            task = Task(id=tid, type=type, analysis_id=analysis_id, filename=filename,
+                        target=target or "full",
+                        cases_dir=str(cases_dir) if cases_dir else None, params=dict(params or {}))
             self._tasks[tid] = task
             self._order.append(tid)
         self._queue.put(tid)
@@ -282,5 +294,5 @@ def _netcheck_step(task: Task, error: str | None) -> dict[str, Any]:
             "note": error, "duration_s": task.duration_s}
 
 
-# Process-wide singleton (one instance = one sequential queue).
+# Process-wide singleton: one shared queue drained by a small worker pool.
 manager = TaskManager()
