@@ -1966,7 +1966,7 @@ async function openComponents(analysisId, keepTab) {
     let nested = mods.nested;
     const iocs = d.iocs;
     const rtf = mods.rtf;
-    if (!ooxml && !sem && !ole && !email && !pdf && !oleLegacy && !mods.javascript && !rtf && !mods.archive && !mods.unlock && !mods.file) {
+    if (!Object.keys(mods).length) {
       bodyEl.innerHTML = `<p class="hint-line">No component analysis for this case yet.</p>`;
       return;
     }
