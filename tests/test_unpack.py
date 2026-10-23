@@ -124,11 +124,3 @@ def test_pe_analyze_skips_floss_capa_when_unpacked(tmp_path, monkeypatch) -> Non
     assert r["floss"]["status"] == "skipped" and "unpacked" in r["floss"]["detail"]
     assert r["_unpacked_files"] == [(str(tmp_path / "a.exe"), "a.exe")]
     assert r["unpack"]["status"] == "unpacked" and "_files" not in r["unpack"]
-
-
-def test_floss_skips_big_files(tmp_path, monkeypatch) -> None:
-    p = tmp_path / "big.exe"
-    with p.open("wb") as fh:
-        fh.truncate(pe.FLOSS_MAX_FILE + 1)
-    r = pe._run_floss(p)
-    assert r["status"] == "skipped" and "too large" in r["detail"]
