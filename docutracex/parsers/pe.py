@@ -42,10 +42,12 @@ _MAX_BYTES = 64 * 1024 * 1024
 # External static tools (FLOSS / capa): per-run time limits and output caps.
 import os as _os
 
-FLOSS_TIMEOUT = int(_os.environ.get("DOCUTRACEX_FLOSS_TIMEOUT", "120"))
-FLOSS_MAX_FILE = 16 * 1024 * 1024   # FLOSS refuses larger files without --large-file
+FLOSS_TIMEOUT = int(_os.environ.get("DOCUTRACEX_FLOSS_TIMEOUT", "1200"))   # 20 min
+# FLOSS arguments (besides --json / --no static / --quiet, which the parser needs):
+# --large-file lifts FLOSS's 16 MB limit; -n 8 = minimum string length.
+FLOSS_EXTRA_ARGS = ["--large-file", "-n", "7"]
 CAPA_TIMEOUT = int(_os.environ.get("DOCUTRACEX_CAPA_TIMEOUT", "1800"))   # 30 min
-_FLOSS_MAX_STRINGS = 200
+_FLOSS_MAX_STRINGS = 7000
 _CAPA_MAX_RULES = 300
 # PyInstaller CArchive cookie (same as parsers.pyinstaller.MAGIC), searched in
 # the file tail like analyze.py does.
@@ -429,16 +431,9 @@ def _run_floss(path: Path) -> dict[str, Any]:
 
     from ..config import settings
 
-    try:
-        fsize = path.stat().st_size
-    except OSError:
-        fsize = 0
-    if fsize > FLOSS_MAX_FILE:   # FLOSS's own limit (floss/const.py MAX_FILE_SIZE)
-        return {"status": "skipped",
-                "detail": f"file too large for FLOSS ({fsize // (1024 * 1024)} MB > "
-                          f"{FLOSS_MAX_FILE // (1024 * 1024)} MB)"}
     rec, out = _run_tool("floss", settings.floss_executable(),
-                         ["--json", "--no", "static", "--quiet"], path, FLOSS_TIMEOUT)
+                         ["--json", "--quiet", *FLOSS_EXTRA_ARGS],
+                         path, FLOSS_TIMEOUT)
     if rec["status"] != "ok":
         return rec
     try:
