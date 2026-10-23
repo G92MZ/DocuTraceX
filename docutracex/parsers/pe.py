@@ -17,14 +17,14 @@ Then:
   version-info masquerade check (OriginalFilename vs the real name).
 
 With **FLOSS** and **capa** provisioned (optional; Mandiant's standalone
-binaries under ``tools/floss/`` and ``tools/capa/``) the obfuscated/stack/tight
-strings FLOSS decodes are mined for IOCs, and capa's matched capabilities become
-findings with their ATT&CK technique. Both are skipped for PyInstaller bundles
-and packed/protected PEs (they would only see the stub; when unpacked, they run
-on the unpacked file instead). Each run leaves a status record (ok / skipped /
-not provisioned / timeout / error) so a missing result is never silent. The
-sample never runs natively: capa is static; FLOSS emulates decoding routines
-(vivisect) to recover strings.
+binaries under ``tools/floss/`` and ``tools/capa/``) the static, obfuscated,
+stack and tight strings FLOSS extracts are mined for IOCs, and capa's matched
+capabilities become findings with their ATT&CK technique. Both are skipped for
+PyInstaller bundles and packed/protected PEs (they would only see the stub;
+when unpacked, they run on the unpacked file instead). Each run leaves a status
+record (ok / skipped / not provisioned / timeout / error) so a missing result
+is never silent. The sample never runs natively: capa is static; FLOSS
+emulates decoding routines (vivisect) to recover strings.
 """
 
 from __future__ import annotations
@@ -43,8 +43,8 @@ _MAX_BYTES = 64 * 1024 * 1024
 import os as _os
 
 FLOSS_TIMEOUT = int(_os.environ.get("DOCUTRACEX_FLOSS_TIMEOUT", "1200"))   # 20 min
-# FLOSS arguments (besides --json / --no static / --quiet, which the parser needs):
-# --large-file lifts FLOSS's 16 MB limit; -n 8 = minimum string length.
+# FLOSS arguments (besides --json / --quiet, which the parser needs):
+# --large-file lifts FLOSS's 16 MB limit; -n 7 = minimum string length.
 FLOSS_EXTRA_ARGS = ["--large-file", "-n", "7"]
 CAPA_TIMEOUT = int(_os.environ.get("DOCUTRACEX_CAPA_TIMEOUT", "1800"))   # 30 min
 _FLOSS_MAX_STRINGS = 7000
@@ -308,8 +308,15 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
             if floss_strings:
                 item["floss_strings"] = floss_strings[:_FLOSS_MAX_STRINGS]
                 strings_for_ioc.extend(floss_strings)
+                counts = floss.get("counts", {})
+                # FIX: include static in the finding summary
                 f.append(_finding("pe_floss_strings", "info",
-                    f"FLOSS decoded {len(floss_strings)} obfuscated/stack/tight string(s)", loc))
+                    f"FLOSS extracted {len(floss_strings)} string(s): "
+                    f"{counts.get('static', 0)} static, "
+                    f"{counts.get('decoded', 0)} decoded, "
+                    f"{counts.get('stack', 0)} stack, "
+                    f"{counts.get('tight', 0)} tight",
+                    loc))
 
             capa = _run_capa(path)
             item["capa"] = capa
@@ -424,9 +431,8 @@ def _run_tool(name: str, exe: Path | None, args: list[str], path: Path,
 
 
 def _run_floss(path: Path) -> dict[str, Any]:
-    """FLOSS (standalone binary): decoded / stack / tight strings, no static
-    strings (pe.py already has those). Returns a status record plus
-    ``strings`` (list[str]) when it ran."""
+    """FLOSS (standalone binary): static / decoded / stack / tight strings.
+    Returns a status record plus ``strings`` (list[str]) when it ran."""
     import json
 
     from ..config import settings
@@ -445,15 +451,20 @@ def _run_floss(path: Path) -> dict[str, Any]:
     strings: list[str] = []
     counts: dict[str, int] = {}
     block = data.get("strings") or {}
-    for key in ("decoded_strings", "stack_strings", "tight_strings"):
+    # FIX: include static_strings — previously omitted, causing the bulk of
+    # FLOSS output to be silently discarded. decoded/stack/tight are kept too.
+    for key in ("static_strings", "decoded_strings", "stack_strings", "tight_strings"):
         vals = [s.get("string") if isinstance(s, dict) else s for s in (block.get(key) or [])]
         vals = [v for v in vals if isinstance(v, str) and v.strip()]
         counts[key.split("_")[0]] = len(vals)
         strings.extend(vals)
     rec["counts"] = counts
     rec["version"] = str((data.get("metadata") or {}).get("version") or "")
-    rec["detail"] = (f"{len(strings)} string(s): {counts.get('decoded', 0)} decoded, "
-                     f"{counts.get('stack', 0)} stack, {counts.get('tight', 0)} tight")
+    # FIX: detail now reflects all four categories including static
+    rec["detail"] = (f"{len(strings)} string(s): {counts.get('static', 0)} static, "
+                     f"{counts.get('decoded', 0)} decoded, "
+                     f"{counts.get('stack', 0)} stack, "
+                     f"{counts.get('tight', 0)} tight")
     rec["strings"] = strings
     return rec
 
