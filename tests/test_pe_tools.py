@@ -96,7 +96,7 @@ def test_floss_parsing(tmp_path, monkeypatch) -> None:
     assert r["counts"] == {"decoded": 1, "stack": 1, "tight": 0}
     assert r["version"] == "3.2.0"
     assert calls[0][1:5] == ["--json", "--no", "static", "--quiet"]
-    assert calls[0][5:8] == ["--large-file", "-n", "8"]
+    assert calls[0][5:8] == ["--large-file", "-n", "7"]
 
 
 def test_capa_parsing_skips_lib_rules(tmp_path, monkeypatch) -> None:
