@@ -1,17 +1,14 @@
 """Common IOC extractor.
 
-Runs as a single phase AFTER all parsers, over the textual/structured data they
-produced (reconstructed text, metadata, field codes, formulas, relationship
-targets, ...). It detects IPv4/IPv6, URLs, domains and hash-like strings,
-normalizes and deduplicates them while keeping every occurrence with its
-provenance, and never contacts the network or executes anything.
+Scans textual/structured parser results after parsing. Extracts IPv4/IPv6,
+URLs, domains, hash-like strings, emails, file paths, registry keys, named
+pipes and MAC addresses. Keeps provenance and deduplicates by (type, value).
+No network access and no execution of extracted content.
 
-Hashes computed by the app to identify files/components are kept separate from
-hash-like strings found in content: this module only reports the latter, tagged
-as "hash_like".
+Registry-key validation checks Windows root aliases and key-path structure;
+it does NOT prove that a key exists on a particular Windows system.
 """
 
-# gmzpt
 from __future__ import annotations
 
 import ipaddress
@@ -19,58 +16,114 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
-# --- patterns ---------------------------------------------------------------
+# --- Patterns ---------------------------------------------------------------
+
 _URL_RE = re.compile(r"\b(?:https?|ftp)://[^\s\"'<>)\]}]+", re.IGNORECASE)
 _IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
-# IPv6 candidates (full or "::"-compressed); each one is then validated with
-# ipaddress, which rejects look-alikes such as times ("15:56:42") or MACs.
-_IPV6_RE = re.compile(r"(?<![\w:.])(?:[A-F0-9]{0,4}:){2,7}[A-F0-9]{0,4}(?![\w:])", re.IGNORECASE)
+_IPV6_RE = re.compile(
+    r"(?<![\w:.])(?:[A-F0-9]{0,4}:){2,7}[A-F0-9]{0,4}(?![\w:])",
+    re.IGNORECASE,
+)
 _DOMAIN_RE = re.compile(
     r"(?<![\w.@-])((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24})(?![\w-])",
     re.IGNORECASE,
 )
-_HASH_RE = re.compile(r"\b[a-fA-F0-9]{32}\b|\b[a-fA-F0-9]{40}\b|\b[a-fA-F0-9]{64}\b")
+_HASH_RE = re.compile(
+    r"(?<![A-Fa-f0-9])(?:[A-Fa-f0-9]{128}|[A-Fa-f0-9]{96}|"
+    r"[A-Fa-f0-9]{64}|[A-Fa-f0-9]{40}|[A-Fa-f0-9]{32})(?![A-Fa-f0-9])"
+)
+_EMAIL_RE = re.compile(
+    r"(?<![A-Z0-9.!#$%&'*+/=?^_`{|}~-])"
+    r"[A-Z0-9.!#$%&'*+/=?^_`{|}~-]+@"
+    r"[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?"
+    r"(?:\.[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?)+",
+    re.IGNORECASE,
+)
 
-# Extensions that look like "label.tld" but are filenames, not domains.
+# Named pipes are checked before generic Windows paths.
+_PIPE_RE = re.compile(
+    r"(?i)(?<![\w])(?:\\\\\.\\pipe\\|\\\\\?\\pipe\\|"
+    r"\\\\[^\\\s]+\\pipe\\)[^\s\"'<>|,;]+"
+)
+
+# Registry root aliases. A subkey is required; a bare root is not reported.
+_REG_ROOTS = (
+    r"(?:HKLM|HKEY_LOCAL_MACHINE|HKCU|HKEY_CURRENT_USER|HKCR|"
+    r"HKEY_CLASSES_ROOT|HKU|HKEY_USERS|HKCC|HKEY_CURRENT_CONFIG)"
+)
+_REGISTRY_RE = re.compile(
+    rf"(?i)(?<![A-Z0-9_]){_REG_ROOTS}\\[^\s\"'<>|,;]+"
+)
+
+# Drive-letter paths, environment-variable paths and UNC paths.
+_FILEPATH_RE = re.compile(
+    r"(?i)(?<![\w])(?:"
+    r"[A-Z]:\\(?:[^\s\"'<>|?*]+\\)*[^\s\"'<>|?*]+|"
+    r"%[A-Z0-9_()]+%\\(?:[^\s\"'<>|?*]+\\)*[^\s\"'<>|?*]+|"
+    r"\\\\[^\\\s]+\\[^\\\s]+(?:\\[^\s\"'<>|?*]+)*"
+    r")"
+)
+
+_MAC_RE = re.compile(
+    r"(?i)(?<![0-9a-f])(?:[0-9a-f]{2}(?::[0-9a-f]{2}){5}|"
+    r"[0-9a-f]{2}(?:-[0-9a-f]{2}){5})(?![0-9a-f])"
+)
+
 _FILE_TLDS = {
-    "xml", "rels", "bin", "png", "jpeg", "jpg", "gif", "emf", "wmf", "bmp", "tiff",
-    "docx", "docm", "dotx", "dotm", "xlsx", "xlsm", "xltx", "xltm", "xlam", "xlsb",
-    "pptx", "pptm", "potx", "potm", "ppsx", "ppsm", "ppam", "sldx", "sldm",
-    "doc", "dot", "xls", "xlt", "xla", "ppt", "pot", "pdf", "eml", "emlx", "msg",
-    "rtf", "txt", "json", "html", "htm", "css", "js", "exe", "dll", "zip", "jar", "mgc",
+    "xml", "rels", "bin", "png", "jpeg", "jpg", "gif", "emf", "wmf",
+    "bmp", "tiff", "docx", "docm", "dotx", "dotm", "xlsx", "xlsm",
+    "xltx", "xltm", "xlam", "xlsb", "pptx", "pptm", "potx", "potm",
+    "ppsx", "ppsm", "ppam", "sldx", "sldm", "doc", "dot", "xls",
+    "xlt", "xla", "ppt", "pot", "pdf", "eml", "emlx", "msg", "rtf",
+    "txt", "json", "html", "htm", "css", "js", "exe", "dll", "zip",
+    "jar", "mgc",
 }
+
 _CONTEXT = 32
 
-# Standalone "label.tld" matches must end in a real TLD: any two-letter ccTLD or
-# one of these generic ones. Keeps code (``x.Open``, ``MSXML2.XMLHTTP``) and
-# text joins (``invoice.Loading``) out of the domain list. URLs are always kept.
 _GENERIC_TLDS = set("""
-com net org info biz edu gov mil int arpa name pro aero coop museum mobi asia tel travel jobs cat
-xyz top online site club app dev cloud store shop live life world today tech space website fun
-icu vip work link click download zip mov win bid loan date racing review stream trade party
-science cricket faith accountant men gdn kim ooo rest host press email news blog page one
-digital network center company solutions services agency group media studio design support
-systems software email services finance financial bank money pay cash credit capital fund
-academy education school college university global international ltd llc inc gmbh
-microsoft google apple amazon office windows live azure aws
-example test invalid localhost local onion
+com net org info biz edu gov mil int arpa name pro aero coop museum mobi
+asia tel travel jobs cat xyz top online site club app dev cloud store shop
+live life world today tech space website fun icu vip work link click download
+zip mov win bid loan date racing review stream trade party science cricket
+faith accountant men gdn kim ooo rest host press email news blog page one
+digital network center company solutions services agency group media studio
+support systems software services finance financial bank money pay cash
+credit capital fund academy education school college university global
+international ltd llc inc gmbh microsoft google apple amazon office windows
+live azure aws example test invalid localhost local onion
 """.split())
 
-# XML namespace / schema hosts: never indicators.
-_NAMESPACE_HOSTS = {"schemas.microsoft.com", "schemas.openxmlformats.org", "www.w3.org", "w3.org",
-                    "purl.org", "ns.adobe.com", "schemas.xmlsoap.org", "www.microsoft.com/office"}
+_NAMESPACE_HOSTS = {
+    "schemas.microsoft.com",
+    "schemas.openxmlformats.org",
+    "www.w3.org",
+    "w3.org",
+    "purl.org",
+    "ns.adobe.com",
+    "schemas.xmlsoap.org",
+}
+
 _VERSION_BEFORE = re.compile(r"(?i)(?:version|ver|v)\s*[=:]?\s*[\"']?$")
+_CODE_TLDS = {
+    "com", "net", "org", "info", "biz", "io", "co", "gov", "edu",
+    "mil", "int", "xyz", "top", "online", "site", "club", "app",
+    "dev", "example", "test", "onion", "ru", "cn",
+}
+_CODE_LOCATION = re.compile(
+    r"code|vba|sandbox|decoded|pcode|formula|xlm|macro|script",
+    re.IGNORECASE,
+)
 
 
 def _valid_ipv4(value: str) -> bool:
     parts = value.split(".")
-    return len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts)
+    return len(parts) == 4 and all(
+        p.isdigit() and 0 <= int(p) <= 255 for p in parts
+    )
 
 
 def _valid_ipv6(value: str) -> str | None:
-    """Normalized IPv6 address, or None if ``value`` is not one (e.g. a time)."""
-    if not any(c.isalnum() for c in value):
-        return None
     try:
         return ipaddress.IPv6Address(value).compressed
     except ValueError:
@@ -83,7 +136,6 @@ def _clean_url(url: str) -> str:
 
 def _domain_of(url: str) -> str | None:
     try:
-        # tag: sJkzUVgDiA
         host = urlparse(url).hostname
         return host.lower() if host else None
     except ValueError:
@@ -91,16 +143,16 @@ def _domain_of(url: str) -> str | None:
 
 
 def _is_gateway(domain: str) -> bool:
-    """Link-rewriting hosts of mail gateways: their URL is kept, the domain is noise."""
-    return domain in ("urldefense.com", "urldefense.proofpoint.com", "linkprotect.cudasvc.com") or \
-        domain.endswith(("safelinks.protection.outlook.com", ".mimecast.com"))
-
-
-# In code (JS/VBA/p-code/formulas) "obj.member" looks like a domain: there,
-# only the most common TLDs count ("a.download", "x.click" are code).
-_CODE_TLDS = {"com", "net", "org", "info", "biz", "io", "co", "gov", "edu", "mil", "int", "xyz",
-              "top", "online", "site", "club", "app", "dev", "example", "test", "onion", "ru", "cn"}
-_CODE_LOCATION = re.compile(r"code|vba|sandbox|decoded|pcode|formula|xlm|macro|script", re.IGNORECASE)
+    return (
+        domain in (
+            "urldefense.com",
+            "urldefense.proofpoint.com",
+            "linkprotect.cudasvc.com",
+        )
+        or domain.endswith(
+            ("safelinks.protection.outlook.com", ".mimecast.com")
+        )
+    )
 
 
 def _known_tld(domain: str, strict: bool = False) -> bool:
@@ -108,35 +160,106 @@ def _known_tld(domain: str, strict: bool = False) -> bool:
     if tld.startswith("xn--"):
         return True
     if strict:
-        return tld in _CODE_TLDS or (len(tld) == 2 and len(domain.split(".")) >= 3)
+        return tld in _CODE_TLDS or (
+            len(tld) == 2 and len(domain.split(".")) >= 3
+        )
     return len(tld) == 2 or tld in _GENERIC_TLDS
 
 
 def _looks_like_filename(domain: str) -> bool:
-    tld = domain.rsplit(".", 1)[-1].lower()
-    return tld in _FILE_TLDS
+    return domain.rsplit(".", 1)[-1].lower() in _FILE_TLDS
+
+
+def _valid_filepath(value: str) -> bool:
+    """Validate a Windows path candidate without restricting scan sources.
+
+    Reject malformed components, including colons inside ordinary filename
+    components. This filters FLOSS fragments such as O:\\e:k while preserving
+    valid paths such as O:\\file.exe and O:\\klgsdfj___.exe.
+
+    NTFS alternate data streams are intentionally not treated as ordinary
+    file paths by this IOC type.
+    """
+    value = value.strip().rstrip(".,;:)]}")
+
+    if not value or any(ch in value for ch in '<>"|?*'):
+        return False
+
+    # Absolute drive path, e.g. C:\\Windows\\cmd.exe
+    if re.match(r"(?i)^[a-z]:\\", value):
+        components = value[3:].split("\\")
+
+    # UNC path, e.g. \\\\server\\share\\file.exe
+    elif value.startswith("\\\\"):
+        parts = value[2:].split("\\")
+        if len(parts) < 2 or not parts[0] or not parts[1]:
+            return False
+        components = parts
+
+    # Environment-variable path, e.g. %TEMP%\\payload.exe
+    elif re.match(r"(?i)^%[a-z0-9_()]+%\\", value):
+        components = value.split("\\")[1:]
+
+    else:
+        return False
+
+    if not components or any(not part for part in components):
+        return False
+
+    for part in components:
+        # A colon inside a filename/directory component is invalid for
+        # conventional Windows paths; the drive designator is handled above.
+        if ":" in part or any(ord(ch) < 32 for ch in part):
+            return False
+
+        # Windows conventional file/directory components cannot end in
+        # a space or dot.
+        if part.endswith((" ", ".")):
+            return False
+
+    return True
 
 
 class _Collector:
     def __init__(self) -> None:
         self.iocs: dict[tuple[str, str], dict[str, Any]] = {}
 
-    def add(self, ioc_type: str, value: str, module: str, location: str, context: str) -> None:
+    def add(
+        self,
+        ioc_type: str,
+        value: str,
+        module: str,
+        location: str,
+        context: str,
+    ) -> None:
         key = (ioc_type, value)
         entry = self.iocs.get(key)
-        occ = {"module": module, "location": location, "context": context}
+        occurrence = {
+            "module": module,
+            "location": location,
+            "context": context,
+        }
+
         if entry is None:
-            self.iocs[key] = {"type": ioc_type, "value": value, "occurrences": [occ]}
+            self.iocs[key] = {
+                "type": ioc_type,
+                "value": value,
+                "occurrences": [occurrence],
+            }
         else:
-            entry["occurrences"].append(occ)
+            entry["occurrences"].append(occurrence)
 
     def result(self) -> dict[str, Any]:
-        iocs = sorted(self.iocs.values(), key=lambda i: (i["type"], i["value"]))
-        for i in iocs:
-            i["count"] = len(i["occurrences"])
+        iocs = sorted(
+            self.iocs.values(),
+            key=lambda item: (item["type"], item["value"]),
+        )
         counts: dict[str, int] = {}
-        for i in iocs:
-            counts[i["type"]] = counts.get(i["type"], 0) + 1
+
+        for item in iocs:
+            item["count"] = len(item["occurrences"])
+            counts[item["type"]] = counts.get(item["type"], 0) + 1
+
         counts["total"] = len(iocs)
         return {"iocs": iocs, "counts": counts}
 
@@ -144,149 +267,294 @@ class _Collector:
 def _ctx(text: str, start: int, end: int) -> str:
     a = max(0, start - _CONTEXT)
     b = min(len(text), end + _CONTEXT)
-    snippet = text[a:b].replace("\n", " ").strip()
-    return snippet
+    return text[a:b].replace("\n", " ").strip()
 
 
-def _scan_text(text: str, module: str, location: str, col: _Collector) -> None:
+def _scan_text(
+    text: str,
+    module: str,
+    location: str,
+    col: _Collector,
+) -> None:
     if not text:
         return
-    # URLs first (and derive their domains).
+
     url_spans: list[tuple[int, int]] = []
-    for m in _URL_RE.finditer(text):
-        url = _clean_url(m.group(0))
-        url_spans.append((m.start(), m.start() + len(url)))
-        dom = _domain_of(url)
-        if dom in _NAMESPACE_HOSTS:
-            continue
-        tld = (dom or "").rsplit(".", 1)[-1]
-        if dom and "." in dom and ":" not in dom and not _valid_ipv4(dom) \
-                and not (tld.isalpha() or tld.lower().startswith("xn--")):
-            continue  # not a real host: strings glued by a heuristic (example.net2f6669...)
-        col.add("url", url, module, location, _ctx(text, m.start(), m.end()))
-        if dom and not _looks_like_filename(dom) and not _valid_ipv4(dom) and ":" not in dom \
-                and not _is_gateway(dom):
-            col.add("domain", dom, module, location, _ctx(text, m.start(), m.end()))
 
-    for m in _IPV4_RE.finditer(text):
-        if not _valid_ipv4(m.group(0)):
-            continue
-        before = text[max(0, m.start() - 14):m.start()]
-        if _VERSION_BEFORE.search(before) or text[m.end():m.end() + 2][:1] == "." and \
-                text[m.end() + 1:m.end() + 2].isdigit():
-            continue  # a version number (version="1.0.0.0", 10.0.19041.1), not an address
-        col.add("ipv4", m.group(0), module, location, _ctx(text, m.start(), m.end()))
+    for match in _URL_RE.finditer(text):
+        url = _clean_url(match.group(0))
+        url_spans.append((match.start(), match.start() + len(url)))
+        domain = _domain_of(url)
 
-    for m in _IPV6_RE.finditer(text):
-        addr = _valid_ipv6(m.group(0))
-        if addr:
-            col.add("ipv6", addr, module, location, _ctx(text, m.start(), m.end()))
-
-    for m in _HASH_RE.finditer(text):
-        col.add("hash_like", m.group(0).lower(), module, location, _ctx(text, m.start(), m.end()))
-
-    # Standalone domains (skip those inside a URL span or that are filenames).
-    for m in _DOMAIN_RE.finditer(text):
-        if any(s <= m.start() < e for s, e in url_spans):
+        if domain in _NAMESPACE_HOSTS:
             continue
-        dom = m.group(1).lower()
-        strict = bool(_CODE_LOCATION.search(location or "")) or module in ("javascript", "vipermonkey")
-        if _looks_like_filename(dom) or not _known_tld(dom, strict) or dom in _NAMESPACE_HOSTS:
+
+        tld = (domain or "").rsplit(".", 1)[-1]
+        if (
+            domain
+            and "." in domain
+            and ":" not in domain
+            and not _valid_ipv4(domain)
+            and not (tld.isalpha() or tld.lower().startswith("xn--"))
+        ):
             continue
-        col.add("domain", dom, module, location, _ctx(text, m.start(), m.end()))
+
+        col.add(
+            "url", url, module, location,
+            _ctx(text, match.start(), match.end()),
+        )
+
+        if (
+            domain
+            and "." in domain
+            and not _looks_like_filename(domain)
+            and not _valid_ipv4(domain)
+            and ":" not in domain
+            and not _is_gateway(domain)
+        ):
+            col.add(
+                "domain", domain, module, location,
+                _ctx(text, match.start(), match.end()),
+            )
+
+    for match in _IPV4_RE.finditer(text):
+        value = match.group(0)
+        if not _valid_ipv4(value):
+            continue
+
+        before = text[max(0, match.start() - 14):match.start()]
+        if _VERSION_BEFORE.search(before) or (
+            text[match.end():match.end() + 1] == "."
+            and text[match.end() + 1:match.end() + 2].isdigit()
+        ):
+            continue
+
+        col.add(
+            "ipv4", value, module, location,
+            _ctx(text, match.start(), match.end()),
+        )
+
+    for match in _IPV6_RE.finditer(text):
+        address = _valid_ipv6(match.group(0))
+        if address:
+            col.add(
+                "ipv6", address, module, location,
+                _ctx(text, match.start(), match.end()),
+            )
+
+    for match in _HASH_RE.finditer(text):
+        col.add(
+            "hash_like", match.group(0).lower(), module, location,
+            _ctx(text, match.start(), match.end()),
+        )
+
+    for match in _EMAIL_RE.finditer(text):
+        email = match.group(0).rstrip(".,;:")
+        if len(email) <= 254 and len(email.split("@", 1)[0]) <= 64:
+            col.add(
+                "email", email.lower(), module, location,
+                _ctx(text, match.start(), match.start() + len(email)),
+            )
+
+    # Registry paths first so they are not also emitted as generic file paths.
+    registry_spans: list[tuple[int, int]] = []
+
+    for match in _REGISTRY_RE.finditer(text):
+        value = match.group(0).rstrip(".,;:)]}")
+        _, _, subkey = value.partition("\\")
+        if not subkey or not any(subkey.split("\\")):
+            continue
+
+        registry_spans.append(
+            (match.start(), match.start() + len(value))
+        )
+        col.add(
+            "registry_key", value, module, location,
+            _ctx(text, match.start(), match.start() + len(value)),
+        )
+
+    pipe_spans: list[tuple[int, int]] = []
+
+    for match in _PIPE_RE.finditer(text):
+        value = match.group(0).rstrip(".,;:)]}")
+        if "\\pipe\\" not in value.lower() or not value.rsplit("\\", 1)[-1]:
+            continue
+
+        pipe_spans.append((match.start(), match.start() + len(value)))
+        col.add(
+            "named_pipe", value, module, location,
+            _ctx(text, match.start(), match.start() + len(value)),
+        )
+
+    for match in _FILEPATH_RE.finditer(text):
+        value = match.group(0).rstrip(".,;:)]}")
+        start = match.start()
+        end = start + len(value)
+
+        if any(
+            a <= start < b
+            for a, b in registry_spans + pipe_spans
+        ):
+            continue
+
+        # Validate the candidate only; source collection remains unchanged.
+        if (
+            value.endswith("\\")
+            or len(value) < 4
+            or not _valid_filepath(value)
+        ):
+            continue
+
+        col.add(
+            "filepath", value, module, location,
+            _ctx(text, start, end),
+        )
+
+    for match in _MAC_RE.finditer(text):
+        value = match.group(0).lower().replace("-", ":")
+        octets = value.split(":")
+        if len(octets) == 6 and any(int(octet, 16) for octet in octets):
+            col.add(
+                "mac_address", value, module, location,
+                _ctx(text, match.start(), match.end()),
+            )
+
+    for match in _DOMAIN_RE.finditer(text):
+        if any(a <= match.start() < b for a, b in url_spans):
+            continue
+
+        domain = match.group(1).lower()
+        strict = (
+            bool(_CODE_LOCATION.search(location or ""))
+            or module in ("javascript", "vipermonkey")
+        )
+
+        if (
+            _looks_like_filename(domain)
+            or not _known_tld(domain, strict)
+            or domain in _NAMESPACE_HOSTS
+        ):
+            continue
+
+        col.add(
+            "domain", domain, module, location,
+            _ctx(text, match.start(), match.end()),
+        )
 
 
 def extract(sources: list[dict[str, Any]]) -> dict[str, Any]:
     """Extract IOCs from a list of {module, location, text} sources."""
-    col = _Collector()
-    for src in sources:
-        _scan_text(src.get("text") or "", src.get("module", ""), src.get("location", ""), col)
-    return col.result()
+    collector = _Collector()
+
+    for source in sources:
+        _scan_text(
+            source.get("text") or "",
+            source.get("module", ""),
+            source.get("location", ""),
+            collector,
+        )
+
+    return collector.result()
 
 
-# --- building sources from parser sub-results --------------------------------
-
-# Keys whose string values are digests/identifiers the app computed itself (not
-# content): scanning them would surface our own hashes as "hash_like" IOCs.
+# Keys containing hashes/identifiers computed by the app itself, not sample content.
 _SKIP_KEYS = {
-    "sha1", "sha256", "sha512", "md5", "imphash", "ssdeep", "tlsh", "pehash",
-    "crc32", "digest", "checksum", "fingerprint", "entropy",
-    "code_file",  # path to the dumped code file (ours), not content
+    "sha1", "sha256", "sha384", "sha512", "md5", "imphash", "ssdeep",
+    "tlsh", "pehash", "crc32", "digest", "checksum", "fingerprint",
+    "entropy", "code_file",
 }
 
 
 def _skip_key(key: Any) -> bool:
-    k = str(key).lower()
-    # Leading-underscore keys are internal scratch (e.g. _full_code), never content.
-    return k.startswith("_") or k in _SKIP_KEYS or "hash" in k
+    name = str(key).lower()
+    return name.startswith("_") or name in _SKIP_KEYS or "hash" in name
 
 
-def _walk(node: Any, module: str, location: str, sources: list[dict[str, Any]]) -> None:
-    """Collect every non-empty string under ``node``, tagged with its key-path.
-
-    A full sweep of a parser's sub-result: new modules and every decoded/emulated
-    output are covered automatically, instead of a hand-kept list of fields.
-    """
+def _walk(
+    node: Any,
+    module: str,
+    location: str,
+    sources: list[dict[str, Any]],
+) -> None:
+    """Collect every non-empty string under node, tagged with its key path."""
     if isinstance(node, str):
         if node.strip():
-            sources.append({"module": module, "location": location or module, "text": node})
+            sources.append({
+                "module": module,
+                "location": location or module,
+                "text": node,
+            })
+
     elif isinstance(node, dict):
-        for k, v in node.items():
-            if _skip_key(k):
+        for key, value in node.items():
+            if _skip_key(key):
                 continue
-            sub = f"{location}/{k}" if location else str(k)
-            _walk(v, module, sub, sources)
+
+            sublocation = f"{location}/{key}" if location else str(key)
+            _walk(value, module, sublocation, sources)
+
     elif isinstance(node, (list, tuple)):
-        for i, v in enumerate(node):
-            sub = f"{location}[{i}]" if location else f"[{i}]"
-            _walk(v, module, sub, sources)
-    # numbers / bool / None are never indicators.
+        for index, value in enumerate(node):
+            sublocation = (
+                f"{location}[{index}]" if location else f"[{index}]"
+            )
+            _walk(value, module, sublocation, sources)
 
 
-def _email_sources(email: dict[str, Any], sources: list[dict[str, Any]]) -> None:
-    """Email is scanned for message content only. Headers, Received hops, sender
-    addresses and attachment names are deliberately left out (forged or benign
-    there); attachment *content* is covered by the recursive 'nested' scan."""
+def _email_sources(
+    email: dict[str, Any],
+    sources: list[dict[str, Any]],
+) -> None:
+    """Scan email body/link content, not headers or attachment names."""
+
     def add(location: str, text: Any) -> None:
         if isinstance(text, str) and text.strip():
-            sources.append({"module": "email", "location": location, "text": text})
+            sources.append({
+                "module": "email",
+                "location": location,
+                "text": text,
+            })
 
     add("body", email.get("body_sample"))
     add("body_html", email.get("html_text_sample"))
+
     for link in email.get("html_links", []) or []:
         add("body_html_link", link)
 
 
-def sources_from_modules(modules: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-    """Text sources to scan from every parser/tool result.
-
-    A single recursive sweep of each module's whole sub-result — not only its
-    findings — so emulated/decoded output and any module added later are scanned
-    without touching this function. Two carve-outs: ``email`` keeps content-only
-    (its headers are analysed by the mail parser, never mined for IOCs), and the
-    ``nested`` tree is read through its flattened findings (where each child's
-    evidence lives) so a child's results are scanned exactly once.
-    """
+def sources_from_modules(
+    modules: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build scan sources from parser results, preserving email/nested carve-outs."""
     sources: list[dict[str, Any]] = []
+
     for name, data in modules.items():
         if not isinstance(data, (dict, list)):
             continue
+
         if name == "email":
             if isinstance(data, dict):
                 _email_sources(data, sources)
+
         elif name == "nested":
             if isinstance(data, dict):
                 _walk(data.get("findings"), "nested", "", sources)
-                # Per-child IOC material: each embedded child's full sub-results,
-                # already reduced to {module, location, text} at scan time (so the
-                # caps on finding evidence don't limit a child). Consumed directly,
-                # not re-walked; the 'email' carve-out was applied when built.
-                for s in data.get("ioc_sources") or []:
-                    if isinstance(s, dict) and isinstance(s.get("text"), str) and s["text"].strip():
-                        sources.append({"module": s.get("module", "nested"),
-                                        "location": s.get("location", ""), "text": s["text"]})
+
+                for item in data.get("ioc_sources") or []:
+                    if (
+                        isinstance(item, dict)
+                        and isinstance(item.get("text"), str)
+                        and item["text"].strip()
+                    ):
+                        sources.append({
+                            "module": item.get("module", "nested"),
+                            "location": item.get("location", ""),
+                            "text": item["text"],
+                        })
             else:
                 _walk(data, "nested", "", sources)
+
         else:
             _walk(data, name, "", sources)
+
     return sources
