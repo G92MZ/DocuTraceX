@@ -2,8 +2,9 @@
 
 Scans textual/structured parser results after parsing. Extracts IPv4/IPv6,
 URLs, domains, hash-like strings, emails, file paths, registry keys, named
-pipes and MAC addresses. Keeps provenance and deduplicates by (type, value).
-No network access and no execution of extracted content.
+pipes, MAC addresses, and sensitive Windows commands / PowerShell cmdlets. 
+Keeps provenance and deduplicates by (type, value). No network access and 
+no execution of extracted content.
 
 Registry-key validation checks Windows root aliases and key-path structure;
 it does NOT prove that a key exists on a particular Windows system.
@@ -69,6 +70,56 @@ _MAC_RE = re.compile(
     r"[0-9a-f]{2}(?:-[0-9a-f]{2}){5})(?![0-9a-f])"
 )
 
+# --- Sensitive Windows Binaries, LOLBins & PowerShell Cmdlets List ----------
+_SENSITIVE_COMMANDS = [
+    # Red, Conectividad y Herramientas de Descarga / Transferencia
+    "netsh", "ipconfig", "route", "nbtstat", "arp", "nslookup", "tracert",
+    "ping", "netstat", "pathping", "bitsadmin", "ftp", "tftp", "finger",
+    "netbtugc", "klist", "nltest", "dnscmd", "rpcping", "cmstp", "telephon",
+    "curl", "wget", "nc", "ncat", "certutil", "certreq",
+
+    # Administración del Sistema, Servicios, Procesos y Seguridad
+    "schtasks", "sc", "taskkill", "tasklist", "wevtutil", "wmic", "powershell",
+    "pwsh", "cmd", "cscript", "wscript", "mshta", "rundll32", "reg", "regsvr32",
+    "gpupdate", "gpresult", "bcdedit", "vssadmin", "wbadmin", "fsutil", "cipher",
+    "takeown", "icacls", "cacls", "attrib", "systeminfo", "whoami", "hostname",
+    "query", "quser", "qwinsta", "logoff", "shutdown", "reboot", "powercfg",
+    "fltmc", "driverquery", "lodctr", "unlodctr", "auditpol", "dism", "pnputil",
+    "wbemtest", "tzutil", "logman", "reagentc",
+
+    # Comandos Net (Gestión de Usuarios, Grupos, Recursos)
+    "net", "net1",
+
+    # LOLBins, Compiladores y Bypass de AppLocker/WDAC
+    "at", "psexec", "winrm", "wsl", "bash", "installutil", "msbuild", "csc",
+    "vbc", "regasm", "regsvcs", "bginfo", "msiexec", "control", "explorer", "hh",
+    "infdefaultinstall", "forfiles", "diskpart", "format", "subst", "runas",
+    "expand", "makecab", "extrac32", "esentutl", "findstr", "where", "dxdiag",
+    "msinfo32", "type", "pocalc", "aspnet_regiis", "dfsvc", "mavinject",
+    "appvlp", "tracker", "PresentationHost", "Microsoft.Workflow.Compiler",
+    "ieexec", "msconfig", "cleanmgr", "verifier", "mmc", "msdt", "diantz",
+    "register-cimprovider", "wslconfig", "tar", "utilman", "sethc",
+
+    # PowerShell Cmdlets Comunes y Peligrosos (Verbos de Acción PowerShell)
+    "Invoke-WebRequest", "Invoke-RestMethod", "Invoke-Expression", "IEX",
+    "Start-Process", "New-Object", "Add-MpPreference", "Set-MpPreference",
+    "Remove-MpPreference", "Disable-NetAdapterBinding", "Enable-NetAdapterBinding",
+    "Set-NetIPAddress", "Get-Process", "Stop-Process", "Get-Service", "Set-Service",
+    "Restart-Service", "Get-CimInstance", "Get-WmiObject", "Get-ItemProperty",
+    "Set-ItemProperty", "New-ItemProperty", "Get-ChildItem", "Remove-Item",
+    "Copy-Item", "Move-Item", "Register-ScheduledTask", "Unregister-ScheduledTask",
+    "New-ScheduledTask", "Set-ExecutionPolicy", "Import-Module", "Export-Clixml",
+    "Out-File", "Add-Content", "Set-Content", "Read-Host", "Write-Host"
+]
+
+# Expresión regular robusta para binarios tradicionales y cmdlets de PowerShell
+_COMMAND_RE = re.compile(
+    rf"(?i)\b(?:{'|'.join(_SENSITIVE_COMMANDS)})(?:\.exe)?\b\s+"
+    r"(?:/[a-z0-9_/?:.\\*%-]+|-[a-z0-9_/?:.\\*%-]+|\"[^\"]+\"|'[^']+'|[a-z0-9_\\.:*?%$-]+)"
+    r"(?:\s+(?:/[a-z0-9_/?:.\\*%-]+|-[a-z0-9_/?:.\\*%-]+|\"[^\"]+\"|'[^']+'|[a-z0-9_\\.:*?%$-]+))*",
+    re.IGNORECASE
+)
+
 _FILE_TLDS = {
     "xml", "rels", "bin", "png", "jpeg", "jpg", "gif", "emf", "wmf",
     "bmp", "tiff", "docx", "docm", "dotx", "dotm", "xlsx", "xlsm",
@@ -79,7 +130,7 @@ _FILE_TLDS = {
     "jar", "mgc",
 }
 
-_CONTEXT = 32
+_CONTEXT = 64
 
 _GENERIC_TLDS = set("""
 com net org info biz edu gov mil int arpa name pro aero coop museum mobi
@@ -207,13 +258,11 @@ def _valid_filepath(value: str) -> bool:
         return False
 
     for part in components:
-        # A colon inside a filename/directory component is invalid for
-        # conventional Windows paths; the drive designator is handled above.
+        # A colon inside a filename/directory component is invalid
         if ":" in part or any(ord(ch) < 32 for ch in part):
             return False
 
-        # Windows conventional file/directory components cannot end in
-        # a space or dot.
+        # Windows conventional file/directory components cannot end in a space or dot
         if part.endswith((" ", ".")):
             return False
 
@@ -278,6 +327,15 @@ def _scan_text(
 ) -> None:
     if not text:
         return
+
+    # Scan de Comandos Sensibles, LOLBins y Cmdlets de PowerShell
+    for match in _COMMAND_RE.finditer(text):
+        cmd_val = match.group(0).strip(".,;:)]}\"'")
+        if len(cmd_val) > 3:
+            col.add(
+                "command", cmd_val, module, location,
+                _ctx(text, match.start(), match.end()),
+            )
 
     url_spans: list[tuple[int, int]] = []
 
