@@ -3,7 +3,9 @@
 The columns follow ``yara_csv_export.md``: ``rule``, ``namespace``, ``tags``,
 the dynamic ``meta_*`` block (one column per distinct ``meta`` key seen in the
 scan), ``enabled``, and the per-string fields (``string_id``, ``offset``,
-``length``, ``data_hex``, ``data_text``, ``context_start``, ``context_hex``). A
+``length``, ``data_hex``, ``data_text``, ``context_start``, ``context_hex``,
+``hit_offset_in_context`` and ``context_marked`` — the context hex with the
+matched bytes in ``[ ]`` so the hit is visible). A
 leading ``file`` column says which scanned file the match is in (a case scans the
 original plus every extracted/nested file). A rule that matched with no strings
 still emits one row with the string columns empty.
@@ -21,7 +23,25 @@ from .storage import CasePaths, read_json
 _BOM = "﻿"
 _BASE_BEFORE_META = ["file", "rule", "namespace", "tags"]
 _BASE_AFTER_META = ["enabled", "string_id", "offset", "length",
-                    "data_hex", "data_text", "context_start", "context_hex"]
+                    "data_hex", "data_text", "context_start", "context_hex",
+                    "hit_offset_in_context", "context_marked"]
+
+
+def _mark_context(ctx_hex: str, ctx_start: int, offset: int, length: int) -> str:
+    """Context as spaced hex bytes with the matched bytes wrapped in [ ], e.g.
+    ``41 42 [44 72 6F 70] 43`` — so the hit is visible in a spreadsheet cell."""
+    if not ctx_hex:
+        return ""
+    rel, n = offset - ctx_start, max(1, length)
+    out: list[str] = []
+    for i in range(len(ctx_hex) // 2):
+        b = ctx_hex[i * 2:i * 2 + 2].upper()
+        if i == rel:
+            b = "[" + b
+        if i == rel + n - 1:
+            b = b + "]"
+        out.append(b)
+    return " ".join(out)
 
 
 def _meta_keys(yres: dict[str, Any]) -> list[str]:
@@ -48,7 +68,13 @@ def _string_row(file_rel: str, m: dict[str, Any], meta_keys: list[str],
         "data_text": (s or {}).get("text", "") if s else "",
         "context_start": ctx.get("start", ""),
         "context_hex": ctx.get("data", ""),
+        "hit_offset_in_context": "",
+        "context_marked": "",
     }
+    if s and ctx.get("data"):
+        start, off = int(ctx.get("start", 0)), int(s.get("offset", 0))
+        row["hit_offset_in_context"] = off - start
+        row["context_marked"] = _mark_context(ctx["data"], start, off, int(s.get("length", 1)))
     meta = m.get("meta") or {}
     for k in meta_keys:
         row[f"meta_{k}"] = "" if meta.get(k) is None else str(meta.get(k))
