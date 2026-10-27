@@ -474,3 +474,28 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 .mcp-copy { position: absolute; top: 6px; right: 6px; }
 .ai-case-select { background: #0f141c; border: 1px solid var(--panel-border); border-radius: 8px; color: var(--text);
   padding: 7px 9px; font: inherit; font-size: 14px; max-width: 100%; min-width: 0; }
+
+
+/* IOCs tab: type filter, chips, collapsible groups */
+.ioc-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+.ioc-toolbar select, .ioc-toolbar input {
+  background: var(--panel); color: var(--text); border: 1px solid var(--panel-border);
+  border-radius: 6px; padding: 4px 8px; font: inherit; font-size: 0.9em;
+}
+.ioc-toolbar input { min-width: 220px; }
+.ioc-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 4px; }
+.ioc-chip {
+  background: var(--panel); color: var(--text); border: 1px solid var(--panel-border);
+  border-radius: 999px; padding: 3px 11px; font: inherit; font-size: 0.85em; cursor: pointer;
+}
+.ioc-chip b { color: var(--accent); margin-left: 2px; }
+.ioc-chip:hover { border-color: var(--accent-dim); }
+.ioc-chip.active { border-color: var(--accent); background: var(--accent-dim); }
+.ioc-chip.empty { opacity: 0.45; }
+.ioc-group {
+  border: 1px solid var(--panel-border); border-left: 3px solid var(--accent);
+  border-radius: 8px; margin: 8px 0; background: var(--panel);
+}
+.ioc-group > summary { cursor: pointer; padding: 8px 12px; user-select: none; }
+.ioc-group[open] > summary { border-bottom: 1px solid var(--panel-border); }
+.ioc-group > table { margin: 0; }
