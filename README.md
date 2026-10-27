@@ -41,8 +41,13 @@ python run.py --port 8001     # run next to WinHound/Longanizer on another port
 
 <!-- rev: gmzpt -->
 
-Grab the latest version without git — the updater checks GitHub and updates the
-app in place, **keeping your cases, rules, settings and tools**:
+`python run.py` **checks for a new version on every start**: if there is one it
+asks `Update X.Y.Z -> A.B.C? [y/N]`, and on `y` it updates and re-provisions the
+toolchain (`install.py`) before launching, so new tools are installed
+automatically. Skip the check with `python run.py --no-update`.
+
+You can also update on demand without git — the updater checks GitHub and updates
+the app in place, **keeping your cases, rules, settings and tools**:
 
 ```bash
 python update.py            # check for a new version and update (asks first)
