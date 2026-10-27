@@ -294,7 +294,17 @@ const SEV_CLASS = { high: "bad", medium: "warn", low: "warn", info: "ok" };
 const SEV_RANK = { high: 0, medium: 1, low: 2, info: 3 };
 const IOC_TYPE_LABEL = {
   url: "URL", domain: "Domain", ipv4: "IPv4", ipv6: "IPv6", hash_like: "Hash-like",
+  email: "Email", filepath: "File path", registry_key: "Registry key",
+  named_pipe: "Named pipe", mac_address: "MAC address", command: "Command",
+  user_agent: "User agent",
 };
+// Group order and plural labels in the IOCs tab.
+const IOC_GROUPS = [
+  ["ipv4", "IPv4"], ["ipv6", "IPv6"], ["domain", "Domains"], ["url", "URLs"],
+  ["email", "Emails"], ["user_agent", "User agents"], ["filepath", "File paths"],
+  ["registry_key", "Registry keys"], ["named_pipe", "Named pipes"],
+  ["command", "Commands"], ["mac_address", "MAC addresses"], ["hash_like", "Hash-like"],
+];
 
 // Manual classification (Marks). Order shown in selectors.
 const MARK_STATES = [
@@ -623,7 +633,7 @@ function paneIocs(iocs, net) {
   const checked = {};
   ((net && net.checks) || []).forEach((c) => { checked[`${c.kind}|${c.target}`] = c; });
   const safe = iocs.iocs.filter((i) => ["domain", "ipv4", "ipv6"].includes(i.type)).map((i) => [netKindOf(i.type), i.value]);
-  const rows = iocs.iocs.map((i) => {
+  const row = (i) => {
     const kind = netKindOf(i.type);
     const done = kind && checked[`${kind}|${i.value}`];
     const nf = done ? (done.findings || []).length : 0;
@@ -631,21 +641,90 @@ function paneIocs(iocs, net) {
       + (done ? ` <button class="btn btn-ghost btn-sm" type="button" data-pivot="checks"><span class="badge badge-${nf ? "bad" : "ok"}">${nf} finding(s)</span></button>` : "") : "";
     const where = (i.occurrences || []).map((o) => `${o.module}/${o.location}`);
     const uniq = [...new Set(where)].slice(0, 4).join(", ");
-    return `<tr>
-      <td>${escapeHtml(IOC_TYPE_LABEL[i.type] || i.type)}</td>
+    const hay = `${i.value} ${where.join(" ")}`.toLowerCase();
+    return `<tr data-ioc-row data-hay="${escapeHtml(hay)}">
       <td class="mono">${escapeHtml(i.value)}</td>
       <td>${i.count}</td>
       <td class="mono" title="${escapeHtml(where.join(", "))}">${escapeHtml(uniq)}</td>
       <td>${addMarkCell("ioc", `${IOC_TYPE_LABEL[i.type] || i.type}: ${i.value}`, "iocs",
         (i.occurrences || []).slice(0, 5).map((o) => `${o.module}/${o.location}: ${o.context || ""}`).join("\n"))}</td>
-      <td>${netCell}</td>
+      ${kind ? `<td>${netCell}</td>` : ""}
     </tr>`;
-  }).join("");
-  const c = iocs.counts || {};
-  const bits = Object.keys(c).filter((k) => k !== "total").map((k) => `${c[k]} ${k}`);
-  const allBtn = safe.length ? ` <button class="btn btn-ghost btn-sm" type="button" data-net-all='${escapeHtml(JSON.stringify(safe))}' title="Domains: DNS, RDAP, certificates and a visit to the website (screenshot, page). IPs: owner, ASN, Tor. Through the proxy.">Check all domains &amp; IPs</button>` : "";
-  return `<p class="hint-line">${escapeHtml(bits.join(" · "))}${allBtn}</p>` +
-    table(["Type", "Value", "Count", "Provenance", "Mark", "Network"], rows);
+  };
+  // group by type, known types first in a fixed order, then any new type
+  const byType = {};
+  iocs.iocs.forEach((i) => { (byType[i.type] = byType[i.type] || []).push(i); });
+  const order = IOC_GROUPS.filter(([t]) => byType[t]);
+  Object.keys(byType).filter((t) => !IOC_GROUPS.some(([g]) => g === t)).sort()
+    .forEach((t) => order.push([t, IOC_TYPE_LABEL[t] || t]));
+  const total = iocs.iocs.length;
+  const opts = `<option value="">All types (${total})</option>` +
+    order.map(([t, l]) => `<option value="${escapeHtml(t)}">${escapeHtml(l)} (${byType[t].length})</option>`).join("");
+  const chips = order.map(([t, l]) =>
+    `<button type="button" class="ioc-chip" data-ioc-chip="${escapeHtml(t)}">${escapeHtml(l)} <b data-ioc-count="${escapeHtml(t)}">${byType[t].length}</b></button>`).join("");
+  const groups = order.map(([t, l]) => `<details class="ioc-group" data-ioc-group="${escapeHtml(t)}" open>
+      <summary><b>${escapeHtml(l)}</b> <span class="muted">· <span data-ioc-gcount="${escapeHtml(t)}">${byType[t].length}</span></span></summary>
+      ${table(["Value", "Count", "Provenance", "Mark"].concat(netKindOf(t) ? ["Network"] : []), byType[t].map(row).join(""))}
+    </details>`).join("");
+  const allBtn = safe.length ? `<button class="btn btn-ghost btn-sm" type="button" data-net-all='${escapeHtml(JSON.stringify(safe))}' title="Domains: DNS, RDAP, certificates and a visit to the website (screenshot, page). IPs: owner, ASN, Tor. Through the proxy.">Check all domains &amp; IPs</button>` : "";
+  return `<div class="ioc-pane">
+    <div class="ioc-toolbar">
+      <select class="ioc-type">${opts}</select>
+      <input class="ioc-q" type="search" placeholder="filter values…" aria-label="Filter IOC values">
+      <button class="btn btn-ghost btn-sm ioc-reset" type="button">Reset</button>
+      ${allBtn}
+    </div>
+    <p class="hint-line ioc-summary">${total} distinct IOC(s) across ${order.length} type(s)</p>
+    <div class="ioc-chips">${chips}</div>
+    <div class="ioc-toolbar">
+      <button class="btn btn-ghost btn-sm ioc-expand" type="button">Expand all</button>
+      <button class="btn btn-ghost btn-sm ioc-collapse" type="button">Collapse all</button>
+    </div>
+    ${groups}
+    <p class="hint-line ioc-empty" hidden>No IOC matches the filter.</p>
+  </div>`;
+}
+
+function wireIocs(root) {
+  const pane = root.querySelector(".ioc-pane");
+  if (!pane) return;
+  const sel = pane.querySelector(".ioc-type"), q = pane.querySelector(".ioc-q");
+  const groups = [...pane.querySelectorAll("[data-ioc-group]")];
+  const apply = () => {
+    const type = sel.value, needle = q.value.trim().toLowerCase();
+    let shown = 0, types = 0;
+    groups.forEach((g) => {
+      const t = g.dataset.iocGroup;
+      let n = 0;
+      g.querySelectorAll("[data-ioc-row]").forEach((r) => {
+        const ok = !needle || r.dataset.hay.includes(needle);
+        r.hidden = !ok; if (ok) n++;
+      });
+      pane.querySelector(`[data-ioc-gcount="${CSS.escape(t)}"]`).textContent = n;
+      pane.querySelector(`[data-ioc-count="${CSS.escape(t)}"]`).textContent = n;
+      const chip = pane.querySelector(`[data-ioc-chip="${CSS.escape(t)}"]`);
+      chip.classList.toggle("active", type === t);
+      chip.classList.toggle("empty", n === 0);
+      const vis = n > 0 && (!type || type === t);
+      g.hidden = !vis;
+      if (vis) { shown += n; types++; }
+    });
+    pane.querySelector(".ioc-summary").textContent =
+      `${shown} distinct IOC(s) across ${types} type(s)` + (type || needle ? " (filtered)" : "");
+    pane.querySelector(".ioc-empty").hidden = shown > 0;
+  };
+  sel.addEventListener("change", apply);
+  q.addEventListener("input", apply);
+  pane.querySelector(".ioc-reset").addEventListener("click", () => { sel.value = ""; q.value = ""; apply(); });
+  pane.querySelector(".ioc-expand").addEventListener("click", () => groups.forEach((g) => { g.open = true; }));
+  pane.querySelector(".ioc-collapse").addEventListener("click", () => groups.forEach((g) => { g.open = false; }));
+  pane.querySelectorAll("[data-ioc-chip]").forEach((c) => c.addEventListener("click", () => {
+    const t = c.dataset.iocChip;
+    sel.value = sel.value === t ? "" : t;   // click again to show all
+    apply();
+    const g = pane.querySelector(`[data-ioc-group="${CSS.escape(t)}"]`);
+    if (g && sel.value) { g.open = true; g.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
+  }));
 }
 
 function paneMetadata(sem, ole, rules) {
@@ -1831,6 +1910,7 @@ function renderSubtabs() {
   wireFileActions(bodyEl, _openCaseId);
   wireAddMarks(bodyEl, _openCaseId);
   wirePivots(bodyEl);
+  wireIocs(bodyEl);
   wireNet(bodyEl, _openCaseId);
   wireUnlock(bodyEl, _openCaseId);
   wireFind(bodyEl);
