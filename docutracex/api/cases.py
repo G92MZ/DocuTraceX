@@ -129,6 +129,24 @@ async def case_report(analysis_id: str):
     return HTMLResponse(content=html)
 
 
+@router.get("/{analysis_id}/yara.csv")
+async def case_yara_csv(analysis_id: str):
+    """Download every YARA match of the case as CSV (one row per matched
+    string; UTF-8 with BOM; dynamic meta_* columns)."""
+    from fastapi.responses import Response
+
+    from .. import yara_csv
+
+    try:
+        manifest = case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    data = yara_csv.csv_bytes(analysis_id, cases_dir=settings.cases_dir)
+    name = yara_csv.filename_for(manifest["original"]["filename"])
+    return Response(content=data, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
 @router.get("/{analysis_id}/marks")
 async def get_marks(analysis_id: str) -> dict:
     """Return the case's findings each enriched with its mark, plus counts."""
