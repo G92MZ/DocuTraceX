@@ -128,7 +128,7 @@ def test_concurrency_setting_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(settings, "cases_dir", tmp_path / "cases")
     (tmp_path / "cases").mkdir()
     client = TestClient(create_app())
-    assert client.get("/api/settings/analysis").json()["concurrency"] == 4   # default
+    assert client.get("/api/settings/analysis").json()["concurrency"] == 1   # default (one analysis at a time)
     assert client.put("/api/settings/analysis", json={"concurrency": 6}).json()["concurrency"] == 6
     assert client.get("/api/settings/analysis").json()["concurrency"] == 6    # persisted
     assert client.put("/api/settings/analysis", json={"concurrency": 99}).json()["concurrency"] == 8  # clamped
