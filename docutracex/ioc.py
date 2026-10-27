@@ -222,18 +222,51 @@ def _looks_like_filename(domain: str) -> bool:
     return domain.rsplit(".", 1)[-1].lower() in _FILE_TLDS
 
 
-# URLs of the analysis tools themselves (banners, help text, tracebacks): never IOCs.
-_TOOL_URL_PREFIXES = (
-    "github.com/decalage2/", "github.com/borntyping/", "decalage.info/",
-    "www.decalage.info/", "github.com/decalage2", "pypi.org/project/oletools",
-    "pypi.org/project/colorlog", "pypi.org/project/vipermonkey",
+# URLs of the analysis tools themselves (banners, help text, tracebacks): never
+# IOCs. Matched by *project*, never by generic host: an unrelated github.com,
+# python.org or nodejs.org URL is still reported.
+_TOOL_REPOS = {  # owner or owner/repo on GitHub (github.com, raw/codeload/api)
+    "decalage2", "borntyping/python-colorlog", "didierstevens",
+    "jesparza/peepdf", "erocarrera/pefile", "mandiant/flare-floss",
+    "mandiant/capa", "mandiant/capa-rules", "virustotal/yara",
+    "virustotal/yara-python", "dissectmalware/xlmmacrodeobfuscator",
+    "nolze/msoffcrypto-tool", "teammsgextractor/msg-extractor",
+    "py-pdf/pypdf", "j4k0xb/webcrack", "connorshride/box-ps", "zrax/pycdc",
+    "leibnitz27/cfr", "fboldewin/reconstructer.org", "miurahr/py7zr",
+    "danifus/pyzipper", "clalancette/pycdlib", "astral-sh/python-build-standalone",
+    "g92mz/docutracex",
+}
+_TOOL_HOSTS = (  # hosts that belong to a tool (subdomains included)
+    "decalage.info", "didierstevens.com", "reconstructer.org", "benf.org",
+    "eternal-todo.com", "virustotal.github.io", "webcrack.netlify.app",
+    "oletools.readthedocs.io", "yara.readthedocs.io", "pypdf.readthedocs.io",
+    "msoffcrypto-tool.readthedocs.io", "pefile.readthedocs.io",
 )
+_TOOL_PYPI = {
+    "oletools", "olefile", "colorlog", "vipermonkey", "pefile", "pdfid", "peepdf",
+    "peepdf-3", "pypdf", "msoffcrypto-tool", "xlmmacrodeobfuscator",
+    "extract-msg", "yara-python", "py7zr", "pyzipper", "pycdlib", "flare-floss",
+    "flare-capa",
+}
+_GH_HOSTS = ("github.com", "www.github.com", "raw.githubusercontent.com",
+             "codeload.github.com", "objects.githubusercontent.com")
 
 
 def _is_tool_url(url: str) -> bool:
-    low = re.sub(r"(?i)^[a-z]+://", "", url).lower()
-    return low.startswith(_TOOL_URL_PREFIXES) or any(
-        x in low for x in ("/oletools", "/vipermonkey", "/colorlog"))
+    try:
+        u = urlparse(url if "://" in url else "http://" + url)
+    except ValueError:
+        return False
+    host = (u.hostname or "").lower()
+    parts = [p for p in u.path.lower().split("/") if p]
+    if host == "api.github.com" and parts[:1] == ["repos"]:
+        host, parts = "github.com", parts[1:]
+    if host in _GH_HOSTS and parts:
+        return parts[0] in _TOOL_REPOS or "/".join(parts[:2]) in _TOOL_REPOS
+    if host in ("pypi.org", "pypi.python.org") and len(parts) >= 2 \
+            and parts[0] in ("project", "pypi", "simple"):
+        return parts[1] in _TOOL_PYPI
+    return any(host == h or host.endswith("." + h) for h in _TOOL_HOSTS)
 
 
 # The app's own install path (tool output, tracebacks) is never an IOC.
