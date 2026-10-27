@@ -161,3 +161,14 @@ def test_ioc_noise_filters() -> None:
     assert not any("decalage" in u or "borntyping" in u for u in urls)
     assert r"C:\Users\Public\Documents\invoice_view.exe" in paths
     assert not any("DocuTraceX" in p or "\\x4d" in p or "\xc3" in p for p in paths)
+
+
+def test_tool_url_list_is_project_specific() -> None:
+    tool = ["https://github.com/mandiant/capa/releases", "https://raw.githubusercontent.com/DidierStevens/DidierStevensSuite/master/pdfid.py",
+            "https://codeload.github.com/decalage2/ViperMonkey/zip/master", "https://api.github.com/repos/j4k0xb/webcrack",
+            "https://pypi.org/project/oletools/", "https://blog.didierstevens.com/programs/pdf-tools/", "http://www.benf.org/other/cfr/"]
+    real = ["https://github.com/attacker-org/payloads/raw/main/a.exe", "https://raw.githubusercontent.com/evil/x/main/s.ps1",
+            "https://www.python.org/ftp/python/3.12.0/python-3.12.0-embed-amd64.zip", "https://nodejs.org/dist/v20/node.exe",
+            "https://pypi.org/project/requests-evil/", "http://billing-portal.example/oletools/x"]
+    assert all(ioc._is_tool_url(u) for u in tool)
+    assert not any(ioc._is_tool_url(u) for u in real)
