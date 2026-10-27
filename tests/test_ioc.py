@@ -172,3 +172,43 @@ def test_tool_url_list_is_project_specific() -> None:
             "https://pypi.org/project/requests-evil/", "http://billing-portal.example/oletools/x"]
     assert all(ioc._is_tool_url(u) for u in tool)
     assert not any(ioc._is_tool_url(u) for u in real)
+
+
+def test_iana_tld_validation(tmp_path, monkeypatch) -> None:
+    import shutil, pathlib
+    from docutracex import tlds
+    from docutracex.config import settings
+    monkeypatch.setattr(settings, "tools_dir", tmp_path)
+    text = "obj at cfg.zz and row.qq; real evil.sbs, a.b.ru, mail x@evil.zz y@pay.sbs and billing-portal.example"
+    # without the IANA file: built-in fallback (any 2-letter TLD passes)
+    assert tlds.status()["source"] == "builtin"
+    assert ("domain", "cfg.zz") in {(i["type"], i["value"]) for i in ioc.extract(
+        [{"module": "word", "location": "text", "text": text}])["iocs"]}
+    dest = tlds.path(); dest.parent.mkdir(parents=True)
+    shutil.copy(pathlib.Path(__file__).parent / "data" / "tlds-alpha-by-domain.txt", dest)
+    st = tlds.status()
+    assert st["source"] == "iana" and st["count"] > 100
+    vals = {(i["type"], i["value"]) for i in ioc.extract(
+        [{"module": "word", "location": "text", "text": text}])["iocs"]}
+    doms = {v for t, v in vals if t == "domain"}
+    emails = {v for t, v in vals if t == "email"}
+    assert "cfg.zz" not in doms and "row.qq" not in doms
+    assert {"evil.sbs", "a.b.ru", "billing-portal.example"} <= doms
+    assert "y@pay.sbs" in emails and "x@evil.zz" not in emails
+
+
+def test_tlds_refresh_api(tmp_path, monkeypatch) -> None:
+    from fastapi.testclient import TestClient
+    from docutracex import tlds
+    from docutracex.app import create_app
+    from docutracex.config import settings
+    monkeypatch.setattr(settings, "tools_dir", tmp_path)
+    monkeypatch.setattr(tlds, "download", lambda proxy=None: {"source": "iana", "count": 1500})
+    c = TestClient(create_app())
+    assert c.post("/api/settings/tlds/refresh").json()["count"] == 1500
+    assert c.get("/api/settings/network").json()["tlds"]["source"] == "builtin"
+
+    def boom(proxy=None):
+        raise OSError("offline")
+    monkeypatch.setattr(tlds, "download", boom)
+    assert c.post("/api/settings/tlds/refresh").status_code == 502

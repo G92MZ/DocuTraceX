@@ -35,7 +35,9 @@ async def put_analysis(payload: dict = Body(...)) -> dict:
 async def get_network() -> dict:
     from ..netcheck import freeproxy, ipinfo, shot
 
-    return {**appsettings.public_network(), "ipdb": ipinfo.db_status(),
+    from .. import tlds
+
+    return {**appsettings.public_network(), "ipdb": ipinfo.db_status(), "tlds": tlds.status(),
             "chromium": shot.browsers_path().is_dir(), "free_lists": freeproxy.status()}
 
 
@@ -95,3 +97,14 @@ async def free_proxy(payload: dict = Body(default={})) -> dict:
     except Exception as exc:  # noqa: BLE001  (list download failed, offline…)
         raise HTTPException(status_code=502, detail=f"free proxy list unavailable: {exc}") from exc
     return {"found": found, **appsettings.public_network()}
+
+
+@router.post("/tlds/refresh")
+async def refresh_tlds() -> dict:
+    """Download the IANA TLD list again (through the HTTP proxy if one is set)."""
+    from .. import tlds
+
+    try:
+        return await asyncio.to_thread(tlds.download, appsettings.proxy_url())
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Could not download the IANA list: {exc}") from exc

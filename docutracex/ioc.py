@@ -18,6 +18,8 @@ from typing import Any
 from pathlib import Path
 from urllib.parse import urlparse
 
+from . import tlds
+
 # --- Patterns ---------------------------------------------------------------
 
 _URL_RE = re.compile(r"\b(?:https?|ftp)://[^\s\"'<>)\]}]+", re.IGNORECASE)
@@ -133,18 +135,7 @@ _FILE_TLDS = {
 
 _CONTEXT = 64
 
-_GENERIC_TLDS = set("""
-com net org info biz edu gov mil int arpa name pro aero coop museum mobi
-asia tel travel jobs cat xyz top online site club app dev cloud store shop
-live life world today tech space website fun icu vip work link click download
-zip mov win bid loan date racing review stream trade party science cricket
-faith accountant men gdn kim ooo rest host press email news blog page one
-digital network center company solutions services agency group media studio
-support systems software services finance financial bank money pay cash
-credit capital fund academy education school college university global
-international ltd llc inc gmbh microsoft google apple amazon office windows
-live azure aws example test invalid localhost local onion
-""".split())
+# TLDs come from the official IANA list (see tlds.py).
 
 _NAMESPACE_HOSTS = {
     "schemas.microsoft.com",
@@ -209,13 +200,15 @@ def _is_gateway(domain: str) -> bool:
 
 def _known_tld(domain: str, strict: bool = False) -> bool:
     tld = domain.rsplit(".", 1)[-1].lower()
-    if tld.startswith("xn--"):
-        return True
+    if not tlds.is_known(tld):
+        return False
     if strict:
-        return tld in _CODE_TLDS or (
+        # code (VBA/JS/...) is full of obj.member pairs: only common TLDs, or a
+        # ccTLD with at least two labels before it
+        return tld in _CODE_TLDS or tld.startswith("xn--") or (
             len(tld) == 2 and len(domain.split(".")) >= 3
         )
-    return len(tld) == 2 or tld in _GENERIC_TLDS
+    return True
 
 
 def _looks_like_filename(domain: str) -> bool:
@@ -428,7 +421,7 @@ def _scan_text(
             and "." in domain
             and ":" not in domain
             and not _valid_ipv4(domain)
-            and not (tld.isalpha() or tld.lower().startswith("xn--"))
+            and not tlds.is_known(tld)
         ):
             continue
 
@@ -483,7 +476,8 @@ def _scan_text(
 
     for match in _EMAIL_RE.finditer(text):
         email = match.group(0).rstrip(".,;:")
-        if len(email) <= 254 and len(email.split("@", 1)[0]) <= 64:
+        if (len(email) <= 254 and len(email.split("@", 1)[0]) <= 64
+                and tlds.is_known(email.rsplit(".", 1)[-1])):
             col.add(
                 "email", email.lower(), module, location,
                 _ctx(text, match.start(), match.start() + len(email)),

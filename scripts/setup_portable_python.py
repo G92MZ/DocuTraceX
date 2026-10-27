@@ -420,6 +420,32 @@ def install_ipdb(force: bool = False) -> bool:
     return ok
 
 
+IANA_DIR = TOOLS / "iana"
+IANA_TLDS_URL = "https://data.iana.org/TLD/tlds-alpha-by-domain.txt"
+
+
+def install_tlds(force: bool = False) -> bool:
+    """Official IANA TLD list into tools/iana/ (IOC domain validation).
+    Refreshed when older than ~30 days; on failure the app falls back to a
+    built-in list, so this never blocks the install."""
+    import time as _time
+
+    dest = IANA_DIR / "tlds-alpha-by-domain.txt"
+    if dest.is_file() and not force and _time.time() - dest.stat().st_mtime < 30 * 86400:
+        return True
+    try:
+        print("[>] Downloading IANA TLD list")
+        data = _get(IANA_TLDS_URL)
+        if data.count(b"\n") < 100:
+            raise ValueError("list looks empty")
+        IANA_DIR.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(data)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] IANA TLD list: {exc} (using the built-in list)")
+        return dest.is_file()
+
+
 def _ipdb_ok() -> bool:
     return all((IPDB_DIR / f"dbip-{k}-lite.mmdb").is_file() for k in ("asn", "country"))
 
@@ -925,6 +951,7 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
     install_officemalscanner()
     install_vipermonkey()
     install_ipdb()
+    install_tlds()
     install_chromium()
     _clear_mark("webcrack")   # an explicit full setup always retries these
     _clear_mark("boxps")
@@ -1044,6 +1071,7 @@ def ensure(version: str = DEFAULT_VERSION) -> bool:
             ipdb_ok = _ipdb_ok()
             chromium_ok = _chromium_ok()
             _ensure_optional()   # webcrack + box-ps (optional; marker-guarded)
+            install_tlds()       # no-op while the cached IANA list is fresh
             if deps_ok and didier_ok and oms_ok and vm_ok and ipdb_ok and chromium_ok:
                 print(f"[=] Portable Python present with tools OK at {PY_DIR}")
                 return True
