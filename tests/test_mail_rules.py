@@ -61,6 +61,7 @@ def test_official_and_unrelated_domains_not_flagged(host: str) -> None:
 
 
 def test_homoglyph_idn() -> None:
+    pytest.importorskip("confusable_homoglyphs", reason="confusable_homoglyphs not installed")
     # "pаypal" with a Cyrillic 'а'
     rules = {r for r, _s, _w in mail_rules.check_domain("xn--pypal-4ve.example")}
     assert {"idn_domain", "homoglyph_domain"} <= rules

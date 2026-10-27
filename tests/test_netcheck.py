@@ -24,6 +24,14 @@ from docutracex.netcheck import http, identity, ipinfo, page  # noqa: E402
 VICTIM = "cuentas.pagar@grupoejemplo.example"
 
 
+def _have_v8() -> bool:
+    try:
+        import STPyV8  # noqa: F401
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 @pytest.fixture(autouse=True)
 def _config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DOCUTRACEX_CONFIG_DIR", str(tmp_path / "config"))
@@ -183,7 +191,9 @@ def test_url_check_submit_and_download(lab: str, tmp_path: Path, monkeypatch: py
     assert desk["page"]["forms"][0]["inputs"][2]["value"] == c["identity"]["email"]  # kit prefilled the fake email
     assert mob["page"]["title"] == "Documento"
     rules = {f["rule"] for f in c["findings"]}
-    assert {"web_credential_form", "web_brand_impersonation", "web_cloaking", "js_sandbox_network"} <= rules
+    assert {"web_credential_form", "web_brand_impersonation", "web_cloaking"} <= rules
+    if _have_v8():   # the inline-script sandbox needs STPyV8
+        assert "js_sandbox_network" in rules
 
     netcheck.run(root, {"kind": "submit", "check_id": c["id"], "form": 0})
     c = read_json(paths.subresult("netcheck"))["checks"][0]
