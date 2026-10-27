@@ -650,6 +650,12 @@ def _email_sources(
         add("body_html_link", link)
 
 
+# Modules whose output is never mined for IOCs: YARA results echo the matched
+# bytes, rule metadata (author URLs, references) and hex context, which are
+# already covered by the parsers that read the file itself.
+_SKIP_MODULES = {"yara"}
+
+
 def sources_from_modules(
     modules: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -657,7 +663,7 @@ def sources_from_modules(
     sources: list[dict[str, Any]] = []
 
     for name, data in modules.items():
-        if not isinstance(data, (dict, list)):
+        if name in _SKIP_MODULES or not isinstance(data, (dict, list)):
             continue
 
         if name == "email":
@@ -671,6 +677,7 @@ def sources_from_modules(
                 for item in data.get("ioc_sources") or []:
                     if (
                         isinstance(item, dict)
+                        and item.get("module") not in _SKIP_MODULES
                         and isinstance(item.get("text"), str)
                         and item["text"].strip()
                     ):
