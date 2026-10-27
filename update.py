@@ -145,12 +145,16 @@ def main() -> None:
     ap.add_argument("--yes", "-y", action="store_true", help="update without asking")
     args = ap.parse_args()
 
+    # Exit codes (consumed by run.py's auto-update flow):
+    #   0 = already up to date, or the user cancelled (nothing changed)
+    #   1 = error (could not check, or the update failed)
+    #   2 = updated successfully
     loc = local_version()
     try:
         rem = remote_version()
     except Exception as e:  # noqa: BLE001
         print(f"Could not check for updates: {e}", file=sys.stderr)
-        sys.exit(2)
+        sys.exit(1)
 
     print(f"Installed: {loc}   Latest: {rem}")
     if not is_newer(rem, loc):
@@ -175,7 +179,8 @@ def main() -> None:
     if gone:
         print(f"Removed {len(gone)} unpacked sample(s): they now live in samples/samples.zip "
               "(password 'infected'); unpack with: python scripts/make_samples.py --extract")
-    print(f"Updated to {rem} ({n} files). Restart the app:  python run.py")
+    print(f"Updated to {rem} ({n} files).")
+    sys.exit(2)   # signal "updated" so run.py re-provisions the toolchain
 
 
 if __name__ == "__main__":
