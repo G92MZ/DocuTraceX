@@ -212,3 +212,16 @@ def test_tlds_refresh_api(tmp_path, monkeypatch) -> None:
         raise OSError("offline")
     monkeypatch.setattr(tlds, "download", boom)
     assert c.post("/api/settings/tlds/refresh").status_code == 502
+
+
+def test_yara_results_are_not_mined_for_iocs() -> None:
+    yara = {"scanned": [{"file": "a.bin", "matches": [{
+        "rule": "R", "meta": {"reference": "https://intel-blog.example/report", "author": "x@vendor.example"},
+        "strings": [{"id": "$u", "text": "http://yara-only.example/p", "context": {"data": "41"}}]}]}]}
+    word = {"text": "visit http://real.example/a"}
+    nested = {"ioc_sources": [{"module": "yara", "location": "x", "text": "http://nested-yara.example/q"}]}
+    vals = {i["value"] for i in ioc.extract(ioc.sources_from_modules(
+        {"yara": yara, "word": word, "nested": nested}))["iocs"]}
+    assert "http://real.example/a" in vals
+    assert not any("yara-only" in v or "intel-blog" in v or "vendor.example" in v
+                   or "nested-yara" in v for v in vals)
