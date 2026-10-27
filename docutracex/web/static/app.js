@@ -2082,7 +2082,7 @@ async function openComponents(analysisId, keepTab) {
     }
     const yara = mods.yara;
     if (yara && yara.rule_count) {
-      sections.push({ id: "yara", label: `YARA (${yara.match_count || 0})`, render: () => paneYara(yara, findings) });
+      sections.push({ id: "yara", label: `YARA (${yara.match_count || 0})`, render: () => paneYara(yara, findings, analysisId) });
     }
     const jsm = mods.javascript;
     if (jsm && (jsm.scripts || []).length) {
@@ -2517,7 +2517,7 @@ async function showYaraResults(analysisId) {
   const findings = d.findings || [];
   out.innerHTML = `<h3 class="formats-title">Results · ${escapeHtml(d.filename || "")}
       <button class="btn btn-ghost btn-sm" type="button" id="yara-open-case">Open case</button></h3>`
-    + paneYara(yara, findings);
+    + paneYara(yara, findings, analysisId);
   document.getElementById("yara-open-case").addEventListener("click", () => {
     openComponents(analysisId).then(() => {
       if ((_compState.sections || []).some((x) => x.id === "yara")) { _compState.active = "yara"; renderSubtabs(); }
@@ -2656,7 +2656,7 @@ function hexContext(x) {
   return `<pre class="hexdump">${lines.join("\n")}</pre>`;
 }
 
-function paneYara(yara, findings) {
+function paneYara(yara, findings, analysisId) {
   if (!yara) return `<p class="hint-line">YARA did not run for this case.</p>`;
   if (!yara.rule_count) return `<p class="hint-line">${escapeHtml(yara.error || "No compiled YARA rules.")} Compile rules in the YARA tab, then scan the case.</p>`;
   const scanned = yara.scanned || [];
@@ -2674,7 +2674,10 @@ function paneYara(yara, findings) {
       strings: m.strings || [], finding: byId[m.finding_id] });
   }));
   // Expand/Collapse act on the pane they live in (case view or YARA tab).
-  html += '<div class="row" style="margin:4px 0 10px"><button class="btn btn-ghost btn-sm" type="button" onclick="this.closest(\'.yara-pane\').querySelectorAll(\'details\').forEach(e=>e.open=true)">Expand all</button> <button class="btn btn-ghost btn-sm" type="button" onclick="this.closest(\'.yara-pane\').querySelectorAll(\'details.yara-card\').forEach(e=>e.open=false)">Collapse all</button></div>';
+  const exportBtn = analysisId
+    ? ` <a class="btn btn-ghost btn-sm" href="/api/cases/${encodeURIComponent(analysisId)}/yara.csv">Export CSV</a>`
+    : "";
+  html += '<div class="row" style="margin:4px 0 10px"><button class="btn btn-ghost btn-sm" type="button" onclick="this.closest(\'.yara-pane\').querySelectorAll(\'details\').forEach(e=>e.open=true)">Expand all</button> <button class="btn btn-ghost btn-sm" type="button" onclick="this.closest(\'.yara-pane\').querySelectorAll(\'details.yara-card\').forEach(e=>e.open=false)">Collapse all</button>' + exportBtn + '</div>';
   Object.values(byRule).forEach((g) => {
     const tags = g.tags.length ? ` · ${escapeHtml(g.tags.join(" "))}` : "";
     const states = g.hits.map((h) => (h.finding && h.finding.mark && h.finding.mark.state) || "unreviewed");
