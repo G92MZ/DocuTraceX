@@ -93,10 +93,10 @@ def test_floss_parsing(tmp_path, monkeypatch) -> None:
     r = pe._run_floss(sample)
     assert r["status"] == "ok"
     assert r["strings"] == ["hxxp://evil.example/a", "cmd.exe /c whoami"]
-    assert r["counts"] == {"decoded": 1, "stack": 1, "tight": 0}
+    assert r["counts"] == {"static": 0, "decoded": 1, "stack": 1, "tight": 0}
     assert r["version"] == "3.2.0"
-    assert calls[0][1:5] == ["--json", "--no", "static", "--quiet"]
-    assert calls[0][5:8] == ["--large-file", "-n", "7"]
+    assert calls[0][1:3] == ["--json", "--quiet"]          # static strings included
+    assert calls[0][3:6] == ["--large-file", "-n", "7"]
 
 
 def test_capa_parsing_skips_lib_rules(tmp_path, monkeypatch) -> None:
