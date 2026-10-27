@@ -145,3 +145,19 @@ def test_url_with_a_non_alphabetic_tld_is_not_an_ioc() -> None:
     res = ioc.extract([{"module": "vbatools", "location": "http_heuristics",
                         "text": "http://cdn.example.net2f66696c65732f7570642e62696e and https://ok.example.org/a"}])
     assert {i["value"] for i in res["iocs"]} == {"https://ok.example.org/a", "ok.example.org"}
+
+
+def test_ioc_noise_filters() -> None:
+    import importlib.util, pathlib
+    spec = importlib.util.spec_from_file_location(
+        "ms", pathlib.Path(__file__).parents[1] / "scripts" / "make_samples.py")
+    ms = importlib.util.module_from_spec(spec); spec.loader.exec_module(ms)
+    text = ms.ioc_noise_bat().decode("utf-8")
+    vals = {(i["type"], i["value"]) for i in
+            ioc.extract([{"module": "script", "location": "text", "text": text}])["iocs"]}
+    urls = {v for t, v in vals if t == "url"}
+    paths = {v for t, v in vals if t == "filepath"}
+    assert "http://billing-portal.example/inv/stage2.ps1" in urls
+    assert not any("decalage" in u or "borntyping" in u for u in urls)
+    assert r"C:\Users\Public\Documents\invoice_view.exe" in paths
+    assert not any("DocuTraceX" in p or "\\x4d" in p or "\xc3" in p for p in paths)
