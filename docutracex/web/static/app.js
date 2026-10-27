@@ -2750,8 +2750,28 @@ async function loadSettings() {
     const db = n.ipdb || {};
     document.getElementById("ipdb-line").innerHTML =
       `DB-IP Lite ASN: ${escapeHtml(db.dbip_asn || "missing")} · country: ${escapeHtml(db.dbip_country || "missing")} · iptoasn: ${escapeHtml(db.ip2asn || "missing")} · Chromium: ${n.chromium ? "tools/playwright" : "not provisioned"}<br>${escapeHtml(db.attribution || "")}`;
+    renderTlds(n.tlds);
   } catch (err) { st.textContent = "Could not load settings."; }
 }
+
+function renderTlds(t) {
+  t = t || {};
+  document.getElementById("tlds-line").textContent = t.source === "iana"
+    ? `Official IANA list: ${t.count} TLDs (updated ${t.updated}). Used to validate domains, URLs and emails in IOCs.`
+    : "IANA list not downloaded yet: using a built-in list (any 2-letter TLD + common generic ones).";
+}
+
+document.getElementById("tlds-refresh").addEventListener("click", async (ev) => {
+  const btn = ev.currentTarget, msg = document.getElementById("tlds-msg");
+  btn.disabled = true; msg.className = "status"; msg.textContent = "Downloading…";
+  try {
+    const r = await fetch("/api/settings/tlds/refresh", { method: "POST" });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    renderTlds(j); msg.className = "status ok-text"; msg.textContent = "Updated.";
+  } catch (err) { msg.className = "status bad-text"; msg.textContent = String(err.message || err); }
+  btn.disabled = false;
+});
 
 function proxyFormValues() {
   const pw = document.getElementById("proxy-pass").value;

