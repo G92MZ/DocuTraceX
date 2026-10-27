@@ -15,6 +15,7 @@ from __future__ import annotations
 import ipaddress
 import re
 from typing import Any
+from pathlib import Path
 from urllib.parse import urlparse
 
 # --- Patterns ---------------------------------------------------------------
@@ -221,6 +222,77 @@ def _looks_like_filename(domain: str) -> bool:
     return domain.rsplit(".", 1)[-1].lower() in _FILE_TLDS
 
 
+# URLs of the analysis tools themselves (banners, help text, tracebacks): never
+# IOCs. Matched by *project*, never by generic host: an unrelated github.com,
+# python.org or nodejs.org URL is still reported.
+_TOOL_REPOS = {  # owner or owner/repo on GitHub (github.com, raw/codeload/api)
+    "decalage2", "borntyping/python-colorlog", "didierstevens",
+    "jesparza/peepdf", "erocarrera/pefile", "mandiant/flare-floss",
+    "mandiant/capa", "mandiant/capa-rules", "virustotal/yara",
+    "virustotal/yara-python", "dissectmalware/xlmmacrodeobfuscator",
+    "nolze/msoffcrypto-tool", "teammsgextractor/msg-extractor",
+    "py-pdf/pypdf", "j4k0xb/webcrack", "connorshride/box-ps", "zrax/pycdc",
+    "leibnitz27/cfr", "fboldewin/reconstructer.org", "miurahr/py7zr",
+    "danifus/pyzipper", "clalancette/pycdlib", "astral-sh/python-build-standalone",
+    "g92mz/docutracex",
+}
+_TOOL_HOSTS = (  # hosts that belong to a tool (subdomains included)
+    "decalage.info", "didierstevens.com", "reconstructer.org", "benf.org",
+    "eternal-todo.com", "virustotal.github.io", "webcrack.netlify.app",
+    "oletools.readthedocs.io", "yara.readthedocs.io", "pypdf.readthedocs.io",
+    "msoffcrypto-tool.readthedocs.io", "pefile.readthedocs.io",
+)
+_TOOL_PYPI = {
+    "oletools", "olefile", "colorlog", "vipermonkey", "pefile", "pdfid", "peepdf",
+    "peepdf-3", "pypdf", "msoffcrypto-tool", "xlmmacrodeobfuscator",
+    "extract-msg", "yara-python", "py7zr", "pyzipper", "pycdlib", "flare-floss",
+    "flare-capa",
+}
+_GH_HOSTS = ("github.com", "www.github.com", "raw.githubusercontent.com",
+             "codeload.github.com", "objects.githubusercontent.com")
+
+
+def _is_tool_url(url: str) -> bool:
+    try:
+        u = urlparse(url if "://" in url else "http://" + url)
+    except ValueError:
+        return False
+    host = (u.hostname or "").lower()
+    parts = [p for p in u.path.lower().split("/") if p]
+    if host == "api.github.com" and parts[:1] == ["repos"]:
+        host, parts = "github.com", parts[1:]
+    if host in _GH_HOSTS and parts:
+        return parts[0] in _TOOL_REPOS or "/".join(parts[:2]) in _TOOL_REPOS
+    if host in ("pypi.org", "pypi.python.org") and len(parts) >= 2 \
+            and parts[0] in ("project", "pypi", "simple"):
+        return parts[1] in _TOOL_PYPI
+    return any(host == h or host.endswith("." + h) for h in _TOOL_HOSTS)
+
+
+# The app's own install path (tool output, tracebacks) is never an IOC.
+_INSTALL_DIR = str(Path(__file__).resolve().parents[1]).lower().rstrip("\\/")
+
+
+def _is_self_path(value: str) -> bool:
+    low = value.lower().replace("/", "\\")
+    inst = _INSTALL_DIR.replace("/", "\\")
+    return "docutracex" in low or (len(inst) > 3 and low.startswith(inst))
+
+
+def _plausible_component(part: str) -> bool:
+    """Reject components that are binary noise rather than real names: control
+    chars, escaped bytes (\\xNN), or mostly non-ASCII / non-alphanumeric."""
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in part):
+        return False
+    non_ascii = sum(1 for ch in part if ord(ch) > 127)
+    if non_ascii * 2 > len(part):
+        return False
+    if part.startswith("%") and part.endswith("%"):
+        return True
+    good = sum(1 for ch in part if ch.isalnum() or ch in " ._-$()~[]{}#@&+,'!")
+    return good * 10 >= len(part) * 8
+
+
 def _valid_filepath(value: str) -> bool:
     """Validate a Windows path candidate without restricting scan sources.
 
@@ -234,6 +306,9 @@ def _valid_filepath(value: str) -> bool:
     value = value.strip().rstrip(".,;:)]}")
 
     if not value or any(ch in value for ch in '<>"|?*'):
+        return False
+    # escaped byte runs (\x4d\x5a...) are binary noise, not a path
+    if re.search(r"(?i)(\\x[0-9a-f]{2}){2}", value):
         return False
 
     # Absolute drive path, e.g. C:\\Windows\\cmd.exe
@@ -259,7 +334,7 @@ def _valid_filepath(value: str) -> bool:
 
     for part in components:
         # A colon inside a filename/directory component is invalid
-        if ":" in part or any(ord(ch) < 32 for ch in part):
+        if ":" in part or not _plausible_component(part):
             return False
 
         # Windows conventional file/directory components cannot end in a space or dot
@@ -344,7 +419,7 @@ def _scan_text(
         url_spans.append((match.start(), match.start() + len(url)))
         domain = _domain_of(url)
 
-        if domain in _NAMESPACE_HOSTS:
+        if domain in _NAMESPACE_HOSTS or _is_tool_url(url):
             continue
 
         tld = (domain or "").rsplit(".", 1)[-1]
@@ -460,6 +535,7 @@ def _scan_text(
             value.endswith("\\")
             or len(value) < 4
             or not _valid_filepath(value)
+            or _is_self_path(value)
         ):
             continue
 
