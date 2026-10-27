@@ -88,6 +88,16 @@ def test_yara_csv_export(client: TestClient) -> None:
     assert row["string_id"] == "$marker"
     assert row["meta_description"] == "test dropper" and row["meta_severity"] == "high"
     assert row["data_text"].strip() and row["offset"] != ""
+    # the hit is marked inside the context hex
+    assert row["hit_offset_in_context"] == str(int(row["offset"]) - int(row["context_start"]))
+    marked = "[" + " ".join(f"{b:02X}" for b in b"DropMarker") + "]"
+    assert marked in row["context_marked"]
+
+
+def test_mark_context_unit() -> None:
+    from docutracex.yara_csv import _mark_context
+    assert _mark_context("41424472436f", 0, 2, 2) == "41 42 [44 72] 43 6F"
+    assert _mark_context("4142", 16, 17, 1) == "41 [42]"
 
 
 def test_yara_csv_header_only_when_no_matches(client: TestClient) -> None:
