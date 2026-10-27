@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from docutracex.config import settings
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import pdfkit as pk  # noqa: E402
@@ -48,6 +50,9 @@ def test_lure_rules_and_tools(lure: Path) -> None:
     assert "powershell" in launch["evidence"]
     assert [r["active"] for r in res["revisions"]][1] == ["/JS", "/JavaScript", "/OpenAction"]
     # Tools ran and kept their output; pdf-parser only for keywords present.
+    pytest.importorskip("peepdf", reason="peepdf-3 not installed")
+    if not (settings.tools_dir / "didier" / "pdf-parser.py").is_file():
+        pytest.skip("Didier Stevens pdf-parser/pdfid not provisioned")
     assert res["peepdf"]["versions"] and res["tools"]["peepdf"]["returncode"] == 0
     assert "pdf-parser /Launch" in res["tools"] and "pdf-parser /GoToR" not in res["tools"]
     assert "pdfid -e" in res["tools"]
