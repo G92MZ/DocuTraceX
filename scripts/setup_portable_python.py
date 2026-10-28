@@ -998,7 +998,9 @@ src, dst = Path(sys.argv[1]), Path(sys.argv[2])
 boosters = Only(io.BytesIO(src.read_bytes())).load()
 dst.mkdir(parents=True, exist_ok=True)
 for i, b in enumerate(boosters):
-    (dst / f"{i:03d}.txt").write_text(b.model_to_string(), encoding="utf-8")
+    # bytes, not text: on Windows write_text would turn \n into \r\n and break the
+    # byte offsets LightGBM keeps in tree_sizes=
+    (dst / f"{i:03d}.txt").write_bytes(b.model_to_string().encode("utf-8"))
 print(len(boosters))
 """
 

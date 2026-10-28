@@ -201,13 +201,30 @@ def _resolve_hashed(raw: dict[str, Any]) -> dict[str, list[str]]:
 
 # --- family / tags (reconstructed label maps) ------------------------------------------
 
+def _model_text(f: Path) -> str:
+    """A text booster with LF line ends. LightGBM locates each tree by the byte
+    sizes in its ``tree_sizes=`` header, so a file written with CRLF (tag models
+    converted on Windows by installs before 1.60.2) fails with "Model format
+    error, expect a tree here" — or aborts the process. Read in text mode
+    (CRLF → LF) and repair the file on disk once."""
+    raw = f.read_bytes()
+    if b"\r\n" not in raw:
+        return raw.decode("utf-8")
+    text = raw.replace(b"\r\n", b"\n").decode("utf-8")
+    try:
+        f.write_bytes(text.encode("utf-8"))
+    except OSError:
+        pass
+    return text
+
+
 def _load_extra(mdir: Path, lgb: Any) -> dict[str, Any]:
     """Tag models (one booster per output, text) and the optional family model."""
     extra: dict[str, Any] = {}
     for k in TAG_KINDS:
         files = sorted((mdir / "tags" / k).glob("*.txt"))
         if files:
-            extra[k] = [lgb.Booster(model_file=str(f)) for f in files]
+            extra[k] = [lgb.Booster(model_str=_model_text(f)) for f in files]
     fam = mdir / "EMBER2024_family.model"
     if fam.is_file():
         extra["family"] = lgb.Booster(model_file=str(fam))
