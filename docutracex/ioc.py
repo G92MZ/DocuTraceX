@@ -286,8 +286,15 @@ def _is_tool_url(url: str) -> bool:
 _INSTALL_DIR = str(Path(__file__).resolve().parents[1]).lower().rstrip("\\/")
 
 
+# Paths the JS sandbox's WSH emulation invents (the script's own location):
+# artefacts of the emulation, never indicators of the sample.
+_EMULATOR_PATHS = {"c:\\users\\user\\downloads\\invoice.js"}
+
+
 def _is_self_path(value: str) -> bool:
     low = value.lower().replace("/", "\\")
+    if low in _EMULATOR_PATHS:
+        return True
     inst = _INSTALL_DIR.replace("/", "\\")
     return "docutracex" in low or (len(inst) > 3 and low.startswith(inst))
 

@@ -57,7 +57,11 @@ def _arithmetic_literals(code: str) -> dict | None:
                  count=len(ms), lines=sorted(set(lines))[:50])
 
 
-_ESC_LIT = re.compile(r"""(["'])((?:\\x[0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}|\\.|(?!\1)[^\\\n])*)\1""")
+# A string literal, in linear time: each step is either one escape (``\\.``)
+# or one plain char — never two ways to match the same text, so an unclosed
+# string (a script cut at a size limit) cannot trigger exponential backtracking.
+# The \\xNN / \\uNNNN escapes are counted afterwards with _ESC_ONE.
+_ESC_LIT = re.compile(r"""(["'])((?:\\.|(?!\1)[^\\\n])*)\1""")
 _ESC_ONE = re.compile(r"\\x[0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}")
 _VAR_BEFORE = re.compile(r"(?:\b(?:var|let|const)\s+)?([A-Za-z_$][\w$]*)\s*(?:=|:)\s*$")
 
@@ -110,7 +114,7 @@ def xor_functions(code: str) -> list[dict]:
     return out
 
 
-_IIFE_STR = re.compile(r"\}\s*\)?\s*\(\s*(['\"])((?:\\.|(?!\1).){80,}?)\1\s*\)", re.DOTALL)
+_IIFE_STR = re.compile(r"\}\s*\)?\s*\(\s*(['\"])((?:\\.|(?!\1)[^\\\n]){80,}?)\1\s*\)")
 
 
 def _iife_string(code: str) -> dict | None:

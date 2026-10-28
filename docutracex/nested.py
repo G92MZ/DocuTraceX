@@ -453,8 +453,14 @@ def merge(base: dict[str, Any] | None, extra: dict[str, Any]) -> dict[str, Any]:
     if not base or not base.get("tree"):
         return extra
     out = dict(base)
-    out["tree"] = list(base.get("tree") or []) + list(extra.get("tree") or [])
-    out["ioc_sources"] = list(base.get("ioc_sources") or []) + list(extra.get("ioc_sources") or [])
+    # A re-analysis recomputes the decrypted stages: drop the previous run's
+    # (top-level nodes carrying ``decrypted_from``) so they are not listed twice.
+    old = [n for n in base.get("tree") or [] if not n.get("decrypted_from")]
+    out["tree"] = old + list(extra.get("tree") or [])
+    stale = {n.get("filename") for n in base.get("tree") or [] if n.get("decrypted_from")}
+    keep = [x for x in base.get("ioc_sources") or []
+            if not any(str(x.get("location", "")).startswith(f) for f in stale if f)]
+    out["ioc_sources"] = keep + list(extra.get("ioc_sources") or [])
     flat: list[dict[str, Any]] = []
     _flatten(out["tree"], flat)
     out["findings"] = flat
