@@ -2157,7 +2157,7 @@ let _openViewId = null;   // a nested child opened like a case (null = the case 
 function childTabKind(n) {
   const name = (n.filename || "").toLowerCase();
   switch (n.kind) {
-    case "binary": return name.endsWith(".msi") ? "MSI" : "PE";
+    case "binary": return n.format || (name.endsWith(".msi") ? "MSI" : "PE");
     case "pdf": return "PDF";
     case "ooxml": case "ole": return "Office";
     case "rtf": return "RTF";
@@ -2477,8 +2477,15 @@ async function openComponents(analysisId, keepTab, viewId) {
       if (!viewId) {
         // a direct tab per FIRST-level child that has its own analysis
         // (deeper ones: "Open analysis" in the Nested tree)
-        (nested.tree || []).filter((n) => n.view_id && childTabKind(n)).forEach((n) => {
-          sections.push({ id: `child-${n.view_id}`, label: `${childTabKind(n)} · ${n.filename}`, openView: n.view_id });
+        // same file name twice (lib/arm64-v8a/libapp.so, lib/armeabi-v7a/libapp.so):
+        // say which one by its folder
+        const kids = (nested.tree || []).filter((n) => n.view_id && childTabKind(n));
+        const seen = {};
+        kids.forEach((n) => { seen[n.filename] = (seen[n.filename] || 0) + 1; });
+        kids.forEach((n) => {
+          const dir = seen[n.filename] > 1 ? ((n.member || n.stored_path || "").replace(/\\/g, "/").split("/").slice(-2, -1)[0] || "") : "";
+          sections.push({ id: `child-${n.view_id}`, label: `${childTabKind(n)} · ${n.filename}${dir ? ` · ${dir}` : ""}`,
+                          openView: n.view_id });
         });
       }
     }
