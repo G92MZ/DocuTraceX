@@ -155,7 +155,7 @@ def annotate(modules: dict[str, Any], paths: CasePaths) -> set[str]:
 # Folders under extracted/ that the app itself writes (code dumps, recovered
 # stages): input collectors must not read them back as if they came from the
 # sample, or every re-run re-analyses the previous run's output.
-OWN_OUTPUT_DIRS = ("code", "stages", "unpacked")   # unpacked: scanned as nested children
+OWN_OUTPUT_DIRS = ("code", "stages", "unpacked", "debloated")   # scanned as nested children
 
 
 def input_files(extracted_dir: Path, limit: int) -> list[Path]:

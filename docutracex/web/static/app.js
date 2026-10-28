@@ -1844,7 +1844,8 @@ function wireInnerTabs(root) {
 const _TOOL_STATUS = { ok: ["ok", "ran"], skipped: ["skip", "skipped"], not_provisioned: ["off", "not provisioned"],
                        not_installed: ["off", "not installed"], timeout: ["bad", "timeout"], error: ["bad", "error"],
                        unpacked: ["ok", "unpacked"], none: ["ok", "not packed"], detected: ["skip", "detected"],
-                       failed: ["bad", "failed"], no_static: ["bad", "protector"] };
+                       failed: ["bad", "failed"], no_static: ["bad", "protector"],
+                       debloated: ["bad", "padded"], clean: ["ok", "no padding"] };
 function toolTab(id, label, rec, html) {
   const st = rec ? (_TOOL_STATUS[rec.status] || ["off", rec.status || ""]) : null;
   const line = rec ? `<p class="hint-line">${escapeHtml(peToolLine(rec))}</p>` : "";
@@ -1913,6 +1914,17 @@ function paneImportsExports(it) {
   return head + imps + fallback + delay + (exps ? `<h4>Exports</h4>${exps}` : "");
 }
 
+function paneDebloat(d) {
+  if (!d) return "";
+  const mb = (n) => (n == null ? "" : n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${(n / 1024).toFixed(1)} KB`);
+  const rows = kv([["Status", d.status], ["Method", d.method], ["Size before", mb(d.size_before)],
+                   ["Size after", mb(d.size_after)], ["Junk removed", mb(d.removed)]]);
+  const hint = d.status === "debloated"
+    ? `<p class="hint-line">Binary padding (T1027.001) stripped with debloat. The real binary is analysed as a child — see the <strong>Nested</strong> tab (recipe <span class="mono">debloat → ${escapeHtml(d.method || "")}</span>); unpacking, FLOSS and capa run there.</p>`
+    : `<p class="hint-line">debloat looks for padding (overlay junk, bloated sections/resources, junk after the signature) on PEs of 1 MB or more.</p>`;
+  return hint + rows;
+}
+
 function paneUnpack(up) {
   if (!up) return "";
   const det = itable(["Packer / installer", "Detected by", "Evidence"], (up.detected || []).map((h) => [h.label, h.by, h.evidence]));
@@ -1946,6 +1958,8 @@ function panePeItem(it, n, fileRec) {
         + (lf && lf.status === "ok" && lf.format === "PE" ? `<h4>LIEF flags</h4>${itable(["Section", "Offset", "Flags"], (lf.sections || []).map((s) => [s.name, s.offset, (s.flags || []).join(" ")]))}` : "") },
     { id: "imports", label: "Imports / Exports", html: paneImportsExports(it) },
     lf ? toolTab("lief", "LIEF", lf, paneLief(lf) + netFindingsList(byTool("lief"))) : null,
+    it.debloat ? toolTab("debloat", "Debloat", { status: it.debloat.status, detail: it.debloat.detail },
+                         paneDebloat(it.debloat) + netFindingsList(byTool("debloat"))) : null,
     it.unpack ? toolTab("unpack", "Packer / unpack", { status: it.unpack.status,
                           detail: it.unpack.detail || (it.unpack.status === "none" ? "no packer detected" : "") },
                         paneUnpack(it.unpack) + netFindingsList(byTool("unpack"))) : null,

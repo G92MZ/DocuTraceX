@@ -115,8 +115,9 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
             tools_budget_ok: bool = True) -> dict[str, Any]:
     """Static PE triage. ``run_tools`` enables the external tools (DIE, the
     unpackers, FLOSS, capa); ``unpack_dir`` is where a packed/installer PE is
-    unpacked (its files come back in ``item["_unpacked_files"]`` — the caller
-    pops them and scans them as children). ``tools_budget_ok=False`` skips
+    unpacked, and a padded PE debloated, next to it: the resulting files come
+    back in ``item["_children"]`` (``{path, filename, origin, recipe,
+    source}``) — the caller pops them and scans them as nested children. ``tools_budget_ok=False`` skips
     FLOSS/capa (used for the Nth nested PE so a big installer can't eat the
     whole case time limit)."""
     item: dict[str, Any] = {"kind": "pe", "file": rel, "findings": []}
@@ -283,11 +284,34 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
         if p.get("path"):
             strings_for_ioc.append(p["path"])
 
+    # --- binary padding (T1027.001): strip the junk first; the real binary is
+    # a nested child where the whole pipeline (unpack, FLOSS, capa…) runs.
+    children: list[dict[str, Any]] = []
+    deb: dict[str, Any] = {}
+    if unpack_dir is not None and run_tools:
+        from . import debloat_pe
+        sha12 = hashlib.sha256(blob).hexdigest()[:12]
+        out = unpack_dir.parent / "debloated" / sha12 / Path(rel).name
+        try:
+            deb = debloat_pe.run(path, out)
+        except Exception as exc:  # noqa: BLE001  (never break the PE triage)
+            deb = {"status": "error", "detail": str(exc)}
+        item["debloat"] = deb
+        if deb.get("status") == "debloated":
+            f.append(debloat_pe.finding(deb, loc))
+            children.append({"path": str(out), "filename": Path(rel).name, "source": "debloat",
+                             "origin": f"debloated {Path(rel).name} ({deb.get('method')})",
+                             "recipe": ["debloat", str(deb.get("method") or "")]})
+    bloated = deb.get("status") == "debloated"
+
     # --- packer / installer: detect, then unpack STATICALLY (first, so the real
     # code is what FLOSS/capa/YARA/IOCs see). PyInstaller has its own pipeline.
     is_pyi = _is_pyinstaller(path)
     up: dict[str, Any] = {}
-    if not is_pyi:
+    if bloated:
+        item["unpack"] = {"status": "skipped", "detail": "bloated: unpacking runs on the debloated child (Nested)",
+                          "detected": [], "files": []}
+    elif not is_pyi:
         from . import unpack
         try:
             dest = (unpack_dir / hashlib.sha256(blob).hexdigest()[:12]) if (unpack_dir and run_tools) else None
@@ -297,8 +321,10 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
             log.warning("packer detection/unpacking failed on %s: %s", rel, exc)
             up = {"status": "error", "detail": str(exc), "detected": [], "findings": []}
         files = up.pop("_files", [])
-        if files:
-            item["_unpacked_files"] = files
+        for fp, fn in files:
+            children.append({"path": fp, "filename": Path(fn).name, "source": "unpack",
+                             "origin": f"unpacked from {Path(rel).name} ({up.get('tool') or up.get('family')})",
+                             "recipe": ["unpack", str(up.get("family") or up.get("tool") or "")]})
         for x in up.get("findings", []):
             x["location"] = loc
             f.append(x)
@@ -307,7 +333,10 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
     # --- optional external static tools: FLOSS (strings) + capa (capabilities) ---
     if run_tools:
         skip_why = ""
-        if is_pyi:
+        if bloated:
+            skip_why = ("bloated (binary padding): FLOSS/capa run on the debloated binary instead — "
+                        "see the Nested tab")
+        elif is_pyi:
             skip_why = ("PyInstaller bundle: FLOSS/capa would only see the bootloader — "
                         "the payload logic is in the Python tab")
         elif up.get("status") == "unpacked":
@@ -352,6 +381,8 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
                     + (f" [{cap['namespace']}]" if cap.get("namespace") else ""),
                     loc, f"{cap.get('matches', 0)} match(es)", attack))
 
+    if children:
+        item["_children"] = children
     item["_strings_sample"] = strings_for_ioc[:200]
     try:
         pe.close()
