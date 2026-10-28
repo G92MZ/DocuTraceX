@@ -744,12 +744,6 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                      for m in ("oletools", "vipermonkey", "javascript", "word", "excel",
                                "powerpoint", "rtf", "email", "shortcut", "msi")}
         code_mods = {k: v for k, v in code_mods.items() if v}
-        ps_res = run("powershell: extraction · layered deobfuscation",
-                     lambda: powershell.analyze(original, paths.extracted_dir, code_mods))
-        if ps_res.get("scripts"):
-            write_subresult(paths, "powershell", ps_res)
-            ran.append("powershell")
-            findings_total += ps_res.get("counts", {}).get("findings", 0)
         vbs_res = run("vbscript: extraction · .vbe decode · string deobfuscation",
                       lambda: vbscript.analyze(original, paths.extracted_dir, code_mods))
         if vbs_res.get("scripts"):
@@ -762,6 +756,14 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             write_subresult(paths, "batch", bat_res)
             ran.append("batch")
             findings_total += bat_res.get("counts", {}).get("findings", 0)
+        # PowerShell last: it also mines the commands VBScript / batch launch.
+        code_mods.update({k: v for k, v in (("vbscript", vbs_res), ("batch", bat_res)) if v.get("scripts")})
+        ps_res = run("powershell: extraction · layered deobfuscation",
+                     lambda: powershell.analyze(original, paths.extracted_dir, code_mods))
+        if ps_res.get("scripts"):
+            write_subresult(paths, "powershell", ps_res)
+            ran.append("powershell")
+            findings_total += ps_res.get("counts", {}).get("findings", 0)
         from .parsers import python as python_parser
         py_res = run("python: .py/.pyc · decompile (pycdc) / disassemble · behaviour rules",
                      lambda: python_parser.analyze(original, paths.extracted_dir, code_mods))
@@ -769,6 +771,27 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             write_subresult(paths, "python", py_res)
             ran.append("python")
             findings_total += py_res.get("counts", {}).get("findings", 0)
+
+    # Decrypted stages: what the analyzers above resolved (JS XOR results,
+    # dropped payloads, base64 blobs that are files) becomes nested children,
+    # re-analysed by whatever fits them — and recursively by the nested scanner.
+    if other_ran or scripting_file:
+        from . import decrypted, nested
+        dmods = {m: read_json(paths.subresult(m)) for m in ("javascript", "powershell", "vbscript", "batch", "python")}
+        ditems = decrypted.write(decrypted.payloads_from({k: v for k, v in dmods.items() if v}),
+                                 paths.extracted_dir / decrypted.DIRNAME, {((manifest.get("original") or {}).get("hashes") or {}).get("sha256", "")})
+        if ditems:
+            dres = run(f"decrypted: {len(ditems)} recovered stage(s) → nested analysis",
+                       lambda: nested.scan_children(ditems, paths, unlock_ctx={"user": user_pw}))
+            if dres.get("tree"):
+                prev = read_json(paths.subresult("nested"))
+                had = bool(prev and prev.get("tree"))
+                merged = nested.merge(prev, dres)
+                write_subresult(paths, "nested", merged)
+                if "nested" not in ran:
+                    ran.append("nested")
+                findings_total += merged.get("counts", {}).get("findings", 0) - (
+                    prev.get("counts", {}).get("findings", 0) if had else 0)
 
     # YARA runs only on demand (YARA tab / re-run "yara"), never automatically.
     # A previous on-demand scan of this case is kept across full re-analyses.

