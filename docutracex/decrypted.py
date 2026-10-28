@@ -100,26 +100,156 @@ def _inflate(raw: bytes) -> bytes | None:
     return None
 
 
-def classify(raw: bytes, how: str, origin: str, depth: int = 0) -> dict[str, Any] | None:
+_NUM = r"(?:0x[0-9A-Fa-f]{1,2}|\d{1,3})"
+_ARR = re.compile(r"(?:@\(|\[|\(|Array\()\s*(" + _NUM + r"(?:\s*,\s*" + _NUM + r"){0,63})\s*[\])]")
+_STR = re.compile(r"""["']([^"'\r\n]{4,64})["']""")
+
+
+def harvest_keys(code: str) -> dict[str, list[bytes]]:
+    """Candidate key material written in a script: byte arrays (1–64 bytes)
+    and short string literals. Used to try to decrypt opaque blobs."""
+    arrays: list[bytes] = []
+    for m in _ARR.finditer(code or ""):
+        try:
+            vals = [int(x, 16) if x.lower().startswith("0x") else int(x, 10)
+                    for x in re.split(r"\s*,\s*", m.group(1))]
+        except ValueError:
+            continue
+        if all(0 <= v <= 255 for v in vals) and 1 <= len(vals) <= 64:
+            b = bytes(vals)
+            if b not in arrays:
+                arrays.append(b)
+    strings: list[bytes] = []
+    for m in _STR.finditer(code or ""):
+        t = m.group(1)
+        if len(set(t)) < 3 or " " in t.strip() and len(t) > 40:
+            continue
+        for b in (t.encode("latin-1", "replace"), t.encode("utf-16-le")):
+            if b not in strings:
+                strings.append(b)
+    return {"arrays": arrays[:40], "strings": strings[:60]}
+
+
+def _strong_magic(raw: bytes) -> bool:
+    """A file signature that random bytes practically never produce (2-byte
+    magics like MZ alone would, ~1/65536 per key tried)."""
+    if raw[:2] == b"MZ":
+        if b"This program" in raw[:512]:
+            return True
+        if len(raw) >= 0x40:
+            off = int.from_bytes(raw[0x3C:0x40], "little")
+            return 0 < off < len(raw) - 4 and raw[off:off + 4] == b"PE\0\0"
+        return False
+    return (raw[:4] in (b"PK\x03\x04", b"\xd0\xcf\x11\xe0") or raw[:5] == b"%PDF-" or raw[:5] == b"{\\rtf"
+            or raw[:3] == b"\x1f\x8b\x08" or raw[:20] == b"\x4c\x00\x00\x00\x01\x14\x02\x00\x00\x00\x00\x00\xc0\x00\x00\x00\x00\x00\x00\x46")
+
+
+def _good(raw: bytes) -> bool:
+    """Does a decryption attempt look right? A strong file signature, or text."""
+    if not raw:
+        return False
+    if _strong_magic(raw):
+        return True
+    t = _text_of(raw[:4096])
+    return t is not None and len(t.strip()) >= MIN_TEXT
+
+
+def _xor(data: bytes, key: bytes) -> bytes:
+    if len(key) == 1:
+        k = key[0]
+        return bytes(b ^ k for b in data)
+    return bytes(b ^ key[i % len(key)] for i, b in enumerate(data))
+
+
+def _unpad(b: bytes) -> bytes | None:
+    n = b[-1] if b else 0
+    if 1 <= n <= 16 and b.endswith(bytes([n]) * n):
+        return b[:-n]
+    return None
+
+
+def try_keys(raw: bytes, keys: dict[str, list[bytes]] | None) -> tuple[bytes, list[str]] | None:
+    """Try to decrypt an opaque blob with single-byte XOR and the key material
+    the script itself defines (repeating XOR, AES-CBC/ECB). Returns
+    (plaintext, recipe steps) for the first attempt that looks right."""
+    head = raw[:256]
+    # 1) single-byte XOR (very common for embedded PEs)
+    for k in range(1, 256):
+        if _good(_xor(head, bytes([k]))) and _good(_xor(raw[:4096], bytes([k]))):
+            return _xor(raw, bytes([k])), [f"xor(0x{k:02x})"]
+    keys = keys or {}
+    material = list(keys.get("arrays") or []) + list(keys.get("strings") or [])
+    # 2) repeating-key XOR with the script's arrays / strings
+    for key in material:
+        if len(key) >= 2 and _good(_xor(head, key)):
+            return _xor(raw, key), [f"xor(key {key[:16].hex()}{'…' if len(key) > 16 else ''})"]
+    # 3) AES with the script's 16/24/32-byte keys, IVs = its 16-byte arrays or the blob's first block
+    try:
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    except Exception:  # noqa: BLE001
+        return None
+    aes_keys = [k for k in material if len(k) in (16, 24, 32)]
+    ivs = [k for k in material if len(k) == 16]
+    if len(raw) < 32 or len(raw) % 16:
+        aes_keys = aes_keys if len(raw) % 16 == 0 or len(raw) > 16 else []
+    for key in aes_keys[:20]:
+        trials = [("cbc", iv, raw) for iv in ivs[:12]] + [("cbc-ivprefix", raw[:16], raw[16:]), ("ecb", None, raw)]
+        for mode, iv, body in trials:
+            if len(body) < 16 or len(body) % 16:
+                continue
+            try:
+                c = Cipher(algorithms.AES(key), modes.CBC(iv) if iv is not None else modes.ECB())
+                first = c.decryptor().update(body[:512])
+                if not _good(first):
+                    continue
+                full = c.decryptor().update(body)
+            except Exception:  # noqa: BLE001
+                continue
+            plain = _unpad(full) or full
+            if _good(plain):
+                step = f"aes-{len(key) * 8}-{mode.split('-')[0]}(key {key[:8].hex()}…" + (f", iv {iv[:4].hex()}…)" if iv is not None else ")")
+                return plain, [step]
+    return None
+
+
+def classify(raw: bytes, how: str, origin: str, depth: int = 0,
+             keys: dict[str, list[bytes]] | None = None,
+             recipe: list[str] | None = None) -> dict[str, Any] | None:
     """A decoded byte string as a payload: file by magic, (inflated) content,
-    text, or an opaque blob; None when it is too small to be worth a child."""
+    text, an opaque blob decrypted with the script's own keys, or an opaque
+    blob; None when it is too small to be worth a child. ``recipe`` records the
+    transformations that led here (shown on the nested child)."""
+    recipe = list(recipe or [])
     if not raw or len(raw) > MAX_BYTES:
         return None
     ext = _magic_ext(raw)
     if ext:
-        return {"how": how, "ext": ext, "data": raw, "origin": f"{origin} → {ext[1:].upper()}"}
-    inner = _inflate(raw) if depth < 2 else None
+        return {"how": how, "ext": ext, "data": raw, "origin": f"{origin} → {ext[1:].upper()}",
+                "recipe": recipe + [ext[1:]]}
+    inner = _inflate(raw) if depth < 3 else None
     if inner:
-        return classify(inner, how + "-inflated", f"{origin} → decompressed", depth + 1)
+        step = "gzip" if raw[:2] == b"\x1f\x8b" else "zlib"
+        return classify(inner, how + "-inflated", f"{origin} → decompressed", depth + 1, keys, recipe + [step])
     text = _text_of(raw)
     if text is not None:
         if len(text.strip()) < MIN_TEXT:
             return None
-        return {"how": how, "text": text, "origin": f"{origin} → text"}
+        return {"how": how, "text": text, "origin": f"{origin} → text", "recipe": recipe + ["text"]}
+    # key trials from 32 bytes (a small encrypted config is still worth it);
+    # data full of NUL bytes is not ciphertext (UTF-16 text, structures)
+    if depth < 3 and len(raw) >= 32 and raw.count(0) <= len(raw) * 0.1:
+        got = try_keys(raw, keys)
+        if got:
+            plain, steps = got
+            res = classify(plain, how + "-decrypted", f"{origin} → decrypted with {steps[0]}", depth + 1,
+                           keys, recipe + steps)
+            if res:
+                return res
     if len(raw) < MIN_BLOB:
         return None
     return {"how": how + "-blob", "ext": ".bin", "data": raw,
-            "origin": f"{origin} → opaque binary ({len(raw)} bytes, likely encrypted/compressed)"}
+            "origin": f"{origin} → opaque binary ({len(raw)} bytes, likely encrypted/compressed)",
+            "recipe": recipe + ["opaque"]}
 
 
 def _read(root: Path | None, rel: Any) -> str:
@@ -169,6 +299,8 @@ def _decode_literals(code: str) -> list[tuple[str, bytes]]:
         lit = m.group(1)
         if len(set(lit)) < 16:                 # "AAAA…", padding runs: not data
             continue
+        if lit.lower().startswith("76492d1116743f0423413b16050a5345"):
+            continue                           # an exported SecureString (PowerShell decrypts it)
         try:
             found.append(("base64", base64.b64decode(lit + "=" * (-len(lit) % 4))))
         except (binascii.Error, ValueError):
@@ -201,7 +333,7 @@ def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[s
             arg = (e.get("args") or [""])[0] if isinstance(e, dict) else ""
             if e.get("kind") == "xor" and _scripty(arg):
                 out.append({"how": f"js-xor-{e.get('name')}", "origin": f"JavaScript {loc}: XOR {e.get('name')}()",
-                            "text": arg})
+                            "text": arg, "recipe": ["js sandbox", f"{e.get('name')}() (XOR)", "text"]})
             elif e.get("kind") == "fromcharcode" and len(arg) >= 80 and _scripty(arg):
                 out.append({"how": "js-fromcharcode", "origin": f"JavaScript {loc}: String.fromCharCode", "text": arg})
         # files the script wrote (FileSystemObject / ADODB.Stream), with the
@@ -211,7 +343,8 @@ def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[s
                 name = str(e.get("name") or "")
                 ext = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name.rsplit("\\", 1)[-1] else ""
                 out.append({"how": "js-drop", "origin": f"JavaScript {loc}: wrote {name}",
-                            "text": e["args"][0], "ext": ext if 1 < len(ext) <= 6 else None})
+                            "text": e["args"][0], "ext": ext if 1 < len(ext) <= 6 else None,
+                            "recipe": ["js sandbox", f"wrote {name.rsplit(chr(92), 1)[-1]}"]})
         for t in sc.get("techniques") or []:
             if t.get("payload") and _scripty(t["payload"]):
                 out.append({"how": "js-payload", "origin": f"JavaScript {loc}: {t.get('name')}", "text": t["payload"]})
@@ -229,6 +362,7 @@ def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[s
     analysed = "\n".join(src for _k, _sc, src, _o in scripts).replace("\r", "")
     for key, sc, src, orig in scripts:
         loc = sc.get("location") or key
+        keys = harvest_keys(src + "\n" + orig)
         n = 0
         seen_lits: set[bytes] = set()
         # literals still encoded in the analysed code: every outcome is a child;
@@ -240,7 +374,8 @@ def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[s
                 if n >= PER_SCRIPT or raw in seen_lits:
                     continue
                 seen_lits.add(raw)
-                p = classify(raw, f"{key}-{kind}", f"{key} {loc}: {kind} literal")
+                p = classify(raw, f"{key}-{kind}", f"{key} {loc}: {kind} literal",
+                             keys=keys, recipe=[kind])
                 if not p:
                     continue
                 if resolved and not (p.get("ext") and p["ext"] != ".bin"):
@@ -282,7 +417,8 @@ def write(payloads: list[dict[str, Any]], dest: Path,
             (dest / name).write_bytes(raw)
         except OSError:
             continue
-        items.append({"path": str(dest / name), "filename": name, "origin": p["origin"]})
+        items.append({"path": str(dest / name), "filename": name, "origin": p["origin"],
+                      "recipe": p.get("recipe") or []})
     return items
 
 

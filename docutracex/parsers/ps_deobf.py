@@ -16,7 +16,8 @@ layers obfuscated loaders stack, statically — nothing is executed:
   [Convert]::FromBase64String('..'))))`` -> the decompressed text;
 - XOR: base64 bytes decrypted in a ``-bxor`` loop with a numeric or string key,
   and number arrays mapped through ``[char]($_ -bxor K)`` -> the plain text.
-  Each decrypted stage is put back in place so the next pass keeps peeling.
+  Each decrypted stage is put back in place so the next pass keeps peeling;
+- ``ConvertTo-SecureString -Key`` (AES) with the key in the script.
 
 ``deobfuscate(cmd)`` returns ``{changed, code, methods}``.
 """
@@ -457,6 +458,79 @@ def _t_hex_helper(code: str) -> tuple[str, int]:
     return code, n
 
 
+# ConvertTo-SecureString -Key: .NET's exported SecureString is the header
+# 76492d1116743f0423413b16050a5345 + base64(UTF-16LE "2|<base64 IV>|<hex AES-CBC
+# ciphertext>"), the plaintext UTF-16LE. With the key in the script, decryptable.
+_SS_HEADER = "76492d1116743f0423413b16050a5345"
+_SS = re.compile(
+    r"(?is)(?:(" + _STRLIT + r"|\$[\w:]+)\s*\|\s*)?ConvertTo-SecureString\s+"
+    r"(?:-String\s+)?(" + _STRLIT + r"|\$[\w:]+)?\s*-Key\s+"
+    r"(\(\s*\d+\s*\.\.\s*\d+\s*\)|@?\(\s*(?:\[byte\[\]\]\s*)?[\d,\s x0-9a-fA-F]+\)|\$[\w:]+|\(\s*\[byte\[\]\]\s*\(\s*[\d,\s]+\)\s*\))")
+
+
+def _ss_key(code: str, expr: str) -> bytes | None:
+    expr = expr.strip()
+    m = re.fullmatch(r"\(\s*(\d+)\s*\.\.\s*(\d+)\s*\)", expr)
+    if m:
+        a, b = int(m.group(1)), int(m.group(2))
+        rng = range(a, b + 1) if a <= b else range(a, b - 1, -1)
+        return bytes(x & 0xFF for x in rng)
+    nums = re.findall(r"0x[0-9a-fA-F]+|\d+", expr)
+    if not expr.startswith("$") and nums:
+        return bytes(_int(x) & 0xFF for x in nums)
+    if expr.startswith("$"):
+        return _key_bytes(code, expr)
+    return None
+
+
+def _ss_value(code: str, ref: str) -> str | None:
+    if not ref:
+        return None
+    if ref.startswith("$"):
+        m = re.search(r"(?i)" + re.escape(ref) + r"\s*=\s*(" + _STRLIT + r")", code)
+        return _lit_value(m.group(1)) if m else None
+    return _lit_value(ref)
+
+
+def securestring_decrypt(blob: str, key: bytes) -> str | None:
+    blob = re.sub(r"\s+", "", blob or "")
+    if not blob.lower().startswith(_SS_HEADER) or len(key) not in (16, 24, 32):
+        return None
+    try:
+        inner = base64.b64decode(blob[len(_SS_HEADER):] + "===").decode("utf-16-le")
+        _v, iv_b64, hexct = inner.split("|")[:3]
+        iv, ct = base64.b64decode(iv_b64), bytes.fromhex(hexct)
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        pt = Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor().update(ct)
+    except Exception:  # noqa: BLE001
+        return None
+    n = pt[-1] if pt else 0
+    if 1 <= n <= 16 and pt.endswith(bytes([n]) * n):
+        pt = pt[:-n]
+    try:
+        return pt.decode("utf-16-le")
+    except UnicodeDecodeError:
+        return None
+
+
+def _t_securestring(code: str) -> tuple[str, int]:
+    n = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal n
+        key = _ss_key(code, m.group(3))
+        val = _ss_value(code, m.group(2) or m.group(1) or "")
+        if not key or not val:
+            return m.group(0)
+        text = securestring_decrypt(val, key)
+        if text is None:
+            return m.group(0)
+        n += 1
+        return f"<# SecureString decrypted (AES key {key[:8].hex()}…) #> " + _as_lit(text)
+
+    return _SS.sub(repl, code), n
+
+
 _TRANSFORMS: list[tuple[str, Callable[[str], tuple[str, int]]]] = [
     ("encoded-command", _t_encoded_command),
     ("decompress", _t_decompress),
@@ -464,6 +538,7 @@ _TRANSFORMS: list[tuple[str, Callable[[str], tuple[str, int]]]] = [
     ("xor-char-array", _t_char_xor),
     ("xor-var-array", _t_var_xor),
     ("hex-helper", _t_hex_helper),
+    ("securestring", _t_securestring),
     ("FromBase64String", _t_frombase64),
     ("backtick-strip", _t_strip_backticks),
     ("char-code", _t_charcode),

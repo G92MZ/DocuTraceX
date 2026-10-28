@@ -317,6 +317,7 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
     # Stages this child decrypted (XOR results, dropped payloads, base64 that is
     # really a PE/ZIP…) become its children, analysed by whatever fits them.
     origins: dict[str, str] = {}
+    recipes: dict[str, list[str]] = {}
     if depth < MAX_DEPTH:
         try:
             from . import decrypted
@@ -325,6 +326,7 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
             for it in got:
                 kids.append((Path(it["path"]), it["filename"]))
                 origins[it["path"]] = it["origin"]
+                recipes[it["path"]] = it.get("recipe") or []
             if got:
                 node["decrypted"] = [{"filename": it["filename"], "origin": it["origin"]} for it in got]
         except Exception as exc:  # noqa: BLE001
@@ -377,6 +379,7 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
                 child = _scan_one(cpath, cname, paths, depth + 1, this_chain, ctx, sources_out)
                 if str(cpath) in origins:
                     child["decrypted_from"] = origins[str(cpath)]
+                    child["recipe"] = recipes.get(str(cpath)) or []
                 node["children"].append(child)
     elif kids:
         node["truncated_children"] = len(kids)
@@ -498,6 +501,7 @@ def scan_children(items: list[dict[str, Any]], paths: CasePaths,
             child = _scan_one(p, it.get("filename") or p.name, paths, 1, "", unlock_ctx, isrc)
             if it.get("origin"):
                 child["decrypted_from"] = it["origin"]
+                child["recipe"] = it.get("recipe") or []
             result["tree"].append(child)
     flat: list[dict[str, Any]] = []
     _flatten(result["tree"], flat)

