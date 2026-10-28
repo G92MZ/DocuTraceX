@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Body, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import JSONResponse
 
 from .. import analyze as analysis
@@ -335,16 +335,81 @@ async def hex_search(analysis_id: str, path: str, q: str, mode: str = "hex", sta
 
 
 @router.get("/{analysis_id}/hex/regions")
-async def hex_regions(analysis_id: str, path: str) -> dict:
-    """Named ranges (PE sections, overlay) of the case file, from Binary/LIEF."""
+async def hex_regions(analysis_id: str, path: str = Query(...)) -> dict:
+    """Structures of the file (PE headers / sections / directories / overlay,
+    ELF headers / sections) for colouring and jumps."""
+    import asyncio
+
     from .. import hexview
-    from ..storage import CasePaths, read_json
-    manifest = case_service.get_case(analysis_id)
-    _hex_target(analysis_id, path)
-    if path != (manifest.get("original") or {}).get("stored_path"):
-        return {"regions": []}
+    return {"regions": await asyncio.to_thread(hexview.structures, _hex_target(analysis_id, path))}
+
+
+@router.get("/{analysis_id}/hex/decode")
+async def hex_decode(analysis_id: str, path: str = Query(...), offset: int = Query(0, ge=0),
+                     length: int = Query(..., ge=1), recipe: str = Query("")) -> dict:
+    """Decode a selection with a recipe (``base64 | xor 41 | zlib``…): preview only."""
+    import asyncio
+
+    from .. import hexview
+    target = _hex_target(analysis_id, path)
+    try:
+        return await asyncio.to_thread(hexview.decode_preview, target, offset, length, recipe)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/{analysis_id}/hex/extracts")
+async def hex_extracts(analysis_id: str) -> dict:
+    from .. import hexview
+    from ..storage import CasePaths
+    try:
+        case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"extracts": hexview.load_extracts(CasePaths(analysis_id).root)}
+
+
+@router.post("/{analysis_id}/hex/extract")
+async def hex_extract(analysis_id: str, payload: dict = Body(...)) -> dict:
+    """Keep a selection (raw or decoded) as a nested child: recorded in the case
+    and analysed by a re-analysis (queued here), like any extracted file."""
+    from .. import hexview
+    from ..storage import CasePaths
+    from ..tasks import manager
+
+    path = str(payload.get("path") or "")
+    target = _hex_target(analysis_id, path)
     paths = CasePaths(analysis_id)
-    return {"regions": hexview.regions(paths.root, path, {"msi": read_json(paths.subresult("msi")) or {}})}
+    try:
+        rel = target.resolve().relative_to(paths.root.resolve()).as_posix()
+        spec = hexview.add_extract(paths.root, rel, int(payload.get("offset", 0)), int(payload.get("length", 0)),
+                                   str(payload.get("recipe") or ""), str(payload.get("name") or ""))
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    manifest = case_service.get_case(analysis_id)
+    task = manager.submit("rerun", analysis_id, manifest["original"]["filename"], target="full",
+                          cases_dir=settings.cases_dir)
+    return {"extract": spec, "task": task.public()}
+
+
+@router.delete("/{analysis_id}/hex/extract/{index}")
+async def hex_extract_delete(analysis_id: str, index: int) -> dict:
+    from .. import hexview
+    from ..storage import CasePaths
+    from ..tasks import manager
+    try:
+        manifest = case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    root = CasePaths(analysis_id).root
+    items = hexview.load_extracts(root)
+    if not 0 <= index < len(items):
+        raise HTTPException(status_code=404, detail="No such extraction")
+    items.pop(index)
+    hexview.save_extracts(root, items)
+    task = manager.submit("rerun", analysis_id, manifest["original"]["filename"], target="full",
+                          cases_dir=settings.cases_dir)
+    return {"extracts": items, "task": task.public()}
 
 
 @router.post("/{analysis_id}/rerun")
