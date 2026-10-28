@@ -3254,8 +3254,8 @@ function mlLabels(it) {
   const rows = kinds.map((k) => `<div><span class="hint-line">${_ML_KIND[k]}</span></div><div>${lab[k].map(chip).join(" ")}</div>`).join("");
   return `<h4>What it looks like</h4>
     <p class="hint-line">EMBER2024 family and tag models. Their output names were <b>reconstructed by DocuTraceX</b> (the authors did not publish them)
-      by matching each output with labelled EMBER2024 files. A tag is shown only above its own threshold, calibrated for precision on
-      EMBER2024 malware (tags too unreliable were dropped); green: ≥70% precision. Only for objects above the detection threshold
+      by matching each output with labelled EMBER2024 files. A tag is shown only above its own threshold — green: calibrated for ≥80% precision on
+      EMBER2024 malware with ≤0.2% firing on benign files; grey: ≥50% precision (tags less reliable than that were dropped). Only for objects above the detection threshold
       (these models were trained on malware). Hints for triage, not attribution.</p>
     <div class="kv">${rows}</div>`;
 }
