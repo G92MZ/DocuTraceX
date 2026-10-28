@@ -227,11 +227,15 @@ def analyze_msi(path: Path, rel: str) -> dict[str, Any]:
     return item
 
 
-def analyze_pe(path: Path, rel: str) -> dict[str, Any]:
-    """PE image static triage (pefile) — delegated to :mod:`pe`."""
+def analyze_pe(path: Path, rel: str, unpack_dir: Path | None = None) -> dict[str, Any]:
+    """PE image static triage (pefile) — delegated to :mod:`pe`. With
+    ``unpack_dir`` a packed/installer PE is unpacked there; its files come back
+    in ``item["_unpacked_files"]`` for the caller to scan as nested children."""
     from . import pe as pe_mod
-    return pe_mod.analyze(path, rel)
+    return pe_mod.analyze(path, rel, unpack_dir=unpack_dir)
 
+
+UNPACK_DIRNAME = "unpacked"     # extracted/unpacked/<family>/…: scanned as nested children
 
 NATIVE_MAGIC = (b"\x7fELF", b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe",
                 b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
@@ -269,7 +273,7 @@ def analyze_native(path: Path, rel: str) -> dict[str, Any]:
     return item
 
 
-def analyze_binary(path: Path, rel: str) -> dict[str, Any]:
+def analyze_binary(path: Path, rel: str, unpack_dir: Path | None = None) -> dict[str, Any]:
     """MSI, PE or ELF/Mach-O — by extension, then by magic."""
     ext = path.suffix.lower()
     if ext in _MSI_EXT:
@@ -277,7 +281,7 @@ def analyze_binary(path: Path, rel: str) -> dict[str, Any]:
     kind = native_kind(path)
     if kind == "native":
         return analyze_native(path, rel)
-    return analyze_pe(path, rel)
+    return analyze_pe(path, rel, unpack_dir)
 
 
 def analyze(original: Path, extracted_dir: Path | None = None,
@@ -285,7 +289,8 @@ def analyze(original: Path, extracted_dir: Path | None = None,
     res: dict[str, Any] = {"module": "msi", "status": "ok", "items": [], "findings": []}
     ext = original.suffix.lower()
     if ext in _MSI_EXT or ext in _PE_EXT or native_kind(original):
-        item = analyze_binary(original, original.name)
+        item = analyze_binary(original, original.name,
+                              (extracted_dir / UNPACK_DIRNAME) if extracted_dir is not None else None)
     else:
         return res
     res["items"].append(item)

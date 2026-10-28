@@ -1780,7 +1780,7 @@ function paneShortcut(scm) {
 function peToolLine(t) {
   if (!t) return "";
   const st = { ok: "ran", skipped: "skipped", not_provisioned: "not provisioned",
-               timeout: "timed out", error: "error" }[t.status] || t.status || "";
+               timeout: "timed out", error: "error", none: "not packed" }[t.status] || t.status || "";
   const dur = t.duration_s != null && t.status === "ok" ? ` · ${t.duration_s}s` : "";
   const ver = t.version ? ` · v${t.version}` : "";
   return `${st}${t.detail ? ` — ${t.detail}` : ""}${ver}${dur}`;
@@ -1842,7 +1842,9 @@ function wireInnerTabs(root) {
 }
 
 const _TOOL_STATUS = { ok: ["ok", "ran"], skipped: ["skip", "skipped"], not_provisioned: ["off", "not provisioned"],
-                       not_installed: ["off", "not installed"], timeout: ["bad", "timeout"], error: ["bad", "error"] };
+                       not_installed: ["off", "not installed"], timeout: ["bad", "timeout"], error: ["bad", "error"],
+                       unpacked: ["ok", "unpacked"], none: ["ok", "not packed"], detected: ["skip", "detected"],
+                       failed: ["bad", "failed"], no_static: ["bad", "protector"] };
 function toolTab(id, label, rec, html) {
   const st = rec ? (_TOOL_STATUS[rec.status] || ["off", rec.status || ""]) : null;
   const line = rec ? `<p class="hint-line">${escapeHtml(peToolLine(rec))}</p>` : "";
@@ -1915,7 +1917,8 @@ function paneUnpack(up) {
   if (!up) return "";
   const det = itable(["Packer / installer", "Detected by", "Evidence"], (up.detected || []).map((h) => [h.label, h.by, h.evidence]));
   const die = up.die ? `<p class="hint-line">Detect It Easy: ${escapeHtml(peToolLine(up.die))}</p>` : "";
-  const files = itable(["Unpacked file", "Size"], (up.files || []).map((f) => [f.name, f.size]));
+  const files = itable(["Unpacked file", "Size"], (up.files || []).map((f) => [f.name, f.size]))
+    + ((up.files || []).length ? `<p class="hint-line">Each unpacked file is analysed as a child — see the <strong>Nested</strong> tab (recipe <span class="mono">unpack → ${escapeHtml(up.family || up.tool || "")}</span>).</p>` : "");
   return kv([["Status", up.status], ["Detail", up.detail], ["Tool", up.tool],
              ["No static unpacker", (up.no_static || []).join(", ")]]) + die + det + files;
 }
@@ -1943,7 +1946,8 @@ function panePeItem(it, n, fileRec) {
         + (lf && lf.status === "ok" && lf.format === "PE" ? `<h4>LIEF flags</h4>${itable(["Section", "Offset", "Flags"], (lf.sections || []).map((s) => [s.name, s.offset, (s.flags || []).join(" ")]))}` : "") },
     { id: "imports", label: "Imports / Exports", html: paneImportsExports(it) },
     lf ? toolTab("lief", "LIEF", lf, paneLief(lf) + netFindingsList(byTool("lief"))) : null,
-    it.unpack ? toolTab("unpack", "Packer / unpack", { status: it.unpack.status === "unpacked" ? "ok" : (it.unpack.status === "none" ? "ok" : it.unpack.status), detail: it.unpack.detail || (it.unpack.status === "none" ? "no packer detected" : "") },
+    it.unpack ? toolTab("unpack", "Packer / unpack", { status: it.unpack.status,
+                          detail: it.unpack.detail || (it.unpack.status === "none" ? "no packer detected" : "") },
                         paneUnpack(it.unpack) + netFindingsList(byTool("unpack"))) : null,
     it.floss ? toolTab("floss", "FLOSS", it.floss, paneFloss(it)) : null,
     it.capa ? toolTab("capa", "capa", it.capa, paneCapa(it.capa)) : null,

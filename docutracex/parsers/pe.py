@@ -32,6 +32,7 @@ emulates decoding routines (vivisect) to recover strings.
 
 from __future__ import annotations
 
+import hashlib
 import math
 from pathlib import Path
 from typing import Any
@@ -289,7 +290,8 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
     if not is_pyi:
         from . import unpack
         try:
-            up = unpack.process(path, blob, pe, unpack_dir if run_tools else None,
+            dest = (unpack_dir / hashlib.sha256(blob).hexdigest()[:12]) if (unpack_dir and run_tools) else None
+            up = unpack.process(path, blob, pe, dest,
                                 use_die=run_tools)
         except Exception as exc:  # noqa: BLE001  (never break the PE triage)
             log.warning("packer detection/unpacking failed on %s: %s", rel, exc)
