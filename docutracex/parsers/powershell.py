@@ -102,16 +102,19 @@ def _sources_from_modules(modules: dict[str, Any]) -> list[tuple[str, str, str]]
         for e in (sc.get("sandbox") or {}).get("log") or []:
             if e.get("kind") in ("call", "activex"):
                 blobs.append(("JS sandbox command", loc, " ".join(e.get("args") or [])))
-            elif e.get("kind") in ("xor", "fromcharcode", "layer"):
-                # what the script decrypted / built at run time: the next stage
-                blobs.append((f"JS decrypted ({e.get('name')})", loc, " ".join(e.get("args") or [])))
-        for t in sc.get("techniques") or []:
-            if t.get("payload"):
-                blobs.append(("JS decrypted payload", loc, str(t["payload"])))
+
         for d in sc.get("decoded") or []:
             blobs.append(("JS decoded string", loc, str(d.get("decoded") or "")))
         if sc.get("code_is_deobfuscated"):
             blobs.append(("deobfuscated JS", loc, sc.get("code") or ""))
+
+    # Commands launched by VBScript / batch (WScript.Shell.Run "powershell …",
+    # cmd /c powershell …): their recovered code is mined for PowerShell.
+    for name in ("vbscript", "batch"):
+        for sc in (modules.get(name) or {}).get("scripts") or []:
+            if isinstance(sc, dict):
+                blobs.append((f"{name} command", sc.get("location") or name,
+                              str(sc.get("code") or "")))
 
     for name in ("word", "excel", "powerpoint", "rtf"):
         mod = modules.get(name) or {}

