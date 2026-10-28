@@ -102,6 +102,12 @@ def _sources_from_modules(modules: dict[str, Any]) -> list[tuple[str, str, str]]
         for e in (sc.get("sandbox") or {}).get("log") or []:
             if e.get("kind") in ("call", "activex"):
                 blobs.append(("JS sandbox command", loc, " ".join(e.get("args") or [])))
+            elif e.get("kind") in ("xor", "fromcharcode", "layer"):
+                # what the script decrypted / built at run time: the next stage
+                blobs.append((f"JS decrypted ({e.get('name')})", loc, " ".join(e.get("args") or [])))
+        for t in sc.get("techniques") or []:
+            if t.get("payload"):
+                blobs.append(("JS decrypted payload", loc, str(t["payload"])))
         for d in sc.get("decoded") or []:
             blobs.append(("JS decoded string", loc, str(d.get("decoded") or "")))
         if sc.get("code_is_deobfuscated"):
@@ -158,7 +164,8 @@ def collect(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> lis
         for cmd in _candidates(text, whole=False):
             add(origin, location, cmd)
 
-    # De-duplicate by command text.
+    # De-duplicate by command text, and drop a command already contained in a
+    # longer one (the JS sandbox logs the same stage as XOR result and as Run).
     seen: set[str] = set()
     uniq = []
     for it in items:
@@ -166,6 +173,9 @@ def collect(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> lis
         if key and key not in seen:
             seen.add(key)
             uniq.append(it)
+    keys = [it["code"].strip() for it in uniq]
+    uniq = [it for i, it in enumerate(uniq)
+            if not any(i != j and keys[i] != keys[j] and keys[i] in keys[j] for j in range(len(keys)))]
     return uniq[:_MAX_ITEMS]
 
 

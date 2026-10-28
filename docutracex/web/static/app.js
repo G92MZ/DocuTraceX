@@ -1369,6 +1369,7 @@ function jsTechniquesHtml(techs) {
       <span class="badge badge-${t.phase === "sandbox" ? "ok" : "muted"}" title="${t.phase === "sandbox" ? "Resolved by running the script in the sandbox" : "Detected by reading the original code"}">${t.phase === "sandbox" ? "sandbox" : "static"}</span>
       <span class="badge badge-${sevCls[t.severity] || "warn"}">${escapeHtml(t.severity)}</span>
       <div class="evidence mono">${escapeHtml(t.evidence || "")}</div>
+      ${t.payload && /powershell|pwsh|-enc|iex/i.test(t.payload) ? `<button class="btn btn-ghost btn-sm" type="button" data-pivot="powershell" title="The decrypted payload is analysed further (decoding, XOR, decompression, box-ps) in the PowerShell tab">↗ next stage in PowerShell</button>` : ""}
       ${t.payload ? `<details class="disclose"><summary>Payload (${t.payload.length} chars)</summary><pre class="text-sample">${escapeHtml(t.payload.slice(0, 20000))}</pre></details>` : ""}
     </li>`).join("");
   const nS = techs.filter((t) => t.phase !== "sandbox").length, nB = techs.length - nS;
