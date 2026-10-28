@@ -31,7 +31,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-MODEL_TYPES = ("Win32", "Win64", "Dot_Net", "PDF", "ELF", "PE", "all")
+MODEL_TYPES = ("Win32", "Win64", "Dot_Net", "PDF", "ELF", "APK", "PE", "all")
 THRESHOLDS_FILE = Path(__file__).with_name("ember_thresholds.json")
 LABELS_FILE = Path(__file__).with_name("ember_labels.json")
 TAG_KINDS = ("behavior", "packer", "file_property", "exploit", "group")
@@ -40,7 +40,20 @@ FAMILY_TOP = 3
 MAX_BYTES = 256 * 1024 * 1024
 TOP_N = 10
 
-_FORMAT_LABEL = {"Win32": "PE (Win32)", "Win64": "PE (Win64)", "Dot_Net": ".NET", "PDF": "PDF", "ELF": "ELF"}
+_FORMAT_LABEL = {"Win32": "PE (Win32)", "Win64": "PE (Win64)", "Dot_Net": ".NET", "PDF": "PDF", "ELF": "ELF",
+                 "APK": "APK (Android)"}
+
+
+def _is_apk(path: Path, head: bytes) -> bool:
+    """An Android package: a ZIP holding AndroidManifest.xml (and usually classes.dex)."""
+    if head[:4] != b"PK\x03\x04":
+        return False
+    try:
+        import zipfile
+        with zipfile.ZipFile(path) as z:
+            return "AndroidManifest.xml" in set(z.namelist()[:5000])
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def models_dir() -> Path:
@@ -60,9 +73,11 @@ def status() -> dict[str, Any]:
 
 
 def file_type(head: bytes, path: Path) -> str | None:
-    """EMBER model family for a file: Win32 / Win64 / Dot_Net / PDF / ELF, or None."""
+    """EMBER model family for a file: Win32 / Win64 / Dot_Net / PDF / ELF / APK, or None."""
     if head[:4] == b"\x7fELF":
         return "ELF"
+    if _is_apk(path, head):
+        return "APK"
     if head[:5] == b"%PDF-" or b"%PDF-" in head[:1024]:
         return "PDF"
     if head[:2] != b"MZ":
@@ -259,7 +274,7 @@ def _classify(paths: list[str], mdir: str) -> list[dict[str, Any]]:
             data = path.read_bytes()[:MAX_BYTES]
             ftype = file_type(data[:4096], path)
             if ftype is None:
-                out.append({**rec, "status": "unsupported", "detail": "not a PE, PDF or ELF file"})
+                out.append({**rec, "status": "unsupported", "detail": "not a PE, PDF, ELF or APK file"})
                 continue
             chain = [ftype] + (["PE"] if ftype in ("Win32", "Win64", "Dot_Net") else []) + ["all"]
             model = next((m for m in chain if (Path(mdir) / f"EMBER2024_{m}.model").is_file()), "all")
@@ -350,7 +365,7 @@ def _supported(path: Path) -> bool:
             head = fh.read(1024)
     except OSError:
         return False
-    return head[:2] == b"MZ" or head[:4] == b"\x7fELF" or b"%PDF-" in head
+    return head[:2] == b"MZ" or head[:4] == b"\x7fELF" or b"%PDF-" in head or _is_apk(path, head)
 
 
 def targets(root: Path, original: Path, nested_tree: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -407,7 +422,7 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
     tg = targets(root, original, nested_tree)
     if not tg:
         res["status"] = "not_applicable"
-        res["detail"] = "no PE, PDF or ELF object in this case"
+        res["detail"] = "no PE, PDF, ELF or APK object in this case"
         return res
     results = classify([Path(t["path"]) for t in tg])
     for t, r in zip(tg, results):
