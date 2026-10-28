@@ -583,3 +583,6 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 .ml-pos { background: #f85149; }
 .ml-neg { background: #3fb950; }
 @media (max-width: 640px) { .ml-bar { grid-template-columns: 100px 1fr 56px; } }
+.ml-help { max-width: 980px; line-height: 1.55; }
+.ml-help h4 { margin: 18px 0 6px; }
+.ml-help ul { margin: 4px 0 8px 18px; padding: 0; }

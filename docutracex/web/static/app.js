@@ -3182,7 +3182,12 @@ function paneMl(ml, findings) {
     family model: ${ml.family_model ? "installed"
       : `not installed <button class="btn btn-ghost btn-sm" type="button" data-ml-family>Download family model (459 MB)</button>
          <span class="hint-line" data-ml-family-state></span>`}</p>`;
-  if (!items.length) return head + extras + `<p class="hint-line">${escapeHtml(ml.detail || "No PE, PDF, ELF or APK object in this case.")}</p>`;
+  if (!items.length) {
+    return innerTabs("ml", [
+      { id: "results", label: "Results", html: head + extras + `<p class="hint-line">${escapeHtml(ml.detail || "No PE, PDF, ELF or APK object in this case.")}</p>` },
+      { id: "help", label: "Help", html: mlHelp(ml) },
+    ]);
+  }
   const rows = items.map((it, i) => {
     const f = byId[it.finding_id];
     const verdict = it.status !== "ok" ? `<span class="badge badge-muted">${escapeHtml(it.status)}</span>`
@@ -3201,7 +3206,10 @@ function paneMl(ml, findings) {
       <div style="padding:8px 10px">${mlDetail(it, f, pct)}</div>
     </details>`;
   }).join("");
-  return `<div class="ml-pane">${head}${extras}${rows}</div>`;
+  return innerTabs("ml", [
+    { id: "results", label: `Results (${items.length})`, html: `<div class="ml-pane">${head}${extras}${rows}</div>` },
+    { id: "help", label: "Help", html: mlHelp(ml) },
+  ]);
 }
 
 // "Download family model": background download in the web service, polled here;
@@ -3242,6 +3250,75 @@ function wireMlFamily(root) {
     poll();
   });
   poll();
+}
+
+// Help sub-tab: how the Machine Learning layer works, its measured results and limits.
+const _ML_MODEL_LABEL = { Win32: "PE · Win32", Win64: "PE · Win64", Dot_Net: ".NET", PDF: "PDF", ELF: "ELF",
+                          APK: "APK (Android)", PE: "PE (any, fallback)", all: "All types (fallback)" };
+function mlHelp(ml) {
+  const h = ml.help || {};
+  const pct = (x) => (x == null ? "—" : `${(100 * x).toFixed(1)}%`);
+  const order = ["Win32", "Win64", "Dot_Net", "PDF", "ELF", "APK", "PE", "all"];
+  const models = itable(["Model", "Threshold (1% FPR)", "Detected at 1% FPR", "Detected at 0.1% FPR", "ROC AUC", "Evasive malware caught*"],
+    order.filter((k) => (h.models || {})[k]).map((k) => {
+      const m = h.models[k];
+      return [_ML_MODEL_LABEL[k] || k, m["threshold_fpr_0.01"] != null ? m["threshold_fpr_0.01"].toFixed(4) : "—",
+              pct(m["tpr_at_fpr_0.01"]), pct(m["tpr_at_fpr_0.001"]), m.roc_auc != null ? m.roc_auc.toFixed(4) : "—",
+              pct(m.challenge_detected_at_1pct_fpr)];
+    }));
+  const labs = h.labels || {};
+  const labRows = Object.keys(_ML_KIND).filter((k) => labs[k]).map((k) => {
+    const l = labs[k];
+    return [_ML_KIND[k], `${l.outputs}`, `${l.named}`, k === "family" ? `${l.high_count || l.high.length} names, e.g. ${l.high.slice(0, 14).join(", ")}` : (l.high.join(", ") || "—"),
+            k === "family" ? "" : (l.medium.join(", ") || "—")];
+  });
+  const labels = itable(["Model", "Outputs", "Named", "High confidence", "Medium"], labRows);
+  return `<div class="ml-help">
+    <h4>What this tab does</h4>
+    <p>Every <b>PE (Win32/Win64), .NET, PDF, ELF and APK</b> object of the case — the uploaded file and every nested child
+      (extracted from archives, unpacked, debloated, decrypted, dropped) — is scored by a <b>static machine-learning classifier</b>.
+      Nothing runs: the model reads features of the file (byte statistics, strings, PE header, sections, imports/exports,
+      Rich header, signature…), the same way the analyst would, and outputs a score between 0 and 1.</p>
+    <h4>Models</h4>
+    <p>The <b>EMBER2024</b> benchmark models (Joyce et al., KDD 2025, Apache-2.0): LightGBM gradient-boosted trees trained by
+      the EMBER2024 authors on 3.2 million files first seen on VirusTotal between Sep 2023 and Dec 2024. "Malicious" means
+      detected by 5+ antivirus engines; "benign" means detected by none 30+ days later. One model per file type, each with
+      the EMBER feature extractor v3 (2,568 features) it was trained with.</p>
+    <h4>How to read a result</h4>
+    <ul>
+      <li><b>Score</b> — the model output. It is <b>not</b> a probability of being malware.</li>
+      <li><b>Threshold</b> — the score that flags 1% of benign files of that type (EMBER2024 test set). <i>Above threshold</i> = the model
+        would flag it; <i>below</i> = it would not. Thresholds were computed by DocuTraceX, not published by the authors.</li>
+      <li><b>Why</b> — TreeSHAP contributions: how much each feature block (and the top 10 features) pushed the score towards
+        malicious (red) or benign (green). Hashed features show this file's own imports, exports, sections or Rich entries.</li>
+      <li><b>What it looks like</b> — family, behaviour, packer, exploit, threat-group and file-property hints, only for objects above
+        the threshold (those models were trained on malware only).</li>
+    </ul>
+    <h4>Measured results (EMBER2024 test set, newer than the training data)</h4>
+    ${models}
+    <p class="hint-line">* Share of the EMBER2024 <b>challenge set</b> caught at the 1% FPR threshold: malware that no antivirus engine
+      detected when first seen. This is the honest figure for new or evasive samples — and why a score below the threshold
+      never means "clean".</p>
+    <h4>Family and tag hints</h4>
+    <p>The authors published these models without the list of names for their outputs. DocuTraceX <b>reconstructed</b> it on 67,806
+      labelled EMBER2024 files: each output was matched with the tag or family it responds to, and each tag got its own threshold.
+      <b>High</b> (green): ≥80% precision on malware with ≤0.2% firing on benign files. <b>Medium</b> (grey): ≥50% precision.
+      Less reliable outputs are not shown. Families: an output is named when most files of that family land on it
+      (agreement) and most files landing on it are that family (purity). Rare names are less reliable than measured.</p>
+    ${labels}
+    <p class="hint-line">Family model: ${ml.family_model ? "installed" : "not installed — use <b>Download family model</b> in Results (459 MB)"}.</p>
+    <h4>Limits</h4>
+    <ul>
+      <li>A complementary indicator, <b>not a verdict</b> and not attribution: confirm with the rest of the analysis.</li>
+      <li>Office documents, scripts, LNK, emails… are not scored (no EMBER model for them) — they are covered by the other tabs.</li>
+      <li>Packed or padded files: look at the score of the <b>unpacked / debloated</b> child too (it is in the list).</li>
+      <li>Models age: EMBER2024 data ends in Dec 2024. Newer families and techniques are less likely to be recognised.</li>
+      <li>Adversarial evasion of static ML is easy; a low score from a motivated attacker means little.</li>
+    </ul>
+    <h4>Marks and report</h4>
+    <p>Like YARA, a result is <b>not a finding</b> until you mark it (True positive, False positive…). A marked result joins Findings;
+      True positives reach the report.</p>
+  </div>`;
 }
 
 const _ML_KIND = { family: "Family", behavior: "Behaviour", packer: "Packer / protector",
