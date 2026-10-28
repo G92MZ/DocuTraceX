@@ -594,10 +594,8 @@ function wireAddMarks(root, analysisId) {
   });
 }
 
-function paneFindings(findings, ids) {
-  if (!findings.length) return `<p class="hint-line">No findings.</p>`;
-  ids = ids || (_compState.sections || []).map((s) => s.id);
-  const rows = findings.map((f) => {
+function findingRowsHtml(findings, ids) {
+  return findings.map((f) => {
     const ev = f.evidence
       ? `<div class="evidence mono" title="Matched content that produced this finding">${escapeHtml(f.evidence)}</div>` : "";
     const target = pivotTarget(f, ids);
@@ -612,7 +610,75 @@ function paneFindings(findings, ids) {
       <td>${markControlsHtml(f)}</td>
     </tr>`;
   }).join("");
-  return table(["Severity", "Source", "Rule", "Detail", "Location", "Mark"], rows);
+}
+
+const FINDING_HEADERS = ["Severity", "Source", "Rule", "Detail", "Location", "Mark"];
+let _findingsView = (() => { try { return localStorage.getItem("dtx.findingsView") || "tree"; } catch (e) { return "tree"; } })();
+
+// ctx: { filename, kind, tree } — the case file and its nested tree, so the
+// findings can be shown per file (default) or as one flat list.
+function paneFindings(findings, ids, ctx) {
+  if (!findings.length) return `<p class="hint-line">No findings.</p>`;
+  ids = ids || (_compState.sections || []).map((s) => s.id);
+  ctx = ctx || {};
+  const toggle = `<div class="findings-toolbar">
+      <span class="seg"><button type="button" class="btn btn-ghost btn-sm${_findingsView === "tree" ? " is-on" : ""}" data-fview="tree">By file</button><button type="button" class="btn btn-ghost btn-sm${_findingsView === "list" ? " is-on" : ""}" data-fview="list">List</button></span>
+      ${_findingsView === "tree" ? `<button class="btn btn-ghost btn-sm" type="button" onclick="this.closest('.subpane').querySelectorAll('details.ftree-findings').forEach(e=>e.open=true)">Expand all</button>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="this.closest('.subpane').querySelectorAll('details.ftree-findings').forEach(e=>e.open=false)">Collapse all</button>` : ""}
+    </div>`;
+  if (_findingsView !== "tree" || !(ctx.tree || []).length) {
+    return toggle + table(FINDING_HEADERS, findingRowsHtml(findings, ids));
+  }
+  // group: "nested:<a › b › c>" -> that child; everything else -> the case file
+  const byChain = {};
+  const root = [];
+  findings.forEach((f) => {
+    const loc = String(f.location || "");
+    if (loc.startsWith("nested:")) {
+      const chain = loc.slice(7).split(" › ").filter(Boolean);
+      // longest known chain prefix (a location may add a sub-part after the file)
+      for (let i = chain.length; i > 0; i--) {
+        const key = chain.slice(0, i).join(" › ");
+        if (_ftreeChains.has(key)) { (byChain[key] = byChain[key] || []).push(f); return; }
+      }
+    }
+    root.push(f);
+  });
+  const worst = (fs) => fs.some((f) => f.severity === "high") ? "bad" : (fs.length ? "warn" : "ok");
+  const card = (name, kind, fs, childrenHtml, open, extra) => {
+    const body = fs.length
+      ? `<details class="ftree-findings"${open ? " open" : ""}><summary><span class="badge badge-${worst(fs)}">${fs.length} finding(s)</span></summary>
+          ${table(FINDING_HEADERS, findingRowsHtml(fs, ids))}</details>`
+      : `<span class="badge badge-ok">no findings</span>`;
+    return `<div class="nested-card nested-${worst(fs)}">
+      <div class="nested-row"><b class="mono nested-name">${escapeHtml(name)}</b>
+        ${kind ? `<span class="badge badge-muted">${escapeHtml(kind)}</span>` : ""}${extra || ""}</div>
+      ${body}${childrenHtml ? `<div class="nested-children">${childrenHtml}</div>` : ""}</div>`;
+  };
+  const subtreeCount = (n, chain) => (byChain[chain] || []).length
+    + (n.children || []).reduce((a, c) => a + subtreeCount(c, `${chain} › ${c.filename}`), 0);
+  const node = (n, chain) => {
+    if (!subtreeCount(n, chain)) return "";       // files with nothing found below them stay in Nested
+    const kids = (n.children || []).map((c) => node(c, `${chain} › ${c.filename}`)).join("");
+    const extra = (n.decrypted_from ? `<span class="badge badge-warn">🔓 decrypted stage</span>` : "")
+      + (n.view_id ? `<button class="btn btn-sm nested-open" type="button" data-open-view="${escapeHtml(n.view_id)}" title="Open this file's own analysis (its tabs)">Open analysis ↗</button>` : "");
+    return card(n.filename, n.kind, byChain[chain] || [], kids, false, extra);
+  };
+  const kids = (ctx.tree || []).map((n) => node(n, n.filename)).join("");
+  return toggle + `<div class="nested-tree">${card(ctx.filename || "case file", ctx.kind ? `${ctx.kind} · case file` : "case file", root, kids, true)}</div>`;
+}
+
+// chains present in the current nested tree (set while building the pane)
+let _ftreeChains = new Set();
+function collectChains(tree) {
+  const out = new Set();
+  const walk = (ns, prefix) => (ns || []).forEach((n) => {
+    const c = prefix ? `${prefix} › ${n.filename}` : n.filename;
+    out.add(c);
+    walk(n.children, c);
+  });
+  walk(tree, "");
+  return out;
 }
 
 function wirePivots(root) {
@@ -1954,6 +2020,13 @@ function renderSubtabs() {
       renderSubtabs();
     });
   });
+  bodyEl.querySelectorAll("[data-fview]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      _findingsView = btn.getAttribute("data-fview");
+      try { localStorage.setItem("dtx.findingsView", _findingsView); } catch (e) { /* per-viewer preference only */ }
+      renderSubtabs();
+    });
+  });
   bodyEl.querySelectorAll("[data-open-view]").forEach((btn) => {
     btn.addEventListener("click", () => openComponents(_openCaseId, null, btn.getAttribute("data-open-view")));
   });
@@ -2311,7 +2384,9 @@ async function openComponents(analysisId, keepTab, viewId) {
     // pivot points at a tab that is actually present for this case.
     const ids = sections.map((s) => s.id);
     const fIdx = sections.findIndex((s) => s.id === "findings");
-    if (fIdx >= 0) sections[fIdx].render = () => paneFindings(findings, ids);
+    const fctx = { filename: d.filename, kind: viewId ? d.kind : "", tree: (nested && nested.tree) || [] };
+    _ftreeChains = collectChains(fctx.tree);
+    if (fIdx >= 0) sections[fIdx].render = () => paneFindings(findings, ids, fctx);
     const active = keepTab && sections.some((x) => x.id === keepTab) ? keepTab : sections[0].id;
     _compState = { sections, active, header: headerHtml, findings };
     renderSubtabs();
