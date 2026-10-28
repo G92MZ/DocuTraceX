@@ -206,6 +206,14 @@ def _valid_ipv6(value: str) -> str | None:
     return addr.compressed
 
 
+# "name.member = value" / "name.member(" right after a dotted name: code, not a host.
+_CODE_MEMBER_AFTER = re.compile(r"\s*(?:=(?!=)|\()")
+# A tool's own report of what it carved ("MD5 = '…'", "sha256: …") inside its
+# output — the app computes the hashes it needs; these are not sample content.
+_TOOL_OUTPUT_LOC = re.compile(r"(?:^|[/› ])tools/[^/]+/output$")
+_DIGEST_LABEL = re.compile(r"(?i)\b(?:md5|sha-?1|sha-?256|sha-?512|hash)\s*[:=]\s*['\"]?$")
+
+
 def _random_hex(value: str) -> bool:
     """A digest is random-looking: no long runs of one nibble (``00000000``,
     ``ffffffff`` — padding in a hex dump) and enough distinct hex digits."""
@@ -473,6 +481,11 @@ def _scan_text(
         # prose, not a command line ("PowerShell deobfuscated before analysis")
         if len(args) >= 2 and all(re.fullmatch(r"[a-z]{3,}", w) for w in args[:4]):
             continue
+        # named in a sentence with a single plain word after it ("May run
+        # PowerShell commands", "uses cmd prompts"): a description, not a run
+        if (len(args) == 1 and re.fullmatch(r"[a-z]{4,}", args[0]) and not match.group("exe")
+                and re.search(r"[A-Za-z]{2,} $", text[max(0, match.start() - 20):match.start()])):
+            continue
         if match.group("cmd").lower() == "new-object" and _BENIGN_NEW_OBJECT.match(match.group("args")):
             continue
         cmd_val = match.group(0).strip(".,;:)]}")
@@ -549,8 +562,11 @@ def _scan_text(
                 _ctx(text, match.start(), match.end()),
             )
 
+    tool_output = bool(_TOOL_OUTPUT_LOC.search(location or ""))
     for match in _HASH_RE.finditer(text):
         if not _random_hex(match.group(0)):
+            continue
+        if tool_output and _DIGEST_LABEL.search(text[max(0, match.start() - 24):match.start()]):
             continue
         col.add(
             "hash_like", match.group(0).lower(), module, location,
@@ -645,6 +661,7 @@ def _scan_text(
             or not _known_tld(domain, strict)
             or domain in _NAMESPACE_HOSTS
             or (domain.endswith(".so") and re.match(r"\.\d", text[match.end():match.end() + 2]))  # libfoo.so.1
+            or _CODE_MEMBER_AFTER.match(text, match.end())              # a.download = …, obj.show(…)
         ):
             continue
 
@@ -772,6 +789,8 @@ _MODULE_SKIP_PATHS = {
     # attachment) is markup and hex, not prose: the attachment itself is
     # analysed as a nested child, which is where its IOCs come from.
     "mailrules": re.compile(r"tools/emldump part \d+ \((?!text/)[^)]*\)/output$"),
+    # olevba's description of each indicator ("May run PowerShell commands")
+    "oletools": re.compile(r"tools/olevba/analysis\[\d+\]/description$"),
 }
 
 
