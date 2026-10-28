@@ -160,8 +160,9 @@ def remove_manual(paths: CasePaths, finding_id: str) -> bool:
 
 
 def is_triage_only(f: dict[str, Any]) -> bool:
-    """YARA hits: shown in the YARA tab for triage, a finding only once marked."""
-    return f.get("source") == "yara" or str(f.get("rule", "")).startswith("yara:")
+    """YARA hits and Machine Learning scores: shown in their own tab for
+    triage, a finding only once the analyst marks them."""
+    return (f.get("source") in ("yara", "ml") or str(f.get("rule", "")).startswith(("yara:", "ml:")))
 
 
 def case_findings(paths: CasePaths, include_unreviewed_yara: bool = False) -> list[dict[str, Any]]:

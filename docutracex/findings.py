@@ -89,7 +89,7 @@ def consolidate(modules: dict[str, Any]) -> list[dict[str, Any]]:
     for mod_name, source in (("unlock", "unlock"), ("archive", "archive"),
                              ("msoffcrypto", "msoffcrypto"), ("xlmdeobf", "xlmdeobf"),
                              ("officemalscanner", "officemalscanner"),
-                             ("pdf", "pdf"), ("nested", "nested"), ("yara", "yara"),
+                             ("pdf", "pdf"), ("nested", "nested"), ("yara", "yara"), ("ml", "ml"),
                              ("ole", "ole"), ("officerules", "officerules"),
                              ("vbatools", "vbatools"), ("vipermonkey", "vipermonkey"),
                              ("pdftools", "pdftools"), ("mailrules", "mailrules"),

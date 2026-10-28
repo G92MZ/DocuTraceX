@@ -271,3 +271,90 @@ def classify(paths: list[Path], timeout: int | None = None) -> list[dict[str, An
 
 if __name__ == "__main__":
     sys.stdout.write(json.dumps(_classify(sys.argv[2:], sys.argv[1]), default=float))
+
+
+# --- case integration ----------------------------------------------------------------
+
+MAX_OBJECTS = 60
+_MAGIC = (b"MZ", b"\x7fELF", b"%PDF-")
+
+
+def _supported(path: Path) -> bool:
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(1024)
+    except OSError:
+        return False
+    return head[:2] == b"MZ" or head[:4] == b"\x7fELF" or b"%PDF-" in head
+
+
+def targets(root: Path, original: Path, nested_tree: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Every object of the case the models can score: the original and each
+    nested child (unpacked / debloated / decrypted / extracted) that is a PE,
+    PDF or ELF — ``{label, path, stored_path, sha256}``, unique by sha256."""
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    if _supported(original):
+        out.append({"label": original.name, "path": str(original), "stored_path": "", "chain": ""})
+
+    def walk(nodes: list[dict[str, Any]], chain: str) -> None:
+        for n in nodes or []:
+            name = n.get("filename") or ""
+            here = f"{chain} › {name}" if chain else name
+            sp = n.get("stored_path") or ""
+            sha = n.get("sha256") or ""
+            p = root / sp if sp else None
+            if p is not None and p.is_file() and (not sha or sha not in seen) and _supported(p):
+                seen.add(sha)
+                out.append({"label": f"nested › {here}", "path": str(p), "stored_path": sp, "sha256": sha,
+                            "chain": here, "recipe": n.get("recipe") or []})
+            walk(n.get("children") or [], here)
+
+    walk(nested_tree, "")
+    return out[:MAX_OBJECTS]
+
+
+def finding_for(item: dict[str, Any]) -> dict[str, Any] | None:
+    """The finding an ML result becomes once the analyst marks it (triage-only
+    until then, like YARA). Detail is stable across re-runs (stable id)."""
+    if item.get("status") != "ok":
+        return None
+    sc, th = item["score"], item.get("threshold")
+    if th is None:
+        sev, verdict = "low", "uncalibrated"
+    elif sc >= th:
+        sev, verdict = "medium", f"above the 1% FPR threshold ({th:.4f})"
+    else:
+        sev, verdict = "info", f"below the 1% FPR threshold ({th:.4f})"
+    return {"tool": "ml", "rule": f"ml:{item['model']}", "severity": sev,
+            "detail": f"{item['model']} ({item.get('format', '')}): score {sc:.4f} — {verdict}",
+            "location": item.get("label") or "", "evidence": ", ".join(
+                f"{t['feature']} ({t['contribution']:+.2f})" for t in (item.get("top_features") or [])[:5])}
+
+
+def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) -> dict[str, Any]:
+    """The Machine Learning module result for a case."""
+    st = status()
+    res: dict[str, Any] = {"module": "ml", "status": "ok", "engine": "EMBER2024 · LightGBM",
+                           "models": st["models"], "calibrated": st["calibrated"], "items": [], "findings": [],
+                           "triage_only": True}
+    tg = targets(root, original, nested_tree)
+    if not tg:
+        res["status"] = "not_applicable"
+        res["detail"] = "no PE, PDF or ELF object in this case"
+        return res
+    results = classify([Path(t["path"]) for t in tg])
+    for t, r in zip(tg, results):
+        item = {**{k: v for k, v in t.items() if k != "path"}, **{k: v for k, v in r.items() if k != "path"}}
+        f = finding_for(item)
+        if f:
+            res["findings"].append(f)
+        res["items"].append(item)
+    res["items"].sort(key=lambda x: -(x.get("score") if x.get("score") is not None else -1))
+    res["counts"] = {"objects": len(res["items"]),
+                     "scored": sum(1 for x in res["items"] if x.get("status") == "ok"),
+                     "findings": 0}       # triage-only: not counted until marked
+    if not any(x.get("status") == "ok" for x in res["items"]):
+        res["status"] = next((x.get("status") for x in res["items"]), "error")
+        res["detail"] = next((x.get("detail") for x in res["items"] if x.get("detail")), "")
+    return res
