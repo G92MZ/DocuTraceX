@@ -710,3 +710,21 @@ def test_vbs_and_python_stages_are_nested(client) -> None:
     _, res = _analyze(client, "sample_exec_chain.py", _ms().exec_chain_py())
     py = [n for n in _flat(_tree(res)) if (n.get("recipe") or [])[:2] == ["base85", "lzma"]]
     assert py and py[0]["filename"].endswith(".py")
+
+
+def test_ioc_sources_skip_app_text_and_enrichment() -> None:
+    from docutracex import ioc
+    mods = {
+        "netcheck": {"checks": [{"data": {"rdap": {"abuse_email": "anti-spam@chinatelecom.cn"}}}]},
+        "unlock": {"original_sha256": "a" * 64, "decrypted_sha256": "b" * 64},
+        "archive": {"entries": [{"name": "visor.py", "stored_path": "extracted/notas.one"}]},
+        "rtf": {"tools": {"rtfdump": {"command": "python rtfdump.py x", "error": "see rtfdump.py",
+                                      "output": "http://evil.example/a"}},
+                "findings": [{"detail": "[file:visor.py] found", "location": "file:notas.one",
+                              "evidence": "http://cdn.example/x"}]},
+        "java": {"scripts": [{"code": "import java.io.File; java.io.File f;"}]},
+    }
+    vals = {i["value"] for i in ioc.extract(ioc.sources_from_modules(mods))["iocs"]}
+    assert {"http://evil.example/a", "http://cdn.example/x"} <= vals
+    for noise in ("anti-spam@chinatelecom.cn", "a" * 64, "b" * 64, "visor.py", "notas.one", "rtfdump.py", "java.io"):
+        assert noise not in vals

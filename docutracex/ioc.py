@@ -236,8 +236,12 @@ def _known_tld(domain: str, strict: bool = False) -> bool:
     return True
 
 
+# Code namespaces that look like hosts (java.io, javax.crypto, android.os…).
+_CODE_NAMESPACES = ("java.", "javax.", "android.", "androidx.", "kotlin.", "jdk.", "sun.")
+
+
 def _looks_like_filename(domain: str) -> bool:
-    return domain.rsplit(".", 1)[-1].lower() in _FILE_TLDS
+    return domain.rsplit(".", 1)[-1].lower() in _FILE_TLDS or domain.lower().startswith(_CODE_NAMESPACES)
 
 
 # URLs of the analysis tools themselves (banners, help text, tracebacks): never
@@ -642,9 +646,20 @@ _SKIP_KEYS = {
 }
 
 
+# Text the app writes about the sample (finding titles, where it was found,
+# its own storage paths), not content of the sample: never mined.
+_APP_TEXT_KEYS = {
+    "detail", "location", "origin", "label", "note",
+    "stored_path", "code_file", "code_file_deob", "view_id", "decrypted_from",
+}
+# Tool run bookkeeping: the command line the app ran, its errors and paths.
+_TOOL_META = re.compile(r"(?:^|/)tools/[^/]+/(?:command|error|stderr|cwd|returncode|timeout)$")
+
+
 def _skip_key(key: Any) -> bool:
     name = str(key).lower()
-    return name.startswith("_") or name in _SKIP_KEYS or "hash" in name
+    return (name.startswith("_") or name in _SKIP_KEYS or name in _APP_TEXT_KEYS or "hash" in name
+            or any(h in name for h in ("sha1", "sha256", "sha512", "md5")))
 
 
 def _walk(
@@ -668,6 +683,9 @@ def _walk(
                 continue
 
             sublocation = f"{location}/{key}" if location else str(key)
+            if _TOOL_META.search(sublocation) or (
+                    module in _MODULE_SKIP_PATHS and _MODULE_SKIP_PATHS[module].search(sublocation)):
+                continue
             _walk(value, module, sublocation, sources)
 
     elif isinstance(node, (list, tuple)):
@@ -699,10 +717,18 @@ def _email_sources(
         add("body_html_link", link)
 
 
-# Modules whose output is never mined for IOCs: YARA results echo the matched
+# Modules whose output is never mined for IOCs. YARA results echo the matched
 # bytes, rule metadata (author URLs, references) and hex context, which are
 # already covered by the parsers that read the file itself.
-_SKIP_MODULES = {"yara"}
+# netcheck: our own network enrichment (RDAP abuse contacts, DNS, the pages we
+# visited) describes infrastructure, it is not content of the sample. file /
+# unlock / findings / iocs: metadata and derived views the app computes.
+_SKIP_MODULES = {"yara", "netcheck", "file", "unlock", "findings", "iocs", "summary"}
+# Per-module paths that hold names/metadata, not content (archive member
+# names like "visor.py" or "notas.one" are not domains).
+_MODULE_SKIP_PATHS = {
+    "archive": re.compile(r"entries\[\d+\]/(?:name|stored_path|path)$"),
+}
 
 
 def sources_from_modules(
