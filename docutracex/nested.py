@@ -25,8 +25,12 @@ from .storage import CasePaths
 
 log = get_logger(__name__)
 
-MAX_DEPTH = 5
+MAX_DEPTH = 12
 MAX_CHILDREN = 25
+# Total nodes per scan: 12 levels x 25 children could explode on a crafted
+# archive-in-archive, so the whole tree is capped (children past it are counted
+# as truncated, not analysed).
+MAX_NODES = 300
 
 _OOXML_EXT = {".docx", ".docm", ".dotx", ".dotm", ".xlsx", ".xlsm", ".xltx", ".xltm",
               ".xlam", ".xlsb", ".pptx", ".pptm", ".potx", ".potm", ".ppsx", ".ppsm",
@@ -114,6 +118,8 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
     ``ctx`` carries the passwords to try on encrypted children: the analyst's
     (``user``) and those given by an enclosing email (``harvested``)."""
     ctx = ctx or {}
+    budget = ctx.setdefault("_budget", [MAX_NODES])
+    budget[0] -= 1
     if sources_out is None:
         sources_out = []
     node: dict[str, Any] = {
@@ -326,7 +332,11 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
         sources_out.append(s)
 
     if depth < MAX_DEPTH:
-        for cpath, cname in kids[:MAX_CHILDREN]:
+        for i, (cpath, cname) in enumerate(kids[:MAX_CHILDREN]):
+            if ctx["_budget"][0] <= 0:      # node cap for the whole tree reached
+                node["truncated_children"] = len(kids[:MAX_CHILDREN]) - i
+                node["truncated_reason"] = f"node limit ({MAX_NODES}) reached"
+                break
             if not cpath.is_file():
                 # Tools store paths relative to the parent of their output dir
                 # (here extracted/), not to the case root.
@@ -417,7 +427,12 @@ def scan_children(items: list[dict[str, Any]], paths: CasePaths,
     result: dict[str, Any] = {"module": "nested", "tree": [], "findings": [],
                               "ioc_sources": [], "status": "ok"}
     isrc: list[dict[str, Any]] = result["ioc_sources"]
-    for it in items[:MAX_CHILDREN]:
+    unlock_ctx = dict(unlock_ctx or {})
+    unlock_ctx["_budget"] = [MAX_NODES]          # one node budget for the whole scan
+    for i, it in enumerate(items[:MAX_CHILDREN]):
+        if unlock_ctx["_budget"][0] <= 0:
+            result["truncated_children"] = len(items[:MAX_CHILDREN]) - i
+            break
         p = Path(it["path"])
         if p.is_file():
             child = _scan_one(p, it.get("filename") or p.name, paths, 1, "", unlock_ctx, isrc)

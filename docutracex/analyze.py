@@ -173,6 +173,27 @@ def _office_extras(run, original: Path, paths: CasePaths, family: str, declared_
     return out
 
 
+# Live step reporting: the task worker registers a listener for its thread so
+# the Tasks tab shows each step as it starts and ends (not only at the end).
+import threading as _threading
+
+_step_local = _threading.local()
+
+
+def set_step_listener(fn) -> None:  # noqa: ANN001
+    """``fn(event, rec)`` with event "start" / "end" for steps of this thread; None clears."""
+    _step_local.fn = fn
+
+
+def _notify_step(event: str, rec: dict[str, Any]) -> None:
+    fn = getattr(_step_local, "fn", None)
+    if fn:
+        try:
+            fn(event, rec)
+        except Exception:  # noqa: BLE001  (reporting must never break the analysis)
+            pass
+
+
 def analyze_case(case_root: Path) -> dict[str, Any]:
     """Run the applicable parsers on a case (in-process). Returns a summary."""
     case_root = Path(case_root)
@@ -195,6 +216,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         """Run one analysis step, timing it and recording it for the Tasks view."""
         import time as _time
         t0 = _time.perf_counter()
+        _notify_step("start", {"step": name})
         err = None
         try:
             res = fn()
@@ -214,6 +236,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         if note and "note" not in rec:
             rec["note"] = note
         steps.append(rec)
+        _notify_step("end", rec)
         return res
 
     # Encrypted Office/PDF original: decrypt it (analyst's password, then the
@@ -902,6 +925,9 @@ def refresh_derived(paths: CasePaths, module: str) -> dict[str, Any]:
 def run_module(case_root: Path, module: str) -> dict[str, Any]:
     """Re-run ONE parser/tool module over an existing case, then recompute the
     derived IOC + findings. Isolated: other modules' results are left as-is."""
+    import time as _time
+    _t0 = _time.perf_counter()
+    _notify_step("start", {"step": f"rerun: {module}"})
     case_root = Path(case_root)
     paths = CasePaths(case_root.name, cases_dir=case_root.parent)
     manifest = read_json(paths.manifest)
@@ -1021,9 +1047,12 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
     summary.setdefault("counts", {})
     summary["counts"]["iocs"] = ioc_total
     summary["counts"]["findings"] = findings_total
+    rerun_rec = {"step": f"rerun: {written}", "status": res.get("status", "ok"),
+                 "findings": res.get("counts", {}).get("findings", 0),
+                 "duration_s": round(_time.perf_counter() - _t0, 3)}
+    _notify_step("end", {**rerun_rec, "step": f"rerun: {module}"})
     summary["steps"] = [
-        {"step": f"rerun: {written}", "status": res.get("status", "ok"),
-         "findings": res.get("counts", {}).get("findings", 0)},
+        rerun_rec,
         {"step": "ioc: recompute", "status": "ok", "iocs": ioc_total},
         {"step": "findings: recompute", "status": "ok", "findings": findings_total},
     ]
