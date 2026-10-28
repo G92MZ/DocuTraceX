@@ -525,3 +525,69 @@ def test_invoke_obfuscation_sample_end_to_end(client) -> None:
     iocs = {i["value"] for i in json.loads((res / "iocs.json").read_text())["iocs"]}
     assert {"http://billing.invoice-portal.example/Factura_2024-0613.pdf.ps1",
             "http://203.0.113.17/inv.ps1"} <= iocs
+
+
+def _vb_xor(s: str, k: int) -> str:
+    return "".join(chr(ord(c) ^ k) for c in s)
+
+
+_VB_PAY = 'CreateObject("WScript.Shell").Run "calc", 0'
+
+
+@pytest.mark.parametrize("src", [
+    'enc = "' + _vb_xor(_VB_PAY, 23).replace('"', '""') + '"\nFor i = 1 To Len(enc)\n'
+    '  dec = dec & Chr(Asc(Mid(enc, i, 1)) Xor 23)\nNext\nExecute dec',
+    'h = "' + "".join(f"{ord(c) ^ 0x41:02X}" for c in _VB_PAY) + '"\nk = &H41\nFor i = 1 To Len(h) Step 2\n'
+    ' s = s & Chr(CLng("&H" & Mid(h, i, 2)) Xor k)\nNext\nExecuteGlobal s',
+    "a = Array(" + ",".join(str(ord(c) ^ 7) for c in _VB_PAY) + ")\r\nFor Each b In a\r\n  r = r & Chr(b Xor 7)\r\nNext\r\nExecute(r)",
+    'k = "inv0613"\ne = "' + "".join(f"{ord(c) ^ ord('inv0613'[i % 7]):02x}" for i, c in enumerate(_VB_PAY))
+    + '"\nFor i = 1 To Len(e) Step 2\n  o = o & Chr(CLng("&H" & Mid(e, i, 2)) Xor Asc(Mid(k, ((i \\ 2) Mod Len(k)) + 1, 1)))\nNext\nExecute o',
+    'Execute Replace("CreaXXteObject(""WScript.Shell"").Run ""calc"", 0", "XX", "")',
+    's = "CreateObject(""WScript."\ns = s & "Shell"").Run ""calc"", 0"\nExecute s',
+])
+def test_vbscript_xor_loops_and_execute(src: str) -> None:
+    from docutracex.parsers.vbscript import deobfuscate
+    assert _VB_PAY in deobfuscate(src)["code"]
+
+
+def test_vbscript_chr_arith_and_quoted_layers() -> None:
+    from docutracex.parsers.vbscript import deobfuscate, vb_eval
+    assert vb_eval("77 Xor 5") == 72 and vb_eval("&H50 - 8") == 72 and vb_eval("__import__") is None
+    code = deobfuscate('x = Chr(77 Xor 5) & Mid("zzi!", 3, 2)')["code"]
+    assert 'x = "Hi!"' in code
+    # A layer still inside quotes is left alone until it is executed.
+    assert 'Chr(83)' in deobfuscate('t = "a"" & Chr(83) & ""b"\nMsgBox t')["code"]
+
+
+def test_vbscript_emulated_with_vipermonkey_when_provisioned(tmp_path: Path, monkeypatch) -> None:
+    from docutracex.config import settings
+    from docutracex.parsers import vbscript, vipermonkey
+    seen = []
+
+    def fake(path, extracted_dir):
+        seen.append(path.read_text())
+        return {"available": True, "status": "ok_with_findings", "actions": [{"action": "Run", "parameters": "calc"}],
+                "artifacts": [], "potential_iocs": [],
+                "findings": [{"tool": "vipermonkey", "rule": "vm_execute", "severity": "high",
+                              "detail": "Emulated macro would execute a command: Run — calc", "location": "vba-emulation"}]}
+    monkeypatch.setattr(type(settings), "pypy_python", lambda self: Path("/fake/pypy"))
+    monkeypatch.setattr(vipermonkey, "analyze", fake)
+    f = tmp_path / "a.vbs"
+    f.write_text('CreateObject("WScript.Shell").Run "calc"')
+    res = vbscript.analyze(f, tmp_path / "extracted", {})
+    assert seen and "WScript.Shell" in seen[0]
+    vm = [x for x in res["findings"] if x["rule"] == "vm_execute"]
+    assert vm and "VBScript" in vm[0]["detail"] and vm[0]["location"] == res["scripts"][0]["location"]
+    assert res["emulation"][0]["actions"]
+
+
+def test_vbs_xor_loader_sample_end_to_end(client) -> None:
+    import json
+    _, res = _analyze(client, "sample_xor_loader.vbs", _ms().xor_loader_vbs())
+    vb = json.loads((res / "vbscript.json").read_text())
+    sc = vb["scripts"][0]
+    assert {"xor-loop", "execute-variable"} <= set(sc["deob_methods"])
+    assert 'CreateObject("MSXML2.XMLHTTP")' in sc["code"]
+    iocs = {i["value"] for i in json.loads((res / "iocs.json").read_text())["iocs"]}
+    assert "http://invoice-cdn.example/Factura_2024-0613.pdf" in iocs
+    assert any("198.51.100.23" in v for v in iocs)
