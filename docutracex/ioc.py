@@ -60,12 +60,20 @@ _REGISTRY_RE = re.compile(
 )
 
 # Drive-letter paths, environment-variable paths and UNC paths.
+# Directory components may contain spaces ("Start Menu", "Program Files") as
+# long as another "\\" follows; the last component stops at whitespace (an
+# unquoted path cannot say where a spaced file name ends). A path inside
+# double quotes is taken whole, spaces included.
+_DIR = r"(?:[^\\\s\"'<>|?*:](?:[^\\\"'<>|?*:\r\n\t]{0,80}[^\\\s\"'<>|?*:])?\\)"
+_LAST = r"[^\s\"'<>|?*]+"
 _FILEPATH_RE = re.compile(
-    r"(?i)(?<![\w])(?:"
-    r"[A-Z]:\\(?:[^\s\"'<>|?*]+\\)*[^\s\"'<>|?*]+|"
-    r"%[A-Z0-9_()]+%\\(?:[^\s\"'<>|?*]+\\)*[^\s\"'<>|?*]+|"
+    r"(?i)(?:"
+    r"(?<=\")(?:[A-Z]:\\|%[A-Z0-9_()]+%\\|\\\\)[^\"\r\n<>|?*]+(?=\")|"
+    r"(?<![\w])(?:"
+    rf"[A-Z]:\\{_DIR}*{_LAST}|"
+    rf"%[A-Z0-9_()]+%\\{_DIR}*{_LAST}|"
     r"\\\\[^\\\s]+\\[^\\\s]+(?:\\[^\s\"'<>|?*]+)*"
-    r")"
+    r"))"
 )
 
 _MAC_RE = re.compile(
@@ -116,12 +124,24 @@ _SENSITIVE_COMMANDS = [
 ]
 
 # Expresión regular robusta para binarios tradicionales y cmdlets de PowerShell
+_ARG = r"(?:/[a-z0-9_/?:.\\*%-]+|-[a-z0-9_/?:.\\*%-]+|\"[^\"\r\n]+\"|'[^'\r\n]+'|[a-z0-9_\\.:*?%$/=@~#+,-]+)"
+# Arguments are separated by spaces/tabs only: a command never runs onto the
+# next line.
 _COMMAND_RE = re.compile(
-    rf"(?i)\b(?:{'|'.join(_SENSITIVE_COMMANDS)})(?:\.exe)?\b\s+"
-    r"(?:/[a-z0-9_/?:.\\*%-]+|-[a-z0-9_/?:.\\*%-]+|\"[^\"]+\"|'[^']+'|[a-z0-9_\\.:*?%$-]+)"
-    r"(?:\s+(?:/[a-z0-9_/?:.\\*%-]+|-[a-z0-9_/?:.\\*%-]+|\"[^\"]+\"|'[^']+'|[a-z0-9_\\.:*?%$-]+))*",
+    rf"(?i)\b(?P<cmd>{'|'.join(_SENSITIVE_COMMANDS)})(?P<exe>\.exe)?\b[ \t]+"
+    rf"(?P<args>{_ARG}(?:[ \t]+{_ARG})*)",
     re.IGNORECASE
 )
+# Commands that are also everyday words ("at IANA", "type of", "where to"):
+# only reported in command position (line start, after & | ; ( or a quote,
+# after cmd /c), written as name.exe, or with a switch as first argument.
+_AMBIGUOUS_COMMANDS = {
+    "at", "type", "where", "format", "control", "expand", "tracker", "explorer",
+    "tar", "bash", "hh", "subst", "verifier", "date", "time", "set", "start",
+    "copy", "move", "find", "echo", "net", "sc", "print", "help", "more", "sort",
+}
+_TECH_ARG = re.compile(r"[\\/.%:\d\"']")   # a path, file, time, variable or quoted arg
+_CMD_POSITION = re.compile(r"(?i)(?:^|[&|;(`\"']|\bcmd(?:\.exe)?\s+/[ck]|\bcall)\s*$")
 
 _FILE_TLDS = {
     "xml", "rels", "bin", "png", "jpeg", "jpg", "gif", "emf", "wmf",
@@ -398,7 +418,18 @@ def _scan_text(
 
     # Scan de Comandos Sensibles, LOLBins y Cmdlets de PowerShell
     for match in _COMMAND_RE.finditer(text):
-        cmd_val = match.group(0).strip(".,;:)]}\"'")
+        if match.group("cmd").lower() in _AMBIGUOUS_COMMANDS and not (
+            match.group("exe")
+            or match.group("args")[:1] in "/-"
+            or (_CMD_POSITION.search(text[max(0, match.start() - 40):match.start()].rsplit("\n", 1)[-1])
+                and _TECH_ARG.search(match.group("args").split()[0]))
+        ):
+            continue
+        cmd_val = match.group(0).strip(".,;:)]}")
+        if cmd_val.count('"') % 2:      # drop a dangling quote, keep balanced ones
+            cmd_val = cmd_val.strip('"')
+        if cmd_val.count("'") % 2:
+            cmd_val = cmd_val.strip("'")
         if len(cmd_val) > 3:
             col.add(
                 "command", cmd_val, module, location,
