@@ -905,6 +905,27 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                 findings_total += merged.get("counts", {}).get("findings", 0) - (
                     prev.get("counts", {}).get("findings", 0) if had else 0)
 
+    # Byte ranges the analyst extracted in the Hex tab (raw or through a decode
+    # recipe): re-created from their spec on every run, analysed as children.
+    from . import hexview
+    if hexview.load_extracts(paths.root) or (paths.extracted_dir / hexview.EXTRACT_DIR).exists():
+        from . import nested
+        hitems = hexview.materialize(paths.root, paths.extracted_dir)
+        prev = read_json(paths.subresult("nested"))
+        had = bool(prev and prev.get("tree"))
+        if hitems:
+            hres = run(f"hex: {len(hitems)} extracted selection(s) → nested analysis",
+                       lambda: nested.scan_children(hitems, paths, unlock_ctx={"user": user_pw}))
+            merged = nested.merge(prev, hres) if hres.get("tree") else prev
+        else:
+            merged = nested.drop_source(prev, "hex") if had else None
+        if merged is not None:
+            write_subresult(paths, "nested", merged)
+            if merged.get("tree") and "nested" not in ran:
+                ran.append("nested")
+            findings_total += merged.get("counts", {}).get("findings", 0) - (
+                prev.get("counts", {}).get("findings", 0) if had else 0)
+
     # Scripts analysed inside nested children -> the case's code tabs.
     try:
         _surface_nested_code(paths, ran)

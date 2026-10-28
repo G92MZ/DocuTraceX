@@ -3380,7 +3380,8 @@ function mlDetail(it, f, pct) {
 // windows; search / entropy run server-side.
 const _hex = { caseId: null, path: "", offset: 0, width: 16, rows: 32, sel: null, mark: null,
                cache: null, files: null, hits: [], hitIdx: -1, entropy: null, regions: [],
-               mode: "hex", query: "", icase: false, info: "" };
+               mode: "hex", query: "", icase: false, info: "", side: "hits", colors: true,
+               recipe: "", decoded: null, extracts: null, msg: "" };
 
 function hexOpen(rel, offset, length, caseId) {
   if (caseId && caseId !== _hex.caseId) hexResetCase(caseId);
@@ -3416,6 +3417,7 @@ function paneHex() {
       <button class="btn btn-ghost btn-sm" type="button" data-hexnav="start">⇤</button>
       <button class="btn btn-ghost btn-sm" type="button" data-hexnav="end">⇥</button>
       <select id="hex-width"><option value="16">16 / row</option><option value="32">32 / row</option></select>
+      <label class="hint-line" title="Colour PE / ELF structures (headers, sections, directories, overlay)"><input type="checkbox" id="hex-colors"> structures</label>
     </div>
     <div class="hex-bar">
       <select id="hex-mode" title="Search mode">
@@ -3431,11 +3433,41 @@ function paneHex() {
     </div>
     <div class="hex-main">
       <div id="hex-grid" class="hex-grid" tabindex="0"></div>
-      <div id="hex-hits" class="hex-hits"></div>
+      <div class="hex-side">
+        <div class="hex-side-tabs">
+          <button type="button" data-hexside="hits">Hits</button><button type="button" data-hexside="inspect">Inspect</button>
+          <button type="button" data-hexside="decode">Decode</button><button type="button" data-hexside="extracts">Extracts</button>
+        </div>
+        <div id="hex-hits" class="hex-hits" data-hexpane="hits"></div>
+        <div class="hex-pane" data-hexpane="inspect"><div id="hex-inspect"></div></div>
+        <div class="hex-pane" data-hexpane="decode">
+          <p class="hint-line">Decode the <b>selection</b> step by step. Steps:</p>
+          <div class="hex-steps">
+            <button class="btn btn-ghost btn-sm" type="button" data-hexstep="base64">base64</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-hexstep="hex">hex</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-hexstep="xor auto">xor auto</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-hexstep="xor ">xor key…</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-hexstep="zlib">zlib / gzip</button>
+            <button class="btn btn-ghost btn-sm" type="button" data-hexstep="reverse">reverse</button>
+          </div>
+          <input id="hex-recipe" class="hex-input hex-recipe" placeholder="base64 | xor 41 | zlib   (empty = raw bytes)" spellcheck="false">
+          <div class="hex-bar"><button class="btn btn-sm" type="button" id="hex-preview">Preview</button>
+            <button class="btn btn-ghost btn-sm" type="button" id="hex-recipe-clear">clear</button></div>
+          <div id="hex-decoded" class="hex-decoded"></div>
+          <div class="hex-bar"><input id="hex-xname" class="hex-input" placeholder="name (optional)" spellcheck="false">
+            <button class="btn btn-sm" type="button" id="hex-extract" title="Keep the selection (decoded with the recipe) as a nested child: analysed by a re-analysis">Extract as nested</button></div>
+          <div id="hex-xmsg" class="hint-line"></div>
+        </div>
+        <div class="hex-pane" data-hexpane="extracts"><div id="hex-extracts"></div></div>
+      </div>
     </div>
     <div class="hex-bar"><span id="hex-sel" class="hint-line mono"></span>
-      <button class="btn btn-ghost btn-sm" type="button" data-hexcopy="hex">copy hex</button>
-      <button class="btn btn-ghost btn-sm" type="button" data-hexcopy="text">copy text</button>
+      <select id="hex-copyas" title="Copy the selection as">
+        <option value="hex">hex</option><option value="text">text</option><option value="c">C array</option>
+        <option value="py">Python bytes</option><option value="b64">base64</option><option value="off">offsets</option>
+      </select>
+      <button class="btn btn-ghost btn-sm" type="button" id="hex-copy">copy</button>
+      <span id="hex-where" class="hint-line"></span>
     </div>
   </div>`;
 }
@@ -3463,6 +3495,8 @@ async function wireHex(root) {
   $("#hex-mode").value = _hex.mode;
   $("#hex-q").value = _hex.query;
   $("#hex-icase").checked = _hex.icase;
+  $("#hex-colors").checked = _hex.colors;
+  $("#hex-recipe").value = _hex.recipe;
   if (!_hex.path) return;
 
   const size = () => (_hex.cache ? _hex.cache.size : 0);
@@ -3488,6 +3522,10 @@ async function wireHex(root) {
     const vis0 = _hex.offset, vis1 = _hex.offset + _hex.width * _hex.rows;
     _hex.hits.forEach(([o, l]) => { if (o < vis1 && o + l > vis0) for (let i = o; i < o + l; i++) hitSet.add(i); });
     const cur = _hex.hits[_hex.hitIdx];
+    // innermost structure first (smallest range wins)
+    const regs = _hex.colors ? _hex.regions.filter((r) => r.offset < vis1 && r.offset + r.length > vis0)
+      .sort((a, b) => a.length - b.length) : [];
+    const regAt = (o) => regs.find((r) => o >= r.offset && o < r.offset + r.length);
     let html = "";
     for (let r = 0; r < _hex.rows; r++) {
       const base = _hex.offset + r * _hex.width;
@@ -3497,10 +3535,11 @@ async function wireHex(root) {
         const o = base + i;
         if (o >= c.size) { hx += '<span class="hb hb-pad">  </span>'; continue; }
         const b = c.bytes[o - c.start];
-        const cls = ["hb", inRange(o, _hex.sel) ? "hb-sel" : "", inRange(o, _hex.mark) ? "hb-mark" : "",
+        const rg = regs.length ? regAt(o) : null;
+        const cls = ["hb", rg ? `hs-${rg.kind}` : "", inRange(o, _hex.sel) ? "hb-sel" : "", inRange(o, _hex.mark) ? "hb-mark" : "",
                      hitSet.has(o) ? (cur && o >= cur[0] && o < cur[0] + cur[1] ? "hb-cur" : "hb-hit") : "",
                      b === 0 ? "hb-zero" : (b >= 32 && b < 127 ? "hb-print" : "")].filter(Boolean).join(" ");
-        hx += `<span class="${cls}" data-o="${o}">${b.toString(16).padStart(2, "0")}</span>`;
+        hx += `<span class="${cls}" data-o="${o}"${rg ? ` title="${escapeHtml(rg.name)}"` : ""}>${b.toString(16).padStart(2, "0")}</span>`;
         tx += `<span class="${cls}" data-o="${o}">${b >= 32 && b < 127 ? escapeHtml(String.fromCharCode(b)) : "."}</span>`;
       }
       html += `<div class="hr"><span class="ho">${_hexFmt(base)}</span><span class="hx">${hx}</span><span class="ht">${tx}</span></div>`;
@@ -3513,7 +3552,68 @@ async function wireHex(root) {
     } else {
       $("#hex-sel").textContent = `offset ${_hexFmt(_hex.offset)} · click a byte to select, shift-click to extend`;
     }
+    const at = s ? Math.min(s[0], s[1]) : _hex.offset;
+    const inside = _hex.regions.filter((r) => at >= r.offset && at < r.offset + r.length).sort((a, b) => a.length - b.length);
+    $("#hex-where").textContent = inside.length ? `in: ${inside.map((r) => r.name).join(" › ")}` : "";
+    if (_hex.side === "inspect") inspect();
     drawEntropy();
+  }
+  function selBytes(max) {                 // bytes of the selection from the cache (or null)
+    const c = _hex.cache, s = _hex.sel;
+    if (!c || !s) return null;
+    const a = Math.min(s[0], s[1]);
+    const n = max;
+    if (a < c.start || a >= c.start + c.bytes.length) return null;
+    return { at: a, bytes: c.bytes.slice(a - c.start, Math.min(c.bytes.length, a - c.start + n)) };
+  }
+  function inspect() {
+    const box = $("#hex-inspect");
+    const got = selBytes(64);
+    if (!got) { box.innerHTML = '<p class="hint-line">Click a byte: its value is read here as integers, floats, timestamps, GUID and text.</p>'; return; }
+    const b = got.bytes, dv = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    const has = (n) => b.length >= n;
+    const rows = [];
+    const add = (k, v) => rows.push(`<tr><td>${k}</td><td class="mono">${escapeHtml(String(v))}</td></tr>`);
+    add("offset", `${_hexFmt(got.at)} (${got.at})`);
+    add("binary", b[0].toString(2).padStart(8, "0"));
+    add("int8 / uint8", `${dv.getInt8(0)} / ${b[0]}`);
+    if (has(2)) { add("int16 LE / BE", `${dv.getInt16(0, true)} / ${dv.getInt16(0)}`); add("uint16 LE / BE", `${dv.getUint16(0, true)} / ${dv.getUint16(0)}`); }
+    if (has(4)) {
+      add("int32 LE / BE", `${dv.getInt32(0, true)} / ${dv.getInt32(0)}`);
+      add("uint32 LE / BE", `${dv.getUint32(0, true)} / ${dv.getUint32(0)}`);
+      add("uint32 LE (hex)", "0x" + dv.getUint32(0, true).toString(16).toUpperCase().padStart(8, "0"));
+      add("float32 LE", dv.getFloat32(0, true).toPrecision(9));
+      const u = dv.getUint32(0, true);
+      add("Unix time32", u > 0 && u < 4102444800 ? new Date(u * 1000).toISOString().replace(".000Z", "Z") : "—");
+      const dd = dv.getUint16(2, true), tt = dv.getUint16(0, true);
+      const y = (dd >> 9) + 1980, mo = (dd >> 5) & 15, d = dd & 31;
+      add("DOS date/time", mo >= 1 && mo <= 12 && d >= 1 ? `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")} ${String(tt >> 11).padStart(2, "0")}:${String((tt >> 5) & 63).padStart(2, "0")}:${String((tt & 31) * 2).padStart(2, "0")}` : "—");
+    }
+    if (has(8)) {
+      add("int64 LE", dv.getBigInt64(0, true).toString());
+      add("uint64 LE", dv.getBigUint64(0, true).toString());
+      add("float64 LE", dv.getFloat64(0, true).toPrecision(17));
+      const ft = dv.getBigUint64(0, true);
+      const ms = Number(ft / 10000n) - 11644473600000;
+      add("FILETIME", ft > 0n && ms > -1e13 && ms < 4102444800000 ? new Date(ms).toISOString() : "—");
+    }
+    if (has(16)) {
+      const h = (i, n) => Array.from(b.slice(i, i + n), (x) => x.toString(16).padStart(2, "0")).join("");
+      const le = (i, n) => Array.from(b.slice(i, i + n)).reverse().map((x) => x.toString(16).padStart(2, "0")).join("");
+      add("GUID", `{${le(0, 4)}-${le(4, 2)}-${le(6, 2)}-${h(8, 2)}-${h(10, 6)}}`.toUpperCase());
+    }
+    const ascii = Array.from(b, (x) => (x >= 32 && x < 127 ? String.fromCharCode(x) : "·")).join("");
+    add("ASCII", ascii.slice(0, 48));
+    let u16 = "";
+    for (let i = 0; i + 1 < b.length; i += 2) { const c = b[i] | (b[i + 1] << 8); u16 += c >= 32 && c < 0xd800 ? String.fromCharCode(c) : "·"; }
+    add("UTF-16LE", u16.slice(0, 32));
+    box.innerHTML = `<table class="hex-insp">${rows.join("")}</table>`;
+  }
+  function showSide() {
+    el.querySelectorAll("[data-hexside]").forEach((b) => b.classList.toggle("is-active", b.getAttribute("data-hexside") === _hex.side));
+    el.querySelectorAll("[data-hexpane]").forEach((p) => { p.hidden = p.getAttribute("data-hexpane") !== _hex.side; });
+    if (_hex.side === "inspect") inspect();
+    if (_hex.side === "extracts") loadExtracts();
   }
   async function go(off) {
     let o = Math.floor(Math.max(0, off) / _hex.width) * _hex.width;
@@ -3607,27 +3707,111 @@ async function wireHex(root) {
   $("#hex-find").addEventListener("click", find);
   $("#hex-q").addEventListener("keydown", (e) => { if (e.key === "Enter") find(); });
   el.querySelectorAll("[data-hexhit]").forEach((b) => b.addEventListener("click", () => jumpHit(_hex.hitIdx + Number(b.getAttribute("data-hexhit")))));
-  el.querySelectorAll("[data-hexcopy]").forEach((b) => b.addEventListener("click", async () => {
-    const s = _hex.sel;
+  $("#hex-copy").addEventListener("click", async () => {
+    const s = _hex.sel, btn = $("#hex-copy");
     if (!s) return;
     const a = Math.min(s[0], s[1]), n = Math.min(Math.max(s[0], s[1]) - a + 1, 65536);
     const j = await _hexApi("read", { path: _hex.path, offset: a, length: n });
     const raw = atob(j.data);
-    const txt = b.getAttribute("data-hexcopy") === "hex"
-      ? Array.from(raw, (ch) => ch.charCodeAt(0).toString(16).padStart(2, "0")).join(" ")
-      : Array.from(raw, (ch) => { const c = ch.charCodeAt(0); return c >= 32 && c < 127 ? ch : "."; }).join("");
-    try { await navigator.clipboard.writeText(txt); b.textContent = "copied"; } catch (e) { b.textContent = "copy failed"; }
-    setTimeout(() => { b.textContent = b.getAttribute("data-hexcopy") === "hex" ? "copy hex" : "copy text"; }, 1200);
+    const bytes = Array.from(raw, (ch) => ch.charCodeAt(0));
+    const hx = (x) => x.toString(16).padStart(2, "0");
+    const mode = $("#hex-copyas").value;
+    const lines = (arr, per, fmt) => { const o = []; for (let i = 0; i < arr.length; i += per) o.push(arr.slice(i, i + per).map(fmt).join(", ")); return o; };
+    const txt = mode === "hex" ? bytes.map(hx).join(" ")
+      : mode === "text" ? bytes.map((c) => (c >= 32 && c < 127 ? String.fromCharCode(c) : ".")).join("")
+      : mode === "c" ? `unsigned char data[${bytes.length}] = {\n    ${lines(bytes, 12, (x) => "0x" + hx(x)).join(",\n    ")}\n};`
+      : mode === "py" ? `data = bytes.fromhex(\n    "${bytes.map(hx).join("").match(/.{1,64}/g).join('"\n    "')}"\n)`
+      : mode === "b64" ? btoa(raw)
+      : `${_hexFmt(a)}-${_hexFmt(a + bytes.length - 1)} (${bytes.length} bytes)`;
+    try { await navigator.clipboard.writeText(txt); btn.textContent = "copied"; } catch (e) { btn.textContent = "copy failed"; }
+    setTimeout(() => { btn.textContent = "copy"; }, 1200);
+  });
+  $("#hex-colors").addEventListener("change", (e) => { _hex.colors = e.target.checked; render(); });
+  el.querySelectorAll("[data-hexside]").forEach((b) => b.addEventListener("click", () => { _hex.side = b.getAttribute("data-hexside"); showSide(); }));
+  // --- decode / extract ---
+  const recipeEl = $("#hex-recipe");
+  recipeEl.addEventListener("input", () => { _hex.recipe = recipeEl.value; });
+  el.querySelectorAll("[data-hexstep]").forEach((b) => b.addEventListener("click", () => {
+    const st = b.getAttribute("data-hexstep");
+    recipeEl.value = (recipeEl.value.trim() ? recipeEl.value.trim() + " | " : "") + st;
+    _hex.recipe = recipeEl.value;
+    recipeEl.focus();
+    if (!st.endsWith(" ")) preview();
   }));
+  $("#hex-recipe-clear").addEventListener("click", () => { recipeEl.value = _hex.recipe = ""; $("#hex-decoded").innerHTML = ""; });
+  const selRange = () => {
+    const s = _hex.sel;
+    if (!s) return null;
+    const a = Math.min(s[0], s[1]);
+    return { offset: a, length: Math.max(s[0], s[1]) - a + 1 };
+  };
+  async function preview() {
+    const r = selRange(), out = $("#hex-decoded");
+    if (!r) { out.innerHTML = '<p class="hint-line">Select the bytes first (click, shift-click — or a search hit).</p>'; return; }
+    out.innerHTML = '<p class="hint-line">decoding…</p>';
+    try {
+      const d = await _hexApi("decode", { path: _hex.path, offset: r.offset, length: r.length, recipe: recipeEl.value });
+      const raw = atob(d.data);
+      let dump = "";
+      for (let i = 0; i < Math.min(raw.length, 512); i += 8) {
+        const row = Array.from(raw.slice(i, i + 8), (ch) => ch.charCodeAt(0));
+        dump += `${i.toString(16).padStart(4, "0")}  ${row.map((x) => x.toString(16).padStart(2, "0")).join(" ").padEnd(23)}  ${row.map((x) => (x >= 32 && x < 127 ? String.fromCharCode(x) : ".")).join("")}\n`;
+      }
+      out.innerHTML = `<p class="hint-line"><b>${escapeHtml(d.type)}</b> · ${d.size} bytes · entropy ${d.entropy}${(d.recipe || []).length ? ` · ${escapeHtml(d.recipe.join(" → "))}` : " · raw"}</p>
+        <pre class="hex-dump">${escapeHtml(dump)}${raw.length > 512 ? "…" : ""}</pre>`;
+    } catch (err) { out.innerHTML = `<p class="bad-text">${escapeHtml(String(err.message || err))}</p>`; }
+  }
+  $("#hex-preview").addEventListener("click", preview);
+  recipeEl.addEventListener("keydown", (e) => { if (e.key === "Enter") preview(); });
+  $("#hex-extract").addEventListener("click", async () => {
+    const r = selRange(), msg = $("#hex-xmsg");
+    if (!r) { msg.textContent = "select the bytes first"; return; }
+    msg.textContent = "saving…";
+    try {
+      const resp = await fetch(`/api/cases/${encodeURIComponent(_hex.caseId)}/hex/extract`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: _hex.path, offset: r.offset, length: r.length, recipe: recipeEl.value, name: $("#hex-xname").value }) });
+      const j = await resp.json();
+      if (!resp.ok) throw new Error(j.detail || resp.statusText);
+      msg.innerHTML = `Saved (${escapeHtml(j.extract.type)}, ${j.extract.size} B). A <b>re-analysis</b> is queued (Tasks): when it finishes the file is a <b>nested child</b> of the case (Components › Nested, YARA, Machine Learning, report) and appears in this tab's file list.`;
+      _hex.extracts = null; _hex.files = null;
+    } catch (err) { msg.textContent = String(err.message || err); }
+  });
+  async function loadExtracts() {
+    const box = $("#hex-extracts");
+    try {
+      const j = await _hexApi("extracts", {});
+      const xs = j.extracts || [];
+      box.innerHTML = xs.length ? xs.map((x, i) => `<div class="hex-xitem"><div class="mono">#${i + 1} ${escapeHtml(x.name || x.path.split("/").pop())}</div>
+          <div class="hint-line">${escapeHtml(x.path.replace(/^extracted\//, ""))} @ ${_hexFmt(x.offset)} +${x.length}</div>
+          <div class="hint-line">${escapeHtml((x.steps || []).join(" → ") || "raw")}</div>
+          <div class="hex-bar"><button class="btn btn-ghost btn-sm" type="button" data-hexgo="${i}">go</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-hexdel="${i}" title="Remove and re-analyse">remove</button></div></div>`).join("")
+        : '<p class="hint-line">No extractions yet. Select bytes, set a recipe in <b>Decode</b> and press <b>Extract as nested</b>.</p>';
+      box.querySelectorAll("[data-hexgo]").forEach((b) => b.addEventListener("click", () => {
+        const x = xs[Number(b.getAttribute("data-hexgo"))];
+        _hex.recipe = x.recipe || "";
+        hexOpen(x.path, x.offset, x.length);
+      }));
+      box.querySelectorAll("[data-hexdel]").forEach((b) => b.addEventListener("click", async () => {
+        b.disabled = true;
+        await fetch(`/api/cases/${encodeURIComponent(_hex.caseId)}/hex/extract/${b.getAttribute("data-hexdel")}`, { method: "DELETE" });
+        _hex.files = null;
+        loadExtracts();
+      }));
+    } catch (err) { box.innerHTML = `<p class="bad-text">${escapeHtml(String(err.message || err))}</p>`; }
+  }
 
   try { await go(_hex.offset); } catch (err) { $("#hex-grid").textContent = String(err.message || err); return; }
   showHits();
+  showSide();
   if (!_hex.entropy) {
     _hexApi("entropy", { path: _hex.path }).then((e) => { _hex.entropy = e; drawEntropy(); }).catch(() => {});
   } else drawEntropy();
   if (!_hex.regions.length) {
     _hexApi("regions", { path: _hex.path }).then((r) => {
       _hex.regions = r.regions || [];
+      render();
       $("#hex-region").innerHTML = '<option value="">region…</option>' + _hex.regions.map((x, i) =>
         `<option value="${i}">${escapeHtml(x.name)} @ ${_hexFmt(x.offset)} (${x.length} B)</option>`).join("");
     }).catch(() => {});
