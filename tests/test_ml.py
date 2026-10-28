@@ -12,8 +12,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 from test_js_techniques import _analyze, _ms, client  # noqa: E402,F401
 
-_DEPS = all(importlib.util.find_spec(m) for m in ("lightgbm", "sklearn", "signify"))
-pytestmark = pytest.mark.skipif(not _DEPS, reason="lightgbm / scikit-learn / signify not installed")
+_DEPS = all(importlib.util.find_spec(m) for m in ("lightgbm", "mmh3", "signify"))
+pytestmark = pytest.mark.skipif(not _DEPS, reason="lightgbm / mmh3 / signify not installed")
 
 from docutracex.config import settings  # noqa: E402
 
@@ -138,3 +138,24 @@ def test_family_download_verifies_hash(tmp_path: Path, monkeypatch) -> None:
         assert fd.status()["state"] == want
     assert (tmp_path / "EMBER2024_family.model").read_bytes() == data
     assert not (tmp_path / "EMBER2024_family.model.part").exists()
+
+
+def test_hasher_matches_sklearn_exactly() -> None:
+    sk = pytest.importorskip("sklearn.feature_extraction")
+    import random
+
+    import numpy as np
+
+    from docutracex.ml.hashing import FeatureHasher
+    rnd = random.Random(7)
+    alph = "abcXYZ09:._-ñ€\x00"
+    for _ in range(500):
+        n = rnd.choice([10, 32, 50, 128, 256, 1024])
+        it = rnd.choice(["string", "pair"])
+        alt = rnd.choice([True, False])
+        word = lambda k: "".join(rnd.choice(alph) for _ in range(rnd.randint(0, k)))  # noqa: E731
+        x = ([word(12) for _ in range(rnd.randint(1, 30))] if it == "string" else
+             [(word(8), rnd.choice([0, 1, 2.5, -3, rnd.random() * 1e6, "v1", 7])) for _ in range(rnd.randint(1, 30))])
+        a = sk.FeatureHasher(n, input_type=it, alternate_sign=alt).transform([x]).toarray()[0]
+        b = FeatureHasher(n, input_type=it, alternate_sign=alt).transform([x]).toarray()[0]
+        assert np.array_equal(a.astype(np.float32), b.astype(np.float32))

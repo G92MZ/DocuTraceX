@@ -52,7 +52,7 @@ def status() -> dict[str, Any]:
     import importlib.util
     d = models_dir()
     have = [t for t in MODEL_TYPES if (d / f"EMBER2024_{t}.model").is_file()]
-    deps = all(importlib.util.find_spec(m) is not None for m in ("lightgbm", "sklearn", "signify", "pefile"))
+    deps = all(importlib.util.find_spec(m) is not None for m in ("lightgbm", "mmh3", "signify", "pefile"))
     tags = [k for k in TAG_KINDS if any((d / "tags" / k).glob("*.txt"))]
     return {"models": have, "dir": str(d), "deps": deps, "tags": tags,
             "family": (d / "EMBER2024_family.model").is_file(),
@@ -147,8 +147,10 @@ def feature_names(ex: Any) -> list[tuple[str, str]]:
 
 
 def _bucket(s: str, n: int) -> int:
-    from sklearn.utils import murmurhash3_32
-    return abs(murmurhash3_32(s, seed=0)) % n
+    import mmh3
+
+    from .hashing import _index
+    return _index(mmh3.hash(s.encode("utf-8"), 0, signed=True), n)
 
 
 def _resolve_hashed(raw: dict[str, Any]) -> dict[str, list[str]]:
@@ -259,7 +261,8 @@ def _classify(paths: list[str], mdir: str) -> list[dict[str, Any]]:
             if ftype is None:
                 out.append({**rec, "status": "unsupported", "detail": "not a PE, PDF or ELF file"})
                 continue
-            model = ftype if (Path(mdir) / f"EMBER2024_{ftype}.model").is_file() else "all"
+            chain = [ftype] + (["PE"] if ftype in ("Win32", "Win64", "Dot_Net") else []) + ["all"]
+            model = next((m for m in chain if (Path(mdir) / f"EMBER2024_{m}.model").is_file()), "all")
             mfile = Path(mdir) / f"EMBER2024_{model}.model"
             if not mfile.is_file():
                 out.append({**rec, "status": "no_model", "file_type": ftype,
@@ -311,7 +314,7 @@ def classify(paths: list[Path], timeout: int | None = None) -> list[dict[str, An
     st = status()
     if not st["deps"]:
         return [{"path": str(p), "status": "not_installed",
-                 "detail": "lightgbm / scikit-learn / signify not installed in the portable Python"} for p in paths]
+                 "detail": "lightgbm / mmh3 / signify not installed in the portable Python"} for p in paths]
     if not st["models"]:
         return [{"path": str(p), "status": "no_model",
                  "detail": f"EMBER2024 models not provisioned ({st['dir']}) — run install.py"} for p in paths]
