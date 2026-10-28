@@ -29,6 +29,7 @@ from .. import quiet, toolrun
 from ..logging_config import get_logger
 from . import script_rules
 from .didier import didier_dir
+from ..config import tmo
 
 log = get_logger(__name__)
 
@@ -38,7 +39,8 @@ _MAX_FILE_BYTES = 5 * 1024 * 1024
 # tag: AeWckx3pKh
 _MAX_CODE = 300_000
 _KEEP_CODE = 60_000
-_SANDBOX_TIMEOUT = 15
+_SANDBOX_TIMEOUT = tmo(15)
+_PARALLEL_SCRIPTS = 3        # scripts analysed at once (sandbox/webcrack are separate processes)
 _SCRIPT_EXT = {".js", ".mjs", ".jse", ".wsf", ".hta", ".html", ".htm", ".shtml", ".xhtml", ".svg",
                ".mht", ".mhtml", ".xsl", ".sct", ".wsc"}
 
@@ -87,7 +89,7 @@ def _decode_jse(path: Path) -> str:
     except OSError:
         return ""
     rec = toolrun.run(quiet.python_tool_cmd(str(script), [], script=True),
-                      f"decode-vbe.py < {path.name}", timeout=60, extra_env=toolrun.with_package_path(),
+                      f"decode-vbe.py < {path.name}", timeout=tmo(60), extra_env=toolrun.with_package_path(),
                       input_text=text)
     out = rec.get("output") or ""
     return "" if out.strip() == "No encoded script found!" else out
@@ -356,7 +358,11 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
     from . import js_deobf, js_techniques, js_webcrack
 
     res: dict[str, Any] = {"module": "javascript", "status": "ok", "scripts": [], "findings": []}
-    for i, it in enumerate(collect(original, extracted_dir, modules), 1):
+    items = list(enumerate(collect(original, extracted_dir, modules), 1))
+
+    def one(i: int, it: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        out_scripts: list[dict[str, Any]] = []
+        out_findings: list[dict[str, Any]] = []
         full = it["code"] or ""           # complete original source (dumped whole)
         orig_code = full[:_MAX_CODE]      # bounded original for metrics / display
         loc = it["location"]
@@ -366,7 +372,9 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
         # obfuscation when provisioned; the pure-Python cascade then peels any
         # remaining decode/eval layers. webcrack runs top-level only (one Node
         # process per child would be heavy) and degrades gracefully when absent.
-        wc = js_webcrack.deobfuscate(full) if run_sandbox else {"changed": False, "code": full}
+        # webcrack (Node) only for obfuscator.io / bundles: all it adds there.
+        wc = (js_webcrack.deobfuscate(full) if run_sandbox and js_webcrack.needs_webcrack(full)
+              else {"changed": False, "code": full})
         base = wc["code"] if wc.get("changed") else full
         deob = js_deobf.deobfuscate(base)
         deob_full = deob["code"]
@@ -397,38 +405,69 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
                   "_full_code": full}
         if changed:
             script["_full_deob"] = deob_full
-        res["scripts"].append(script)
+        out_scripts.append(script)
         by_rule: dict[str, list[dict[str, Any]]] = {}
         for h in hits:
             by_rule.setdefault(h["rule"], []).append(h)
         for rule, hs in by_rule.items():
             if rule in _MEDIUM_ONLY_IS_NOISE and len(by_rule) == 1:
                 continue
-            res["findings"].append(_finding(rule, hs[0]["severity"], f"[{it['origin']}] {hs[0]['label']}", loc,
+            out_findings.append(_finding(rule, hs[0]["severity"], f"[{it['origin']}] {hs[0]['label']}", loc,
                                             "\n".join(f"line {h['line_no']}: {h['line']}" for h in hs[:5])))
         if mets["obfuscation_score"] >= 4:
-            res["findings"].append(_finding("js_obfuscated", "medium" if mets["obfuscation_score"] < 6 else "high",
+            out_findings.append(_finding("js_obfuscated", "medium" if mets["obfuscation_score"] < 6 else "high",
                                             f"[{it['origin']}] Heavily obfuscated script (score {mets['obfuscation_score']})",
                                             loc, f"longest line {mets['longest_line']}, {mets['escapes']} escapes, "
                                                  f"entropy {mets['entropy']}, {mets['long_strings']} long encoded strings"))
         if changed:
             methods = ", ".join(deob_methods) or "static decoding"
             scheme_note = f"; packer scheme(s): {', '.join(deob['schemes'])}" if deob["schemes"] else ""
-            res["findings"].append(_finding("js_deobfuscated", "medium",
+            out_findings.append(_finding("js_deobfuscated", "medium",
                                             f"[{it['origin']}] Deobfuscated before analysis ({methods}){scheme_note} — "
                                             f"findings below are from the recovered payload",
                                             loc, (code[:600] or "").strip()))
         elif deob["schemes"]:
-            res["findings"].append(_finding("js_obfuscated", "high",
+            out_findings.append(_finding("js_obfuscated", "high",
                                             f"[{it['origin']}] Obfuscation scheme detected ({', '.join(deob['schemes'])}) — "
                                             f"left for the sandbox to unfold", loc, deob["schemes"][0]))
-        _sandbox_findings(sb, loc, res["findings"])
+        _sandbox_findings(sb, loc, out_findings)
         for t in techniques:
             if t["severity"] == "info":
                 continue
             where = "resolved in the sandbox" if t["phase"] == "sandbox" else "static"
-            res["findings"].append(_finding(f"js_{t['id']}", t["severity"],
+            out_findings.append(_finding(f"js_{t['id']}", t["severity"],
                                             f"[{it['origin']}] {t['name']} ({where})", loc, t["evidence"]))
+        return out_scripts, out_findings
+
+    # Scripts are analysed in parallel (webcrack and the STPyV8 sandbox are
+    # separate processes), results kept in their original order; each finished
+    # script is reported to the Tasks tab as "script N/M".
+    from ..analyze import step_progress_reporter
+    progress = step_progress_reporter()
+    results: dict[int, tuple[list, list]] = {}
+    if items:
+        import threading
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        done = 0
+        done_lock = threading.Lock()
+        workers = max(1, min(_PARALLEL_SCRIPTS, len(items))) if run_sandbox else 1
+        progress(f"script 0/{len(items)}")
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futs = {pool.submit(one, i, it): i for i, it in items}
+            for fut in as_completed(futs):
+                i = futs[fut]
+                try:
+                    results[i] = fut.result()
+                except Exception as exc:  # noqa: BLE001  (one script must not sink the rest)
+                    results[i] = ([], [_finding("js_analysis_error", "info", f"Script {i} could not be analysed: {exc}",
+                                                "javascript")])
+                with done_lock:
+                    done += 1
+                    progress(f"script {done}/{len(items)}")
+    for i in sorted(results):
+        res["scripts"].extend(results[i][0])
+        res["findings"].extend(results[i][1])
     res["counts"] = {"findings": len(res["findings"]), "scripts": len(res["scripts"])}
     if res["findings"]:
         res["status"] = "ok_with_findings"

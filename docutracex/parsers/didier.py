@@ -22,6 +22,7 @@ from typing import Any
 
 from ..config import settings
 from ..logging_config import get_logger
+from ..config import tmo
 
 log = get_logger(__name__)
 
@@ -65,7 +66,7 @@ def _run_one(name: str, script: Path, target: Path, args: list[str] | None) -> d
     try:
         proc = subprocess.run(
             cmd, capture_output=True, text=True, encoding="utf-8",
-            errors="replace", timeout=120,
+            errors="replace", timeout=tmo(120),
         )
         out = (proc.stdout or "")[:_OUTPUT_BOUND]
         return {"available": True, "returncode": proc.returncode, "output": out,

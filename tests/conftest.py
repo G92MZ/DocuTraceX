@@ -4,8 +4,13 @@ git-ignored; they are refreshed whenever the archive is newer."""
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
+
+# Tests check behaviour, not limits: run the analysis time limits unscaled (the
+# app's default factor is 5), so a test with an endless-loop script stays fast.
+os.environ.setdefault("DOCUTRACEX_TIMEOUT_FACTOR", "1")
 
 ROOT = Path(__file__).resolve().parent.parent
 ARCHIVE = ROOT / "samples" / "samples.zip"

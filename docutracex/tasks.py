@@ -349,6 +349,14 @@ class TaskManager:
                     task.steps = list(task.steps) + [{"step": rec["step"], "status": "running",
                                                       "started_utc": _now_ms()}]
                     task.phase = rec["step"]
+                elif event == "progress":
+                    # progress inside the running step, e.g. "script 7/23"
+                    steps = list(task.steps)
+                    for i in range(len(steps) - 1, -1, -1):
+                        if steps[i].get("status") == "running" and steps[i]["step"] == rec.get("step"):
+                            steps[i] = {**steps[i], "detail": rec.get("detail", "")}
+                            break
+                    task.steps = steps
                 else:
                     steps = list(task.steps)
                     for i in range(len(steps) - 1, -1, -1):

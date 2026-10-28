@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from ..logging_config import get_logger
+from ..config import tmo
 
 log = get_logger(__name__)
 
@@ -64,7 +65,7 @@ def _cli(module: str, args: list[str], path: Path) -> dict[str, Any]:
     env["PYTHONPATH"] = root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=180, env=env)
+                              errors="replace", timeout=tmo(180), env=env)
         out = (proc.stdout or "") + (("\n[stderr]\n" + proc.stderr) if proc.stderr.strip() else "")
         return {"command": shown, "returncode": proc.returncode,
                 "output": out[:_OUTPUT_BOUND], "output_truncated": len(out) > _OUTPUT_BOUND}

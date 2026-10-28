@@ -199,3 +199,29 @@ def test_decrypted_payloads_and_sniffing(tmp_path: Path) -> None:
     names = sorted(i["filename"] for i in items)
     assert names[0].endswith(".ps1") and names[1].endswith(".exe")
     assert (tmp_path / "decrypted" / names[1]).read_bytes() == pe
+
+
+def test_timeout_factor_and_webcrack_gate() -> None:
+    from docutracex import config
+    from docutracex.parsers.js_webcrack import needs_webcrack
+    assert config.tmo(15) == round(15 * config.TIMEOUT_FACTOR)
+    assert needs_webcrack(_ms().obf_obfuscatorio_js().decode("utf-8", "replace"))
+    assert not needs_webcrack(_sample()) and not needs_webcrack("var a = 1; WScript.Echo(a);")
+
+
+def test_js_scripts_report_progress(tmp_path: Path) -> None:
+    from docutracex import analyze
+    events: list[tuple[str, dict]] = []
+    html = "".join(f"<script>var a{i} = {i}; document.write('x{i}');</script>" for i in range(5))
+    f = tmp_path / "p.html"
+    f.write_text(f"<html><body>{html}</body></html>", encoding="utf-8")
+    analyze.set_step_listener(lambda ev, rec: events.append((ev, rec)))
+    try:
+        analyze._notify_step("start", {"step": "javascript: x"})
+        res = J.analyze(f, tmp_path / "none", {})
+    finally:
+        analyze.set_step_listener(None)
+    details = [r["detail"] for e, r in events if e == "progress"]
+    n = len(res["scripts"])
+    assert n >= 2 and details[0] == f"script 0/{n}" and details[-1] == f"script {n}/{n}"
+    assert [s["id"] for s in res["scripts"]] == sorted(s["id"] for s in res["scripts"])   # order kept
