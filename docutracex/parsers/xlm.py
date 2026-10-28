@@ -12,11 +12,12 @@ from pathlib import Path
 from typing import Any
 
 from ..logging_config import get_logger
+from ..config import tmo
 
 log = get_logger(__name__)
 
 _MAX_FORMULAS = 5000
-_TIMEOUT = 60
+_TIMEOUT = tmo(60)
 
 
 # id: gmzpt

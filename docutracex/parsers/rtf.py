@@ -34,6 +34,7 @@ from typing import Any
 from .. import quiet, toolrun
 from ..config import settings
 from ..logging_config import get_logger
+from ..config import tmo
 
 log = get_logger(__name__)
 
@@ -362,14 +363,14 @@ def _rtfdump(path: Path) -> dict[str, Any]:
     out: dict[str, Any] = {"available": True}
     for key, args in (("groups", []), ("objects", ["-O"])):
         out[key] = toolrun.run(quiet.python_tool_cmd(str(script), [*args, str(path)], script=True),
-                               " ".join(["rtfdump.py", *args, path.name]), timeout=120,
+                               " ".join(["rtfdump.py", *args, path.name]), timeout=tmo(120),
                                extra_env=toolrun.with_package_path(), bound=_OUTPUT_BOUND)
     return out
 
 
 def _rtfobj_cli(path: Path) -> dict[str, Any]:
     return toolrun.run(quiet.python_tool_cmd("oletools.rtfobj", [str(path)]), f"rtfobj {path.name}",
-                       timeout=120, extra_env=toolrun.with_package_path(), bound=_OUTPUT_BOUND)
+                       timeout=tmo(120), extra_env=toolrun.with_package_path(), bound=_OUTPUT_BOUND)
 
 
 def _rtfscan(path: Path, workdir: Path | None) -> dict[str, Any] | None:
@@ -378,7 +379,7 @@ def _rtfscan(path: Path, workdir: Path | None) -> dict[str, Any] | None:
         return None
     try:
         proc = subprocess.run([str(exe), str(path), "scan"], capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=180,
+                              encoding="utf-8", errors="replace", timeout=tmo(180),
                               cwd=str(workdir) if workdir else None)
         return {"command": f"RTFScan.exe {path.name} scan", "returncode": proc.returncode,
                 "output": (proc.stdout or "")[:_OUTPUT_BOUND]}

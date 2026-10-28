@@ -24,11 +24,12 @@ from typing import Any
 from .. import toolrun
 from ..config import settings
 from ..logging_config import get_logger
+from ..config import tmo
 
 log = get_logger(__name__)
 
 EMULATION_MINUTES = 3          # ViperMonkey's own time limit
-PROCESS_TIMEOUT = 8 * 60       # hard limit for the whole run
+PROCESS_TIMEOUT = tmo(8 * 60)      # hard limit for the whole run
 _MAX_ACTIONS = 500
 
 # action keyword -> (rule, severity, label); first match wins.
@@ -54,7 +55,7 @@ def vipermonkey_status() -> dict[str, Any]:
     if exe is None:
         return {"available": False, "detail": "PyPy 2.7 not provisioned under tools/pypy/"}
     rec = toolrun.run([str(exe), "-c", "import vipermonkey.vmonkey"], "import vipermonkey",
-                      timeout=120)
+                      timeout=tmo(120))
     if rec.get("returncode") == 0:
         return {"available": True, "detail": f"ViperMonkey importable on {exe}"}
     err = (rec.get("stderr") or rec.get("error") or "").strip().splitlines()

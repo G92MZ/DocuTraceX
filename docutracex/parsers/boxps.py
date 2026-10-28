@@ -24,10 +24,11 @@ from typing import Any
 from .. import toolrun
 from ..config import settings
 from ..logging_config import get_logger
+from ..config import tmo
 
 log = get_logger(__name__)
 
-PROCESS_TIMEOUT = 90
+PROCESS_TIMEOUT = tmo(90)
 _MAX_ACTIONS = 300
 _MAX_LAYER = 200_000
 

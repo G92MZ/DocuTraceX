@@ -8,11 +8,15 @@ evaluates only the obfuscation *decoder* in an isolated-vm sandbox; it never
 runs the analysed payload's effects.
 
 Runs before the pure-Python cascade so the whole pipeline (rules, IOC scan,
-STPyV8 sandbox) sees the flattened code. Degrades gracefully: when Node/webcrack
+STPyV8 sandbox) sees the flattened code — but **only when the script looks like
+obfuscator.io output or a webpack/browserify bundle** (``needs_webcrack``):
+that is all webcrack adds, and starting Node per script is not free. Degrades gracefully: when Node/webcrack
 are not provisioned, ``deobfuscate`` returns the input unchanged.
 """
 
 from __future__ import annotations
+
+import re
 
 import shutil
 import tempfile
@@ -21,9 +25,10 @@ from typing import Any
 
 from .. import toolrun
 from ..config import settings
+from ..config import tmo
 
 _RUNNER = Path(__file__).resolve().parent.parent / "assets" / "webcrack_run.js"
-_TIMEOUT = 60
+_TIMEOUT = tmo(60)
 _MAX_INPUT = 4_000_000
 _MAX_OUTPUT = 8_000_000
 
@@ -48,6 +53,26 @@ def status() -> dict[str, Any]:
     if wc is None:
         return {"available": False, "detail": "webcrack not installed under tools/webcrack/"}
     return {"available": True, "detail": f"webcrack ready on {node}"}
+
+
+_HEX_ID = re.compile(r"\b_0x[0-9a-fA-F]{4,}\b")
+_OBF_MARKERS = (
+    re.compile(r"while\s*\(\s*!!\s*\[\s*\]\s*\)"),                       # rotator loop
+    re.compile(r"parseInt\s*\(\s*_0x[0-9a-fA-F]+\s*\(\s*0x[0-9a-fA-F]+"),   # rotator checksum
+    re.compile(r"['\"](?:\d+\|){2,}\d+['\"]\s*\[?\s*['\"]?split"),           # control-flow flattening
+    re.compile(r"function\s+_0x[0-9a-fA-F]+\s*\(\s*\)\s*\{\s*(?:var|const|let)\s+_0x[0-9a-fA-F]+\s*=\s*\["),  # string array
+)
+_BUNDLE = re.compile(r"__webpack_require__|webpackJsonp|webpackChunk|\btypeof\s+require\s*==\s*['\"]function['\"]\s*&&\s*require")
+
+
+def needs_webcrack(code: str) -> bool:
+    """obfuscator.io (string array + rotator, ``_0x`` identifiers, flattened
+    control flow) or a JS bundle: the cases webcrack actually unpacks."""
+    sample = (code or "")[:400_000]
+    ids = len(set(_HEX_ID.findall(sample)))
+    if ids >= 10 and any(rx.search(sample) for rx in _OBF_MARKERS):
+        return True
+    return ids >= 40 or bool(_BUNDLE.search(sample))
 
 
 def deobfuscate(code: str) -> dict[str, Any]:
