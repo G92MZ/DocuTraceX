@@ -49,7 +49,14 @@ def _family(manifest: dict[str, Any], original: Path | None = None) -> str | Non
         except OSError:
             pass
     disc = manifest.get("format", {}).get("discrepancy") or {}
-    return disc.get("declared_family")
+    fam = disc.get("declared_family")
+    if fam is None and original is not None:
+        # no extension we know (an ELF "update", a Mach-O, a PE named .bin):
+        # native executables are still analysed as binaries
+        from .parsers import msi
+        if msi.native_kind(original):
+            return "binary"
+    return fam
 
 
 

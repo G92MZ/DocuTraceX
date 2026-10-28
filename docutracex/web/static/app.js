@@ -1811,28 +1811,161 @@ function paneFloss(it) {
     <pre class="text-sample">${escapeHtml(ss.join("\n"))}</pre></details>`;
 }
 
-function paneMsi(msim) {
-  const parts = (msim.items || []).map((it) => {
+// Inner tabs (one per analysis inside a sub-tab, e.g. Binary → File · pefile ·
+// LIEF · FLOSS · capa). Pure CSS/DOM toggle, wired by wireInnerTabs(); the last
+// choice per group is remembered while the case is open.
+const _itabActive = {};
+function innerTabs(group, tabs) {
+  tabs = tabs.filter((t) => t && t.html);
+  if (!tabs.length) return "";
+  const act = tabs.some((t) => t.id === _itabActive[group]) ? _itabActive[group] : tabs[0].id;
+  const bar = tabs.map((t) => `<button type="button" class="itab${t.id === act ? " is-active" : ""}"
+      data-itab-group="${escapeHtml(group)}" data-itab="${escapeHtml(t.id)}">${escapeHtml(t.label)}${
+      t.status ? ` <span class="itab-status itab-${escapeHtml(t.status)}">${escapeHtml(t.statusLabel || t.status)}</span>` : ""}</button>`).join("");
+  const panes = tabs.map((t) => `<div class="ipane" data-ipane-group="${escapeHtml(group)}" data-ipane="${escapeHtml(t.id)}"${
+      t.id === act ? "" : " hidden"}>${t.html}</div>`).join("");
+  return `<div class="itabs" role="tablist">${bar}</div>${panes}`;
+}
+
+function wireInnerTabs(root) {
+  root.querySelectorAll(".itab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const g = btn.getAttribute("data-itab-group"), id = btn.getAttribute("data-itab");
+      _itabActive[g] = id;
+      root.querySelectorAll(`.itab[data-itab-group="${CSS.escape(g)}"]`).forEach((b) =>
+        b.classList.toggle("is-active", b === btn));
+      root.querySelectorAll(`.ipane[data-ipane-group="${CSS.escape(g)}"]`).forEach((p) => {
+        p.hidden = p.getAttribute("data-ipane") !== id;
+      });
+    });
+  });
+}
+
+const _TOOL_STATUS = { ok: ["ok", "ran"], skipped: ["skip", "skipped"], not_provisioned: ["off", "not provisioned"],
+                       not_installed: ["off", "not installed"], timeout: ["bad", "timeout"], error: ["bad", "error"] };
+function toolTab(id, label, rec, html) {
+  const st = rec ? (_TOOL_STATUS[rec.status] || ["off", rec.status || ""]) : null;
+  const line = rec ? `<p class="hint-line">${escapeHtml(peToolLine(rec))}</p>` : "";
+  return { id, label, status: st ? st[0] : "", statusLabel: st ? st[1] : "", html: line + (html || "") || "<p class=\"hint-line\">No result.</p>" };
+}
+
+function itable(head, rows) {
+  if (!rows.length) return "";
+  return `<table class="cases"><thead><tr>${head.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead>
+    <tbody>${rows.map((r) => `<tr>${r.map((c) => `<td class="mono">${escapeHtml(c == null ? "" : String(c))}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+}
+
+function paneLief(lf) {
+  if (!lf || lf.status !== "ok") return "";
+  const mit = lf.mitigations || {};
+  const yn = (b) => (b ? "yes" : "no");
+  const chk = lf.checksum || {};
+  const head = kv([
+    ["Format", lf.format], ["LIEF", lf.version], ["imphash", lf.imphash],
+    ["Image base", lf.imagebase], ["Entry point", lf.entrypoint], ["Linker", lf.linker], ["OS version", lf.os_version],
+    ["ASLR / DEP / CFG", lf.format === "PE" ? `${yn(mit.aslr)} / ${yn(mit.dep)} / ${yn(mit.cfg)}` : ""],
+    ["High-entropy VA", lf.format === "PE" ? yn(mit.high_entropy_va) : ""],
+    ["Checksum", chk.declared ? `${chk.declared} (computed ${chk.computed}) ${chk.valid ? "✓" : "✗ mismatch"}` : ""],
+    ["Authenticode", lf.format === "PE" ? ((lf.signatures || []).length ? `signed — ${lf.signature_check}` : "not signed") : ""],
+    ["Authentihash", lf.authentihash_sha256],
+    ["TLS callbacks", (lf.tls_callbacks || []).join(", ")],
+    ["CFG flags", (lf.load_config || {}).guard_flags],
+    ["Export name", lf.export_name],
+    // ELF / Mach-O
+    ["Type", lf.type], ["Machine", lf.machine || lf.cpu], ["Class", lf.class], ["Interpreter", lf.interpreter],
+    ["PIE / NX", lf.format === "ELF" ? `${yn(lf.pie)} / ${yn(lf.nx)}` : ""],
+    ["Linking", lf.format === "ELF" ? (lf.static ? "static" : "dynamic") + (lf.stripped ? ", stripped" : "") : ""],
+    ["Code signature", lf.format === "MachO" ? yn(lf.signed) : ""],
+    ["RPATH / RUNPATH", (lf.rpath || []).join("; ")],
+  ]);
+  const pdb = itable(["PDB path", "GUID", "Age"], (lf.pdb || []).map((p) => [p.path, p.guid, p.age]));
+  const rich = lf.rich_header ? `<details class="disclose"><summary>Rich header — ${(lf.rich_header.entries || []).length} entries (key ${escapeHtml(lf.rich_header.key)})</summary>
+    ${itable(["Product id", "Build", "Count"], (lf.rich_header.entries || []).map((e) => [e.id, e.build_id, e.count]))}</details>` : "";
+  const sigs = (lf.signatures || []).map((sg, n) => `<details class="disclose"${n ? "" : " open"}><summary>Signature ${n + 1} — ${escapeHtml(sg.digest || "")}</summary>
+    ${itable(["Subject", "Issuer", "Serial", "Valid from", "Valid to"], (sg.certificates || []).map((c) => [c.subject, c.issuer, c.serial, c.valid_from, c.valid_to]))}</details>`).join("");
+  const ver = itable(["Version info", "Value"], (lf.version_info || []).map((v) => [v.key, v.value]));
+  const res = (lf.resource_types || []).length ? kv([["Resource types", lf.resource_types.join(", ")], ["Icons", lf.icons]]) : "";
+  const man = lf.manifest ? `<details class="disclose"><summary>Manifest</summary><pre class="text-sample">${escapeHtml(lf.manifest)}</pre></details>` : "";
+  const ov = lf.overlay ? kv([["Overlay", `${lf.overlay.size} bytes at ${lf.overlay.offset} · entropy ${lf.overlay.entropy} · head ${lf.overlay.head}`]]) : "";
+  const libs = (lf.libraries || []).length ? kv([["Libraries", lf.libraries.join(", ")]]) : "";
+  const syms = (lf.imported || []).length ? `<details class="disclose"><summary>Imported symbols — ${lf.imported.length}</summary>
+    <pre class="text-sample">${escapeHtml(lf.imported.join("\n"))}</pre></details>` : "";
+  const exps = (lf.exported || []).length ? `<details class="disclose"><summary>Exported symbols — ${lf.exported.length}</summary>
+    <pre class="text-sample">${escapeHtml(lf.exported.join("\n"))}</pre></details>` : "";
+  const secs = lf.format !== "PE" ? itable(["Section", "Size", "Offset", "Entropy", "Flags"],
+    (lf.sections || []).map((x) => [x.name, x.size, x.offset, x.entropy, (x.flags || []).join(" ")])) : "";
+  return head + pdb + sigs + ver + res + man + ov + rich + libs + syms + exps + secs;
+}
+
+function paneImportsExports(it) {
+  const lf = it.lief || {};
+  const imps = (lf.imports || []).map((l) => `<details class="disclose"><summary>${escapeHtml(l.library)} — ${l.count}</summary>
+    <pre class="text-sample">${escapeHtml((l.functions || []).join("\n"))}</pre></details>`).join("");
+  const fallback = !imps && (it.imports_dll || []).length ? kv([["DLLs", it.imports_dll.join(", ")]]) : "";
+  const delay = (lf.delay_imports || []).map((l) => `<details class="disclose"><summary>${escapeHtml(l.library)} (delay-load) — ${(l.functions || []).length}</summary>
+    <pre class="text-sample">${escapeHtml((l.functions || []).join("\n"))}</pre></details>`).join("");
+  const exps = (lf.exports || []).length
+    ? itable(["Export", "Ordinal", "Forwarded to"], lf.exports.map((e) => [e.name, e.ordinal, e.forward]))
+    : ((it.exports || []).length ? kv([["Exports", it.exports.join(", ")]]) : "");
+  const head = `<p class="hint-line">${escapeHtml(String(it.imports_count != null ? it.imports_count : "?"))} imported function(s) from ${(lf.imports || it.imports_dll || []).length} DLL(s).</p>`;
+  return head + imps + fallback + delay + (exps ? `<h4>Exports</h4>${exps}` : "");
+}
+
+function paneUnpack(up) {
+  if (!up) return "";
+  const det = itable(["Packer / installer", "Detected by", "Evidence"], (up.detected || []).map((h) => [h.label, h.by, h.evidence]));
+  const die = up.die ? `<p class="hint-line">Detect It Easy: ${escapeHtml(peToolLine(up.die))}</p>` : "";
+  const files = itable(["Unpacked file", "Size"], (up.files || []).map((f) => [f.name, f.size]));
+  return kv([["Status", up.status], ["Detail", up.detail], ["Tool", up.tool],
+             ["No static unpacker", (up.no_static || []).join(", ")]]) + die + det + files;
+}
+
+function panePeItem(it, n, fileRec) {
+  const g = `bin${n}`;
+  const byTool = (t) => (it.findings || []).filter((f) => f.tool === t);
+  const secs = (it.sections || []).map((s) => [s.name, s.vsize, s.rawsize, s.entropy, s.wx ? "W+X" : ""]);
+  const overview = kv([
+    ["File", it.file], ["Size", it.size != null ? `${it.size} bytes` : ""],
+    ["Looks like PE", it.is_pe ? "yes (MZ)" : "no"],
+    ["Type", it.is_dll ? "DLL" : (it.is_pe ? "EXE" : "")], ["Architecture", it.machine],
+    ["Subsystem", it.subsystem], ["Compiled", it.compiled], ["Entry point", it.entrypoint],
+    ["Imports", it.imports_count != null ? `${it.imports_count} (${(it.imports_dll || []).slice(0, 5).join(", ")})` : ""],
+    ["Exports", (it.exports || []).slice(0, 8).join(", ")],
+    ["Signed", it.signed ? "yes (Authenticode)" : (it.is_pe ? "no" : "")],
+  ]);
+  const err = it.error ? `<p class="bad-text">${escapeHtml(it.error)}</p>` : "";
+  const lf = it.lief;
+  return innerTabs(g, [
+    fileRec ? { id: "file", label: "File", html: paneFile(fileRec) } : null,
+    { id: "findings", label: `Findings (${(it.findings || []).length})`, html: netFindingsList(it.findings || []) },
+    { id: "pefile", label: "pefile", html: `<p class="hint-line">Header, sections and imports parsed with pefile.</p>${overview}${err}${netFindingsList(byTool("pe"))}` },
+    { id: "sections", label: `Sections (${secs.length})`, html: itable(["Section", "Virtual size", "Raw size", "Entropy", ""], secs)
+        + (lf && lf.status === "ok" && lf.format === "PE" ? `<h4>LIEF flags</h4>${itable(["Section", "Offset", "Flags"], (lf.sections || []).map((s) => [s.name, s.offset, (s.flags || []).join(" ")]))}` : "") },
+    { id: "imports", label: "Imports / Exports", html: paneImportsExports(it) },
+    lf ? toolTab("lief", "LIEF", lf, paneLief(lf) + netFindingsList(byTool("lief"))) : null,
+    it.unpack ? toolTab("unpack", "Packer / unpack", { status: it.unpack.status === "unpacked" ? "ok" : (it.unpack.status === "none" ? "ok" : it.unpack.status), detail: it.unpack.detail || (it.unpack.status === "none" ? "no packer detected" : "") },
+                        paneUnpack(it.unpack) + netFindingsList(byTool("unpack"))) : null,
+    it.floss ? toolTab("floss", "FLOSS", it.floss, paneFloss(it)) : null,
+    it.capa ? toolTab("capa", "capa", it.capa, paneCapa(it.capa)) : null,
+  ]);
+}
+
+function paneNativeItem(it, n, fileRec) {
+  const lf = it.lief || {};
+  return innerTabs(`bin${n}`, [
+    fileRec ? { id: "file", label: "File", html: paneFile(fileRec) } : null,
+    { id: "findings", label: `Findings (${(it.findings || []).length})`, html: netFindingsList(it.findings || []) },
+    toolTab("lief", `LIEF (${lf.format || "?"})`, lf, paneLief(lf)),
+  ]);
+}
+
+function paneMsi(msim, fileRec) {
+  const parts = (msim.items || []).map((it, n) => {
     if (it.kind === "pe") {
-      const secs = (it.sections || []).map((s) => `<tr><td class="mono">${escapeHtml(s.name || "")}</td>
-        <td>${s.rawsize != null ? escapeHtml(String(s.rawsize)) : ""}</td>
-        <td>${s.entropy != null ? escapeHtml(String(s.entropy)) : ""}</td>
-        <td>${s.wx ? "W+X" : ""}</td></tr>`).join("");
-      const secTable = secs ? `<table class="cases"><thead><tr><th>Section</th><th>Raw</th><th>Entropy</th><th></th></tr></thead>
-        <tbody>${secs}</tbody></table>` : "";
-      const rows = kv([
-        ["File", it.file], ["Size", it.size != null ? `${it.size} bytes` : ""],
-        ["Looks like PE", it.is_pe ? "yes (MZ)" : "no"],
-        ["Type", it.is_dll ? "DLL" : (it.is_pe ? "EXE" : "")], ["Architecture", it.machine],
-        ["Subsystem", it.subsystem], ["Compiled", it.compiled], ["Entry point", it.entrypoint],
-        ["Imports", it.imports_count != null ? `${it.imports_count} (${(it.imports_dll || []).slice(0, 5).join(", ")})` : ""],
-        ["Exports", (it.exports || []).slice(0, 8).join(", ")],
-        ["Signed", it.signed ? "yes (Authenticode)" : (it.is_pe ? "no" : "")],
-        ["FLOSS", peToolLine(it.floss)],
-        ["capa", peToolLine(it.capa)],
-      ]);
-      const err = it.error ? `<p class="bad-text">${escapeHtml(it.error)}</p>` : "";
-      return `<div class="sub-item"><div class="hint-line">PE static triage (pefile) — header, sections/entropy, imports and resources. Deep RE stays with a dedicated tool.</div>${rows}${err}${netFindingsList(it.findings || [])}${secTable}${paneCapa(it.capa)}${paneFloss(it)}</div>`;
+      return `<div class="sub-item">${panePeItem(it, n, n === 0 ? fileRec : null)}</div>`;
+    }
+    if (it.kind === "native") {
+      return `<div class="sub-item">${paneNativeItem(it, n, n === 0 ? fileRec : null)}</div>`;
     }
     const meta = it.metadata || {};
     const rows = kv([
@@ -1845,7 +1978,7 @@ function paneMsi(msim) {
     const err = it.error ? `<p class="bad-text">${escapeHtml(it.error)}</p>` : "";
     return `<div class="sub-item"><div class="hint-line">Windows Installer (.msi) — OLE tables decoded, strings mined into the scripting engine.</div>${rows}${err}${netFindingsList(it.findings || [])}</div>`;
   }).join("");
-  return `<p class="hint-line">Windows Installer / PE binary analysis.</p>${parts}`;
+  return parts;
 }
 
 function paneOnenote(onm) {
@@ -2050,6 +2183,7 @@ function renderSubtabs() {
   wireNet(bodyEl, _openCaseId);
   wireUnlock(bodyEl, _openCaseId);
   wireFind(bodyEl);
+  wireInnerTabs(bodyEl);
   applyFind();
 }
 
@@ -2362,9 +2496,13 @@ async function openComponents(analysisId, keepTab, viewId) {
     }
     const msim = mods.msi;
     if (msim && (msim.items || []).length) {
-      const isPe = (msim.items[0] || {}).kind === "pe";
-      sections.push({ id: "msi", label: isPe ? "Binary" : `MSI (${((msim.items[0] || {}).tables || []).length} tables)`,
-        html: paneMsi(msim) });
+      const k0 = (msim.items[0] || {}).kind;
+      const isBin = k0 === "pe" || k0 === "native";
+      // the generic File record lives inside Binary as its first analysis tab
+      const fileIdx = isBin ? sections.findIndex((x) => x.id === "file") : -1;
+      if (fileIdx >= 0) sections.splice(fileIdx, 1);
+      sections.push({ id: "msi", label: isBin ? "Binary" : `MSI (${((msim.items[0] || {}).tables || []).length} tables)`,
+        html: paneMsi(msim, isBin ? mods.file : null) });
     }
     const vbat = mods.vbatools;
     const vmon = mods.vipermonkey;
@@ -2406,7 +2544,7 @@ async function openComponents(analysisId, keepTab, viewId) {
       renderRerun(analysisId, d);
     }
   } catch (err) {
-    bodyEl.innerHTML = `<p class="hint-line">Could not load components.</p>`;
+    bodyEl.innerHTML = `<p class="hint-line">Could not load components.</p>`; console.error("components", err);
   }
 }
 
