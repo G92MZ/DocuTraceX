@@ -401,7 +401,7 @@ function wireFileActions(root, analysisId) {
       ev.preventDefault();
       ev.stopPropagation();
       hexOpen(btn.getAttribute("data-hex"), Number(btn.getAttribute("data-hex-offset") || 0),
-              Number(btn.getAttribute("data-hex-len") || 0));
+              Number(btn.getAttribute("data-hex-len") || 0), analysisId || _openCaseId);
     });
   });
   root.querySelectorAll("[data-download]").forEach((btn) => {
@@ -2217,8 +2217,6 @@ function renderSubtabs() {
   wireUnlock(bodyEl, _openCaseId);
   wireFind(bodyEl);
   wireInnerTabs(bodyEl);
-  wireMlFamily(bodyEl);
-  wireHex(bodyEl);
   applyFind();
 }
 
@@ -2488,12 +2486,6 @@ async function openComponents(analysisId, keepTab, viewId) {
     if (yara && yara.rule_count) {
       sections.push({ id: "yara", label: `YARA (${yara.match_count || 0})`, render: () => paneYara(yara, d.yara_findings || findings, analysisId) });
     }
-    const mlm = mods.ml;
-    if (mlm && (mlm.items || []).length) {
-      sections.push({ id: "ml", label: `Machine Learning (${(mlm.items || []).filter((x) => x.status === "ok").length})`,
-                      render: () => paneMl(mlm, d.ml_findings || []) });
-    }
-    sections.push({ id: "hex", label: "Hex", render: () => paneHex() });
     const jsm = mods.javascript;
     if (jsm && (jsm.scripts || []).length) {
       sections.push({ id: "javascript", label: `JavaScript (${jsm.scripts.length})`, html: paneJavascript(jsm) });
@@ -3232,7 +3224,7 @@ function paneMl(ml, findings) {
 
 // "Download family model": background download in the web service, polled here;
 // when it is done the Machine Learning module is re-run for this case.
-function wireMlFamily(root) {
+function wireMlFamily(root, caseId) {
   const btn = root.querySelector("[data-ml-family]");
   if (!btn) return;
   const out = root.querySelector("[data-ml-family-state]");
@@ -3250,9 +3242,9 @@ function wireMlFamily(root) {
       out.textContent = "family model already downloaded.";
     } else if (st.installed || st.state === "done") {
       out.textContent = "downloaded — re-running Machine Learning…";
-      const r = await fetch(`/api/cases/${encodeURIComponent(_openCaseId)}/rerun`, {
+      const r = await fetch(`/api/cases/${encodeURIComponent(caseId)}/rerun`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ module: "ml" }) });
-      out.textContent = r.ok ? "downloaded — Machine Learning re-run queued (Tasks); reopen the case when it finishes."
+      out.textContent = r.ok ? "downloaded — Machine Learning re-run queued (Tasks); pick the case again when it finishes."
                              : "downloaded — re-run Machine Learning from the case to see families.";
     } else if (st.state === "error") {
       btn.disabled = false;
@@ -3390,23 +3382,25 @@ const _hex = { caseId: null, path: "", offset: 0, width: 16, rows: 32, sel: null
                cache: null, files: null, hits: [], hitIdx: -1, entropy: null, regions: [],
                mode: "hex", query: "", icase: false, info: "" };
 
-function hexOpen(rel, offset, length) {
+function hexOpen(rel, offset, length, caseId) {
+  if (caseId && caseId !== _hex.caseId) hexResetCase(caseId);
   if (_hex.path !== rel) { _hex.entropy = null; _hex.regions = []; _hex.hits = []; _hex.hitIdx = -1; _hex.cache = null; }
   _hex.path = rel;
   _hex.offset = Math.max(0, Math.floor((offset || 0) / _hex.width) * _hex.width - 4 * _hex.width);
   _hex.mark = length ? [offset, offset + length - 1] : null;
   _hex.sel = length ? [offset, offset + length - 1] : (offset ? [offset, offset] : null);
-  if (_compState && _compState.sections.some((x) => x.id === "hex")) {
-    _compState.active = "hex";
-    renderSubtabs();
-  }
+  showTab("hex");
+  renderHexView();
+  const sel = document.getElementById("hex-case");
+  if (sel) fillCaseSelect(sel, _hex.caseId);
+}
+
+function hexResetCase(caseId) {
+  Object.assign(_hex, { caseId, path: "", offset: 0, sel: null, mark: null, cache: null,
+                        files: null, hits: [], hitIdx: -1, entropy: null, regions: [] });
 }
 
 function paneHex() {
-  if (_hex.caseId !== _openCaseId) {
-    Object.assign(_hex, { caseId: _openCaseId, path: "", offset: 0, sel: null, mark: null, cache: null,
-                          files: null, hits: [], hitIdx: -1, entropy: null, regions: [] });
-  }
   return `<div id="hex-root" class="hex-root">
     <div class="hex-bar">
       <select id="hex-file" class="hex-file" title="File of this case"><option>loading files…</option></select>
@@ -3446,7 +3440,7 @@ function paneHex() {
   </div>`;
 }
 
-const _hexApi = (what, params) => fetch(`/api/cases/${encodeURIComponent(_openCaseId)}/hex/${what}?` +
+const _hexApi = (what, params) => fetch(`/api/cases/${encodeURIComponent(_hex.caseId)}/hex/${what}?` +
   new URLSearchParams(params)).then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.detail || r.statusText); return j; });
 
 const _hexFmt = (n) => "0x" + Number(n).toString(16).toUpperCase().padStart(8, "0");
@@ -4157,6 +4151,72 @@ function setupAi() {
   });
 }
 
+// --- Main tabs "Machine Learning" and "Hex": pick a case, see its ML results / bytes.
+async function fillCaseSelect(sel, current) {
+  const cases = await fetch("/api/cases").then((r) => r.json()).catch(() => []);
+  const pick = current || sel.value || _openCaseId || (cases[0] && cases[0].analysis_id) || "";
+  sel.innerHTML = cases.length
+    ? cases.map((c) => `<option value="${escapeHtml(c.analysis_id)}"${c.analysis_id === pick ? " selected" : ""}>${escapeHtml(c.filename || "")} · ${escapeHtml(c.analysis_id)}</option>`).join("")
+    : '<option value="">(no cases yet)</option>';
+  return sel.value;
+}
+
+let _mlCase = null;
+async function loadMlView(caseId) {
+  const sel = document.getElementById("ml-case");
+  const body = document.getElementById("ml-body");
+  if (!sel || !body) return;
+  const id = await fillCaseSelect(sel, caseId || _mlCase);
+  _mlCase = id;
+  if (!id) { body.innerHTML = '<p class="hint-line">Analyse a file first; its Machine Learning results show up here.</p>'; return; }
+  body.innerHTML = '<p class="hint-line">Loading…</p>';
+  try {
+    const d = await fetch(`/api/cases/${encodeURIComponent(id)}/components`).then((r) => r.json());
+    if (_mlCase !== id) return;
+    const ml = (d.modules || {}).ml;
+    const findings = d.ml_findings || [];
+    body.innerHTML = ml ? paneMl(ml, findings)
+      : innerTabs("ml", [
+          { id: "results", label: "Results", html: '<p class="hint-line">Machine Learning did not run on this case (no PE, .NET, PDF, ELF or APK object, or the case predates it — re-analyse it).</p>' },
+          { id: "help", label: "Help", html: mlHelp({}) }]);
+    wireInnerTabs(body);
+    wireMarks(body, id, (fid, mark) => { findings.forEach((f) => { if (f.id === fid) f.mark = mark; }); });
+    wireMlFamily(body, id);
+  } catch (err) {
+    body.innerHTML = `<p class="bad-text">Could not load the case: ${escapeHtml(String(err.message || err))}</p>`;
+  }
+}
+
+async function loadHexView() {
+  const sel = document.getElementById("hex-case");
+  if (!sel) return;
+  const id = await fillCaseSelect(sel, _hex.caseId);
+  if (id !== _hex.caseId) hexResetCase(id);
+  renderHexView();
+}
+
+function renderHexView() {
+  const body = document.getElementById("hex-body");
+  const sel = document.getElementById("hex-case");
+  if (!body) return;
+  if (sel && _hex.caseId && sel.value !== _hex.caseId) {
+    if (![...sel.options].some((o) => o.value === _hex.caseId)) {
+      sel.insertAdjacentHTML("afterbegin", `<option value="${escapeHtml(_hex.caseId)}">${escapeHtml(_hex.caseId)}</option>`);
+    }
+    sel.value = _hex.caseId;
+  }
+  if (!_hex.caseId) { body.innerHTML = '<p class="hint-line">Analyse a file first; every file of the case can then be opened here.</p>'; return; }
+  body.innerHTML = paneHex();
+  wireHex(body);
+}
+
+function setupMlHex() {
+  const ms = document.getElementById("ml-case");
+  if (ms) ms.addEventListener("change", () => { _mlCase = ms.value; loadMlView(ms.value); });
+  const hs = document.getElementById("hex-case");
+  if (hs) hs.addEventListener("change", () => { hexResetCase(hs.value); renderHexView(); });
+}
+
 // --- Tab navigation ----------------------------------------------------------
 function setupTabs() {
   const tabs = document.querySelectorAll(".tab");
@@ -4171,6 +4231,8 @@ function setupTabs() {
       if (target === "tasks") loadTasks();
       if (target === "reports") loadReports(_openCaseId);
       if (target === "yara") loadYara();
+      if (target === "ml") loadMlView();
+      if (target === "hex") loadHexView();
       if (target === "settings") loadSettings();
       if (target === "ai") loadAiCases();
     });
@@ -4184,6 +4246,7 @@ setupTabs();
 setupYara();
 setupSettings();
 setupAi();
+setupMlHex();
 renderFormats();
 loadDiagnostics(); // initial load to set the nav indicator
 loadCases();
