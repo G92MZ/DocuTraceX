@@ -3173,7 +3173,7 @@ function paneMl(ml, findings) {
   (findings || []).forEach((f) => { byId[f.id] = f; });
   const items = ml.items || [];
   const pct = (x) => (x == null ? "" : `${(100 * x).toFixed(1)}%`);
-  const head = `<p class="hint-line">Static classifier <b>${escapeHtml(ml.engine || "EMBER2024 · LightGBM")}</b> on every PE, .NET, PDF and ELF object of the case
+  const head = `<p class="hint-line">Static classifier <b>${escapeHtml(ml.engine || "EMBER2024 · LightGBM")}</b> on every PE, .NET, PDF, ELF and APK object of the case
     (original, extracted, unpacked, debloated, decrypted). The score is compared with a threshold calibrated at a <b>1% false-positive rate</b>
     on the EMBER2024 test set of that file type. It is a <b>complementary indicator, not a verdict</b>: on evasive malware that no antivirus
     detected at first (EMBER2024 challenge set) only part is caught at that threshold (shown per model).
@@ -3182,7 +3182,7 @@ function paneMl(ml, findings) {
     family model: ${ml.family_model ? "installed"
       : `not installed <button class="btn btn-ghost btn-sm" type="button" data-ml-family>Download family model (459 MB)</button>
          <span class="hint-line" data-ml-family-state></span>`}</p>`;
-  if (!items.length) return head + extras + `<p class="hint-line">${escapeHtml(ml.detail || "No PE, PDF or ELF object in this case.")}</p>`;
+  if (!items.length) return head + extras + `<p class="hint-line">${escapeHtml(ml.detail || "No PE, PDF, ELF or APK object in this case.")}</p>`;
   const rows = items.map((it, i) => {
     const f = byId[it.finding_id];
     const verdict = it.status !== "ok" ? `<span class="badge badge-muted">${escapeHtml(it.status)}</span>`

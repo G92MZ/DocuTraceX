@@ -159,3 +159,11 @@ def test_hasher_matches_sklearn_exactly() -> None:
         a = sk.FeatureHasher(n, input_type=it, alternate_sign=alt).transform([x]).toarray()[0]
         b = FeatureHasher(n, input_type=it, alternate_sign=alt).transform([x]).toarray()[0]
         assert np.array_equal(a.astype(np.float32), b.astype(np.float32))
+
+
+@pytest.mark.skipif(not (settings.tools_dir / "ember" / "EMBER2024_APK.model").is_file(), reason="APK model not provisioned")
+def test_apk_is_classified(client) -> None:
+    _, res = _analyze(client, "sample_invoice_viewer.apk", _ms().invoice_viewer_apk())
+    items = json.loads((res / "ml.json").read_text())["items"]
+    apk = next(i for i in items if i.get("file_type") == "APK")
+    assert apk["status"] == "ok" and apk["model"] == "EMBER2024_APK"
