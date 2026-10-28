@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 
 import pytest
@@ -475,3 +476,17 @@ def test_crypto_loader_sample_end_to_end(client) -> None:
     assert "securestring" in ps["deob_methods"]
     iocs = {i["value"] for i in json.loads((res / "iocs.json").read_text())["iocs"]}
     assert {"http://billing-portal.example/inv/aes-c2", "http://billing-portal.example/inv/ss-stage.ps1"} <= iocs
+
+
+@pytest.mark.skipif(not _have_v8(), reason="STPyV8 not installed")
+def test_msxml_binary_drop(client) -> None:
+    import base64
+    import json
+    js = _ms().msxml_dropper_js()
+    _, res = _analyze(client, "sample_msxml_dropper.js", js)
+    jsr = json.loads((res / "javascript.json").read_text())
+    assert {"js_sandbox_drop", "js_sandbox_b64_decode", "js_sandbox_command"} <= {f["rule"] for f in jsr["findings"]}
+    exe = next(n for n in _tree(res) if n["filename"].endswith(".exe"))
+    assert exe["kind"] == "binary" and exe["recipe"][-1] == "exe"
+    b64 = "".join(re.findall(r'"([A-Za-z0-9+/=]+)"', js.decode().split("var xml")[0]))
+    assert (res.parent / exe["stored_path"]).read_bytes() == base64.b64decode(b64)   # byte-identical
