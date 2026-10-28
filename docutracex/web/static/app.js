@@ -2307,15 +2307,18 @@ let _tasksPoll = null;
 
 function taskProgress(t) {
   if (TASK_ACTIVE.has(t.state)) {
+    // the step being run now (live), e.g. "● nested: recursive scan…"
+    const now = t.state === "running" && t.phase && !["analyzing", "network check", "queued"].includes(t.phase)
+      ? escapeHtml(t.phase.split(" · ")[0].slice(0, 60)) : "working";
     return t.progress == null
-      ? '<span class="spin" aria-label="working">●</span> working'
+      ? `<span class="spin" aria-label="working">●</span> ${now}`
       : `${Math.round(t.progress * 100)}%`;
   }
   return "—";
 }
 
 const STEP_STATE_CLS = {
-  ok: "ok", ok_with_findings: "warn", error: "bad", unavailable: "muted", skipped: "muted",
+  ok: "ok", ok_with_findings: "warn", error: "bad", unavailable: "muted", skipped: "muted", running: "warn",
 };
 
 function stepsTable(steps) {
@@ -2329,12 +2332,41 @@ function stepsTable(steps) {
     return `<tr>
       <td>${escapeHtml(s.step)}</td>
       <td><span class="badge badge-${cls}">${escapeHtml(s.status)}</span></td>
-      <td class="mono">${s.duration_s != null ? s.duration_s + "s" : ""}</td>
+      <td class="mono">${s.duration_s != null ? fmtDuration(s.duration_s)
+        : (s.status === "running" && s.started_utc ? `<span data-elapsed-from="${escapeHtml(s.started_utc)}">${fmtDuration(elapsedSince(s.started_utc))}</span>` : "")}</td>
       <td class="hint-line">${extra.join(" · ")}</td>
     </tr>`;
   }).join("");
   return table(["Sub-step (tool executed)", "Status", "Time", "Result"], rows);
 }
+
+function fmtDuration(sec) {
+  if (sec == null || isNaN(sec)) return "";
+  sec = Math.max(0, Number(sec));
+  if (sec < 10) return `${sec.toFixed(1)}s`;
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = Math.floor(sec % 60);
+  return h ? `${h}h ${m}m ${s}s` : (m ? `${m}m ${s}s` : `${s}s`);
+}
+
+function elapsedSince(iso) {
+  const t = Date.parse(iso);
+  return isNaN(t) ? null : (Date.now() - t) / 1000;
+}
+
+function fmtWhen(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  const p = (n) => String(n).padStart(2, "0");
+  const today = new Date().toDateString() === d.toDateString();
+  return (today ? "" : `${p(d.getDate())}/${p(d.getMonth() + 1)} `) + `${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+// Live "running for…" counters in the Tasks tab (cheap: only existing spans).
+setInterval(() => {
+  document.querySelectorAll("[data-elapsed-from]").forEach((el) => {
+    el.textContent = fmtDuration(elapsedSince(el.dataset.elapsedFrom));
+  });
+}, 1000);
 
 function renderTasks(data) {
   const summary = document.getElementById("tasks-summary");
@@ -2349,14 +2381,20 @@ function renderTasks(data) {
     const cancel = TASK_ACTIVE.has(t.state)
       ? `<button class="btn btn-ghost btn-sm" data-cancel="${escapeHtml(t.id)}">Cancel</button>` : "";
     const err = t.error ? `<div class="hint-line bad-text">${escapeHtml(t.error)}</div>` : "";
-    const dur = t.duration_s != null ? ` · ${t.duration_s}s` : "";
+    // finished: how long it took; running: live elapsed time (ticks every second)
+    const dur = t.duration_s != null
+      ? ` · took ${fmtDuration(t.duration_s)}`
+      : (t.state === "running" && t.started_utc
+        ? ` · <span data-elapsed-from="${escapeHtml(t.started_utc)}">${fmtDuration(elapsedSince(t.started_utc))}</span>`
+        : "");
+    const when = t.finished_utc && !TASK_ACTIVE.has(t.state) ? ` · finished ${fmtWhen(t.finished_utc)}` : "";
     const nsteps = (t.steps || []).length;
     return `<details class="disclose"${TASK_ACTIVE.has(t.state) ? " open" : ""}>
       <summary>
         <span class="mono">${escapeHtml(t.id)}</span>
         <span class="file">${escapeHtml(t.filename || "")}</span>
         <span class="badge badge-${cls}">${escapeHtml(t.state)}</span>
-        <span class="hint-line">${escapeHtml(t.type)} · ${escapeHtml(target)}${dur} · ${taskProgress(t)}${nsteps ? ` · ${nsteps} sub-steps` : ""}</span>
+        <span class="hint-line">${escapeHtml(t.type)} · ${escapeHtml(target)}${dur}${when}${TASK_ACTIVE.has(t.state) ? ` · ${taskProgress(t)}` : ""}${nsteps ? ` · ${nsteps} sub-steps` : ""}</span>
         ${cancel}
       </summary>
       <div style="padding:8px 10px">${err}${stepsTable(t.steps)}</div>
