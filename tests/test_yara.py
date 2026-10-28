@@ -105,25 +105,23 @@ def _run_yara(client: TestClient, cid: str) -> None:
 
 
 @has_samples
-def test_yara_runs_only_on_demand_and_hits_are_markable(client: TestClient, env: Path) -> None:
+def test_yara_runs_automatically_and_hits_are_findings_only_once_marked(client: TestClient, env: Path) -> None:
     client.post("/api/yara/upload", files={"file": ("t.yar", RULE.encode())})
     _compile(client)
     with (SAMPLES / "sample.xlsm").open("rb") as fh:
         cid = client.post("/api/cases", files={"file": ("sample.xlsm", fh.read())}).json()["analysis_id"]
     _wait_case(client, cid)
     comp = client.get(f"/api/cases/{cid}/components").json()
-    assert "yara" not in comp["modules"]  # not run automatically
-
-    _run_yara(client, cid)  # the "Scan case" button
-    comp = client.get(f"/api/cases/{cid}/components").json()
-    ymod = comp["modules"]["yara"]
-    assert ymod["match_count"] >= 1
-    yf = [f for f in comp["findings"] if f["source"] == "yara"]
-    assert yf and yf[0]["rule"] == "yara:Has_VBA"
+    ymod = comp["modules"]["yara"]                           # ran automatically
+    assert ymod["match_count"] >= 1 and ymod.get("triage_only")
+    # not a finding until marked: only in the YARA tab
+    assert not [f for f in comp["findings"] if f["source"] == "yara"]
+    yf = [f for f in comp["yara_findings"] if f["rule"] == "yara:Has_VBA"]
+    assert yf and yf[0]["mark"]["state"] == "unreviewed"
 
     hit = ymod["scanned"][0]
     m = hit["matches"][0]
-    assert m["finding_id"] in {f["id"] for f in yf}
+    assert m["finding_id"] in {f["id"] for f in comp["yara_findings"]}
     assert Path(hit["path"]).is_file()                       # local path of the target
     assert m["strings"][0]["text"] == "vbaProject"           # what matched, readable
     assert m["strings"][0]["data"] == b"vbaProject".hex()
@@ -135,17 +133,19 @@ def test_yara_runs_only_on_demand_and_hits_are_markable(client: TestClient, env:
     src = ymod["rules_info"][f"{m['namespace']}:Has_VBA"]
     assert src["source"].startswith("rule Has_VBA") and src["file"].endswith("t.yar")
 
-    # The report lists only confirmed (TP) findings, so mark it, then it appears.
+    # Marked -> a finding (Findings tab); a True positive reaches the report.
     assert "yara:Has_VBA" not in client.get(f"/api/cases/{cid}/report").text
     client.put(f"/api/cases/{cid}/marks/{m['finding_id']}", json={"state": "true_positive"})
+    comp = client.get(f"/api/cases/{cid}/components").json()
+    assert any(f["rule"] == "yara:Has_VBA" and f["mark"]["state"] == "true_positive"
+               for f in comp["findings"])
     assert "yara:Has_VBA" in client.get(f"/api/cases/{cid}/report").text
 
-    # A full re-analysis keeps the previous YARA results (and so the mark).
+    # A full re-analysis scans again; same ids, so the mark is kept.
     client.post(f"/api/cases/{cid}/rerun", json={})
     time.sleep(0.2)
     _wait_case(client, cid)
     comp = client.get(f"/api/cases/{cid}/components").json()
-    assert "yara" in comp["modules"]
     assert any(f["mark"]["state"] == "true_positive" for f in comp["findings"] if f["source"] == "yara")
 
 
@@ -243,9 +243,24 @@ def test_any_other_file_gets_yara_marks_and_report(client: TestClient, env: Path
     assert f["filename"] == "payload.exe" and f["size_bytes"] == len(exe) and f["hashes"]["sha256"]
     assert "javascript" not in comp["modules"]
 
-    _run_yara(client, cid)
-    comp = client.get(f"/api/cases/{cid}/components").json()
-    yf = [x for x in comp["findings"] if x["source"] == "yara"]
+    comp = client.get(f"/api/cases/{cid}/components").json()      # YARA ran on its own
+    yf = [x for x in comp["yara_findings"] if x["source"] == "yara"]
     assert yf and yf[0]["rule"] == "yara:Fake_Dropper"
     client.put(f"/api/cases/{cid}/marks/{yf[0]['id']}", json={"state": "true_positive"})
     assert "yara:Fake_Dropper" in client.get(f"/api/cases/{cid}/report").text
+
+
+def test_yara_scans_nested_and_decoded_stages(client: TestClient, env: Path) -> None:
+    """Every analysed object is scanned: here a PE that only exists as a hex
+    literal inside a PowerShell script (a decoded stage)."""
+    client.post("/api/yara/upload", files={"file": ("st.yar", (
+        'rule Stage_PE { strings: $s="InertStageMarker" condition: uint16(0) == 0x5A4D and $s }').encode())})
+    _compile(client)
+    pe = b"MZ" + bytes(range(64)) + b"This program cannot be run in DOS mode. InertStageMarker"
+    ps = f"function H($h) {{ $h }}\r\n$img = H '{pe.hex()}'\r\n".encode()
+    cid = client.post("/api/cases", files={"file": ("loader.ps1", ps)}).json()["analysis_id"]
+    _wait_case(client, cid)
+    comp = client.get(f"/api/cases/{cid}/components").json()
+    hits = [s for s in comp["modules"]["yara"]["scanned"] if s.get("matches")]
+    assert any("stages" in (s.get("stored_path") or s.get("file") or "") for s in hits)
+    assert not [f for f in comp["findings"] if f["source"] == "yara"]

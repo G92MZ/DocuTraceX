@@ -2313,7 +2313,7 @@ async function openComponents(analysisId, keepTab, viewId) {
     }
     const yara = mods.yara;
     if (yara && yara.rule_count) {
-      sections.push({ id: "yara", label: `YARA (${yara.match_count || 0})`, render: () => paneYara(yara, findings, analysisId) });
+      sections.push({ id: "yara", label: `YARA (${yara.match_count || 0})`, render: () => paneYara(yara, d.yara_findings || findings, analysisId) });
     }
     const jsm = mods.javascript;
     if (jsm && (jsm.scripts || []).length) {
@@ -2794,7 +2794,7 @@ async function showYaraResults(analysisId) {
   const out = document.getElementById("yara-results");
   const d = await fetch(`/api/cases/${encodeURIComponent(analysisId)}/components`).then((r) => r.json());
   const yara = (d.modules || {}).yara;
-  const findings = d.findings || [];
+  const findings = d.yara_findings || d.findings || [];
   out.innerHTML = `<h3 class="formats-title">Results · ${escapeHtml(d.filename || "")}
       <button class="btn btn-ghost btn-sm" type="button" id="yara-open-case">Open case</button></h3>`
     + paneYara(yara, findings, analysisId);
@@ -2940,7 +2940,7 @@ function paneYara(yara, findings, analysisId) {
   if (!yara) return `<p class="hint-line">YARA did not run for this case.</p>`;
   if (!yara.rule_count) return `<p class="hint-line">${escapeHtml(yara.error || "No compiled YARA rules.")} Compile rules in the YARA tab, then scan the case.</p>`;
   const scanned = yara.scanned || [];
-  let html = `<p class="hint-line">${yara.rule_count} rule(s) · ${yara.files_scanned} file(s) scanned · ${yara.match_count} match(es). Mark each hit (True positive, False positive, …); only True positives reach the report.</p>`;
+  let html = `<p class="hint-line">${yara.rule_count} rule(s) · ${yara.files_scanned} file(s) scanned · ${yara.match_count} match(es). Runs automatically on every analysed object (original, extracted, nested, decoded stages). <b>Hits are not findings until you mark them</b> (True positive, False positive, …): a marked hit joins Findings, and True positives reach the report.</p>`;
   if (!scanned.length) return html + `<p class="hint-line">No matches.</p>`;
   const byId = {};
   (findings || []).forEach((f) => { byId[f.id] = f; });

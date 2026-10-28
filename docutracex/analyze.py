@@ -885,13 +885,22 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001  (presentation only; never fail the case)
         log.warning("Could not surface nested code for %s: %s", paths.root.name, exc)
 
-    # YARA runs only on demand (YARA tab / re-run "yara"), never automatically.
-    # A previous on-demand scan of this case is kept across full re-analyses.
-    prev_yara = read_json(paths.subresult("yara"))
-    if prev_yara and prev_yara.get("rule_count"):
+    # YARA runs on every analysed object (the original, everything extracted,
+    # nested children, decrypted/decoded stages) whenever rules are loaded. Its
+    # hits are NOT findings until the analyst marks them (YARA tab): they are
+    # left out of the counts here and filtered in marks.case_findings().
+    from .parsers import yara_scan
+    yres = run("yara: loaded rules over every analysed object (original, extracted, nested, stages)",
+               lambda: yara_scan.analyze(original, paths.extracted_dir))
+    if yres.get("rule_count"):
+        yres["triage_only"] = True
+        write_subresult(paths, "yara", yres)
         if "yara" not in ran:
             ran.append("yara")
-        findings_total += prev_yara.get("counts", {}).get("findings", 0)
+    else:
+        prev_yara = read_json(paths.subresult("yara"))
+        if prev_yara and prev_yara.get("rule_count") and "yara" not in ran:
+            ran.append("yara")
     # Network checks (on demand, Checks tab) are evidence too: kept as well.
     prev_net = read_json(paths.subresult("netcheck"))
     if prev_net and prev_net.get("checks"):
@@ -924,8 +933,11 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                            lambda: findings_mod.consolidate(modules))
         write_subresult(paths, "findings", {"findings": consolidated,
                                             "counts": {"total": len(consolidated)}})
-        overall_counts["findings"] = len(consolidated)
-        steps[-1]["findings"] = len(consolidated)
+        # YARA hits count only once the analyst marks them
+        from . import marks as marks_mod
+        visible = len(marks_mod.case_findings(paths))
+        overall_counts["findings"] = visible
+        steps[-1]["findings"] = visible
 
         # Dump extracted code (VBA/JS/XLM) to files and persist the code_file
         # tags, so the UI can offer Folder/Download on the code panes.
@@ -989,7 +1001,8 @@ def _recompute_derived(paths: CasePaths) -> tuple[int, int]:
     from . import codefiles
     for m in codefiles.annotate(modules, paths):
         write_subresult(paths, m, modules[m])
-    return ioc_result.get("counts", {}).get("total", 0), len(consolidated)
+    from . import marks as marks_mod      # YARA hits count once marked
+    return ioc_result.get("counts", {}).get("total", 0), len(marks_mod.case_findings(paths))
 
 
 def refresh_derived(paths: CasePaths, module: str) -> dict[str, Any]:
