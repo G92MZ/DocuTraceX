@@ -1861,7 +1861,13 @@ function nestedNode(n) {
       ${addMarkCell("nested", `Nested item ${n.filename}`, n.stored_path || "nested", n.kind || "")}
     </div>`;
   if (n.decrypted_from) html += `<div class="nested-finding hint-line">↳ from ${escapeHtml(n.decrypted_from)}</div>`;
-  if (n.code) html += `<div class="nested-finding hint-line">analysed as: ${escapeHtml(Object.keys(n.code).join(", "))}</div>`;
+  if (n.code) {
+    const TAB = { javascript: "JavaScript", powershell: "PowerShell", vbscript: "VBScript", batch: "Batch", python: "Python" };
+    const links = Object.keys(n.code).map((k) => TAB[k]
+      ? `<button class="btn btn-ghost btn-sm" type="button" data-pivot="${k}" title="Full analysis of this file's code (layers, behaviour hits, sandbox) in the ${TAB[k]} tab">↗ ${TAB[k]}</button>`
+      : escapeHtml(k)).join(" ");
+    html += `<div class="nested-finding hint-line">analysed as: ${links}</div>`;
+  }
   (n.findings || []).forEach((f) => {
     html += `<div class="nested-finding"><span class="badge badge-${SEV_CLASS[f.severity] || "warn"}">${escapeHtml(f.severity)}</span>
       <span class="mono">${escapeHtml(f.tool)}/${escapeHtml(f.rule)}</span> ${escapeHtml(f.detail)}</div>`;

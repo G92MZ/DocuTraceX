@@ -175,6 +175,55 @@ def _office_extras(run, original: Path, paths: CasePaths, family: str, declared_
     return out
 
 
+_CODE_TABS = ("javascript", "powershell", "vbscript", "batch", "python")
+
+
+def _surface_nested_code(paths: CasePaths, ran: list[str]) -> None:
+    """Show the scripts analysed inside nested children (a dropped .ps1, a
+    decrypted stage, a .js in a ZIP…) in the case's own code tabs, with their
+    full analysis (layers, hits, sandbox) and their nested path as origin.
+    Their findings already count in the nested module: only scripts are added.
+    Scripts surfaced by a previous run are replaced, never duplicated."""
+    nested = read_json(paths.subresult("nested")) or {}
+    found: dict[str, list[dict[str, Any]]] = {k: [] for k in _CODE_TABS}
+
+    def walk(nodes: list[dict[str, Any]], chain: str) -> None:
+        for n in nodes or []:
+            here = f"{chain} › {n.get('filename')}" if chain else str(n.get("filename"))
+            for key, info in (n.get("code") or {}).items():
+                if key in found and isinstance(info, dict):
+                    for sc in info.get("items") or []:
+                        sc = dict(sc)
+                        sc["origin"] = f"nested › {here}" + (f" · {sc['origin']}" if sc.get("origin") else "")
+                        sc["location"] = f"nested:{here}"
+                        sc["from_nested"] = True
+                        found[key].append(sc)
+            walk(n.get("children") or [], here)
+
+    walk(nested.get("tree") or [], "")
+    for key, extra in found.items():
+        mod = read_json(paths.subresult(key))
+        if not extra and not (mod and any(s.get("from_nested") for s in mod.get("scripts") or [])):
+            continue
+        mod = mod or {"module": key, "status": "ok", "scripts": [], "findings": []}
+        own = [s for s in mod.get("scripts") or [] if not s.get("from_nested")]
+        seen = {(s.get("code") or "").strip() for s in own}
+        add = []
+        for sc in extra:
+            k = (sc.get("code") or "").strip()
+            if k and k not in seen:
+                seen.add(k)
+                add.append(sc)
+        mod["scripts"] = own + add
+        for i, sc in enumerate(mod["scripts"], 1):
+            sc["id"] = i
+        mod.setdefault("counts", {})["scripts"] = len(mod["scripts"])
+        mod["counts"]["from_nested"] = len(add)
+        write_subresult(paths, key, mod)      # also clears scripts a previous run surfaced
+        if mod["scripts"] and key not in ran:
+            ran.append(key)
+
+
 # Live step reporting: the task worker registers a listener for its thread so
 # the Tasks tab shows each step as it starts and ends (not only at the end).
 import threading as _threading
@@ -816,6 +865,12 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                     ran.append("nested")
                 findings_total += merged.get("counts", {}).get("findings", 0) - (
                     prev.get("counts", {}).get("findings", 0) if had else 0)
+
+    # Scripts analysed inside nested children -> the case's code tabs.
+    try:
+        _surface_nested_code(paths, ran)
+    except Exception as exc:  # noqa: BLE001  (presentation only; never fail the case)
+        log.warning("Could not surface nested code for %s: %s", paths.root.name, exc)
 
     # YARA runs only on demand (YARA tab / re-run "yara"), never automatically.
     # A previous on-demand scan of this case is kept across full re-analyses.

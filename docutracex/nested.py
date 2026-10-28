@@ -411,6 +411,9 @@ def _scan_code_languages(abs_path: Path, paths: CasePaths, node: dict[str, Any],
         node.setdefault("code", {})[key] = {
             "scripts": len(scripts),
             "deobfuscated": sum(1 for s in scripts if s.get("code_is_deobfuscated")),
+            # the analysed scripts themselves (code, layers, hits, sandbox…):
+            # surfaced in the case's code tabs (analyze._surface_nested_code)
+            "items": [{k: v for k, v in sc.items() if not str(k).startswith("_")} for sc in scripts],
         }
 
 
