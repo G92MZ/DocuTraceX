@@ -92,3 +92,34 @@ def test_steps_are_reported_live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert seen[0][-1]["status"] == "running" and seen[0][-1]["started_utc"].endswith("Z")
     assert seen[1][0]["status"] == "ok" and seen[1][-1]["status"] == "running"
     assert [s["status"] for s in seen[-1]] == ["ok", "ok"]
+
+
+def test_live_steps_from_the_portable_subprocess(client: TestClient, tmp_path: Path,
+                                                 monkeypatch: pytest.MonkeyPatch) -> None:
+    """In production the analysis runs on the portable interpreter (a separate
+    process): its step events must still reach the task, live."""
+    import os
+    import sys
+    from docutracex import analyze
+    wrapper = tmp_path / "portable-python"
+    wrapper.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+    wrapper.chmod(0o755)
+    if os.name == "nt":
+        pytest.skip("shell wrapper")
+    r = client.post("/api/cases", files={"file": ("c.bat", b"@echo off\r\npowershell -nop -c whoami\r\n")}).json()
+    _wait(client, r["task"]["id"])
+    monkeypatch.setattr(settings, "portable_python", lambda: wrapper)
+    monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[1]))
+    monkeypatch.setenv("DOCUTRACEX_CASES_DIR", str(settings.cases_dir))
+    # if it silently fell back to in-process, no step would be reported
+    monkeypatch.setattr(analyze, "analyze_case", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("in-process")))
+    events: list[tuple[str, str]] = []
+    analyze.set_step_listener(lambda ev, rec: events.append((ev, rec.get("step", ""))))
+    try:
+        analyze.run_analysis(Path(settings.cases_dir) / r["analysis_id"])
+    finally:
+        analyze.set_step_listener(None)
+    starts = [s for e, s in events if e == "start"]
+    ends = [s for e, s in events if e == "end"]
+    assert starts and any(s.startswith("batch") for s in starts)
+    assert set(starts) <= set(ends) | {s for s in starts if s.startswith("ioc") or s.startswith("findings")}
