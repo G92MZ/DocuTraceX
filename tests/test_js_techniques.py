@@ -344,3 +344,32 @@ def test_ps_rules_reflective_hollowing_task_wmi() -> None:
     ])
     rules = {h["rule"] for h in script_rules.scan(code, script_rules.PS)}
     assert {"ps_reflection_load", "ps_hollow_host", "ps_persist", "ps_scriptblock", "ps_wmi_exec"} <= rules
+
+
+def test_nested_child_views(client) -> None:
+    """Every nested child with its own analysis gets a view served like a case
+    (its modules, findings with a source, IOCs, its own children)."""
+    import json
+    from pathlib import Path as _P
+    eml = _P(__file__).resolve().parents[1] / "samples" / "sample.eml"
+    if not eml.is_file():
+        pytest.skip("samples not unpacked")
+    cid, res = _analyze(client, "sample.eml", eml.read_bytes())
+    tree = _tree(res)
+    rtf = next(n for n in tree if n["kind"] == "rtf")
+    assert rtf["view_id"] and "rtf" in rtf["view_modules"]
+    v = client.get(f"/api/cases/{cid}/nested/{rtf['view_id']}/components").json()
+    assert v["nested_view"] and v["filename"] == rtf["filename"] and "rtf" in v["modules"]
+    assert v["findings"] and all(f["source"] for f in v["findings"])
+    assert len(v["modules"]["nested"]["tree"]) == len(rtf["children"])        # its own children
+    deep = rtf["children"][0]
+    assert client.get(f"/api/cases/{cid}/nested/{deep['view_id']}/components").status_code == 200
+    office = next((n for n in tree if n["kind"] == "ooxml"), None)
+    if office:
+        ov = client.get(f"/api/cases/{cid}/nested/{office['view_id']}/components").json()
+        assert any(k in ov["modules"] for k in ("word", "excel", "powerpoint"))
+    assert client.get(f"/api/cases/{cid}/nested/nope/components").status_code == 400
+    assert client.get(f"/api/cases/{cid}/nested/{'0' * 16}-000000/components").status_code == 404
+    views = sorted(p.name for p in (res / "nested_views").glob("*.json"))
+    assert len(views) == len({n["view_id"] for n in tree if n.get("view_id")}
+                             | {c["view_id"] for n in tree for c in n.get("children") or [] if c.get("view_id")})
