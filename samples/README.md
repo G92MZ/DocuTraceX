@@ -208,6 +208,10 @@ Notes:
     (0.15–0.93 across seeds).
 - In practice, open the sample in the tab, look at **Why** (feature blocks and
   top features), and mark the result yourself.
+- **Report and CSV:** analyse `ml/` (or a ZIP of it), mark a result (e.g. the
+  keylogger as *True positive*), then open **Reports** — the *Machine Learning*
+  section lists every object with its score, verdict, hints and mark — or press
+  **Export CSV** in the Machine Learning tab (one row per object).
 
 Every other binary / PDF of the sample set is scored too. For example:
 

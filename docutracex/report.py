@@ -111,6 +111,46 @@ def _metadata_section(modules: dict[str, Any]) -> str:
     return "<h2>Document metadata</h2><table><tbody>" + rows + "</tbody></table>"
 
 
+def _ml_section(ml: dict[str, Any] | None, marks: dict[str, dict[str, Any]]) -> str:
+    """Every object scored by the EMBER2024 models: score against the calibrated
+    threshold, hints and the analyst's mark. An indicator, not a verdict — the
+    results marked True positive are also in the findings above."""
+    from .ml_csv import family_hints, tag_hints
+
+    items = (ml or {}).get("items") or []
+    if not items:
+        return ""
+    rows = []
+    for it in items:
+        mk = marks.get(it.get("finding_id") or "") or {}
+        state = mk.get("state", "unreviewed") if it.get("finding_id") else ""
+        if it.get("status") != "ok":
+            rows.append(_row([_e(it.get("label")), _e(it.get("format") or it.get("file_type") or ""), "",
+                              f"<span class='muted'>{_e(it.get('status'))}: {_e(it.get('detail'))}</span>", "", ""]))
+            continue
+        above = it.get("threshold") is not None and it["score"] >= it["threshold"]
+        color = "#e8795a" if above else "#5fd38b"
+        verdict = f"<span class='chip' style='border-color:{color};color:{color}'>{_e(it.get('verdict'))}</span>"
+        thr = f" / {it['threshold']:.4f}" if it.get("threshold") is not None else ""
+        hints = tag_hints(it) + [f"family: {h}" for h in family_hints(it, only_high=True)]
+        why = ", ".join(f"{t['feature']} ({t['contribution']:+.2f})" for t in (it.get("top_features") or [])[:3])
+        rows.append(_row([
+            _e(it.get("label")) + (f"<div class='muted'><code>{_e(it.get('sha256'))}</code></div>" if it.get("sha256") else ""),
+            _e(it.get("model", "").replace("EMBER2024_", "")),
+            f"<code style='white-space:nowrap'>{it['score']:.4f}{thr}</code>",
+            verdict + (f"<div class='muted'>why: {_e(why)}</div>" if why else ""),
+            _e(", ".join(hints)) or "<span class='muted'>—</span>",
+            _e(_MARK_LABEL.get(state, state)) + (f"<div class='muted'>{_e(mk.get('comment'))}</div>" if mk.get("comment") else ""),
+        ]))
+    above_n = sum(1 for it in items if it.get("verdict") == "above threshold")
+    return (f"<h2>Machine Learning — EMBER2024 ({above_n} of {len(items)} above threshold)</h2>"
+            "<p class='muted'>Static classifier on every PE, .NET, PDF, ELF and APK object of the case. The score is "
+            "compared with a threshold calibrated at a 1% false-positive rate; it is a complementary indicator, "
+            "not a verdict. Results marked True positive also appear in the confirmed findings.</p>"
+            "<table><thead><tr><th>Object</th><th>Model</th><th>Score / threshold</th><th>Verdict</th>"
+            "<th>Hints (tags, family)</th><th>Mark</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
+
+
 def build_report_html(analysis_id: str, cases_dir=None) -> str:
     paths = CasePaths(analysis_id, cases_dir=cases_dir)
     manifest = read_json(paths.manifest) or {}
@@ -187,6 +227,7 @@ def build_report_html(analysis_id: str, cases_dir=None) -> str:
 {_findings_section(tp_findings)}
 <h2>Indicators of compromise ({ioc_total})</h2>
 {_iocs_section(iocs)}
+{_ml_section(read_json(paths.subresult("ml")), marks_service.read_marks(paths))}
 {_nested_section(modules.get('nested'))}
 {_metadata_section(modules)}
 <div class="muted" style="margin-top:32px">DocuTraceX · static analysis only — nothing in the sample was executed.</div>

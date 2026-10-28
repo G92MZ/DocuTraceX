@@ -204,6 +204,24 @@ async def case_yara_csv(analysis_id: str):
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
+@router.get("/{analysis_id}/ml.csv")
+async def case_ml_csv(analysis_id: str):
+    """Download the case's Machine Learning results as CSV (one row per scored
+    object; UTF-8 with BOM)."""
+    from fastapi.responses import Response
+
+    from .. import ml_csv
+
+    try:
+        manifest = case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    data = ml_csv.csv_bytes(analysis_id, cases_dir=settings.cases_dir)
+    name = ml_csv.filename_for(manifest["original"]["filename"])
+    return Response(content=data, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
 @router.get("/{analysis_id}/marks")
 async def get_marks(analysis_id: str) -> dict:
     """Return the case's findings each enriched with its mark, plus counts."""
