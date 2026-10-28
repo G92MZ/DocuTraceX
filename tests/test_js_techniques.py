@@ -373,3 +373,46 @@ def test_nested_child_views(client) -> None:
     views = sorted(p.name for p in (res / "nested_views").glob("*.json"))
     assert len(views) == len({n["view_id"] for n in tree if n.get("view_id")}
                              | {c["view_id"] for n in tree for c in n.get("children") or [] if c.get("view_id")})
+
+
+def test_classify_decoded_bytes() -> None:
+    import base64
+    import gzip
+    from docutracex import decrypted as d
+    pe = b"MZ" + b"\x90" * 300
+    assert d.classify(pe, "x", "o")["ext"] == ".exe"
+    inflated = d.classify(gzip.compress(b"server=http://billing-portal.example/c2 interval=3600"), "x", "o")
+    assert inflated["text"].startswith("server=") and inflated["how"].endswith("inflated")
+    assert d.classify(gzip.compress(pe), "x", "o")["ext"] == ".exe"           # file inside gzip
+    import random
+    rnd = random.Random(1)
+    blob = bytes(rnd.randrange(256) for _ in range(600))
+    assert d.classify(blob, "x", "o")["ext"] == ".bin"
+    assert d.classify(blob[:100], "x", "o") is None                           # too small to matter
+    assert d.classify(b"hi", "x", "o") is None
+
+
+def test_resolved_literals_only_count_as_files() -> None:
+    """A literal the deobfuscator already resolved (gone from the analysed
+    code) only becomes a child when it is a FILE; still-encoded literals always."""
+    import base64
+    import random
+    from docutracex import decrypted as d
+    rnd = random.Random(2)
+    blob = base64.b64encode(bytes(rnd.randrange(256) for _ in range(600))).decode()
+    pe = base64.b64encode(b"MZ" + bytes(range(256)) + b"This program cannot be run in DOS mode.").decode()
+    sc = {"code_is_deobfuscated": True, "location": "x.ps1",
+          "_full_code": f"$a='{blob}'\n$p='{pe}'\n$c='{blob[::-1]}'",
+          "_full_deob": f"$a = <# decrypted #> 'Write-Host hi'\n$p = <# decoded #> 'MZ...'\n$c='{blob[::-1]}'"}
+    hows = sorted(p["how"] for p in d.payloads_from({"powershell": {"scripts": [sc]}}))
+    assert hows == ["powershell-base64", "powershell-base64-blob"]     # the PE (resolved) + the still-encoded blob
+
+
+def test_encoded_blobs_sample_end_to_end(client) -> None:
+    import json
+    _, res = _analyze(client, "sample_encoded_blobs.ps1", _ms().encoded_blobs_ps1())
+    kids = {n["filename"].rsplit(".", 1)[-1]: n for n in _tree(res)}
+    assert {"ini", "bin", "exe"} <= set(kids)
+    assert kids["bin"]["entropy"] > 7 and kids["exe"]["kind"] == "binary"
+    iocs = {i["value"] for i in json.loads((res / "iocs.json").read_text())["iocs"]}
+    assert "http://billing-portal.example/inv/c2" in iocs
