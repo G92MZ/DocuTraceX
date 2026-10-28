@@ -92,7 +92,13 @@ def _download_zip() -> bytes:
 
 def apply_update() -> int:
     """Download the latest code and copy it over the install dir. Returns the
-    number of files written. Protected data folders are left untouched."""
+    number of files written. Protected data folders are left untouched.
+
+    ``VERSION`` is written LAST and only if every other file was copied: a file
+    that cannot be replaced (e.g. ``samples/samples.zip`` open in WinRAR/7-Zip,
+    or locked by an antivirus scan) must not leave a half-updated install that
+    already claims the new version — the next run would say "up to date" and
+    never retry. Locked files are reported and the update can simply be re-run."""
     zf = zipfile.ZipFile(io.BytesIO(_download_zip()))
     names = [n for n in zf.namelist() if n.strip()]
     if not names:
@@ -103,6 +109,8 @@ def apply_update() -> int:
         zf.extractall(tmp)
         src = os.path.join(tmp, root)
         copied = 0
+        failed: list[str] = []
+        version_src = None
         for dirpath, dirnames, filenames in os.walk(src):
             rel = os.path.relpath(dirpath, src)
             top = "" if rel == "." else rel.split(os.sep)[0]
@@ -112,8 +120,23 @@ def apply_update() -> int:
             dest_dir = HERE if rel == "." else os.path.join(HERE, rel)
             os.makedirs(dest_dir, exist_ok=True)
             for fn in filenames:
-                shutil.copy2(os.path.join(dirpath, fn), os.path.join(dest_dir, fn))
-                copied += 1
+                s_path = os.path.join(dirpath, fn)
+                if rel == "." and fn == "VERSION":
+                    version_src = s_path          # written at the very end
+                    continue
+                try:
+                    shutil.copy2(s_path, os.path.join(dest_dir, fn))
+                    copied += 1
+                except OSError as exc:
+                    failed.append(f"{os.path.join(rel, fn) if rel != '.' else fn}: {exc.strerror or exc}")
+        if failed:
+            raise RuntimeError(
+                f"{len(failed)} file(s) could not be replaced — close any program using them "
+                "(an archive viewer, an editor, the running app) and run the update again:\n  "
+                + "\n  ".join(failed[:20]))
+        if version_src:
+            shutil.copy2(version_src, os.path.join(HERE, "VERSION"))
+            copied += 1
         return copied
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
