@@ -10,6 +10,7 @@ from .. import cases as case_service
 from .. import marks as marks_service
 from ..config import settings
 from ..errors import CaseError
+from re import error as re_error
 
 router = APIRouter(prefix="/api/cases", tags=["cases"])
 
@@ -276,6 +277,74 @@ async def download_file(analysis_id: str, path: str):
         raise HTTPException(status_code=400, detail="Not a file")
     return FileResponse(str(target), filename=target.name,
                         media_type="application/octet-stream")
+
+
+# --- Hex tab ---------------------------------------------------------------------
+
+def _hex_target(analysis_id: str, path: str):
+    try:
+        case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    target = _safe_target(analysis_id, path)
+    if not target.is_file():
+        raise HTTPException(status_code=400, detail="Not a file")
+    return target
+
+
+@router.get("/{analysis_id}/hex/files")
+async def hex_files(analysis_id: str) -> dict:
+    """Every file of the case that the Hex tab can open."""
+    from .. import hexview
+    from ..storage import CasePaths, read_json
+    try:
+        manifest = case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    paths = CasePaths(analysis_id)
+    tree = (read_json(paths.subresult("nested")) or {}).get("tree") or []
+    orig = (manifest.get("original") or {}).get("stored_path") or ""
+    return {"files": hexview.list_files(paths.root, tree, orig)}
+
+
+@router.get("/{analysis_id}/hex/read")
+async def hex_read(analysis_id: str, path: str, offset: int = 0, length: int = 4096) -> dict:
+    from .. import hexview
+    return hexview.read(_hex_target(analysis_id, path), offset, length)
+
+
+@router.get("/{analysis_id}/hex/entropy")
+async def hex_entropy(analysis_id: str, path: str) -> dict:
+    import asyncio
+
+    from .. import hexview
+    return await asyncio.to_thread(hexview.entropy, _hex_target(analysis_id, path))
+
+
+@router.get("/{analysis_id}/hex/search")
+async def hex_search(analysis_id: str, path: str, q: str, mode: str = "hex", start: int = 0,
+                     ignore_case: bool = False) -> dict:
+    import asyncio
+
+    from .. import hexview
+    target = _hex_target(analysis_id, path)
+    try:
+        return await asyncio.to_thread(hexview.search, target, mode, q, start, hexview.MAX_HITS, ignore_case)
+    except (ValueError, re_error) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/{analysis_id}/hex/regions")
+async def hex_regions(analysis_id: str, path: str) -> dict:
+    """Named ranges (PE sections, overlay) of the case file, from Binary/LIEF."""
+    from .. import hexview
+    from ..storage import CasePaths, read_json
+    manifest = case_service.get_case(analysis_id)
+    _hex_target(analysis_id, path)
+    if path != (manifest.get("original") or {}).get("stored_path"):
+        return {"regions": []}
+    paths = CasePaths(analysis_id)
+    return {"regions": hexview.regions(paths.root, path, {"msi": read_json(paths.subresult("msi")) or {}})}
 
 
 @router.post("/{analysis_id}/rerun")
