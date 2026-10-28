@@ -68,11 +68,30 @@ _B64_CALL = re.compile(r"""base64\.(?:urlsafe_)?b64decode\(\s*['"]([A-Za-z0-9+/=
 _HEX_CALL = re.compile(r"""(?:bytes\.fromhex|binascii\.unhexlify)\(\s*['"]([0-9a-fA-F]{8,})['"]""")
 
 
+def _squash(steps: list[str]) -> list[str]:
+    """['base64','zlib','base64','zlib',…] → ['(base64 → zlib) ×5']."""
+    for size in (1, 2, 3, 4):
+        unit = steps[:size]
+        if unit and len(steps) % size == 0 and len(steps) > size and unit * (len(steps) // size) == steps:
+            return [f"({' → '.join(unit)}) ×{len(steps) // size}"]
+    return steps[:12] + (["…"] if len(steps) > 12 else [])
+
+
 def deobfuscate(src: str) -> dict[str, Any]:
     """A light, static decode of the common ``.py`` wrappers: append the decoded
     payloads so the rules see what ``exec(base64.b64decode(...))`` would run."""
+    from .py_layers import unwrap
     methods: list[str] = []
     extra: list[str] = []
+    layers = unwrap(src)
+    if layers["layers"]:
+        methods.append("exec-chain" if layers["kind"] == "source" else "exec-chain → marshal")
+        steps = " → ".join(_squash(layers["steps"]))
+        header = (f"# --- DocuTraceX: {layers['layers']} exec layer(s) peeled ({steps})"
+                  + (" — marshalled code object: names and strings" if layers["kind"] == "marshal" else "")
+                  + " ---")
+        return {"changed": True, "methods": methods, "layers": layers,
+                "code": src + "\n\n" + header + "\n" + (layers["code"] or "")}
     for m in _B64_CALL.finditer(src):
         try:
             extra.append(base64.b64decode(m.group(1) + "===").decode("utf-8", "replace"))
@@ -89,8 +108,8 @@ def deobfuscate(src: str) -> dict[str, Any]:
             pass
     extra = [e for e in extra if e.strip()]
     if not extra:
-        return {"changed": False, "code": src, "methods": []}
-    return {"changed": True, "methods": methods,
+        return {"changed": False, "code": src, "methods": [], "layers": layers}
+    return {"changed": True, "methods": methods, "layers": layers,
             "code": src + "\n\n# --- DocuTraceX: decoded payload(s) ---\n" + "\n".join(extra)}
 
 
@@ -289,7 +308,23 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any] | None 
             deob = deobfuscate(src)
             deob_methods = deob["methods"]
             code = (deob["code"] if deob["changed"] else src)[:_MAX_CODE]
+            lay = deob.get("layers") or {}
+            if lay.get("layers"):
+                res["findings"].append(_finding(
+                    "py_exec_layers", "high" if lay["layers"] > 1 or lay["kind"] == "marshal" else "medium",
+                    f"[{origin}] Code hidden in {lay['layers']} exec layer(s) "
+                    f"({' → '.join(_squash(lay['steps']))}) — peeled statically", loc,
+                    (lay.get("code") or "")[:600]))
 
+
+        from .py_layers import PYARMOR
+        armor = PYARMOR.findall(code)
+        if armor:
+            res["findings"].append(_finding(
+                "py_pyarmor", "medium",
+                f"[{origin}] Protected with PyArmor: the bytecode is encrypted and only decrypted at run "
+                "time, so it cannot be recovered statically (a runtime dump is needed)", loc,
+                "\n".join(dict.fromkeys(armor))[:300]))
         hits = static_hits(code)
         mets = javascript.metrics(code)
         script = {
