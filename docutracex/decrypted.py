@@ -3,7 +3,7 @@
 When an analyzer *resolves* a hidden stage — the JS sandbox logs what a custom
 XOR routine returned or flags a dropped payload, a script carries a base64 blob
 that is really a PE/ZIP/PDF — that stage is not just shown: it is written to
-``extracted/decrypted/`` with an extension guessed from its content and handed
+``extracted/stages/`` with an extension guessed from its content and handed
 to the nested scanner, which routes it to the right analyzer (JavaScript,
 PowerShell, VBScript, batch, Python, PE, Office, PDF, archive…). The nested
 scanner does the same on every child, so a stage that decrypts the next one is
@@ -19,7 +19,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-DIRNAME = "decrypted"
+DIRNAME = "stages"   # not "decrypted": that is where unlock puts decrypted originals
 MAX_PAYLOADS = 12
 MIN_TEXT = 24
 MAX_BYTES = 8 * 1024 * 1024
@@ -78,6 +78,14 @@ def payloads_from(mods: dict[str, Any]) -> list[dict[str, Any]]:
                             "text": arg})
             elif e.get("kind") == "fromcharcode" and len(arg) >= 80 and _scripty(arg):
                 out.append({"how": "js-fromcharcode", "origin": f"JavaScript {loc}: String.fromCharCode", "text": arg})
+        # files the script wrote (FileSystemObject / ADODB.Stream), with the
+        # extension of the path it gave them
+        for e in (sc.get("sandbox") or {}).get("log") or []:
+            if isinstance(e, dict) and e.get("kind") == "drop" and (e.get("args") or [""])[0].strip():
+                name = str(e.get("name") or "")
+                ext = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name.rsplit("\\", 1)[-1] else ""
+                out.append({"how": "js-drop", "origin": f"JavaScript {loc}: wrote {name}",
+                            "text": e["args"][0], "ext": ext if 1 < len(ext) <= 6 else None})
         for t in sc.get("techniques") or []:
             if t.get("payload") and _scripty(t["payload"]):
                 out.append({"how": "js-payload", "origin": f"JavaScript {loc}: {t.get('name')}", "text": t["payload"]})
@@ -122,7 +130,7 @@ def write(payloads: list[dict[str, Any]], dest: Path,
         if "data" in p:
             raw, ext = p["data"], p.get("ext") or ".bin"
         else:
-            raw, ext = p["text"].encode("utf-8", "replace"), sniff_ext(p["text"])
+            raw, ext = p["text"].encode("utf-8", "replace"), (p.get("ext") or sniff_ext(p["text"]))
         slug = re.sub(r"[^A-Za-z0-9_-]+", "_", p["how"])[:40].strip("_") or "stage"
         name = f"decrypted_{slug}_{p['sha256'][:8]}{ext}"
         try:
