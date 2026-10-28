@@ -41,6 +41,16 @@ _DQ = r'"(?:`.|[^"`])*"'
 _STRLIT = rf"(?:{_SQ}|{_DQ})"
 
 
+# Stages decoded while deobfuscating (each one becomes a nested child with its
+# recipe). Set per deobfuscate() call; transforms append via _stage().
+_STAGES: list[dict[str, Any]] | None = None
+
+
+def _stage(recipe: list[str], text: str, source: str) -> None:
+    if _STAGES is not None and len(_STAGES) < 20 and text and len(text.strip()) >= 32:
+        _STAGES.append({"recipe": recipe, "text": text, "source": source})
+
+
 def _sq_value(lit: str) -> str:
     return lit[1:-1].replace("''", "'")
 
@@ -98,6 +108,7 @@ def _t_encoded_command(code: str) -> tuple[str, int]:
         if text is None:
             return m.group(0)
         n += 1
+        _stage(["base64 (-EncodedCommand)", "utf-16le"], text, m.group(1))
         return "\n" + text + "\n"
 
     return _ENC_FLAG.sub(repl, code), n
@@ -125,6 +136,7 @@ def _t_frombase64(code: str) -> tuple[str, int]:
         if text is None:
             return m.group(0)
         n += 1
+        _stage(["base64", m.group(1).lower()], text, _lit_value(m.group(2)))
         return _as_lit(text)
 
     def repl_bare(m: re.Match) -> str:
@@ -135,6 +147,7 @@ def _t_frombase64(code: str) -> tuple[str, int]:
         if text is None or not _looks_text(text):
             return m.group(0)
         n += 1
+        _stage(["base64"], text, _lit_value(m.group(1)))
         return _as_lit(text)
 
     code = _FROMB64_WRAPPED.sub(repl_wrapped, code)
@@ -290,6 +303,7 @@ def _t_decompress(code: str) -> tuple[str, int]:
         if text is None:
             return m.group(0)
         n += 1
+        _stage(["base64", m.group(1).lower()], text, _lit_value(m.group(2)))
         return _as_lit(text)
 
     for rx in _DECOMPS:
@@ -311,6 +325,7 @@ def _t_decompress(code: str) -> tuple[str, int]:
         if text is None:
             continue
         n += 1
+        _stage(["base64", sm.group(1).lower()], text, _lit_value(am.group(2)))
         code = code.replace(am.group(0), f"{am.group(1)} = <# {sm.group(1)}-decompressed #> " + _as_lit(text), 1)
         code += "\n" + text + "\n"
     return code, n
@@ -370,6 +385,8 @@ def _t_xor_base64(code: str) -> tuple[str, int]:
         if text is None:
             continue
         n += 1
+        kdesc = f"0x{key[0]:02x}" if len(key) == 1 else repr(key.decode("latin-1"))
+        _stage(["base64", f"xor({kdesc})"], text, _lit_value(am.group(2)))
         # Put the decrypted stage where the blob was; the loop stays as context.
         code = code.replace(am.group(0), f"{var} = <# XOR-decrypted (key {key!r}) #> " + _as_lit(text), 1)
         code += "\n" + text + "\n"
@@ -529,6 +546,7 @@ def _t_securestring(code: str) -> tuple[str, int]:
         if text is None:
             return m.group(0)
         n += 1
+        _stage(["securestring", f"aes-{len(key) * 8}-cbc"], text, val)
         return f"<# SecureString decrypted (AES key {key[:8].hex()}…) #> " + _as_lit(text)
 
     return _SS.sub(repl, code), n
@@ -929,9 +947,12 @@ _TRANSFORMS: list[tuple[str, Callable[[str], tuple[str, int]]]] = [
 
 def deobfuscate(cmd: str, *, max_passes: int = _MAX_PASSES,
                 max_bytes: int = _MAX_BYTES) -> dict[str, Any]:
+    global _STAGES
     original = cmd or ""
     cur = original
     methods: list[str] = []
+    stages: list[dict[str, Any]] = []
+    _STAGES = stages
     cap = max(max_bytes, len(original) + 1)
     for _ in range(max_passes):
         if len(cur) > cap:
@@ -948,4 +969,13 @@ def deobfuscate(cmd: str, *, max_passes: int = _MAX_PASSES,
                     methods.append(name)
         if cur == before:
             break
-    return {"changed": cur.strip() != original.strip(), "code": cur, "methods": methods}
+    _STAGES = None
+    # Only stages decoded from data written in THIS script: deeper layers come
+    # out again when the stage itself is analysed as a nested child.
+    top, seen = [], set()
+    for st in stages:
+        src = st.pop("source", "")
+        if src and src in original and st["text"] not in seen:
+            seen.add(st["text"])
+            top.append(st)
+    return {"changed": cur.strip() != original.strip(), "code": cur, "methods": methods, "stages": top}

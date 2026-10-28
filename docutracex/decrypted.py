@@ -364,6 +364,21 @@ def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[s
             if t.get("payload") and _scripty(t["payload"]):
                 out.append({"how": "js-payload", "origin": f"JavaScript {loc}: {t.get('name')}", "text": t["payload"]})
 
+    # Stages the language deobfuscators decoded in place (XOR/deflate/base64
+    # layers, Execute'd strings, exec chains): each one is ALSO a nested child
+    # with its recipe, analysed again on its own (its deeper layers come out
+    # there, one level down).
+    for key, ext in (("powershell", ".ps1"), ("vbscript", ".vbs"), ("python", ".py"), ("batch", ".bat")):
+        for sc in (mods.get(key) or {}).get("scripts") or []:
+            if not isinstance(sc, dict) or sc.get("from_nested"):
+                continue
+            loc = sc.get("location") or key
+            for st in (sc.get("decoded_stages") or [])[:PER_SCRIPT]:
+                text, recipe = st.get("text") or "", list(st.get("recipe") or [])
+                if text.strip():
+                    out.append({"how": f"{key}-stage", "origin": f"{key} {loc}: {' → '.join(recipe)}",
+                                "text": text, "ext": ext, "recipe": recipe})
+
     # Every encoded literal in the recovered code (base64 / hex, gzip/zlib in
     # them) is decoded and becomes a child, whatever comes out — unless the
     # deobfuscator already inlined it in the code that was analysed.

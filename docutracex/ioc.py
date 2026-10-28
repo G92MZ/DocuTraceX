@@ -140,6 +140,11 @@ _AMBIGUOUS_COMMANDS = {
     "tar", "bash", "hh", "subst", "verifier", "date", "time", "set", "start",
     "copy", "move", "find", "echo", "net", "sc", "print", "help", "more", "sort",
 }
+# .NET helpers every decoder uses: not an indicator by themselves.
+_BENIGN_NEW_OBJECT = re.compile(
+    r"(?i)(?:-TypeName\s+)?(?:System\.)?(?:IO\.(?:MemoryStream|StreamReader|StreamWriter|BinaryReader|"
+    r"Compression\.\w+)|Text\.\w+|Collections\.[\w.`\[\]]+|Byte\[\]|Random|"
+    r"Security\.Cryptography\.(?:AesManaged|AesCryptoServiceProvider|RijndaelManaged|SHA256Managed))\b")
 _TECH_ARG = re.compile(r"[\\/.%:\d\"']")   # a path, file, time, variable or quoted arg
 _CMD_POSITION = re.compile(r"(?i)(?:^|[&|;(`\"']|\bcmd(?:\.exe)?\s+/[ck]|\bcall)\s*$")
 
@@ -431,6 +436,12 @@ def _scan_text(
             or (_CMD_POSITION.search(text[max(0, match.start() - 40):match.start()].rsplit("\n", 1)[-1])
                 and _TECH_ARG.search(match.group("args").split()[0]))
         ):
+            continue
+        args = match.group("args").split()
+        # prose, not a command line ("PowerShell deobfuscated before analysis")
+        if len(args) >= 2 and all(re.fullmatch(r"[a-z]{3,}", w) for w in args[:4]):
+            continue
+        if match.group("cmd").lower() == "new-object" and _BENIGN_NEW_OBJECT.match(match.group("args")):
             continue
         cmd_val = match.group(0).strip(".,;:)]}")
         if cmd_val.count('"') % 2:      # drop a dangling quote, keep balanced ones

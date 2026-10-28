@@ -292,6 +292,7 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any] | None 
         loc, origin = it["location"], it["origin"]
         is_pyc = it["ext"] in (".pyc", ".pyo")
         source_kind = "source"
+        lay: dict[str, Any] = {}
         pyver = ""
         deob_methods: list[str] = []
         orig_code = ""
@@ -335,6 +336,9 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any] | None 
             "original_code": orig_code[:_KEEP_CODE] if deob_methods else "",
             "original_truncated": bool(deob_methods) and len(orig_code) > _KEEP_CODE,
             "deob_methods": deob_methods, "deob_schemes": [],
+            "decoded_stages": ([{"recipe": _squash(lay["steps"]) + (["code object"] if lay["kind"] == "marshal" else []),
+                                 "text": (lay.get("code") or "")[:400_000]}]
+                               if not is_pyc and lay.get("layers") and (lay.get("code") or "").strip() else []),
             "source": source_kind, "python_version": pyver,
             "hits": hits, "metrics": mets, "_full_code": code,
         }

@@ -679,3 +679,34 @@ def test_exec_chain_sample_end_to_end(client) -> None:
     iocs = {i["value"] for i in json.loads((res / "iocs.json").read_text())["iocs"]}
     assert "http://invoice-sync.example/Factura_2024-0613.exe" in iocs
     assert any("203.0.113.50" in v for v in iocs)
+
+
+def _flat(nodes: list[dict]) -> list[dict]:
+    out = []
+    for n in nodes:
+        out.append(n)
+        out.extend(_flat(n.get("children") or []))
+    return out
+
+
+def test_inline_decoded_stages_are_nested_with_recipe(client) -> None:
+    import json
+    _, res = _analyze(client, "sample_xor_stager.ps1", _ms().xor_stager_ps1())
+    tree = _tree(res)
+    top = next(n for n in tree if n.get("recipe") == ["base64", "xor('inv')"])
+    assert top["filename"].endswith(".ps1")
+    child = next(n for n in top.get("children") or [] if n.get("recipe") == ["base64", "deflate"])
+    assert "ps_download" in {f["rule"] for f in child.get("findings") or []}
+    iocs = json.loads((res / "iocs.json").read_text())["iocs"]
+    cmds = {i["value"] for i in iocs if i["type"] == "command"}
+    assert not any("deobfuscated before" in c or "IO.MemoryStream" in c for c in cmds)
+    assert "New-Object Net.WebClient" in cmds
+
+
+def test_vbs_and_python_stages_are_nested(client) -> None:
+    _, res = _analyze(client, "sample_xor_loader.vbs", _ms().xor_loader_vbs())
+    vbs = [n for n in _flat(_tree(res)) if n.get("recipe") == ["hex", "xor('Factura0613')"]]
+    assert vbs and vbs[0]["filename"].endswith(".vbs")
+    _, res = _analyze(client, "sample_exec_chain.py", _ms().exec_chain_py())
+    py = [n for n in _flat(_tree(res)) if (n.get("recipe") or [])[:2] == ["base85", "lzma"]]
+    assert py and py[0]["filename"].endswith(".py")
