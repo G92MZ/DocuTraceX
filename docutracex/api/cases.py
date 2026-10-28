@@ -95,11 +95,12 @@ async def get_components(analysis_id: str) -> dict:
     iocs = read_json(paths.subresult("iocs"))
     marked = _load_findings_with_marks(analysis_id)
     # every YARA hit with its mark, for the YARA tab (unmarked ones are not findings)
-    yara_marked = marks_service.apply(
+    triage = marks_service.apply(
         [f for f in marks_service.case_findings(paths, include_unreviewed_yara=True)
          if marks_service.is_triage_only(f)], marks_service.read_marks(paths))
     return {
-        "yara_findings": yara_marked["findings"],
+        "yara_findings": [f for f in triage["findings"] if f.get("source") != "ml"],
+        "ml_findings": [f for f in triage["findings"] if f.get("source") == "ml"],
         "analysis_id": analysis_id,
         "filename": manifest["original"]["filename"],
         "state": manifest.get("state"),

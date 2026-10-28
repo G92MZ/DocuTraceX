@@ -723,7 +723,7 @@ def _email_sources(
 # netcheck: our own network enrichment (RDAP abuse contacts, DNS, the pages we
 # visited) describes infrastructure, it is not content of the sample. file /
 # unlock / findings / iocs: metadata and derived views the app computes.
-_SKIP_MODULES = {"yara", "netcheck", "file", "unlock", "findings", "iocs", "summary"}
+_SKIP_MODULES = {"yara", "ml", "netcheck", "file", "unlock", "findings", "iocs", "summary"}
 # Per-module paths that hold names/metadata, not content (archive member
 # names like "visor.py" or "notas.one" are not domains).
 _MODULE_SKIP_PATHS = {

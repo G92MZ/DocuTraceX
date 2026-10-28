@@ -108,6 +108,21 @@ TOOL_DEPS: list[Dependency] = [
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
     ),
     Dependency(
+        "lightgbm", "lightgbm", "Machine Learning tab: EMBER2024 LightGBM models",
+        required=False,
+        install_hint="run scripts/setup_portable_python.py (installed into the portable)",
+    ),
+    Dependency(
+        "sklearn", "scikit-learn", "Machine Learning tab: EMBER feature hashing",
+        required=False,
+        install_hint="run scripts/setup_portable_python.py (installed into the portable)",
+    ),
+    Dependency(
+        "signify", "signify", "Machine Learning tab: EMBER Authenticode features (pinned 0.7.1)",
+        required=False,
+        install_hint="run scripts/setup_portable_python.py (installed into the portable)",
+    ),
+    Dependency(
         "debloat", "debloat", "Binary padding removal (T1027.001) before PE analysis",
         required=False,
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
