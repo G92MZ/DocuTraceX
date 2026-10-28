@@ -167,3 +167,11 @@ def test_apk_is_classified(client) -> None:
     items = json.loads((res / "ml.json").read_text())["items"]
     apk = next(i for i in items if i.get("file_type") == "APK")
     assert apk["status"] == "ok" and apk["model"] == "EMBER2024_APK"
+
+
+def test_help_data_has_metrics_and_labels() -> None:
+    from docutracex.ml import ember_ml
+    h = ember_ml.help_data()
+    assert {"Win32", "Win64", "Dot_Net", "PDF", "ELF", "APK"} <= set(h["models"])
+    assert 0.8 < h["models"]["Win32"]["tpr_at_fpr_0.01"] < 1
+    assert "upx" in h["labels"]["packer"]["high"] and h["labels"]["family"]["high"][0] == "berbew"
