@@ -206,11 +206,13 @@ def test_url_check_submit_and_download(lab: str, tmp_path: Path, monkeypatch: py
     assert d["downloads"][0]["filename"] == "Justificante.docm"
     assert any(f["rule"] == "dde_link" for f in d["findings"])  # the served .docm was analysed recursively
 
-    # Consolidated findings and IOCs include the checks.
+    # Consolidated findings include the checks; IOCs never mine them (our own
+    # enrichment: visited pages, RDAP abuse contacts…), only the sample.
     findings = read_json(paths.subresult("findings"))["findings"]
     assert any(f["source"] == "netcheck" and f["rule"] == "web_credential_form" for f in findings)
-    iocs = {i["value"] for i in read_json(paths.subresult("iocs"))["iocs"]}
-    assert f"{lab}/owa/auth.php" in iocs
+    iocs = read_json(paths.subresult("iocs"))["iocs"]
+    assert f"{lab}/owa/auth.php" not in {i["value"] for i in iocs}
+    assert not any(o.get("module") == "netcheck" for i in iocs for o in i["occurrences"])
 
 
 def test_api_settings_and_netcheck_validation(lab: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
