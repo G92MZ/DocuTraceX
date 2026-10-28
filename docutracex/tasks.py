@@ -41,6 +41,10 @@ _ACTIVE = {QUEUED, RUNNING, CANCELLING}
 _FINAL_FROM_SUMMARY = {"completed": COMPLETED, "error": FAILED}
 
 
+def _now_ms() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -337,18 +341,40 @@ class TaskManager:
         if module or task.type != "analyze":
             _snapshot_history(paths)  # re-run: keep the previous results
 
+        def on_step(event: str, rec: dict[str, Any]) -> None:
+            # live sub-steps: a "running" row (with its precise start, for the
+            # UI's ticking counter) replaced by the timed record when it ends
+            with self._lock:
+                if event == "start":
+                    task.steps = list(task.steps) + [{"step": rec["step"], "status": "running",
+                                                      "started_utc": _now_ms()}]
+                    task.phase = rec["step"]
+                else:
+                    steps = list(task.steps)
+                    for i in range(len(steps) - 1, -1, -1):
+                        if steps[i].get("status") == "running" and steps[i]["step"] == rec["step"]:
+                            steps[i] = dict(rec)
+                            break
+                    else:
+                        steps.append(dict(rec))
+                    task.steps = steps
+
+        task.steps = []
+        analyze.set_step_listener(on_step)
         error = None
         try:
             analyze.run_analysis(paths.root, module=module)
         except Exception as exc:  # noqa: BLE001
             error = str(exc)
+        finally:
+            analyze.set_step_listener(None)
 
         summary = read_json(paths.summary) or {}
         with self._lock:
             task.finished_utc = _now()
             task.duration_s = _duration(task)
             task.counts = summary.get("counts", {})
-            task.steps = summary.get("steps", [])
+            task.steps = summary.get("steps") or task.steps
             task.phase = "done"
             if tid in self._cancel:
                 task.state = CANCELLED
