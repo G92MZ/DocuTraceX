@@ -24,6 +24,8 @@
     <button class="tab" type="button" data-view="reports"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6v20h12V6z"/><path d="M14 2v4h4M9 13h6M9 17h6M9 9h2"/></svg><span>Reports</span></button>
     <button class="tab" type="button" data-view="tasks"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3 6 1.5 1.5L7 5M3 12l1.5 1.5L7 11M3 18l1.5 1.5L7 17"/></svg><span>Tasks</span></button>
     <button class="tab" type="button" data-view="yara"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><span>YARA</span></button>
+    <button class="tab" type="button" data-view="ml"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/><path d="M10 10h4v4h-4z"/></svg><span>Machine Learning</span></button>
+    <button class="tab" type="button" data-view="hex"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z"/><path d="M7 9h2M11 9h2M15 9h2M7 13h2M11 13h2M15 13h2"/></svg><span>Hex</span></button>
     <button class="tab" type="button" data-view="ai"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg><span>AI</span></button>
     <button class="tab tab-right" type="button" data-view="settings"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>Settings</span></button>
     <button class="tab" type="button" data-view="diagnostics">
@@ -161,6 +163,30 @@
         <div id="yara-results"></div>
         <div id="yara-errors"></div>
         <div id="yara-body"></div>
+      </section>
+    </div>
+
+    <!-- Machine Learning -->
+    <div class="view" data-view="ml" hidden>
+      <section class="panel">
+        <div class="diag-head"><h2>Machine Learning</h2></div>
+        <div class="upload">
+          <span class="hint-line">Case:</span>
+          <select id="ml-case" class="ai-case-select"></select>
+        </div>
+        <div id="ml-body"></div>
+      </section>
+    </div>
+
+    <!-- Hex -->
+    <div class="view" data-view="hex" hidden>
+      <section class="panel">
+        <div class="diag-head"><h2>Hex</h2></div>
+        <div class="upload">
+          <span class="hint-line">Case:</span>
+          <select id="hex-case" class="ai-case-select"></select>
+        </div>
+        <div id="hex-body"></div>
       </section>
     </div>
 
