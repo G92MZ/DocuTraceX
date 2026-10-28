@@ -179,12 +179,18 @@ def _resolve_hashed(raw: dict[str, Any]) -> dict[str, list[str]]:
 # --- classification (child process) -----------------------------------------------
 
 def _classify(paths: list[str], mdir: str) -> list[dict[str, Any]]:
-    import lightgbm as lgb
-    import numpy as np
+    try:
+        import lightgbm as lgb
+        import numpy as np
 
-    from . import ember_features as ef
+        from . import ember_features as ef
+    except Exception as exc:  # noqa: BLE001  (missing dep, or oscrypto/OpenSSL 3 detection bug)
+        hint = (" — run scripts/setup_portable_python.py (installs the patched oscrypto)"
+                if "libcrypto" in str(exc) else "")
+        return [{"path": p, "status": "not_installed", "detail": f"{type(exc).__name__}: {exc}"[:200] + hint}
+                for p in paths]
 
-    thresholds = json.loads(THRESHOLDS_FILE.read_text()) if THRESHOLDS_FILE.is_file() else {}
+    thresholds = (json.loads(THRESHOLDS_FILE.read_text()).get("models") or {}) if THRESHOLDS_FILE.is_file() else {}
     ex = ef.PEFeatureExtractor()
     names = feature_names(ex)
     boosters: dict[str, Any] = {}
@@ -234,7 +240,7 @@ def _classify(paths: list[str], mdir: str) -> list[dict[str, Any]]:
                         "threshold": th, "calibrated": th is not None,
                         "verdict": (None if th is None else ("above threshold" if score >= th else "below threshold")),
                         "metrics": {k: v for k, v in (thresholds.get(model) or {}).items()
-                                    if k in ("tpr_at_fpr_0.01", "roc_auc", "challenge_pr_auc")},
+                                    if k in ("tpr_at_fpr_0.01", "roc_auc", "challenge_detected_at_1pct_fpr")},
                         "bias": float(contrib[-1]),
                         "blocks": dict(sorted(blocks.items(), key=lambda kv: -abs(kv[1]))),
                         "top_features": top, "feature_version": ef.FEATURE_VERSION})
@@ -348,6 +354,8 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
         item = {**{k: v for k, v in t.items() if k != "path"}, **{k: v for k, v in r.items() if k != "path"}}
         f = finding_for(item)
         if f:
+            from ..findings import finding_id
+            item["finding_id"] = finding_id(f["tool"], f["rule"], f["location"], f["detail"])
             res["findings"].append(f)
         res["items"].append(item)
     res["items"].sort(key=lambda x: -(x.get("score") if x.get("score") is not None else -1))

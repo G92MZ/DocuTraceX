@@ -45,6 +45,11 @@ tools = [
     "lief>=0.15",
     # Binary padding removal (T1027.001): strips overlay/section/resource junk.
     "debloat>=1.6",
+    # Machine Learning tab (EMBER2024 LightGBM models; EMBER feature v3 vendored
+    # in docutracex/ml). signify is pinned: 0.8+ changed the API the features use.
+    "lightgbm>=4.5",
+    "scikit-learn>=1.5",
+    "signify==0.7.1",
     # Encrypted Office detection + default-password decryption (evasion check).
     "msoffcrypto-tool>=5.1",
     # Excel 4.0 (XLM) macro deobfuscation (hidden macro sheets, evasion).
