@@ -44,6 +44,19 @@ def _ext(name: str) -> str:
     return ("." + name.lower().rsplit(".", 1)[1]) if "." in name else ""
 
 
+def binary_format(data: bytes, name: str = "") -> str:
+    """ELF / Mach-O / MSI / PE label for a binary child (the tab says what it is)."""
+    head = data[:8]
+    if head[:4] == b"\x7fELF":
+        return "ELF"
+    if head[:4] in (b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe",
+                    b"\xca\xfe\xba\xbe"):
+        return "Mach-O"
+    if head == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" or name.lower().endswith(".msi"):
+        return "MSI"
+    return "PE"
+
+
 def _kind(path: Path, name: str) -> str:
     """Decide how to analyze a child: by extension, then by content sniff."""
     ext = _ext(name)
@@ -136,6 +149,8 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
         # AeWckx3pKh
         node["size_bytes"] = len(data)
         node["sha256"] = hashlib.sha256(data).hexdigest()
+        if node["kind"] == "binary":
+            node["format"] = binary_format(data, name)
         printable = sum(1 for b in data[:65536] if 32 <= b < 127 or b in (9, 10, 13))
         if node["kind"] == "other" and data and printable < min(len(data), 65536) * 0.85:
             # opaque data (e.g. a decoded blob): its entropy says encrypted /
@@ -155,6 +170,7 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
     kids: list[tuple[Path, str]] = []
     origins: dict[str, str] = {}          # child path -> how it was obtained (decrypted / unpacked)
     recipes: dict[str, list[str]] = {}
+    members: dict[str, str] = {}          # child path -> its path inside the archive (lib/arm64-v8a/x.so)
     kind = node["kind"]
 
     # tag: gmzpt
@@ -198,6 +214,8 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
             for e in rec["entries"]:
                 if e.get("file"):
                     kids.append((Path(e["file"]), Path(e["name"]).name))
+                    if "/" in e["name"].replace("\\", "/").strip("/"):
+                        members[str(Path(e["file"]))] = e["name"]
         elif kind in ("ooxml", "ole"):
             from .parsers import oletools_suite
             res = oletools_suite.analyze(abs_path, work)
@@ -384,6 +402,8 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
                 cpath = alt
             if cpath.is_file():
                 child = _scan_one(cpath, cname, paths, depth + 1, this_chain, ctx, sources_out)
+                if members.get(str(cpath)):
+                    child["member"] = members[str(cpath)]
                 if str(cpath) in origins:
                     child["decrypted_from"] = origins[str(cpath)]
                     child["recipe"] = recipes.get(str(cpath)) or []
@@ -506,6 +526,8 @@ def scan_children(items: list[dict[str, Any]], paths: CasePaths,
         p = Path(it["path"])
         if p.is_file():
             child = _scan_one(p, it.get("filename") or p.name, paths, 1, "", unlock_ctx, isrc)
+            if it.get("member") and "/" in it["member"].replace("\\", "/").strip("/"):
+                child["member"] = it["member"]         # path inside the archive (lib/arm64-v8a/libapp.so)
             if it.get("origin"):
                 child["decrypted_from"] = it["origin"]
                 child["recipe"] = it.get("recipe") or []

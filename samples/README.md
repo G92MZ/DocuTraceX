@@ -167,6 +167,20 @@ The Hex tab needs no sample of its own. Use these:
 | **Decode** + **Extract as nested** | `sample_encoded_blobs.ps1`: <ol><li>Search regex `H4sI[A-Za-z0-9+/=]+`.</li><li>Recipe `base64 \| zlib` gives the config with the C2 URL.</li><li>Press *Extract as nested*.</li></ol> After the re-analysis it is a child of the case, and its URL is in IOCs. |
 | **XOR** (multi-step) | `sample_xor_stager.ps1`: <ol><li>Select the blob; `base64 \| xor 696e76` (the script's key `inv`) gives the next stage. `xor auto` only finds single-byte keys.</li><li>Extract that stage as nested and open it in Hex.</li><li>Decode its inner base64 with `base64 \| zlib` to get the final `DownloadString` of `stage4.ps1`.</li></ol> |
 
+## IOC noise checks
+
+Indicators that must **not** appear in the IOCs tab:
+
+- **`sample.eml`** — the `pedido.doc` attachment is RTF sent as `application/msword`:
+  - emldump's dump of that part is RTF markup and hex padding, so it is not mined;
+  - nothing like `\\d}}{\fldrslt` or `0000…ffff…` should show up;
+  - the RTF itself is analysed as a nested child, and its real URLs and paths still appear.
+- **`sample_native_libs.apk`** — the same `libapp.so` is built for two ABIs (`lib/arm64-v8a`, `lib/x86_64`):
+  - **Components:** two tabs, **ELF · libapp.so · arm64-v8a** and **ELF · libapp.so · x86_64**.
+  - **IOCs:** none of its `DT_NEEDED` libraries (`liblog.so`, `libc.so`, `libm.so`…) are "domains" (`.so` is also a ccTLD).
+  - **IOCs:** the `::` string is not an IPv6.
+- **Any PE / ELF analysed with capa** — capability and ATT&CK names ("query or enumerate registry key", "Query Registry") are not commands.
+
 ## Machine Learning tab (EMBER2024)
 
 The **`ml/`** folder of `samples.zip` has at least **three samples per EMBER2024
@@ -192,7 +206,7 @@ header, debug directory, version resource, .NET metadata; ELF64; APK).
 | `ml/sample_pdf_launch_embedded.pdf` | PDF | 0.983 | above | `/Launch cmd.exe` + an embedded `factura.exe` (MZ stub, scored too as a nested row) |
 | `ml/sample_pdf_invoice_clean.pdf` | PDF | 0.002 | below (control) | plain one-page invoice |
 | `ml/sample_elf_miner` | ELF | 0.998 | above | `stratum+tcp://` pool, xmrig-style options, cron persistence, high-entropy `.data` |
-| `ml/sample_elf_backdoor` | ELF | 0.999 | above | reverse shell to `203.0.113.47:4444`, `authorized_keys`, `chattr +i`, encrypted config blob |
+| `ml/sample_elf_backdoor` | ELF | 1.000 | above | reverse shell to `203.0.113.47:4444`, `authorized_keys`, `chattr +i`, encrypted config blob |
 | `ml/sample_elf_invoice_sync` | ELF | 0.000 | below (control) | CLI tool strings, `libsqlite3` |
 | `ml/sample_apk_overlay_banker.apk` | APK | 0.930 | above | accessibility + overlay + SMS permissions, `DexClassLoader`, root checks, stored encrypted `assets/payload.dat` |
 | `ml/sample_apk_invoice_scanner.apk` | APK | 0.036 | below (control) | camera + internet only |
