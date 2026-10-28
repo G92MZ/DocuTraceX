@@ -3178,7 +3178,7 @@ function paneYara(yara, findings, analysisId) {
 // One row per classified object (original + nested PE / PDF / ELF); each row opens
 // with the score, the calibrated threshold and WHY (feature blocks + top features).
 // Like YARA: not a finding until the analyst marks it.
-function paneMl(ml, findings) {
+function paneMl(ml, findings, caseId) {
   const byId = {};
   (findings || []).forEach((f) => { byId[f.id] = f; });
   const items = ml.items || [];
@@ -3187,11 +3187,12 @@ function paneMl(ml, findings) {
     (original, extracted, unpacked, debloated, decrypted). The score is compared with a threshold calibrated at a <b>1% false-positive rate</b>
     on the EMBER2024 test set of that file type. It is a <b>complementary indicator, not a verdict</b>: on evasive malware that no antivirus
     detected at first (EMBER2024 challenge set) only part is caught at that threshold (shown per model).
-    <b>Results are not findings until you mark them</b>; a marked result joins Findings and True positives reach the report.</p>`;
+    <b>Results are not findings until you mark them</b>; a marked result joins Findings. The report has a Machine Learning section with every result and its mark.</p>`;
   const extras = `<p class="hint-line">Tag models: ${escapeHtml((ml.tag_models || []).join(", ") || "not installed")} ·
     family model: ${ml.family_model ? "installed"
       : `not installed <button class="btn btn-ghost btn-sm" type="button" data-ml-family>Download family model (459 MB)</button>
-         <span class="hint-line" data-ml-family-state></span>`}</p>`;
+         <span class="hint-line" data-ml-family-state></span>`}
+    ${caseId && items.length ? ` · <a class="btn btn-ghost btn-sm" href="/api/cases/${encodeURIComponent(caseId)}/ml.csv">Export CSV</a>` : ""}</p>`;
   if (!items.length) {
     return innerTabs("ml", [
       { id: "results", label: "Results", html: head + extras + `<p class="hint-line">${escapeHtml(ml.detail || "No PE, PDF, ELF or APK object in this case.")}</p>` },
@@ -4359,7 +4360,7 @@ async function loadMlView(caseId) {
     if (_mlCase !== id) return;
     const ml = (d.modules || {}).ml;
     const findings = d.ml_findings || [];
-    body.innerHTML = ml ? paneMl(ml, findings)
+    body.innerHTML = ml ? paneMl(ml, findings, id)
       : innerTabs("ml", [
           { id: "results", label: "Results", html: '<p class="hint-line">Machine Learning did not run on this case (no PE, .NET, PDF, ELF or APK object, or the case predates it — re-analyse it).</p>' },
           { id: "help", label: "Help", html: mlHelp({}) }]);
