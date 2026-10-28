@@ -1838,10 +1838,8 @@ function panePyinstaller(pim) {
 
 function nestedNode(n) {
   const fcount = (n.findings || []).length;
-  const badge = fcount
-    ? `<span class="badge badge-bad">${fcount} finding(s)</span>`
-    : (n.kind === "other" ? '<span class="badge badge-muted">not analyzable</span>'
-                          : '<span class="badge badge-ok">clean</span>');
+  const worst = (n.findings || []).some((f) => f.severity === "high") ? "bad"
+    : (fcount ? "warn" : "ok");
   const lk = n.unlock || n.archive;
   const lock = lk && lk.encrypted
     ? (lk.decrypted
@@ -1850,29 +1848,31 @@ function nestedNode(n) {
     : "";
   const pwc = (n.password_candidates || []).length
     ? `<span class="badge badge-muted" title="${escapeHtml(n.password_candidates.map((c) => c.context).join("\n"))}">🔑 ${n.password_candidates.length} password(s) in body</span>` : "";
-  let html = `<div class="nested-node">
+  const TAB = { javascript: "JavaScript", powershell: "PowerShell", vbscript: "VBScript", batch: "Batch", python: "Python" };
+  const codeLinks = Object.keys(n.code || {}).filter((k) => TAB[k]).map((k) =>
+    `<button class="btn btn-ghost btn-sm" type="button" data-pivot="${k}" title="Full analysis of this file's code (layers, behaviour hits, sandbox) in the ${TAB[k]} tab">↗ ${TAB[k]}</button>`).join("");
+  const open = n.view_id
+    ? `<button class="btn btn-sm nested-open" type="button" data-open-view="${escapeHtml(n.view_id)}" title="Open this file's own analysis (its tabs), like a case">Open analysis ↗</button>` : "";
+  // findings collapsed behind their count (click to expand)
+  const fList = fcount
+    ? `<details class="nested-findings"><summary><span class="badge badge-${worst}">${fcount} finding(s)</span></summary>
+        ${(n.findings || []).map((f) => `<div class="nested-finding"><span class="badge badge-${SEV_CLASS[f.severity] || "warn"}">${escapeHtml(f.severity)}</span>
+          <span class="mono">${escapeHtml(f.tool)}/${escapeHtml(f.rule)}</span> ${escapeHtml(f.detail)}</div>`).join("")}
+      </details>`
+    : (n.kind === "other" ? '<span class="badge badge-muted">not analyzable</span>' : '<span class="badge badge-ok">clean</span>');
+  let html = `<div class="nested-card nested-${worst}">
     <div class="nested-row">
-      <span class="mono">${escapeHtml(n.filename)}</span>
+      <b class="mono nested-name">${escapeHtml(n.filename)}</b>
       <span class="badge badge-muted">${escapeHtml(n.kind)}</span>
       ${n.decrypted_from ? `<span class="badge badge-warn" title="Recovered by decrypting/decoding: ${escapeHtml(n.decrypted_from)}">🔓 decrypted stage</span>` : ""}
       ${lock}${pwc}
-      ${badge}
-      ${n.view_id ? `<button class="btn btn-ghost btn-sm" type="button" data-open-view="${escapeHtml(n.view_id)}" title="Open this file's own analysis (its tabs), like a case">Open analysis ↗</button>` : ""}
-      ${fileActions(n.stored_path)}
-      ${addMarkCell("nested", `Nested item ${n.filename}`, n.stored_path || "nested", n.kind || "")}
+      ${fcount ? "" : fList}
+      ${open}${codeLinks}
+      <span class="nested-tools">${fileActions(n.stored_path)}
+      ${addMarkCell("nested", `Nested item ${n.filename}`, n.stored_path || "nested", n.kind || "")}</span>
     </div>`;
-  if (n.decrypted_from) html += `<div class="nested-finding hint-line">↳ from ${escapeHtml(n.decrypted_from)}</div>`;
-  if (n.code) {
-    const TAB = { javascript: "JavaScript", powershell: "PowerShell", vbscript: "VBScript", batch: "Batch", python: "Python" };
-    const links = Object.keys(n.code).map((k) => TAB[k]
-      ? `<button class="btn btn-ghost btn-sm" type="button" data-pivot="${k}" title="Full analysis of this file's code (layers, behaviour hits, sandbox) in the ${TAB[k]} tab">↗ ${TAB[k]}</button>`
-      : escapeHtml(k)).join(" ");
-    html += `<div class="nested-finding hint-line">analysed as: ${links}</div>`;
-  }
-  (n.findings || []).forEach((f) => {
-    html += `<div class="nested-finding"><span class="badge badge-${SEV_CLASS[f.severity] || "warn"}">${escapeHtml(f.severity)}</span>
-      <span class="mono">${escapeHtml(f.tool)}/${escapeHtml(f.rule)}</span> ${escapeHtml(f.detail)}</div>`;
-  });
+  if (n.decrypted_from) html += `<div class="nested-origin hint-line">↳ from ${escapeHtml(n.decrypted_from)}</div>`;
+  if (fcount) html += fList;
   if ((n.children || []).length) {
     html += `<div class="nested-children">` + n.children.map(nestedNode).join("") + `</div>`;
   }
@@ -1884,8 +1884,10 @@ function paneNested(nested) {
   const tree = (nested && nested.tree) || [];
   if (!tree.length) return `<p class="hint-line">No extracted children.</p>`;
   const c = (nested.counts || {});
-  return `<p class="hint-line">${c.nodes || tree.length} extracted item(s) scanned recursively · ${c.findings || 0} finding(s)</p>`
-    + tree.map(nestedNode).join("");
+  return `<p class="hint-line">${c.nodes || tree.length} extracted item(s) scanned recursively · ${c.findings || 0} finding(s)
+      <button class="btn btn-ghost btn-sm" type="button" onclick="this.closest('.subpane').querySelectorAll('details.nested-findings').forEach(e=>e.open=true)">Expand findings</button>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="this.closest('.subpane').querySelectorAll('details.nested-findings').forEach(e=>e.open=false)">Collapse findings</button></p>
+    <div class="nested-tree">${tree.map(nestedNode).join("")}</div>`;
 }
 
 function paneOle(ole) {
