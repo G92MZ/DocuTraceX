@@ -5,8 +5,9 @@
 # Kept byte-for-byte compatible with the extractor the EMBER2024 models were
 # trained with (any change to the features changes the scores). Local changes:
 #   - the pefile warnings list is read from ember_pefile_warnings.txt;
-#   - a feature-version constant for the compatibility check.
-# Requires: numpy, pefile, scikit-learn (FeatureHasher), signify==0.7.1.
+#   - a feature-version constant for the compatibility check;
+#   - sklearn's FeatureHasher replaced by .hashing (identical output, no scipy).
+# Requires: numpy, pefile, mmh3, signify==0.7.1 (sklearn's FeatureHasher -> .hashing).
 """
 Extracts some basic features from PE files. Many of the features
 implemented have been used in previously published works. For more information,
@@ -32,7 +33,7 @@ from collections import Counter, OrderedDict
 
 import numpy as np
 import pefile
-from sklearn.feature_extraction import FeatureHasher
+from .hashing import FeatureHasher   # exact, dependency-light replacement of sklearn's
 import signify
 from signify.authenticode import SignedPEFile
 from datetime import datetime
