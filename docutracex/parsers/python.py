@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from . import javascript, script_rules
+from ..config import tmo
 
 _MAX_ITEMS = 60
 _MAX_FILES = 400
@@ -212,7 +213,7 @@ def _decompile(path: Path) -> str:
         return ""
     try:
         proc = subprocess.run([str(exe), str(path)], capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=60)
+                              encoding="utf-8", errors="replace", timeout=tmo(60))
     except Exception:  # noqa: BLE001
         return ""
     out = (proc.stdout or "").strip()

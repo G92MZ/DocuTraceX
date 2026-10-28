@@ -30,6 +30,7 @@ from typing import Any
 from .. import quiet, toolrun
 from ..logging_config import get_logger
 from .didier import didier_dir
+from ..config import tmo
 
 log = get_logger(__name__)
 
@@ -60,7 +61,7 @@ def _peepdf(path: Path, res: dict[str, Any]) -> None:
         copy = work / path.name
         shutil.copyfile(path, copy)
         rec = _py("peepdf", ["-f", "-l", "-g", "-j", "-m", copy.name], f"peepdf -f -l -g -j -m {path.name}",
-                  timeout=240, cwd=work)
+                  timeout=tmo(240), cwd=work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
     res["tools"]["peepdf"] = rec
@@ -105,7 +106,7 @@ def _pdfparser_targeted(path: Path, res: dict[str, Any]) -> None:
     for key in _TARGETED:
         rec = _py(str(script), ["--search", key, "--filter", "--raw", str(path)],
                   f"pdf-parser.py --search {key} --filter --raw {path.name}", script=True,
-                  timeout=120)
+                  timeout=tmo(120))
         if re.search(r"^obj \d+ \d+", rec.get("output") or "", re.MULTILINE):
             dumps[key] = rec
     res["tools"].update({f"pdf-parser {k}": v for k, v in dumps.items()})
@@ -116,7 +117,7 @@ def _pdfid_extended(path: Path, res: dict[str, Any]) -> None:
     script = didier_dir() / "pdfid.py"
     if not script.is_file():
         return
-    rec = _py(str(script), ["-e", str(path)], f"pdfid.py -e {path.name}", script=True, timeout=120)
+    rec = _py(str(script), ["-e", str(path)], f"pdfid.py -e {path.name}", script=True, timeout=tmo(120))
     res["tools"]["pdfid -e"] = rec
     out = rec.get("output") or ""
     m = re.search(r"After last %%EOF\s+(\d+)", out)
@@ -163,7 +164,7 @@ def _signatures(path: Path, res: dict[str, Any]) -> None:
 
 def _qr(path: Path, res: dict[str, Any]) -> None:
     rec = toolrun.run([sys.executable, "-m", "docutracex.parsers.pdf_qr", str(path)],
-                      f"pdf_qr (pdfium + zxing-cpp) {path.name}", timeout=180,
+                      f"pdf_qr (pdfium + zxing-cpp) {path.name}", timeout=tmo(180),
                       extra_env=toolrun.with_package_path())
     try:
         data = json.loads(rec.get("output") or "{}")

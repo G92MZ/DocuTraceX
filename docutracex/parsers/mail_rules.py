@@ -35,6 +35,7 @@ from urllib.parse import urlparse
 from .. import quiet, toolrun, urlwrap
 from ..logging_config import get_logger
 from .didier import didier_dir
+from ..config import tmo
 
 log = get_logger(__name__)
 
@@ -407,7 +408,7 @@ def _qr_images(email: dict[str, Any], case_root: Path | None, res: dict[str, Any
     for a in imgs[:_MAX_QR_IMAGES]:
         path = case_root / a["stored_path"]
         rec = toolrun.run([sys.executable, "-m", "docutracex.parsers.pdf_qr", str(path)],
-                          f"qr {a.get('filename')}", timeout=60, extra_env=toolrun.with_package_path())
+                          f"qr {a.get('filename')}", timeout=tmo(60), extra_env=toolrun.with_package_path())
         try:
             data = json.loads(rec.get("output") or "{}")
         except ValueError:
@@ -453,7 +454,7 @@ def _emldump_parts(path: Path, ext: str, res: dict[str, Any]) -> None:
     if ext == ".msg" or not script.is_file():
         return
     listing = toolrun.run(quiet.python_tool_cmd(str(script), [str(path)], script=True),
-                          f"emldump.py {path.name}", timeout=60, extra_env=toolrun.with_package_path())
+                          f"emldump.py {path.name}", timeout=tmo(60), extra_env=toolrun.with_package_path())
     res["tools"]["emldump"] = listing
     for line in (listing.get("output") or "").splitlines():
         m = re.match(r"\s*(\d+):\s+\S+\s+(text/[\w.+-]+|application/[\w.+-]+|image/[\w.+-]+)", line)
@@ -462,7 +463,7 @@ def _emldump_parts(path: Path, ext: str, res: dict[str, Any]) -> None:
         idx = m.group(1)
         res["tools"][f"emldump part {idx} ({m.group(2)})"] = toolrun.run(
             quiet.python_tool_cmd(str(script), ["-s", idx, "-d", str(path)], script=True),
-            f"emldump.py -s {idx} -d {path.name}", timeout=60, bound=20000,
+            f"emldump.py -s {idx} -d {path.name}", timeout=tmo(60), bound=20000,
             extra_env=toolrun.with_package_path())
 
 

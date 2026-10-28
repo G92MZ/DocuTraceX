@@ -2308,8 +2308,10 @@ let _tasksPoll = null;
 function taskProgress(t) {
   if (TASK_ACTIVE.has(t.state)) {
     // the step being run now (live), e.g. "● nested: recursive scan…"
+    const run = [...(t.steps || [])].reverse().find((s) => s.status === "running");
     const now = t.state === "running" && t.phase && !["analyzing", "network check", "queued"].includes(t.phase)
-      ? escapeHtml(t.phase.split(" · ")[0].slice(0, 60)) : "working";
+      ? escapeHtml(t.phase.split(" · ")[0].slice(0, 60)) + (run && run.detail ? ` — ${escapeHtml(run.detail)}` : "")
+      : "working";
     return t.progress == null
       ? `<span class="spin" aria-label="working">●</span> ${now}`
       : `${Math.round(t.progress * 100)}%`;
@@ -2328,6 +2330,7 @@ function stepsTable(steps) {
     const extra = [];
     if (s.findings != null) extra.push(`${s.findings} finding(s)`);
     if (s.iocs != null) extra.push(`${s.iocs} IOC(s)`);
+    if (s.status === "running" && s.detail) extra.push(`<b>${escapeHtml(s.detail)}</b>`);
     if (s.note) extra.push(escapeHtml(s.note));
     return `<tr>
       <td>${escapeHtml(s.step)}</td>

@@ -28,6 +28,7 @@ from typing import Any
 
 from .config import settings
 from .logging_config import get_logger
+from .config import tmo
 
 log = get_logger(__name__)
 
@@ -35,7 +36,7 @@ _RULE_EXT = (".yar", ".yara", ".rule", ".rules")
 _MAX_STRINGS = 50          # matched strings kept per rule hit
 _MAX_MATCH_DATA = 120      # bytes of matched data kept (hex + printable)
 _MAX_INSTANCES = 10        # occurrences kept per matched string
-_SCAN_TIMEOUT = 60         # seconds per file
+_SCAN_TIMEOUT = tmo(60)         # seconds per file
 
 
 def _base() -> Path:
@@ -233,7 +234,7 @@ def _run_portable(op: str):
                     continue
     finally:
         try:
-            proc.wait(timeout=600)
+            proc.wait(timeout=tmo(600))
         except Exception:  # noqa: BLE001
             proc.kill()
         if proc.returncode:

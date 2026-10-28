@@ -203,3 +203,19 @@ class Settings:
 
 
 settings = Settings()
+
+
+# All analysis time limits (tools, sandboxes, emulators, FLOSS/capa, unpackers,
+# YARA, the whole portable run) are multiplied by this factor: a slow tool is
+# better than a lost analysis. Network checks, the AI endpoint and downloads
+# keep their own limits. Override with DOCUTRACEX_TIMEOUT_FACTOR.
+try:
+    TIMEOUT_FACTOR = max(0.1, float(os.environ.get("DOCUTRACEX_TIMEOUT_FACTOR", "5")))
+except ValueError:
+    TIMEOUT_FACTOR = 5.0
+
+
+def tmo(seconds: float) -> int:
+    """An analysis time limit scaled by ``TIMEOUT_FACTOR``."""
+    return max(1, int(round(seconds * TIMEOUT_FACTOR)))
+
