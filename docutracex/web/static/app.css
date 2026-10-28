@@ -523,3 +523,16 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 .js-tech-n { color: var(--text-dim); margin-right: 4px; }
 .js-tech .badge { margin-left: 6px; }
 .js-tech .evidence { margin-top: 3px; white-space: pre-wrap; word-break: break-all; }
+
+
+/* Findings: "By file" / "List" */
+.findings-toolbar { display: flex; gap: 8px; align-items: center; margin: 4px 0 10px; }
+.seg { display: inline-flex; border: 1px solid var(--panel-border); border-radius: 8px; overflow: hidden; }
+.seg .btn { border: 0; border-radius: 0; }
+.seg .btn.is-on { background: var(--accent-dim); color: var(--text); }
+.ftree-findings { margin: 6px 0 0 2px; }
+.ftree-findings > summary { cursor: pointer; list-style: none; display: inline-block; }
+.ftree-findings > summary::-webkit-details-marker { display: none; }
+.ftree-findings > summary::before { content: "▸ "; color: var(--text-dim); }
+.ftree-findings[open] > summary::before { content: "▾ "; }
+.ftree-findings table { margin-top: 6px; }
