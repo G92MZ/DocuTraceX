@@ -194,3 +194,60 @@ def test_crlf_tag_model_loads_and_is_repaired(tmp_path: Path) -> None:
     extra = ember_ml._load_extra(tmp_path, lgb)
     assert len(extra["packer"]) == 1 and extra["packer"][0].num_trees() == 3
     assert b"\r\n" not in f.read_bytes()           # fixed on disk once
+
+
+# expected EMBER2024 model / verdict for every sample of the ml/ folder
+_ML_SAMPLES = {
+    "sample_win32_downloader.exe": ("Win32", True), "sample_win32_injector.exe": ("Win32", True),
+    "sample_win32_invoice_calc.dll": ("Win32", False),
+    "sample_win64_keylogger.exe": ("Win64", True), "sample_win64_packed_loader.exe": ("Win64", True),
+    "sample_win64_invoice_sync.dll": ("Win64", False),
+    "sample_dotnet_stealer.exe": ("Dot_Net", True), "sample_dotnet_loader.exe": ("Dot_Net", True),
+    "sample_dotnet_invoice_tool.dll": ("Dot_Net", False),
+    "sample_pdf_openaction_js.pdf": ("PDF", True), "sample_pdf_launch_embedded.pdf": ("PDF", True),
+    "sample_pdf_invoice_clean.pdf": ("PDF", False),
+    "sample_elf_miner": ("ELF", True), "sample_elf_backdoor": ("ELF", True), "sample_elf_invoice_sync": ("ELF", False),
+    "sample_apk_overlay_banker.apk": ("APK", True), "sample_apk_invoice_scanner.apk": ("APK", False),
+    "sample_invoice_viewer.apk": ("APK", False),
+}
+
+
+def _ml_files() -> dict[str, bytes]:
+    ms = _ms()
+    return {**ms.ml_samples(), "ml/sample_invoice_viewer.apk": ms.invoice_viewer_apk()}
+
+
+def test_ml_samples_cover_every_model_and_are_inert(tmp_path: Path) -> None:
+    import pefile
+
+    from docutracex.ml import ember_ml
+
+    files = {Path(k).name: v for k, v in _ml_files().items()}
+    assert set(files) == set(_ML_SAMPLES)
+    for name, data in files.items():
+        p = tmp_path / name
+        p.write_bytes(data)
+        assert ember_ml.file_type(data[:4096], p) == _ML_SAMPLES[name][0], name
+        if data[:2] == b"MZ":                                    # only code: ret / a .NET IL "ret"
+            pe = pefile.PE(data=data)
+            ep = pe.get_offset_from_rva(pe.OPTIONAL_HEADER.AddressOfEntryPoint)
+            assert data[ep] in (0xC3, 0xFF), name
+
+
+@pytest.mark.skipif(not (Path(__file__).parents[1] / "tools" / "ember" / "EMBER2024_APK.model").is_file(),
+                    reason="EMBER models not provisioned")
+def test_ml_samples_end_to_end(client) -> None:
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for k, v in _ml_files().items():
+            z.writestr(Path(k).name, v)
+    _, res = _analyze(client, "ml_samples.zip", buf.getvalue())
+    ml = json.loads((res / "ml.json").read_text())
+    by = {i["label"].split(" › ")[-1]: i for i in ml["items"]}
+    for name, (model, above) in _ML_SAMPLES.items():
+        it = by[name]
+        assert it["status"] == "ok" and it["model"] == f"EMBER2024_{model}", (name, it.get("detail"))
+        assert (it["verdict"] == "above threshold") is above, (name, it["score"])
