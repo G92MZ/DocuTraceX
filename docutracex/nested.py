@@ -549,5 +549,21 @@ def merge(base: dict[str, Any] | None, extra: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def drop_source(base: dict[str, Any], source: str) -> dict[str, Any]:
+    """The nested result without the top-level nodes of one ``source`` (e.g. the
+    Hex-tab extractions after the analyst removed the last one)."""
+    out = dict(base)
+    gone = {n.get("filename") for n in base.get("tree") or [] if n.get("source") == source}
+    out["tree"] = [n for n in base.get("tree") or [] if n.get("source") != source]
+    out["ioc_sources"] = [x for x in base.get("ioc_sources") or []
+                          if not any(str(x.get("location", "")).startswith(f) for f in gone if f)]
+    flat: list[dict[str, Any]] = []
+    _flatten(out["tree"], flat)
+    out["findings"] = flat
+    out["counts"] = {"findings": len(flat), "nodes": _count_nodes(out["tree"])}
+    out["status"] = "ok_with_findings" if flat else "ok"
+    return out
+
+
 def _count_nodes(nodes: list[dict[str, Any]]) -> int:
     return sum(1 + _count_nodes(n.get("children", [])) for n in nodes)
