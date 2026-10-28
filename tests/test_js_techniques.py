@@ -309,3 +309,38 @@ def test_rerun_does_not_duplicate_decrypted_stages(client) -> None:
             break
         time.sleep(0.05)
     assert [n["filename"] for n in _tree(res)] == before and len(before) == len(set(before))
+
+
+@pytest.mark.skipif(not _have_v8(), reason="STPyV8 not installed")
+def test_nested_scripts_surface_in_code_tabs(client) -> None:
+    """The .ps1 a dropper writes is analysed as a nested child AND shown in the
+    PowerShell tab with its full analysis (once, also after a re-run)."""
+    import json
+    import time
+    cid, res = _analyze(client, "sample_wsh_selfread.js", _ms().wsh_selfread_dropper_js())
+    ps = json.loads((res / "powershell.json").read_text())
+    nested_ps = [s for s in ps["scripts"] if s.get("from_nested")]
+    assert len(nested_ps) == 1 and nested_ps[0]["origin"].startswith("nested › decrypted_js-drop_")
+    assert {"xor-var-array", "hex-helper"} <= set(nested_ps[0]["deob_methods"])
+    assert {"ps_persist", "ps_scriptblock"} <= {h["rule"] for h in nested_ps[0]["hits"]}
+    tid = client.post(f"/api/cases/{cid}/rerun", json={"module": "full"}).json()["task"]["id"]
+    for _ in range(1200):
+        t = next((x for x in client.get("/api/tasks").json()["tasks"] if x["id"] == tid), {})
+        if t.get("state") in ("completed", "failed"):
+            break
+        time.sleep(0.05)
+    ps = json.loads((res / "powershell.json").read_text())
+    assert len([s for s in ps["scripts"] if s.get("from_nested")]) == 1
+
+
+def test_ps_rules_reflective_hollowing_task_wmi() -> None:
+    from docutracex.parsers import script_rules
+    code = "\n".join([
+        "$d=[AppDomain]::CurrentDomain; if($m.ReturnType -eq [Reflection.Assembly]){}",
+        '$h = "C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\MSBuild.exe"',
+        "$s = New-Object -ComObject 'Schedule.Service'; $f.RegisterTask('\\x', $xml, 6)",
+        "$rc=[scriptblock]::Create($rs)",
+        "Invoke-CimMethod -ClassName Win32_Process -MethodName Create",
+    ])
+    rules = {h["rule"] for h in script_rules.scan(code, script_rules.PS)}
+    assert {"ps_reflection_load", "ps_hollow_host", "ps_persist", "ps_scriptblock", "ps_wmi_exec"} <= rules

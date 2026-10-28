@@ -78,7 +78,8 @@ _RULES: list[tuple[str, set[str], str, str, str, str]] = [
     ("js_run_key", {JS}, "high", "T1547.001", "Run-key persistence (registry)",
      r"RegWrite|CurrentVersion\\+Run(?:Once)?"),
     ("ps_persist", {PS}, "medium", "T1547.001", "persistence (registry / scheduled task)",
-     r"New-ItemProperty|Set-ItemProperty|CurrentVersion\\+Run|Register-ScheduledTask|schtasks\s+/create"),
+     r"New-ItemProperty|Set-ItemProperty|CurrentVersion\\+Run|Register-ScheduledTask|schtasks\s+/create|"
+     r"Schedule\.Service|\.RegisterTask(?:Definition)?\s*\(|<LogonTrigger>|<BootTrigger>"),
     ("ps_wmi_persist", {PS}, "high", "T1546.003", "WMI event-subscription persistence",
      r"__EventFilter|CommandLineEventConsumer|__FilterToConsumerBinding|Set-WmiInstance\s+-Class\s+__"),
     ("ps_service", {PS}, "high", "T1543.003", "creates a service",
@@ -132,7 +133,15 @@ _RULES: list[tuple[str, set[str], str, str, str, str]] = [
     ("ps_shellcode", {PS, VBS}, "high", "T1055", "memory-injection API",
      r"VirtualAlloc|VirtualProtect|CreateThread|RtlMoveMemory|WriteProcessMemory|NtAllocateVirtualMemory|CallWindowProc|memset\s*\("),
     ("ps_reflection_load", {PS}, "high", "T1620", "reflective .NET assembly load",
-     r"\[Reflection\.Assembly\]::Load|\[System\.Reflection\.Assembly\]::Load|Load\(\[Convert\]::FromBase64String"),
+     r"\[Reflection\.Assembly\]::Load|\[System\.Reflection\.Assembly\]::Load|Load\(\[Convert\]::FromBase64String|"
+     r"\[AppDomain\]::CurrentDomain\.Load\s*\(|ReturnType\s*-eq\s*\[(?:System\.)?Reflection\.Assembly\]"),
+    ("ps_hollow_host", {PS, JS, VBS}, "high", "T1055.012", "targets a .NET host binary for injection (process hollowing)",
+     r"Microsoft\.NET\\+Framework(?:64)?\\+[^'\"\s]*\\+(?:MSBuild|RegAsm|RegSvcs|InstallUtil|AppLaunch|aspnet_compiler|"
+     r"vbc|jsc|csc|AddInProcess(?:32)?|CasPol)\.exe"),
+    ("ps_scriptblock", {PS}, "medium", "T1059.001", "builds and runs code at run time ([scriptblock]::Create)",
+     r"\[scriptblock\]::Create\s*\(|\[System\.Management\.Automation\.ScriptBlock\]::Create"),
+    ("ps_wmi_exec", {PS}, "high", "T1047", "starts a process through WMI (Win32_Process.Create)",
+     r"Win32_Process[^\n]{0,80}\bCreate\b|Invoke-(?:Cim|Wmi)Method[^\n]{0,80}Win32_Process|\[wmiclass\][^\n]{0,40}Win32_Process"),
     ("ps_addtype", {PS}, "high", "T1059.001", "compiles inline code (Add-Type/DllImport)",
      r"Add-Type\s+-(?:TypeDefinition|MemberDefinition)|\bDllImport\b"),
     ("js_dotnet_load", {JS, VBS}, "high", "T1620", "in-memory .NET load (DotNetToJScript)",
