@@ -21,6 +21,7 @@ import itertools
 import queue
 import shutil
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,12 +36,21 @@ log = get_logger(__name__)
 # Live states.
 QUEUED, RUNNING, CANCELLING, CANCELLED = "queued", "running", "cancelling", "cancelled"
 COMPLETED, FAILED = "completed", "failed"
+HISTORY_LIMIT = 500      # finished tasks listed in the Tasks tab
 _ACTIVE = {QUEUED, RUNNING, CANCELLING}
 _FINAL_FROM_SUMMARY = {"completed": COMPLETED, "error": FAILED}
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _duration(task: "Task") -> float | None:
+    """Precise duration from the monotonic start; ISO timestamps (second
+    resolution) only as a fallback."""
+    if task.t0 is not None:
+        return round(time.monotonic() - task.t0, 2)
+    return _elapsed(task.started_utc or task.finished_utc, task.finished_utc or _now())
 
 
 def _elapsed(start: str, end: str) -> float | None:
@@ -71,6 +81,7 @@ class Task:
     steps: list[dict[str, Any]] = field(default_factory=list)
     cases_dir: str | None = None
     params: dict[str, Any] = field(default_factory=dict)   # netcheck: kind/target/...
+    t0: float | None = field(default=None, repr=False)     # monotonic start (precise duration)
 
     def public(self) -> dict[str, Any]:
         return {
@@ -112,6 +123,8 @@ def _append_attempt(paths: CasePaths, task: Task) -> None:
         "state": task.state, "started_utc": task.started_utc,
         "finished_utc": task.finished_utc, "duration_s": task.duration_s,
         "error": task.error, "counts": task.counts,
+        # per-step timings, so a finished task can be inspected after a restart
+        "steps": list(task.steps or [])[:200], "filename": task.filename,
     })
     data["updated_utc"] = _now()
     try:
@@ -133,6 +146,8 @@ class TaskManager:
         self._queue: queue.Queue[str] = queue.Queue()
         self._cancel: set[str] = set()
         self._counter = itertools.count(1)
+        self._hist: list[dict[str, Any]] | None = None
+        self._hist_dir = ""
         self._workers: list[threading.Thread] = []
         self._max_workers = max_workers
 
@@ -202,7 +217,69 @@ class TaskManager:
             tasks = [self._tasks[i] for i in reversed(self._order)]
         if analysis_id:
             tasks = [t for t in tasks if t.analysis_id == analysis_id]
-        return [t.public() for t in tasks]
+        out = [t.public() for t in tasks]
+        # Finished tasks of earlier runs of the app (persisted per case in
+        # results/tasks.json), so the list survives a restart.
+        live = {(t["analysis_id"], t["id"], t["started_utc"]) for t in out}
+        cases_dir = Path(settings.cases_dir)
+        try:
+            existing = {p.name for p in cases_dir.iterdir()} if cases_dir.is_dir() else set()
+        except OSError:
+            existing = set()
+        for h in self._history():
+            if h["analysis_id"] not in existing or (analysis_id and h["analysis_id"] != analysis_id):
+                continue
+            if (h["analysis_id"], h["id"], h["started_utc"]) not in live:
+                out.append(h)
+        active = [t for t in out if t["state"] in _ACTIVE]
+        done = sorted((t for t in out if t["state"] not in _ACTIVE),
+                      key=lambda t: t.get("finished_utc") or t.get("created_utc") or "", reverse=True)
+        return active + done[:HISTORY_LIMIT]
+
+    def _history(self) -> list[dict[str, Any]]:
+        """Persisted attempts of every case, read once per process (the tasks
+        of this session are in memory and appended to the same files)."""
+        with self._lock:
+            if self._hist is not None and self._hist_dir == str(settings.cases_dir):
+                return self._hist
+        hist: list[dict[str, Any]] = []
+        cases_dir = Path(settings.cases_dir)
+        for case in sorted(cases_dir.iterdir()) if cases_dir.is_dir() else []:
+            if not case.is_dir():
+                continue                    # .gitkeep and other stray files
+            try:
+                data = read_json(case / "results" / "tasks.json")
+            except Exception:  # noqa: BLE001  (one broken case must not hide the rest)
+                continue
+            if not isinstance(data, dict):
+                continue
+            fname = ""
+            for a in data.get("attempts") or []:
+                if not isinstance(a, dict) or a.get("state") in _ACTIVE:
+                    continue
+                if not fname and not a.get("filename"):
+                    try:
+                        man = read_json(case / "case.json") or {}
+                    except Exception:  # noqa: BLE001
+                        man = {}
+                    fname = (man.get("original") or {}).get("filename", "")
+                hist.append({
+                    "id": a.get("task_id") or f"attempt-{a.get('attempt')}", "type": a.get("type") or "analyze",
+                    "analysis_id": case.name, "filename": a.get("filename") or fname,
+                    "target": a.get("target") or "full", "state": a.get("state") or "completed",
+                    "phase": "done", "progress": 1.0, "created_utc": a.get("started_utc"),
+                    "started_utc": a.get("started_utc"), "finished_utc": a.get("finished_utc"),
+                    "duration_s": a.get("duration_s"), "error": a.get("error"),
+                    "counts": a.get("counts") or {}, "steps": a.get("steps") or [], "params": {},
+                    "history": True,
+                })
+        with self._lock:
+            # only attempts that predate this process: this session's tasks are
+            # in memory (and would otherwise be listed twice)
+            mine = {(t.analysis_id, t.id, t.started_utc) for t in self._tasks.values()}
+            self._hist = [h for h in hist if (h["analysis_id"], h["id"], h["started_utc"]) not in mine]
+            self._hist_dir = str(settings.cases_dir)
+            return self._hist
 
     def active_count(self) -> int:
         with self._lock:
@@ -243,6 +320,7 @@ class TaskManager:
                 return
             task.state = RUNNING
             task.started_utc = _now()
+            task.t0 = time.monotonic()
             task.phase = "network check" if task.type == "netcheck" else "analyzing"
             task.progress = None  # unknown, not 0%
             cases_dir = Path(task.cases_dir) if task.cases_dir else settings.cases_dir
@@ -268,7 +346,7 @@ class TaskManager:
         summary = read_json(paths.summary) or {}
         with self._lock:
             task.finished_utc = _now()
-            task.duration_s = _elapsed(task.started_utc or task.finished_utc, task.finished_utc)
+            task.duration_s = _duration(task)
             task.counts = summary.get("counts", {})
             task.steps = summary.get("steps", [])
             task.phase = "done"
@@ -294,7 +372,7 @@ class TaskManager:
         summary = read_json(paths.summary) or {}
         with self._lock:
             task.finished_utc = _now()
-            task.duration_s = _elapsed(task.started_utc or task.finished_utc, task.finished_utc)
+            task.duration_s = _duration(task)
             task.counts = summary.get("counts", {})
             task.steps = [_netcheck_step(task, error)]
             task.phase = "done"
