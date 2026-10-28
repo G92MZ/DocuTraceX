@@ -3531,6 +3531,45 @@ function hexResetCase(caseId) {
                         files: null, hits: [], hitIdx: -1, entropy: null, regions: [] });
 }
 
+// Entropy strip colours (shared by the canvas and its legend) and what each means.
+const HEX_ENTROPY_BANDS = [
+  { min: 7.2, color: "#f85149", label: "> 7.2", what: "encrypted or compressed — ciphertext, packed code, archives, images" },
+  { min: 6.0, color: "#d29922", label: "6.0 – 7.2", what: "dense — machine code, compressed-ish or mixed data" },
+  { min: 3.2, color: "#3b88b8", label: "3.2 – 6.0", what: "structured — text, strings, tables, headers" },
+  { min: 0.4, color: "#2a4d63", label: "0.4 – 3.2", what: "low variety — repetitive data, sparse tables" },
+  { min: -1, color: "#1b2330", label: "≈ 0", what: "zeros / padding" },
+];
+const hexEntropyBand = (v) => HEX_ENTROPY_BANDS.find((b) => v > b.min) || HEX_ENTROPY_BANDS[HEX_ENTROPY_BANDS.length - 1];
+const HEX_STRUCT_LABEL = {
+  header: "headers (DOS, PE / COFF / optional, ELF)", stub: "DOS stub", rich: "Rich header (MSVC toolchain)",
+  table: "tables (data directories, section / program headers)", code: "code section", data: "data section",
+  rsrc: "resources (.rsrc, .NET managed resources)", dir: "directories (imports, exports, debug, TLS, .NET metadata…)",
+  sig: "Authenticode signature", overlay: "overlay (data after the image)",
+};
+let _hexLegendOpen = (() => { try { return localStorage.getItem("dtx.hexLegend") === "1"; } catch (e) { return false; } })();
+
+function hexLegendHtml() {
+  const sw = (style, cls) => `<span class="hex-sw${cls ? ` ${cls}` : ""}"${style ? ` style="${style}"` : ""}></span>`;
+  const ent = HEX_ENTROPY_BANDS.map((b) =>
+    `<li>${sw(`background:${b.color}`)}<b>${escapeHtml(b.label)}</b> ${escapeHtml(b.what)}</li>`).join("")
+    + `<li>${sw("background:#fff")}<b>white box</b> the part of the file shown in the grid</li>`;
+  const bytes = [
+    [sw("", "hb-sel"), "selection (click, shift-click)"],
+    [sw("", "hb-cur"), "current search hit"],
+    [sw("", "hb-hit"), "other search hits"],
+    [sw("", "hb-mark"), "range you jumped to (YARA match, region)"],
+    [`<span class="hex-sw-txt hb-print">A</span>`, "printable ASCII"],
+    [`<span class="hex-sw-txt hb-zero">00</span>`, "zero byte"],
+  ].map(([s1, t]) => `<li>${s1}${escapeHtml(t)}</li>`).join("");
+  return `<details class="hex-legend"${_hexLegendOpen ? " open" : ""}><summary>Colour legend</summary>
+    <div class="hex-legend-cols">
+      <div><div class="hint-line">Entropy strip (bits per byte, 0–8; height = entropy)</div><ul>${ent}</ul></div>
+      <div><div class="hint-line">Bytes in the grid</div><ul>${bytes}</ul></div>
+      <div><div class="hint-line">Structures <span class="hex-legend-struct-note"></span></div><ul class="hex-legend-structs"></ul></div>
+    </div>
+  </details>`;
+}
+
 function paneHex() {
   return `<div id="hex-root" class="hex-root">
     <div class="hex-bar">
@@ -3538,6 +3577,7 @@ function paneHex() {
       <span id="hex-size" class="hint-line"></span>
     </div>
     <canvas id="hex-entropy" class="hex-entropy" height="26" title="Entropy along the file (0–8): click to jump"></canvas>
+    ${hexLegendHtml()}
     <div class="hex-bar">
       <label class="hint-line">Go to</label>
       <input id="hex-goto" class="hex-input" placeholder="0x1F40 or 8000" spellcheck="false">
@@ -3675,6 +3715,7 @@ async function wireHex(root) {
       html += `<div class="hr"><span class="ho">${_hexFmt(base)}</span><span class="hx">${hx}</span><span class="ht">${tx}</span></div>`;
     }
     $("#hex-grid").innerHTML = html;
+    updateLegend();
     const s = _hex.sel;
     if (s) {
       const a = Math.min(s[0], s[1]), b = Math.max(s[0], s[1]);
@@ -3753,6 +3794,13 @@ async function wireHex(root) {
     _hex.offset = o;
     render();
   }
+  function updateLegend() {
+    const ul = $(".hex-legend-structs"), note = $(".hex-legend-struct-note");
+    if (!ul) return;
+    const kinds = [...new Set((_hex.regions || []).map((r) => r.kind))].filter((k) => HEX_STRUCT_LABEL[k]);
+    note.textContent = !kinds.length ? "— none in this file" : (_hex.colors ? "" : "— tick “structures” to colour them");
+    ul.innerHTML = kinds.map((k) => `<li><span class="hex-sw hs-${k}"></span>${escapeHtml(HEX_STRUCT_LABEL[k])}</li>`).join("");
+  }
   function drawEntropy() {
     const cv = $("#hex-entropy");
     const e = _hex.entropy;
@@ -3765,7 +3813,7 @@ async function wireHex(root) {
     e.values.forEach((v, i) => {
       const x0 = Math.floor(i * w / n), x1 = Math.ceil((i + 1) * w / n);
       const t = v / 8;
-      g.fillStyle = t > 0.9 ? "#f85149" : t > 0.75 ? "#d29922" : t > 0.4 ? "#3b88b8" : t > 0.05 ? "#2a4d63" : "#1b2330";
+      g.fillStyle = hexEntropyBand(v).color;
       const h = Math.max(2, Math.round(t * cv.height));
       g.fillRect(x0, cv.height - h, x1 - x0, h);
     });
@@ -3803,6 +3851,19 @@ async function wireHex(root) {
     const n = Number(o);
     _hex.sel = e.shiftKey && _hex.sel ? [_hex.sel[0], n] : [n, n];
     render();
+  });
+  $("#hex-entropy").addEventListener("mousemove", (e) => {
+    const en = _hex.entropy;
+    if (!en || !en.values.length) return;
+    const r = e.target.getBoundingClientRect();
+    const i = Math.min(en.values.length - 1, Math.max(0, Math.floor((e.clientX - r.left) / r.width * en.values.length)));
+    const v = en.values[i], b = hexEntropyBand(v);
+    e.target.title = `${_hexFmt(i * en.block)} – ${_hexFmt(Math.min(en.size, (i + 1) * en.block) - 1)} · entropy ${v.toFixed(2)} · ${b.what}\nclick to jump`;
+  });
+  const lg = el.querySelector(".hex-legend");
+  if (lg) lg.addEventListener("toggle", () => {
+    _hexLegendOpen = lg.open;
+    try { localStorage.setItem("dtx.hexLegend", lg.open ? "1" : "0"); } catch (e) { /* per-viewer only */ }
   });
   $("#hex-entropy").addEventListener("click", (e) => {
     const r = e.target.getBoundingClientRect();
