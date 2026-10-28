@@ -1504,7 +1504,7 @@ def build_all() -> dict[str, bytes]:
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
         "sample_obf_techniques.js": obf_techniques_js(),
         "sample_chain_dropper.js": chain_dropper_js(), "sample_msxml_dropper.js": msxml_dropper_js(), "sample_wsh_selfread.js": wsh_selfread_dropper_js(), "sample_xor_stager.ps1": xor_stager_ps1(),
-        "sample_encoded_blobs.ps1": encoded_blobs_ps1(), "sample_crypto_loader.ps1": crypto_loader_ps1(), "sample_invoke_obfuscation.ps1": invoke_obfuscation_ps1(), "sample_xor_loader.vbs": xor_loader_vbs(), "sample_dosfuscation.bat": dosfuscation_bat(), "sample_exec_chain.py": exec_chain_py(), "sample_lief_helper.dll": lief_helper_dll(), "sample_bloated_invoice.exe": bloated_exe(), "sample_invoice_viewer.apk": invoice_viewer_apk(),
+        "sample_encoded_blobs.ps1": encoded_blobs_ps1(), "sample_crypto_loader.ps1": crypto_loader_ps1(), "sample_invoke_obfuscation.ps1": invoke_obfuscation_ps1(), "sample_xor_loader.vbs": xor_loader_vbs(), "sample_dosfuscation.bat": dosfuscation_bat(), "sample_exec_chain.py": exec_chain_py(), "sample_lief_helper.dll": lief_helper_dll(), "sample_bloated_invoice.exe": bloated_exe(), "ml/sample_invoice_viewer.apk": invoice_viewer_apk(),
         "sample_stage2.ps1": stage2_ps1(), "sample_dropper.vbs": dropper_vbs(),
         "sample_dropper.bat": dropper_bat(), "sample_ioc_noise.bat": ioc_noise_bat(), "sample_loader.hta": loader_hta(),
         "sample_shortcut.pdf.lnk": shortcut_lnk(), "sample_shortcut.url": internet_shortcut_url(),

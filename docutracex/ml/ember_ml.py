@@ -229,8 +229,9 @@ def _labels(extra: dict[str, Any], X: Any, labels: dict[str, Any]) -> dict[str, 
             if not lab:
                 continue
             pr = float(b.predict(X)[0])
-            if pr >= TAG_MIN_PROB:
-                hits.append({"name": lab["name"], "prob": round(pr, 4), "confidence": lab["confidence"]})
+            if pr >= float(lab.get("threshold", TAG_MIN_PROB)):
+                hits.append({"name": lab["name"], "prob": round(pr, 4), "confidence": lab["confidence"],
+                             "precision": lab.get("precision")})
         out[k] = sorted(hits, key=lambda h: -h["prob"])
     fam = extra.get("family")
     if fam is not None:
@@ -317,7 +318,10 @@ def _classify(paths: list[str], mdir: str) -> list[dict[str, Any]]:
                         "bias": float(contrib[-1]),
                         "blocks": dict(sorted(blocks.items(), key=lambda kv: -abs(kv[1]))),
                         "top_features": top, "feature_version": ef.FEATURE_VERSION,
-                        "labels": _labels(extra, X, label_maps) if extra else {}})
+                        # tag/family models were trained on malware only: shown only when
+                        # the detector puts the object above its threshold
+                        "labels": (_labels(extra, X, label_maps)
+                                   if extra and th is not None and score >= th else {})})
         except Exception as exc:  # noqa: BLE001
             out.append({**rec, "status": "error", "detail": f"{type(exc).__name__}: {exc}"[:300]})
     return out
