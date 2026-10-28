@@ -319,20 +319,26 @@ _BXOR = re.compile(r"(?i)-bxor\s*(" + _NUM + r"|" + _VAR + r"(?:\s*\[[^\]]{1,60}
 _STR_ASSIGN = r"(?i)\{v}\s*=\s*(" + _STRLIT + r")"
 
 
+def _int(x: str) -> int:
+    """PowerShell integer literal: 0x.. hex, else decimal (leading zeros allowed)."""
+    x = x.strip()
+    return int(x, 16) if x[:2].lower() == "0x" else int(x, 10)
+
+
 def _key_bytes(code: str, key: str) -> bytes | None:
     if re.fullmatch(_NUM, key):
-        return bytes([int(key, 0) & 0xFF])
+        return bytes([_int(key) & 0xFF])
     var = key.split("[", 1)[0].strip()
     m = re.search(r"(?i)" + re.escape(var) + r"\s*=\s*(" + _STRLIT + r")", code)
     if m:
         return _lit_value(m.group(1)).encode("latin-1", "replace") or None
     m = re.search(r"(?i)" + re.escape(var) + r"\s*=\s*(" + _NUM + r")\b", code)
     if m:
-        return bytes([int(m.group(1), 0) & 0xFF])
+        return bytes([_int(m.group(1)) & 0xFF])
     m = re.search(r"(?i)" + re.escape(var) + r"\s*=\s*(?:\[byte\[\]\]\s*)?\(?\s*(" + _NUM +
                   r"(?:\s*,\s*" + _NUM + r")+)\s*\)?", code)
     if m:
-        return bytes(int(x, 0) & 0xFF for x in re.split(r"\s*,\s*", m.group(1)))
+        return bytes(_int(x) & 0xFF for x in re.split(r"\s*,\s*", m.group(1)))
     return None
 
 
@@ -378,9 +384,9 @@ def _t_char_xor(code: str) -> tuple[str, int]:
 
     def repl(m: re.Match) -> str:
         nonlocal n
-        k = int(m.group(2), 0)
+        k = _int(m.group(2))
         try:
-            text = "".join(chr((int(x, 0) ^ k) & 0xFFFF) for x in re.split(r"\s*,\s*", m.group(1)))
+            text = "".join(chr((_int(x) ^ k) & 0xFFFF) for x in re.split(r"\s*,\s*", m.group(1)))
         except ValueError:
             return m.group(0)
         n += 1
@@ -389,11 +395,75 @@ def _t_char_xor(code: str) -> tuple[str, int]:
     return _CHAR_XOR.sub(repl, code), n
 
 
+_VAR_ARRAY = r"(?i)\${v}\s*=\s*(?:\[(?:byte|int|char)\[\]\]\s*)?@?\(\s*((?:0x[0-9a-f]+|\d+)(?:\s*,\s*(?:0x[0-9a-f]+|\d+)){3,})\s*\)"
+_VAR_NUM = r"(?i)\${v}\s*=\s*(0x[0-9a-f]+|\d+)\b"
+_VAR_XOR = re.compile(
+    r"(?i)-join\s*\(?\s*\$(\w+)\s*\|\s*(?:%|ForEach-Object|foreach)\s*\{\s*\[char\]\s*\(\s*(?:\[int\])?\s*\$_\s*"
+    r"-bxor\s*(?:\$(\w+)|(0x[0-9a-f]+|\d+))\s*\)\s*\}\s*\)?")
+
+
+def _t_var_xor(code: str) -> tuple[str, int]:
+    """``-join($arr | %{[char]([int]$_ -bxor $key)})`` with ``$arr = @(n,…)`` and
+    ``$key = n`` defined elsewhere in the script -> the decoded string."""
+    n = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal n
+        am = re.search(_VAR_ARRAY.replace("{v}", re.escape(m.group(1))), code)
+        if not am:
+            return m.group(0)
+        if m.group(3):
+            k = _int(m.group(3))
+        else:
+            km = re.search(_VAR_NUM.replace("{v}", re.escape(m.group(2))), code)
+            if not km:
+                return m.group(0)
+            k = _int(km.group(1))
+        try:
+            text = "".join(chr((_int(x) ^ k) & 0xFFFF) for x in re.split(r"\s*,\s*", am.group(1)))
+        except ValueError:
+            return m.group(0)
+        n += 1
+        return _as_lit(text)
+
+    return _VAR_XOR.sub(repl, code), n
+
+
+# A helper scriptblock that turns a hex string into text, e.g.
+#   $h2s = { param($h) … [Convert]::ToInt32($h.Substring($i,2),16) … }
+_HEX_HELPER = re.compile(r"(?is)\$(\w+)\s*=\s*\{\s*param\s*\(\s*\$\w+\s*\)[^\n]{0,400}?"
+                         r"ToInt32\s*\(\s*\$\w+\.Substring\s*\([^)]*,\s*2\s*\)\s*,\s*16\s*\)")
+
+
+def _t_hex_helper(code: str) -> tuple[str, int]:
+    """``& $helper '4865…'`` where ``$helper`` is a hex-to-text scriptblock."""
+    n = 0
+    for hm in _HEX_HELPER.finditer(code):
+        call = re.compile(r"(?i)&\s*\$" + re.escape(hm.group(1)) + r"\s+(" + _STRLIT + r")")
+
+        def repl(m: re.Match) -> str:
+            nonlocal n
+            h = re.sub(r"\s+", "", _lit_value(m.group(1)))
+            if len(h) % 2 or not re.fullmatch(r"[0-9A-Fa-f]*", h):
+                return m.group(0)
+            try:
+                text = bytes.fromhex(h).decode("latin-1")
+            except ValueError:
+                return m.group(0)
+            n += 1
+            return _as_lit(text)
+
+        code = call.sub(repl, code)
+    return code, n
+
+
 _TRANSFORMS: list[tuple[str, Callable[[str], tuple[str, int]]]] = [
     ("encoded-command", _t_encoded_command),
     ("decompress", _t_decompress),
     ("xor-base64", _t_xor_base64),
     ("xor-char-array", _t_char_xor),
+    ("xor-var-array", _t_var_xor),
+    ("hex-helper", _t_hex_helper),
     ("FromBase64String", _t_frombase64),
     ("backtick-strip", _t_strip_backticks),
     ("char-code", _t_charcode),

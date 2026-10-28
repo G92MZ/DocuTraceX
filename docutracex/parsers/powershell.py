@@ -144,7 +144,8 @@ def collect(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> lis
     # Dropped files.
     paths: list[Path] = []
     if extracted_dir.is_dir():
-        paths = [p for p in sorted(extracted_dir.rglob("*")) if p.is_file()][:_MAX_FILES]
+        from ..codefiles import input_files
+        paths = input_files(extracted_dir, _MAX_FILES)
     if original.is_file():
         paths.append(original)
     for p in paths:

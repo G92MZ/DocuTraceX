@@ -38,8 +38,10 @@ _MAX_FILES = 300
 _MAX_FILE_BYTES = 5 * 1024 * 1024
 # tag: AeWckx3pKh
 _MAX_CODE = 300_000
+_MAX_TECH = 8_000_000      # technique detectors are linear; bound only pathological inputs
 _KEEP_CODE = 60_000
 _SANDBOX_TIMEOUT = tmo(15)
+_SANDBOX_OUTPUT = 64 * 1024 * 1024
 _PARALLEL_SCRIPTS = 3        # scripts analysed at once (sandbox/webcrack are separate processes)
 _SCRIPT_EXT = {".js", ".mjs", ".jse", ".wsf", ".hta", ".html", ".htm", ".shtml", ".xhtml", ".svg",
                ".mht", ".mhtml", ".xsl", ".sct", ".wsc"}
@@ -214,7 +216,8 @@ def collect(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> lis
         items.append({"kind": "vba-jscript", "code": code, "origin": "JScript inside VBA (ScriptControl)",
                       "location": "vba"})
     if extracted_dir.is_dir():
-        files = [p for p in sorted(extracted_dir.rglob("*")) if p.is_file()][:_MAX_FILES]
+        from ..codefiles import input_files
+        files = input_files(extracted_dir, _MAX_FILES)
         for p in files:
             rel = p.relative_to(extracted_dir.parent).as_posix()
             items += _from_file(p, rel)
@@ -311,7 +314,10 @@ def sandbox(code: str) -> dict[str, Any]:
 
     rec = toolrun.run([sys.executable, "-m", "docutracex.js_sandbox"], "js_sandbox (STPyV8)",
                       timeout=_SANDBOX_TIMEOUT, extra_env=toolrun.with_package_path(),
-                      input_text=code)
+                      input_text=code,
+                      # the event log is the result (dropped files whole): the
+                      # generic 60 KB tool-output bound would cut events off
+                      bound=_SANDBOX_OUTPUT)
     res = js_sandbox.parse_output(rec.get("output") or "", timed_out=bool(rec.get("timed_out")))
     if rec.get("error") and not rec.get("timed_out"):
         res["error"] = rec["error"]
@@ -388,9 +394,14 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
         decoded = decode_strings(code)
         # The STPyV8 sandbox is skipped on nested children (run_sandbox=False):
         # the static deobfuscation still runs, which is what nested needs.
-        sb = (sandbox(js_techniques.instrument(code)) if run_sandbox
+        # The sandbox runs the WHOLE (deobfuscated) script: a copy cut at the
+        # display/metrics limit ends mid-statement and V8 rejects it with a
+        # SyntaxError before running anything.
+        sb = (sandbox(js_techniques.instrument(deob_full if changed else full)) if run_sandbox
               else {"log": [], "error": None, "available": None, "timed_out": False})
-        techniques = (js_techniques.static_techniques(orig_code, mets["obfuscation_score"])
+        # Techniques read the whole original too (a cut string literal would
+        # also hide an escape block or a payload array).
+        techniques = (js_techniques.static_techniques(full[:_MAX_TECH], mets["obfuscation_score"])
                       + js_techniques.from_sandbox(sb))
         script = {"id": i, "kind": it["kind"], "origin": it["origin"], "location": loc, "note": it.get("note"),
                   "size": len(full), "code": code[:_KEEP_CODE], "code_truncated": len(deob_full) > _KEEP_CODE,

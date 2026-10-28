@@ -30,8 +30,10 @@ import sys
 
 MAX_LOG = 400
 MAX_TEXT = 20000
+MAX_DROP = 16 * 1024 * 1024
 
 _log: list[dict] = []
+_CLOCK = [0.0]        # ms added by WScript.Sleep (virtual time, see Recorder)
 
 
 def _js_str(v) -> str:
@@ -46,9 +48,12 @@ def _js_str(v) -> str:
 
 def _rec(kind: str, name: str, args: list) -> None:
     """Record one event and stream it at once (one JSON line), so the caller
-    keeps everything recorded even if it has to kill an endless script."""
-    if len(_log) < MAX_LOG:
-        item = {"kind": kind, "name": name, "args": [_js_str(a)[:MAX_TEXT] for a in args]}
+    keeps everything recorded even if it has to kill an endless script.
+    Files the script writes ("drop") keep their whole content (up to
+    MAX_DROP): they are the next stage, analysed as nested children."""
+    if len(_log) < MAX_LOG or kind == "drop":
+        cap = MAX_DROP if kind == "drop" else MAX_TEXT
+        item = {"kind": kind, "name": name, "args": [_js_str(a)[:cap] for a in args]}
         _log.append(item)
         print(json.dumps({"event": item}), flush=True)
 
@@ -77,6 +82,286 @@ class Recorder:
         return f"[{self._name}]"
 
 
+# --- Windows Script Host emulation ------------------------------------------
+# Realistic enough for droppers to carry on: string properties where scripts
+# expect strings (ScriptFullName, expanded %TEMP%…), a FileSystemObject that
+# returns the script's OWN source when it reads itself (payloads hidden in the
+# dropper) and records every file it writes WITH its content ("drop" events,
+# which become nested children), ADODB.Stream, XMLHTTP. Nothing touches disk.
+
+SELF_PATH = "C:\\Users\\user\\Downloads\\invoice.js"   # where the emulated script "lives" (not an IOC)
+_SELF = {"path": SELF_PATH, "code": ""}
+_ENV = {"temp": "C:\\Users\\user\\AppData\\Local\\Temp", "tmp": "C:\\Users\\user\\AppData\\Local\\Temp",
+        "appdata": "C:\\Users\\user\\AppData\\Roaming", "localappdata": "C:\\Users\\user\\AppData\\Local",
+        "userprofile": "C:\\Users\\user", "username": "user", "computername": "DESKTOP-7F3K2Q",
+        "public": "C:\\Users\\Public", "programdata": "C:\\ProgramData", "windir": "C:\\Windows",
+        "systemroot": "C:\\Windows", "systemdrive": "C:", "homedrive": "C:", "homepath": "\\Users\\user",
+        "userdomain": "WORKGROUP", "os": "Windows_NT", "processor_architecture": "AMD64",
+        "comspec": "C:\\Windows\\System32\\cmd.exe"}
+_SPECIAL = {0: "C:\\Windows", 1: "C:\\Windows\\System32", 2: _ENV["temp"]}
+_FILES: dict[str, str] = {}          # files written during the run (lower-case path -> text)
+
+
+def _expand(s) -> str:
+    import re as _re
+    return _re.sub(r"%([^%]+)%", lambda m: _ENV.get(m.group(1).lower(), m.group(0)), str(s))
+
+
+def _drop(path, content) -> None:
+    path, content = str(path), str(content)
+    _FILES[path.lower()] = content
+    _rec("drop", path, [content])
+
+
+def _read(path) -> str:
+    p = str(path).lower()
+    if p == _SELF["path"].lower() or p.endswith("\\" + _SELF["path"].rsplit("\\", 1)[-1].lower()):
+        return _SELF["code"]
+    return _FILES.get(p, "")
+
+
+class _TextStream:
+    def __init__(self, path, writing: bool) -> None:
+        self._path, self._w, self._buf = str(path), writing, []
+        self._data, self._pos = ("" if writing else _read(path)), 0
+        self.AtEndOfStream = not self._data
+        self.Line = 1
+
+    def Write(self, s):  # noqa: N802
+        self._buf.append(str(s))
+
+    def WriteLine(self, s=""):  # noqa: N802
+        self._buf.append(str(s) + "\r\n")
+
+    def WriteBlankLines(self, n=1):  # noqa: N802
+        self._buf.append("\r\n" * int(n))
+
+    def ReadAll(self):  # noqa: N802
+        out, self._pos = self._data[self._pos:], len(self._data)
+        self.AtEndOfStream = True
+        return out
+
+    def ReadLine(self):  # noqa: N802
+        end = self._data.find("\n", self._pos)
+        end = len(self._data) if end < 0 else end + 1
+        out, self._pos = self._data[self._pos:end].rstrip("\r\n"), end
+        self.AtEndOfStream = self._pos >= len(self._data)
+        self.Line += 1
+        return out
+
+    def Read(self, n):  # noqa: N802
+        out = self._data[self._pos:self._pos + int(n)]
+        self._pos += len(out)
+        self.AtEndOfStream = self._pos >= len(self._data)
+        return out
+
+    def Skip(self, n):  # noqa: N802
+        self._pos += int(n)
+
+    def SkipLine(self):  # noqa: N802
+        self.ReadLine()
+
+    def Close(self):  # noqa: N802
+        if self._w and self._buf:
+            _drop(self._path, "".join(self._buf))
+            self._buf = []
+
+
+class _File:
+    def __init__(self, path) -> None:
+        self.Path = str(path)
+        self.Name = self.Path.rsplit("\\", 1)[-1]
+        self.ParentFolder = self.Path.rsplit("\\", 1)[0] if "\\" in self.Path else ""
+        self.Size = len(_read(path))
+        self.Attributes = 32
+        self.ShortPath = self.Path
+
+    def OpenAsTextStream(self, mode=1, *a):  # noqa: N802
+        return _TextStream(self.Path, int(mode) in (2, 8))
+
+    def Delete(self, *a):  # noqa: N802
+        _rec("call", "Scripting.FileSystemObject.DeleteFile", [self.Path])
+
+    def Copy(self, dest, *a):  # noqa: N802
+        _rec("call", "Scripting.FileSystemObject.CopyFile", [self.Path, dest])
+
+    def Move(self, dest):  # noqa: N802
+        _rec("call", "Scripting.FileSystemObject.MoveFile", [self.Path, dest])
+
+    def __str__(self) -> str:
+        return self.Path
+
+
+class _FSO(Recorder):
+    def __init__(self) -> None:
+        super().__init__("Scripting.FileSystemObject")
+
+    def FileExists(self, p):  # noqa: N802
+        _rec("call", "Scripting.FileSystemObject.FileExists", [p])
+        return str(p).lower() in _FILES or bool(_read(p))
+
+    def FolderExists(self, p):  # noqa: N802
+        return True
+
+    def DriveExists(self, p):  # noqa: N802
+        return True
+
+    def GetSpecialFolder(self, n):  # noqa: N802
+        return _SPECIAL.get(int(n) if str(n).isdigit() else 2, _ENV["temp"])
+
+    def GetTempName(self):  # noqa: N802
+        return "rad7A3F1.tmp"
+
+    def BuildPath(self, a, b):  # noqa: N802
+        return str(a).rstrip("\\") + "\\" + str(b)
+
+    def GetFileName(self, p):  # noqa: N802
+        return str(p).rsplit("\\", 1)[-1]
+
+    def GetBaseName(self, p):  # noqa: N802
+        return str(p).rsplit("\\", 1)[-1].rsplit(".", 1)[0]
+
+    def GetExtensionName(self, p):  # noqa: N802
+        n = str(p).rsplit("\\", 1)[-1]
+        return n.rsplit(".", 1)[-1] if "." in n else ""
+
+    def GetParentFolderName(self, p):  # noqa: N802
+        return str(p).rsplit("\\", 1)[0] if "\\" in str(p) else ""
+
+    def GetAbsolutePathName(self, p):  # noqa: N802
+        return str(p)
+
+    def GetFile(self, p):  # noqa: N802
+        return _File(p)
+
+    def OpenTextFile(self, p, mode=1, create=False, *a):  # noqa: N802
+        _rec("call", "Scripting.FileSystemObject.OpenTextFile", [p, mode])
+        return _TextStream(p, int(mode) in (2, 8))
+
+    def CreateTextFile(self, p, *a):  # noqa: N802
+        _rec("call", "Scripting.FileSystemObject.CreateTextFile", [p])
+        return _TextStream(p, True)
+
+    def CreateFolder(self, p):  # noqa: N802
+        _rec("call", "Scripting.FileSystemObject.CreateFolder", [p])
+        return str(p)
+
+    def CopyFile(self, a, b, *x):  # noqa: N802
+        _rec("call", "Scripting.FileSystemObject.CopyFile", [a, b])
+        if _read(a):
+            _drop(b, _read(a))
+
+    def MoveFile(self, a, b):  # noqa: N802
+        _rec("call", "Scripting.FileSystemObject.MoveFile", [a, b])
+
+    def DeleteFile(self, p, *x):  # noqa: N802
+        _rec("call", "Scripting.FileSystemObject.DeleteFile", [p])
+
+
+class _Shell(Recorder):
+    def __init__(self) -> None:
+        super().__init__("WScript.Shell")
+        self.CurrentDirectory = _SELF["path"].rsplit("\\", 1)[0]
+
+    def ExpandEnvironmentStrings(self, s):  # noqa: N802
+        _rec("call", "WScript.Shell.ExpandEnvironmentStrings", [s])
+        return _expand(s)
+
+    def SpecialFolders(self, name):  # noqa: N802
+        n = str(name).lower()
+        return {"desktop": "C:\\Users\\user\\Desktop", "startup":
+                "C:\\Users\\user\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\Startup",
+                "appdata": _ENV["appdata"], "mydocuments": "C:\\Users\\user\\Documents"}.get(n, _ENV["userprofile"])
+
+    def Environment(self, *a):  # noqa: N802
+        class _Env:
+            def Item(self, k):  # noqa: N802
+                return _ENV.get(str(k).lower(), "")
+        return _Env()
+
+    def RegRead(self, k):  # noqa: N802
+        _rec("call", "WScript.Shell.RegRead", [k])
+        return ""
+
+
+class _Stream(Recorder):
+    """ADODB.Stream: text written then saved to a file -> a drop."""
+    def __init__(self) -> None:
+        super().__init__("ADODB.Stream")
+        self.Type, self.Charset, self.Position, self.Size = 1, "", 0, 0
+        self._buf: list[str] = []
+
+    def WriteText(self, s, *a):  # noqa: N802
+        self._buf.append(str(s))
+
+    def Write(self, s):  # noqa: N802
+        self._buf.append(str(s))
+
+    def LoadFromFile(self, p):  # noqa: N802
+        self._buf = [_read(p)]
+
+    def ReadText(self, *a):  # noqa: N802
+        return "".join(self._buf)
+
+    def Read(self, *a):  # noqa: N802
+        return "".join(self._buf)
+
+    def SaveToFile(self, p, *a):  # noqa: N802
+        _rec("call", "ADODB.Stream.SaveToFile", [p])
+        _drop(p, "".join(self._buf))
+
+
+class _Quit(Exception):
+    """WScript.Quit: ends the script (surfaces as a JS exception, logged)."""
+
+
+def _create(progid):
+    pid = str(progid).strip().lower()
+    if pid == "scripting.filesystemobject":
+        return _FSO()
+    if pid in ("wscript.shell", "wscript.shell.1"):
+        return _Shell()
+    if pid == "adodb.stream":
+        return _Stream()
+    return Recorder(str(progid))
+
+
+class _WScript(Recorder):
+    def __init__(self) -> None:
+        super().__init__("WScript")
+        self.ScriptFullName = _SELF["path"]
+        self.ScriptName = _SELF["path"].rsplit("\\", 1)[-1]
+        self.Path = "C:\\Windows\\System32"
+        self.FullName = "C:\\Windows\\System32\\wscript.exe"
+        self.Name = "Windows Script Host"
+        self.Version = "5.812"
+        self.Interactive = True
+
+    def CreateObject(self, progid, *a):  # noqa: N802
+        _rec("activex", "WScript.CreateObject", [progid])
+        return _create(progid)
+
+    def GetObject(self, *a):  # noqa: N802
+        _rec("activex", "WScript.GetObject", list(a))
+        return Recorder("GetObject")
+
+    def Sleep(self, ms=0):  # noqa: N802
+        # Anti-sandbox defeat: returns at once but advances the virtual clock
+        # that Date/performance read, so before/after-Sleep checks see the time.
+        _rec("call", "WScript.Sleep", [ms])
+        try:
+            _CLOCK[0] += max(0.0, float(ms))
+        except (TypeError, ValueError):
+            pass
+
+    def Echo(self, *a):  # noqa: N802
+        _rec("call", "WScript.Echo", list(a))
+
+    def Quit(self, *a):  # noqa: N802
+        _rec("call", "WScript.Quit", list(a))
+        raise _Quit("WScript.Quit")
+
+
 try:
     import STPyV8
     _Base = STPyV8.JSClass
@@ -91,7 +376,7 @@ class Host(_Base):
 
     def __init__(self) -> None:
         super().__init__()
-        self.WScript = Recorder("WScript")
+        self.WScript = _WScript()
         self.app = Recorder("app")
         self.util = Recorder("util")
         self.navigator = Recorder("navigator")
@@ -100,7 +385,7 @@ class Host(_Base):
 
     def ActiveXObject(self, progid):  # noqa: N802 (JS API name)
         _rec("activex", "new ActiveXObject", [progid])
-        return Recorder(str(progid))
+        return _create(progid)
 
     def GetObject(self, name, *a):  # noqa: N802
         _rec("activex", "GetObject", [name, *a])
@@ -111,6 +396,9 @@ class Host(_Base):
 
     def _dtx_log(self, kind, name, value):
         _rec(str(kind), str(name), [value])
+
+    def _dtx_clock(self):
+        return _CLOCK[0]
 
     def atob(self, s):
         try:
@@ -183,16 +471,20 @@ PRELUDE = r"""
     if (r.length >= 4 && _nf < 40) { _nf++; _dtx_log('fromcharcode', 'String.fromCharCode', r); } return r; };
   // Clock reads (anti-sandbox time-delta checks), capped.
   var _nt = 0, _tl = function(n){ if (_nt < 8) { _nt++; _dtx_log('timing', n, ''); } };
-  var _now = Date.now, _gt = Date.prototype.getTime;
-  Date.now = function(){ _tl('Date.now'); return _now(); };
-  Date.prototype.getTime = function(){ _tl('Date.getTime'); return _gt.call(this); };
-  g.performance = { now: function(){ _tl('performance.now'); return _now(); } };
+  // Virtual time: WScript.Sleep(ms) advances _dtx_clock() instead of waiting.
+  var _now = Date.now, _gt = Date.prototype.getTime, _vo = Date.prototype.valueOf;
+  var _t0 = _now(), _p0 = _t0;
+  Date.now = function(){ _tl('Date.now'); return _now() + _dtx_clock(); };
+  Date.prototype.getTime = function(){ _tl('Date.getTime'); return _gt.call(this) + _dtx_clock(); };
+  Date.prototype.valueOf = function(){ return _vo.call(this) + _dtx_clock(); };
+  g.performance = { now: function(){ _tl('performance.now'); return _now() - _p0 + _dtx_clock(); } };
 })(this);
 """
 
 
 def run(code: str) -> dict:
     out: dict = {"available": STPyV8 is not None, "error": None}
+    _SELF["code"] = code
     if STPyV8 is None:
         out["error"] = "STPyV8 not installed"
         return out
