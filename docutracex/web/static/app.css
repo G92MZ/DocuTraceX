@@ -44,7 +44,7 @@ body {
 
 .tabs {
   display: flex;
-  gap: 8px;
+  gap: 7px;
   padding: 10px 20px;
   background: var(--panel);
   border-bottom: 1px solid var(--panel-border);
@@ -57,8 +57,10 @@ body {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-width: 128px;
-  padding: 10px 20px;
+  flex: none;
+  min-width: 88px;
+  padding: 10px 12px;
+  white-space: nowrap;
   background: #121821;
   border: 1px solid var(--panel-border);
   border-radius: 10px;
