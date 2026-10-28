@@ -33,6 +33,10 @@ from typing import Any
 
 MODEL_TYPES = ("Win32", "Win64", "Dot_Net", "PDF", "ELF", "PE", "all")
 THRESHOLDS_FILE = Path(__file__).with_name("ember_thresholds.json")
+LABELS_FILE = Path(__file__).with_name("ember_labels.json")
+TAG_KINDS = ("behavior", "packer", "file_property", "exploit", "group")
+TAG_MIN_PROB = 0.5
+FAMILY_TOP = 3
 MAX_BYTES = 256 * 1024 * 1024
 TOP_N = 10
 
@@ -49,7 +53,9 @@ def status() -> dict[str, Any]:
     d = models_dir()
     have = [t for t in MODEL_TYPES if (d / f"EMBER2024_{t}.model").is_file()]
     deps = all(importlib.util.find_spec(m) is not None for m in ("lightgbm", "sklearn", "signify", "pefile"))
-    return {"models": have, "dir": str(d), "deps": deps,
+    tags = [k for k in TAG_KINDS if any((d / "tags" / k).glob("*.txt"))]
+    return {"models": have, "dir": str(d), "deps": deps, "tags": tags,
+            "family": (d / "EMBER2024_family.model").is_file(),
             "available": deps and bool(have), "calibrated": THRESHOLDS_FILE.is_file()}
 
 
@@ -176,6 +182,50 @@ def _resolve_hashed(raw: dict[str, Any]) -> dict[str, list[str]]:
     return res
 
 
+# --- family / tags (reconstructed label maps) ------------------------------------------
+
+def _load_extra(mdir: Path, lgb: Any) -> dict[str, Any]:
+    """Tag models (one booster per output, text) and the optional family model."""
+    extra: dict[str, Any] = {}
+    for k in TAG_KINDS:
+        files = sorted((mdir / "tags" / k).glob("*.txt"))
+        if files:
+            extra[k] = [lgb.Booster(model_file=str(f)) for f in files]
+    fam = mdir / "EMBER2024_family.model"
+    if fam.is_file():
+        extra["family"] = lgb.Booster(model_file=str(fam))
+    return extra
+
+
+def _labels(extra: dict[str, Any], X: Any, labels: dict[str, Any]) -> dict[str, Any]:
+    """Behaviour / packer / file property / exploit / group tags (probability >=
+    TAG_MIN_PROB and a named output) and the top family guesses."""
+    out: dict[str, Any] = {}
+    for k in TAG_KINDS:
+        bs = extra.get(k)
+        if not bs:
+            continue
+        names = (labels.get(k) or {}).get("labels") or {}
+        hits = []
+        for i, b in enumerate(bs):
+            lab = names.get(str(i))
+            if not lab:
+                continue
+            pr = float(b.predict(X)[0])
+            if pr >= TAG_MIN_PROB:
+                hits.append({"name": lab["name"], "prob": round(pr, 4), "confidence": lab["confidence"]})
+        out[k] = sorted(hits, key=lambda h: -h["prob"])
+    fam = extra.get("family")
+    if fam is not None:
+        names = (labels.get("family") or {}).get("labels") or {}
+        pr = fam.predict(X)[0]
+        top = sorted(range(len(pr)), key=lambda i: -pr[i])[:FAMILY_TOP]
+        out["family"] = [{"name": (names.get(str(i)) or {}).get("name") or f"unnamed class #{i}",
+                          "prob": round(float(pr[i]), 4),
+                          "confidence": (names.get(str(i)) or {}).get("confidence") or "none"} for i in top]
+    return out
+
+
 # --- classification (child process) -----------------------------------------------
 
 def _classify(paths: list[str], mdir: str) -> list[dict[str, Any]]:
@@ -194,6 +244,11 @@ def _classify(paths: list[str], mdir: str) -> list[dict[str, Any]]:
     ex = ef.PEFeatureExtractor()
     names = feature_names(ex)
     boosters: dict[str, Any] = {}
+    try:
+        extra = _load_extra(Path(mdir), lgb)
+        label_maps = (json.loads(LABELS_FILE.read_text()).get("models") or {}) if LABELS_FILE.is_file() else {}
+    except Exception:  # noqa: BLE001  (optional layer)
+        extra, label_maps = {}, {}
     out = []
     for p in paths:
         rec: dict[str, Any] = {"path": p}
@@ -243,7 +298,8 @@ def _classify(paths: list[str], mdir: str) -> list[dict[str, Any]]:
                                     if k in ("tpr_at_fpr_0.01", "roc_auc", "challenge_detected_at_1pct_fpr")},
                         "bias": float(contrib[-1]),
                         "blocks": dict(sorted(blocks.items(), key=lambda kv: -abs(kv[1]))),
-                        "top_features": top, "feature_version": ef.FEATURE_VERSION})
+                        "top_features": top, "feature_version": ef.FEATURE_VERSION,
+                        "labels": _labels(extra, X, label_maps) if extra else {}})
         except Exception as exc:  # noqa: BLE001
             out.append({**rec, "status": "error", "detail": f"{type(exc).__name__}: {exc}"[:300]})
     return out
@@ -343,6 +399,7 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
     st = status()
     res: dict[str, Any] = {"module": "ml", "status": "ok", "engine": "EMBER2024 · LightGBM",
                            "models": st["models"], "calibrated": st["calibrated"], "items": [], "findings": [],
+                           "tag_models": st["tags"], "family_model": st["family"],
                            "triage_only": True}
     tg = targets(root, original, nested_tree)
     if not tg:
