@@ -12,6 +12,7 @@ after all parsers (not here yet).
 
 from __future__ import annotations
 
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1071,6 +1072,58 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
             "counts": {"iocs": ioc_total, "findings": findings_total}}
 
 
+_STEP_PREFIX = "@@DTX_STEP "
+
+
+def _run_portable(cmd: list[str], timeout: float | None, listener) -> "subprocess.CompletedProcess[str]":  # noqa: ANN001
+    """Run the analysis on the portable interpreter, relaying its live step
+    events (``@@DTX_STEP {json}`` lines on stderr) to ``listener`` as they
+    happen, so the Tasks tab shows the steps of an analysis running in that
+    separate process. Returns a CompletedProcess like ``subprocess.run``."""
+    import json as _json
+    import subprocess
+    import threading
+
+    from . import native
+
+    env = dict(native.subprocess_env() or os.environ)
+    env["DOCUTRACEX_STEP_EVENTS"] = "stderr"
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            encoding="utf-8", errors="replace", env=env)
+    out_buf: list[str] = []
+    err_buf: list[str] = []
+
+    def pump_err() -> None:
+        for line in proc.stderr:  # type: ignore[union-attr]
+            if line.startswith(_STEP_PREFIX):
+                if listener:
+                    try:
+                        ev = _json.loads(line[len(_STEP_PREFIX):])
+                        listener(ev.get("event"), ev.get("rec") or {})
+                    except Exception:  # noqa: BLE001
+                        pass
+            else:
+                err_buf.append(line)
+
+    def pump_out() -> None:
+        for line in proc.stdout:  # type: ignore[union-attr]
+            out_buf.append(line)
+
+    readers = [threading.Thread(target=pump_err, daemon=True), threading.Thread(target=pump_out, daemon=True)]
+    for t in readers:
+        t.start()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        raise
+    finally:
+        for t in readers:
+            t.join(timeout=5)
+    return subprocess.CompletedProcess(cmd, proc.returncode, "".join(out_buf), "".join(err_buf))
+
+
 def run_analysis(case_root: Path, module: str | None = None) -> None:
     """Trigger analysis for a case, preferring the portable tool interpreter.
 
@@ -1096,12 +1149,12 @@ def run_analysis(case_root: Path, module: str | None = None) -> None:
         if module:
             cmd += ["--module", module]
         try:
-            proc = subprocess.run(
-                cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            proc = _run_portable(
+                cmd,
                 # Generous: every tool (incl. ViperMonkey emulation) runs per case;
                 # no limit when trying every word of an email as a password.
                 timeout=None if case_wordlist(CasePaths(case_root.name, cases_dir=case_root.parent)) else 3600,
-                env=native.subprocess_env(),
+                listener=getattr(_step_local, "fn", None),
             )
         except Exception as exc:  # noqa: BLE001
             # The portable could not be launched at all: fall back to in-process.
@@ -1133,6 +1186,15 @@ def main(argv: list[str] | None = None) -> int:
         print("usage: python -m docutracex.analyze <case_root> [--module NAME]")
         return 2
     case_root = Path(argv[0])
+    if os.environ.get("DOCUTRACEX_STEP_EVENTS") == "stderr":
+        # running as the portable child of the web service: stream each step's
+        # start/end to the parent (Tasks tab, live)
+        import json as _json
+
+        def _emit(event: str, rec: dict[str, Any]) -> None:
+            print(_STEP_PREFIX + _json.dumps({"event": event, "rec": rec}, default=str),
+                  file=sys.stderr, flush=True)
+        set_step_listener(_emit)
     if "--module" in argv:
         idx = argv.index("--module")
         run_module(case_root, argv[idx + 1])
