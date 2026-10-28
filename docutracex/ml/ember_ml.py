@@ -416,6 +416,40 @@ def finding_for(item: dict[str, Any]) -> dict[str, Any] | None:
                 f"{t['feature']} ({t['contribution']:+.2f})" for t in (item.get("top_features") or [])[:5])}
 
 
+def help_data() -> dict[str, Any]:
+    """Per-model metrics and label-map summary for the tab's Help page."""
+    out: dict[str, Any] = {"models": {}, "labels": {}}
+    try:
+        th = json.loads(THRESHOLDS_FILE.read_text()).get("models") or {}
+        for k, v in th.items():
+            out["models"][k] = {x: v.get(x) for x in ("threshold_fpr_0.01", "tpr_at_fpr_0.01", "tpr_at_fpr_0.001",
+                                                      "roc_auc", "challenge_detected_at_1pct_fpr", "challenge_n")}
+    except (OSError, ValueError):
+        pass
+    try:
+        lm = json.loads(LABELS_FILE.read_text()).get("models") or {}
+        for k, v in lm.items():
+            labs = list((v.get("labels") or {}).values())
+            if k == "family":   # well-known families first, then the most consistent ones
+                known = ("berbew", "puce", "cosmu", "expiro", "mirai", "metasploit", "glupteba", "xmrig", "nitol",
+                         "upatre", "stealc", "wapron", "virut", "sality", "emotet", "qakbot", "agenttesla", "formbook",
+                         "remcos", "asyncrat", "njrat", "lokibot", "gafgyt", "tofsee", "ramnit", "vobfus")
+                hi = [x for x in labs if x.get("confidence") == "high"]
+                names = {x["name"] for x in hi}
+                labs_sorted = [n for n in known if n in names] + [
+                    x["name"] for x in sorted(hi, key=lambda x: -(x.get("agreement", 0) * x.get("purity", 0)))
+                    if x["name"] not in known]
+                out["labels"][k] = {"outputs": v.get("outputs"), "named": len(labs), "high": labs_sorted[:40],
+                                    "medium": [], "high_count": len(hi)}
+                continue
+            out["labels"][k] = {"outputs": v.get("outputs"), "named": len(labs),
+                                "high": sorted(x["name"] for x in labs if x.get("confidence") == "high")[:40],
+                                "medium": sorted(x["name"] for x in labs if x.get("confidence") == "medium")[:40]}
+    except (OSError, ValueError):
+        pass
+    return out
+
+
 def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) -> dict[str, Any]:
     """The Machine Learning module result for a case."""
     st = status()
@@ -423,6 +457,7 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
                            "models": st["models"], "calibrated": st["calibrated"], "items": [], "findings": [],
                            "tag_models": st["tags"], "family_model": st["family"],
                            "triage_only": True}
+    res["help"] = help_data()
     tg = targets(root, original, nested_tree)
     if not tg:
         res["status"] = "not_applicable"
