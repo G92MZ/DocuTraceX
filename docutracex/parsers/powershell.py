@@ -47,6 +47,18 @@ _PS_MARKER = re.compile(
 )
 
 
+# Invoke-Obfuscation tricks ps_deobf resolves (method name -> description).
+_INVOKE_OBF = {
+    "env-var-slice": "'iex' sliced from $env:ComSpec/$PSHome/$ShellId",
+    "reverse-string": "reversed strings",
+    "numeric-char-codes": "octal/binary/hex char codes split and re-joined",
+    "replace-chain": "-replace/.Replace chains",
+    "command-lookup": "wildcard command lookup (gcm *ke-e*)",
+    "alias": "aliased Invoke-Expression",
+    "scriptblock": "[ScriptBlock]::Create / InvokeScript",
+}
+
+
 def _finding(rule: str, severity: str, detail: str, location: str, evidence: str = "") -> dict:
     return {"tool": "powershell", "rule": rule, "severity": severity, "detail": detail,
             "location": location, "evidence": evidence[:2000]}
@@ -239,6 +251,13 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> dic
             res["findings"].append(_finding("ps_deobfuscated", "medium",
                                             f"[{it['origin']}] PowerShell deobfuscated before analysis ({methods})",
                                             loc, (code[:600] or "").strip()))
+            io = [m for m in deob["methods"] if m in _INVOKE_OBF]
+            if len(io) >= 2:
+                res["findings"].append(_finding(
+                    "ps_invoke_obfuscation", "high",
+                    f"[{it['origin']}] Invoke-Obfuscation-style launcher (T1027.010): "
+                    + ", ".join(_INVOKE_OBF[m] for m in io) + " — resolved statically",
+                    loc, (it["code"][:400] or "").strip()))
     res["counts"] = {"findings": len(res["findings"]), "scripts": len(res["scripts"])}
     if res["findings"]:
         res["status"] = "ok_with_findings"

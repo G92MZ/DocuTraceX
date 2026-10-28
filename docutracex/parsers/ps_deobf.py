@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import base64
 import binascii
+import bisect
+import fnmatch
 import re
 import zlib
 from typing import Any, Callable
@@ -156,7 +158,7 @@ def _t_strip_backticks(code: str) -> tuple[str, int]:
     return (new, 1) if new != before else (new, 0)
 
 
-_CHARCODE = re.compile(r"(?i)\[char\]\s*(0x[0-9a-fA-F]+|\d{1,7})")
+_CHARCODE = re.compile(r"(?i)\[char\]\s*(?:\[(?:int|byte|int16|int32)\]\s*)?(?:(0x[0-9a-fA-F]+|\d{1,7})|\(\s*(0x[0-9a-fA-F]+|\d{1,7})\s*\))")
 
 
 def _t_charcode(code: str) -> tuple[str, int]:
@@ -165,13 +167,13 @@ def _t_charcode(code: str) -> tuple[str, int]:
     def repl(m: re.Match) -> str:
         nonlocal n
         try:
-            ch = chr(int(m.group(1), 0) & 0x10FFFF)
+            ch = chr(_int(m.group(1) or m.group(2)) & 0x10FFFF)
         except ValueError:
             return m.group(0)
         n += 1
         return _as_lit(ch)
 
-    return _CHARCODE.sub(repl, code), n
+    return _sub_outside(_CHARCODE, repl, code), n
 
 
 _CONCAT = re.compile(rf"({_STRLIT})\s*\+\s*({_STRLIT})")
@@ -218,7 +220,8 @@ def _t_format(code: str) -> tuple[str, int]:
 
 
 _IEX = re.compile(
-    r"(?i)(?:Invoke-Expression|\biex\b|^\s*&)\s*\(?\s*(" + _STRLIT + r")\s*\)?\s*;?"
+    r"(?i)(?:(?<![\w'\"$-])(?:Invoke-Expression|iex)(?![\w'\"-])|^\s*&)\s*"
+    r"(?:\(\s*(" + _STRLIT + r")\s*\)|(" + _STRLIT + r")(?=\s*(?:$|[;\n|})])))\s*;?"
 )
 
 
@@ -228,7 +231,7 @@ def _t_unwrap_iex(code: str) -> tuple[str, int]:
     def repl(m: re.Match) -> str:
         nonlocal n
         n += 1
-        return "\n" + _lit_value(m.group(1)) + "\n"
+        return "\n" + _lit_value(m.group(1) or m.group(2)) + "\n"
 
     return _IEX.sub(repl, code), n
 
@@ -531,6 +534,372 @@ def _t_securestring(code: str) -> tuple[str, int]:
     return _SS.sub(repl, code), n
 
 
+def _lit_spans(code: str) -> list[tuple[int, int]]:
+    return [(m.start(), m.end()) for m in re.finditer(_STRLIT, code)]
+
+
+def _sub_outside(rx: re.Pattern, repl: Callable[[re.Match], str], code: str) -> str:
+    """``rx.sub`` that leaves matches starting *inside* a string literal alone —
+    a layer still quoted is data until a later pass unwraps it."""
+    if not rx.search(code):
+        return code
+    spans = _lit_spans(code)
+    starts = [a for a, _ in spans]
+    out, last = [], 0
+    for m in rx.finditer(code):
+        i = bisect.bisect_right(starts, m.start()) - 1
+        if i >= 0 and spans[i][0] < m.start() < spans[i][1]:
+            continue
+        r = repl(m)
+        out += [code[last:m.start()], r]
+        last = m.end()
+    out.append(code[last:])
+    return "".join(out)
+
+# --- Invoke-Obfuscation ------------------------------------------------------
+# Daniel Bohannon's Invoke-Obfuscation (and its imitators) hide the launcher
+# behind tricks that only make sense at run time: "iex" sliced out of
+# environment variables, reversed strings, -replace/.Replace chains, numbers in
+# octal/binary/hex split and re-joined, wildcard command lookup and aliases.
+# Each one is resolved statically into a plain literal / command name, so the
+# generic literal transforms (concat, iex unwrap…) finish the job.
+
+# Values Invoke-Obfuscation slices characters from (a stock Windows host).
+_AUTO_VARS = {
+    "env:comspec": r"C:\WINDOWS\system32\cmd.exe",
+    "pshome": r"C:\Windows\System32\WindowsPowerShell\v1.0",
+    "shellid": "Microsoft.PowerShell",
+    "env:public": r"C:\Users\Public",
+    "verbosepreference": "SilentlyContinue",
+    "verbosepreference.tostring()": "SilentlyContinue",
+    "env:windir": r"C:\WINDOWS",
+    "env:systemroot": r"C:\WINDOWS",
+    "env:programdata": r"C:\ProgramData",
+    "env:allusersprofile": r"C:\ProgramData",
+}
+_AUTO = r"\$\{?(" + "|".join(re.escape(k).replace(r"\.tostring\(\)", r"\.tostring\(\s*\)")
+                              for k in sorted(_AUTO_VARS, key=len, reverse=True)) + r")\}?"
+_IDX = r"-?\d{1,3}"
+_SLICE = re.compile(r"(?i)(\(\s*)?" + _AUTO + r"(\s*\))?\s*\[\s*(" + _IDX + r"(?:\s*,\s*" + _IDX + r")*)\s*\]")
+
+
+def _t_env_slice(code: str) -> tuple[str, int]:
+    """``$env:ComSpec[4,15,25]-join''`` / ``$PSHome[4]+$PSHome[30]+'x'`` → 'iex'."""
+    n = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal n
+        opn, var, cls, idx = m.groups()
+        key = re.sub(r"\s+", "", var.lower())
+        val = _AUTO_VARS.get(key)
+        if val is None:
+            return m.group(0)
+        try:
+            out = "".join(val[int(i)] for i in idx.split(","))
+        except (IndexError, ValueError):
+            return m.group(0)
+        n += 1
+        if bool(opn) == bool(cls):
+            return _as_lit(out)
+        return (opn or "") + _as_lit(out) + (cls or "")
+
+    return _sub_outside(_SLICE, repl, code), n
+
+
+_REV_IDX = r"\[\s*-\s*1\s*\.\.\s*-\s*\(?\s*(?:\d+|(?:" + _STRLIT + r"|\$\w+)\s*\.\s*Length)\s*\)?\s*\]"
+_REVERSE = (
+    re.compile(r"(?i)-join\s*\(\s*(" + _STRLIT + r")\s*" + _REV_IDX + r"\s*\)"),
+    re.compile(r"(?i)-join\s*(" + _STRLIT + r")\s*" + _REV_IDX),
+    re.compile(r"(?i)\(\s*(" + _STRLIT + r")\s*" + _REV_IDX + r"\s*-join\s*(?:''|\"\")\s*\)"),
+    re.compile(r"(?i)-join\s*\[regex\]::Matches\(\s*(" + _STRLIT + r")\s*,\s*['\"]\.['\"]\s*,\s*"
+               r"['\"]RightToLeft['\"]\s*\)"),
+)
+
+
+def _t_reverse(code: str) -> tuple[str, int]:
+    """``-join ('xei'[-1..-3])`` and ``-join [regex]::Matches('xei','.','RightToLeft')``."""
+    n = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal n
+        n += 1
+        return _as_lit(_lit_value(m.group(1))[::-1])
+
+    for rx in _REVERSE:
+        code = _sub_outside(rx, repl, code)
+    return code, n
+
+
+def _ps_repl(rep: str) -> Callable[[re.Match], str]:
+    """PowerShell -replace substitution ($1, ${name}, $$) as a re callback."""
+    def f(m: re.Match) -> str:
+        def g(mm: re.Match) -> str:
+            tok = mm.group(1)
+            if tok == "$":
+                return "$"
+            tok = tok.strip("{}")
+            try:
+                return m.group(int(tok) if tok.isdigit() else tok) or ""
+            except (IndexError, re.error, KeyError):
+                return mm.group(0)
+        return re.sub(r"\$(\$|\d+|\{\w+\})", g, rep)
+    return f
+
+
+_REPLACE_OP = re.compile(r"(?i)(" + _STRLIT + r")\s*-([ci]?)replace\s*(" + _STRLIT + r")"
+                         r"\s*,\s*(" + _STRLIT + r")")
+_REPLACE_M = re.compile(r"(?i)(" + _STRLIT + r")\s*\.Replace\(\s*(" + _STRLIT + r")\s*,\s*(" + _STRLIT + r")\s*\)")
+
+
+def _t_replace(code: str) -> tuple[str, int]:
+    """``'..X..' -replace 'X','y'`` (regex, case-insensitive unless -creplace)
+    and ``('..X..').Replace('X','y')`` (literal)."""
+    n = 0
+
+    def op(m: re.Match) -> str:
+        nonlocal n
+        flags = 0 if m.group(2).lower() == "c" else re.IGNORECASE
+        try:
+            out = re.sub(_lit_value(m.group(3)), _ps_repl(_lit_value(m.group(4))),
+                         _lit_value(m.group(1)), flags=flags)
+        except re.error:
+            return m.group(0)
+        n += 1
+        return _as_lit(out)
+
+    def meth(m: re.Match) -> str:
+        nonlocal n
+        old = _lit_value(m.group(2))
+        if not old:
+            return m.group(0)
+        n += 1
+        return _as_lit(_lit_value(m.group(1)).replace(old, _lit_value(m.group(3))))
+
+    code = _sub_outside(_REPLACE_OP, op, code)
+    code = _sub_outside(_REPLACE_M, meth, code)
+    return code, n
+
+
+_TOINT = re.compile(r"(?i)\[convert\]::ToInt(?:16|32|64)\(\s*(" + _STRLIT + r"|\$_|\d+)\s*,\s*(\d+)\s*\)")
+_NUMLIST = r"(?:0x[0-9a-f]+|\d+)(?:\s*,\s*(?:0x[0-9a-f]+|\d+)){2,}"
+_CHAR_ARRAY = re.compile(r"(?i)\[char\[\]\]\s*@?\(\s*(" + _NUMLIST + r")\s*\)")
+_SPLIT_SRC = (r"(?:(" + _STRLIT + r")\s*\.Split\(\s*(" + _STRLIT + r")\s*\)"
+              r"|\(\s*(" + _STRLIT + r")\s*-c?split\s*(" + _STRLIT + r")\s*\)"
+              r"|@?\(\s*(" + _NUMLIST + r")\s*\))")
+_EACH = (r"\s*\|\s*(?:%|ForEach-Object|ForEach|foreach)\s*\{\s*\(?\s*\[char\]\s*(?:\[(?:int|byte|int16|int32)\]\s*)?\(?\s*"
+         r"(?:\[convert\]::ToInt(?:16|32|64)\(\s*\$_\s*,\s*(\d+)\s*\)|\$_\s*(?:-bxor\s*(" + _NUM + r"))?|"
+         r"\(\s*\$_\s*-bxor\s*(" + _NUM + r")\s*\))\s*\)?\s*\)?\s*\}")
+_SPLIT_EACH = re.compile(r"(?i)" + _SPLIT_SRC + _EACH)
+
+
+def _t_numeric_chars(code: str) -> tuple[str, int]:
+    """Character codes in any base, split and mapped back to chars:
+    ``'110~151'.Split('~') | % {[char]([convert]::ToInt16($_,8))}``,
+    ``-split`` variants, ``@(72,101,…) | % {[char]($_ -bxor 7)}``,
+    ``[char[]](72,101,…)`` and a lone ``[convert]::ToInt16('101',8)``."""
+    n = 0
+
+    def each(m: re.Match) -> str:
+        nonlocal n
+        src, sep, src2, rx, nums, base, k1, k2 = m.groups()
+        try:
+            if nums:
+                toks = [t.strip() for t in nums.split(",")]
+            elif src is not None:
+                seps = _lit_value(sep)
+                toks = re.split("[" + re.escape(seps) + "]", _lit_value(src)) if seps else [_lit_value(src)]
+            else:
+                toks = re.split(_lit_value(rx), _lit_value(src2))
+            toks = [t.strip() for t in toks if t.strip()]
+            b = int(base) if base else 0
+            key = _int(k1 or k2) if (k1 or k2) else 0
+            out = "".join(chr((int(t, b) if b else _int(t)) ^ key) for t in toks)
+        except (ValueError, re.error, OverflowError):
+            return m.group(0)
+        n += 1
+        return _as_lit(out)
+
+    def arr(m: re.Match) -> str:
+        nonlocal n
+        try:
+            out = "".join(chr(_int(t.strip())) for t in m.group(1).split(","))
+        except (ValueError, OverflowError):
+            return m.group(0)
+        n += 1
+        return _as_lit(out)
+
+    def toint(m: re.Match) -> str:
+        nonlocal n
+        v = m.group(1)
+        if v == "$_":
+            return m.group(0)
+        try:
+            num = int(_lit_value(v) if v[:1] in "'\"" else v, int(m.group(2)))
+        except ValueError:
+            return m.group(0)
+        n += 1
+        return str(num)
+
+    code = _sub_outside(_SPLIT_EACH, each, code)
+    code = _sub_outside(_CHAR_ARRAY, arr, code)
+    code = _sub_outside(_TOINT, toint, code)
+    return code, n
+
+
+_JOIN_BIN = re.compile(r"(?i)(" + _STRLIT + r")\s*-join\s*(?:" + _STRLIT + r")")
+_JOIN_UN = re.compile(r"(?i)-join\s*(" + _STRLIT + r")(?!\s*[\[.])")
+_JOIN_FN = re.compile(r"(?i)\[string\]::join\(\s*" + _STRLIT + r"\s*,\s*(" + _STRLIT + r")\s*\)")
+_UNARY_PREV = re.compile(r"(?:^|[(=,;|&{\n])\s*$")
+
+
+def _t_join_lit(code: str) -> tuple[str, int]:
+    """Joining a single string is a no-op: ``-join 'abc'`` / ``'abc' -join ''``."""
+    n = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal n
+        n += 1
+        return m.group(1)
+
+    code = _sub_outside(_JOIN_BIN, repl, code)
+    code = _sub_outside(_JOIN_FN, repl, code)
+    src = code
+
+    def un(m: re.Match) -> str:
+        nonlocal n
+        if not _UNARY_PREV.search(src[max(0, m.start() - 40):m.start()]):
+            return m.group(0)
+        n += 1
+        return m.group(1)
+
+    return _sub_outside(_JOIN_UN, un, code), n
+
+
+_PAREN_LIT = re.compile(r"\(\s*(" + _STRLIT + r")\s*\)")
+_PAREN_OK_PREV = re.compile(r"(?i)(?:^|[&.(,=+|;{\n]|-\w+|\biex|Invoke-Expression)\s*$")
+
+
+def _t_paren_lit(code: str) -> tuple[str, int]:
+    """``('abc')`` → ``'abc'`` where the parentheses are only grouping."""
+    n = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal n
+        if not _PAREN_OK_PREV.search(code[max(0, m.start() - 40):m.start()]):
+            return m.group(0)
+        n += 1
+        return m.group(1)
+
+    return _sub_outside(_PAREN_LIT, repl, code), n
+
+
+# Common cmdlets a wildcard (gcm *ke-e*) or GetCmdlet() lookup resolves to.
+_CMDLETS = ("Invoke-Expression", "New-Object", "Invoke-WebRequest", "Invoke-RestMethod",
+            "Start-Process", "Invoke-Command", "Add-Type", "Set-Variable", "Get-Variable",
+            "Start-BitsTransfer", "Invoke-Item", "Set-ItemProperty", "New-ItemProperty",
+            "Start-Sleep", "Out-Null", "Out-String", "Get-Process", "Stop-Process",
+            "Set-Content", "Get-Content", "Remove-Item", "Copy-Item", "Register-ScheduledTask",
+            "New-ScheduledTaskAction", "Write-Host", "Get-WmiObject", "Invoke-WmiMethod",
+            "Get-CimInstance", "Invoke-CimMethod", "Set-MpPreference", "Add-MpPreference",
+            "ConvertTo-SecureString", "ConvertFrom-SecureString")
+_GCM = re.compile(r"(?i)(?:(?<![\w'\"\])])[&.]\s*)?\(\s*(?:gcm|Get-Command)\s+\(?\s*(" + _STRLIT + r"|[\w*?\-\[\]]+)\s*\)?\s*\)")
+_GETCMDLET = re.compile(r"(?i)(?:(?<![\w'\"\])])[&.]\s*)?\(?\s*\$ExecutionContext\.InvokeCommand\.(?:GetCmdlet|GetCommand|GetCommandName)"
+                        r"\(\s*(" + _STRLIT + r")[^()]*\)\s*\)?")
+_CALL_NAME = re.compile(r"(?i)(?:(?<![\w'\"\])\]])|(?<=\())([&.])\s*(" + _STRLIT + r")(?=\s|$|[;)|}])")
+
+
+def _resolve_cmd(pattern: str) -> str | None:
+    hits = [c for c in _CMDLETS if fnmatch.fnmatchcase(c.lower(), pattern.lower())]
+    if not hits and pattern.lower() in ("iex",):
+        return "Invoke-Expression"
+    return hits[0] if len(hits) == 1 else None
+
+
+def _t_cmd_lookup(code: str) -> tuple[str, int]:
+    """``&(gcm *ke-e*)``, ``.(Get-Command I*-*pr*)``,
+    ``$ExecutionContext.InvokeCommand.GetCmdlet('Invoke-Expression')`` and
+    ``&('iex')`` / ``.('New-Object')`` → the plain command name."""
+    n = 0
+
+    def gcm(m: re.Match) -> str:
+        nonlocal n
+        pat = m.group(1)
+        pat = _lit_value(pat) if pat[:1] in "'\"" else pat
+        name = _resolve_cmd(pat)
+        if not name:
+            return m.group(0)
+        n += 1
+        return name
+
+    def call(m: re.Match) -> str:
+        nonlocal n
+        name = _lit_value(m.group(2))
+        if not re.fullmatch(r"[A-Za-z][\w-]{1,40}", name):
+            return m.group(0)
+        n += 1
+        return name
+
+    code = _sub_outside(_GCM, gcm, code)
+    code = _sub_outside(_GETCMDLET, gcm, code)
+    code = _sub_outside(_CALL_NAME, call, code)
+    return code, n
+
+
+_ALIAS_DEF = re.compile(r"(?i)\b(?:sal|Set-Alias|nal|New-Alias)\s+(?:-Name\s+)?([\w-]+)\s+(?:-Value\s+)?"
+                        r"(" + _STRLIT + r"|[\w-]+)\s*;?")
+
+
+def _t_alias(code: str) -> tuple[str, int]:
+    """``Set-Alias x9 Invoke-Expression; x9 (...)`` → ``Invoke-Expression (...)``."""
+    n = 0
+    spans = _lit_spans(code)
+    for m in list(_ALIAS_DEF.finditer(code)):
+        if any(a < m.start() < b for a, b in spans):
+            continue
+        alias, target = m.group(1), m.group(2)
+        target = _lit_value(target) if target[:1] in "'\"" else target
+        if not re.fullmatch(r"[A-Za-z][\w-]{1,40}", target) or alias.lower() == target.lower():
+            continue
+        tail = code[m.end():]
+        new_tail = _sub_outside(re.compile(r"(?i)(?<![\w$.-])" + re.escape(alias) + r"(?![\w-])"),
+                                lambda _m: target, tail)
+        k = int(new_tail != tail)
+        if k:
+            code = code[:m.start()] + new_tail
+            n += k
+            break   # offsets changed; next pass picks up the rest
+    return code, n
+
+
+_BRACE_VAR = re.compile(r"\$\{(\w+(?::\w+)?)\}")
+
+
+def _t_brace_vars(code: str) -> tuple[str, int]:
+    """``${env:ComSpec}`` / ``${x}`` → ``$env:ComSpec`` / ``$x``."""
+    new = _sub_outside(_BRACE_VAR, lambda m: "$" + m.group(1), code)
+    return new, int(new != code)
+
+
+_SCRIPTBLOCK = re.compile(r"(?i)&?\s*\(?\s*(?:\[scriptblock\]::Create|\$ExecutionContext\.InvokeCommand\.(?:InvokeScript|NewScriptBlock))"
+                          r"\(\s*(" + _STRLIT + r")\s*\)\s*\)?(?:\.Invoke\(\s*\))?")
+_PIPE_IEX = re.compile(r"(?i)(" + _STRLIT + r")\s*\|\s*(?:iex|Invoke-Expression)\b")
+
+
+def _t_scriptblock(code: str) -> tuple[str, int]:
+    """``[ScriptBlock]::Create('…')``, ``InvokeCommand.InvokeScript('…')`` and
+    ``'…' | iex`` → the code itself."""
+    n = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal n
+        n += 1
+        return "\n" + _lit_value(m.group(1)) + "\n"
+
+    code = _sub_outside(_SCRIPTBLOCK, repl, code)
+    code = _sub_outside(_PIPE_IEX, repl, code)
+    return code, n
+
+
 _TRANSFORMS: list[tuple[str, Callable[[str], tuple[str, int]]]] = [
     ("encoded-command", _t_encoded_command),
     ("decompress", _t_decompress),
@@ -541,6 +910,16 @@ _TRANSFORMS: list[tuple[str, Callable[[str], tuple[str, int]]]] = [
     ("securestring", _t_securestring),
     ("FromBase64String", _t_frombase64),
     ("backtick-strip", _t_strip_backticks),
+    ("brace-vars", _t_brace_vars),
+    ("env-var-slice", _t_env_slice),
+    ("reverse-string", _t_reverse),
+    ("numeric-char-codes", _t_numeric_chars),
+    ("replace-chain", _t_replace),
+    ("join", _t_join_lit),
+    ("paren-literal", _t_paren_lit),
+    ("command-lookup", _t_cmd_lookup),
+    ("alias", _t_alias),
+    ("scriptblock", _t_scriptblock),
     ("char-code", _t_charcode),
     ("concat-strings", _t_concat),
     ("format-operator", _t_format),
