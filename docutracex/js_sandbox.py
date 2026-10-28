@@ -5,6 +5,8 @@ processes: the only host objects are *recorders* we provide. It answers "what
 does this obfuscated script end up doing?" by:
 
 - hooking ``eval``, ``Function``, ``setTimeout``/``setInterval`` with strings,
+  ``String.fromCharCode`` (resolved strings) and the clock (``Date.now``,
+  ``getTime``, ``performance.now``: anti-sandbox time-delta checks),
   ``document.write``/``writeln``: each unwrapped layer of code is recorded and
   then executed inside the sandbox, so multi-layer packers unfold;
 - stubbing the hosts maldoc scripts expect — Windows Script Host
@@ -170,6 +172,17 @@ PRELUDE = r"""
   g.Blob = function(parts, opts){ _dtx_log('dom', 'new Blob', (opts && opts.type) || ''); this.size = 0; };
   g.URL = { createObjectURL: function(){ _dtx_log('dom', 'URL.createObjectURL', 'blob'); return 'blob:sandbox'; } };
   g.navigator.msSaveOrOpenBlob = function(b, n){ _dtx_log('dom', 'msSaveOrOpenBlob', String(n)); };
+  // Strings built with fromCharCode (only meaningful ones, capped so a
+  // char-by-char loop cannot flood the log).
+  var _fcc = String.fromCharCode, _nf = 0;
+  String.fromCharCode = function(){ var r = _fcc.apply(String, arguments);
+    if (r.length >= 4 && _nf < 40) { _nf++; _dtx_log('fromcharcode', 'String.fromCharCode', r); } return r; };
+  // Clock reads (anti-sandbox time-delta checks), capped.
+  var _nt = 0, _tl = function(n){ if (_nt < 8) { _nt++; _dtx_log('timing', n, ''); } };
+  var _now = Date.now, _gt = Date.prototype.getTime;
+  Date.now = function(){ _tl('Date.now'); return _now(); };
+  Date.prototype.getTime = function(){ _tl('Date.getTime'); return _gt.call(this); };
+  g.performance = { now: function(){ _tl('performance.now'); return _now(); } };
 })(this);
 """
 

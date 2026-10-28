@@ -499,3 +499,13 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 .ioc-group > summary { cursor: pointer; padding: 8px 12px; user-select: none; }
 .ioc-group[open] > summary { border-bottom: 1px solid var(--panel-border); }
 .ioc-group > table { margin: 0; }
+
+
+/* JavaScript: confirmed obfuscation techniques */
+.js-techs { border-left: 3px solid var(--accent); background: var(--panel); border-radius: 6px; padding: 6px 10px; margin: 8px 0 12px; }
+.js-tech-list { list-style: none; margin: 4px 0; padding: 0; }
+.js-tech { padding: 5px 0; border-top: 1px solid var(--panel-border); }
+.js-tech:first-child { border-top: 0; }
+.js-tech-n { color: var(--text-dim); margin-right: 4px; }
+.js-tech .badge { margin-left: 6px; }
+.js-tech .evidence { margin-top: 3px; white-space: pre-wrap; word-break: break-all; }

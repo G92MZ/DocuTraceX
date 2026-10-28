@@ -353,7 +353,7 @@ def _sandbox_findings(sb: dict[str, Any], loc: str, out: list[dict[str, Any]]) -
 
 def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
             run_sandbox: bool = True) -> dict[str, Any]:
-    from . import js_deobf, js_webcrack
+    from . import js_deobf, js_techniques, js_webcrack
 
     res: dict[str, Any] = {"module": "javascript", "status": "ok", "scripts": [], "findings": []}
     for i, it in enumerate(collect(original, extracted_dir, modules), 1):
@@ -380,7 +380,10 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
         decoded = decode_strings(code)
         # The STPyV8 sandbox is skipped on nested children (run_sandbox=False):
         # the static deobfuscation still runs, which is what nested needs.
-        sb = sandbox(code) if run_sandbox else {"log": [], "error": None, "available": None, "timed_out": False}
+        sb = (sandbox(js_techniques.instrument(code)) if run_sandbox
+              else {"log": [], "error": None, "available": None, "timed_out": False})
+        techniques = (js_techniques.static_techniques(orig_code, mets["obfuscation_score"])
+                      + js_techniques.from_sandbox(sb))
         script = {"id": i, "kind": it["kind"], "origin": it["origin"], "location": loc, "note": it.get("note"),
                   "size": len(full), "code": code[:_KEEP_CODE], "code_truncated": len(deob_full) > _KEEP_CODE,
                   "code_is_deobfuscated": changed,
@@ -390,6 +393,7 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
                   "deob_size": len(deob_full) if changed else 0,
                   "pretty": _pretty(code)[:_KEEP_CODE] if metrics(code)["longest_line"] > 200 else "",
                   "hits": hits, "metrics": mets, "metrics_deob": mets_deob, "decoded": decoded, "sandbox": sb,
+                  "techniques": techniques,
                   "_full_code": full}
         if changed:
             script["_full_deob"] = deob_full
@@ -419,6 +423,12 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
                                             f"[{it['origin']}] Obfuscation scheme detected ({', '.join(deob['schemes'])}) — "
                                             f"left for the sandbox to unfold", loc, deob["schemes"][0]))
         _sandbox_findings(sb, loc, res["findings"])
+        for t in techniques:
+            if t["severity"] == "info":
+                continue
+            where = "resolved in the sandbox" if t["phase"] == "sandbox" else "static"
+            res["findings"].append(_finding(f"js_{t['id']}", t["severity"],
+                                            f"[{it['origin']}] {t['name']} ({where})", loc, t["evidence"]))
     res["counts"] = {"findings": len(res["findings"]), "scripts": len(res["scripts"])}
     if res["findings"]:
         res["status"] = "ok_with_findings"
