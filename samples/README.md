@@ -179,6 +179,10 @@ Indicators that must **not** appear in the IOCs tab:
   - **Components:** two tabs, **ELF · libapp.so · arm64-v8a** and **ELF · libapp.so · x86_64**.
   - **IOCs:** none of its `DT_NEEDED` libraries (`liblog.so`, `libc.so`, `libm.so`…) are "domains" (`.so` is also a ccTLD).
   - **IOCs:** the `::` string is not an IPv6.
+- **`sample.eml`, `sample.msg`, `sample.docm`, `sample.pdf`, `sample.rtf`**:
+  - olevba's description "May run PowerShell commands" is not a command;
+  - the smuggling page's `a.download = …` is not the domain `a.download`;
+  - the MD5s that rtfobj prints for the objects it carves (`MD5 = '…'`) are not hashes of the sample.
 - **Any PE / ELF analysed with capa** — capability and ATT&CK names ("query or enumerate registry key", "Query Registry") are not commands.
 
 ## Machine Learning tab (EMBER2024)
