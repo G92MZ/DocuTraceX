@@ -570,7 +570,7 @@ function addMarkCell(kind, detail, location, evidence) {
 
 function wireAddMarks(root, analysisId) {
   if (!analysisId) return;
-  const reload = () => openComponents(analysisId, _compState.active);
+  const reload = () => openComponents(analysisId, _compState.active, _openViewId);
   root.querySelectorAll("details.add-mark").forEach((d) => {
     const btn = d.querySelector(".am-add");
     btn.addEventListener("click", async () => {
@@ -1638,7 +1638,7 @@ function wireUnlock(root, analysisId) {
           if ((t.live || []).some((x) => ["queued", "running", "cancelling"].includes(x.state))) return;
         } catch (e) { return; }
         clearInterval(iv);
-        if (_openCaseId === analysisId) openComponents(analysisId, _compState && _compState.active);
+        if (_openCaseId === analysisId) openComponents(analysisId, _compState && _compState.active, _openViewId);
       }, 2500);
       return true;
     } catch (err) {
@@ -1857,6 +1857,7 @@ function nestedNode(n) {
       ${n.decrypted_from ? `<span class="badge badge-warn" title="Recovered by decrypting/decoding: ${escapeHtml(n.decrypted_from)}">🔓 decrypted stage</span>` : ""}
       ${lock}${pwc}
       ${badge}
+      ${n.view_id ? `<button class="btn btn-ghost btn-sm" type="button" data-open-view="${escapeHtml(n.view_id)}" title="Open this file's own analysis (its tabs), like a case">Open analysis ↗</button>` : ""}
       ${fileActions(n.stored_path)}
       ${addMarkCell("nested", `Nested item ${n.filename}`, n.stored_path || "nested", n.kind || "")}
     </div>`;
@@ -1907,6 +1908,25 @@ function paneOle(ole) {
 }
 
 let _compState = { sections: [], active: null, header: "" };
+let _openViewId = null;   // a nested child opened like a case (null = the case itself)
+
+// Kind label of a nested child's own analysis, for its direct tab; null when
+// it has none worth a tab (plain data, or a script already in the code tabs).
+function childTabKind(n) {
+  const name = (n.filename || "").toLowerCase();
+  switch (n.kind) {
+    case "binary": return name.endsWith(".msi") ? "MSI" : "PE";
+    case "pdf": return "PDF";
+    case "ooxml": case "ole": return "Office";
+    case "rtf": return "RTF";
+    case "email": return "Email";
+    case "shortcut": return "Shortcut";
+    case "java": return "Java";
+    case "onenote": return "OneNote";
+    case "archive": return "Archive";
+    default: return null;
+  }
+}
 
 function renderSubtabs() {
   const bar = _compState.sections.map((s) =>
@@ -1926,9 +1946,14 @@ function renderSubtabs() {
   bodyEl.innerHTML = `${header}${findBar}<div class="subtabs">${bar}</div><div class="subpane">${pane}</div>`;
   bodyEl.querySelectorAll(".subtab").forEach((btn) => {
     btn.addEventListener("click", () => {
+      const sec2 = _compState.sections.find((s) => s.id === btn.getAttribute("data-sub")) || {};
+      if (sec2.openView) { openComponents(_openCaseId, null, sec2.openView); return; }
       _compState.active = btn.getAttribute("data-sub");
       renderSubtabs();
     });
+  });
+  bodyEl.querySelectorAll("[data-open-view]").forEach((btn) => {
+    btn.addEventListener("click", () => openComponents(_openCaseId, null, btn.getAttribute("data-open-view")));
   });
   // Wire the mark controls present in the active pane (Findings / YARA) and
   // keep the in-memory findings in sync so other panes show the new mark.
@@ -2087,9 +2112,10 @@ function wireFind(root) {
   if (prev) prev.addEventListener("click", () => stepFind(-1));
 }
 
-async function openComponents(analysisId, keepTab) {
+async function openComponents(analysisId, keepTab, viewId) {
   showTab("components");
   _openCaseId = analysisId;
+  _openViewId = viewId || null;
   const caseLine = document.getElementById("comp-case");
   const summary = document.getElementById("comp-summary");
   const bodyEl = document.getElementById("comp-body");
@@ -2097,8 +2123,18 @@ async function openComponents(analysisId, keepTab) {
   summary.textContent = "";
   bodyEl.innerHTML = "";
   try {
-    const d = await fetch(`/api/cases/${encodeURIComponent(analysisId)}/components`).then((r) => r.json());
-    caseLine.innerHTML = `Case <span class="mono">${escapeHtml(d.analysis_id)}</span> · ${escapeHtml(d.filename || "")} · state: ${escapeHtml(d.state || "")}`;
+    const url = viewId
+      ? `/api/cases/${encodeURIComponent(analysisId)}/nested/${encodeURIComponent(viewId)}/components`
+      : `/api/cases/${encodeURIComponent(analysisId)}/components`;
+    const d = await fetch(url).then((r) => r.json());
+    caseLine.innerHTML = viewId
+      // a nested child opened like a case: breadcrumb back to the case
+      ? `<button class="btn btn-ghost btn-sm" type="button" data-back-case="${escapeHtml(analysisId)}">← Back to case</button>
+         <span class="mono">${escapeHtml(analysisId)}</span> › Nested › <b>${escapeHtml(d.chain || d.filename || "")}</b>
+         <span class="badge badge-muted">nested ${escapeHtml(d.kind || "")}</span>`
+      : `Case <span class="mono">${escapeHtml(d.analysis_id)}</span> · ${escapeHtml(d.filename || "")} · state: ${escapeHtml(d.state || "")}`;
+    const back = caseLine.querySelector("[data-back-case]");
+    if (back) back.addEventListener("click", (e) => { e.preventDefault(); openComponents(analysisId, "nested"); });
     const mods = d.modules || {};
     const ooxml = mods.ooxml;
     const sem = mods.word || mods.excel || mods.powerpoint;
@@ -2126,7 +2162,8 @@ async function openComponents(analysisId, keepTab) {
     });
     const ni = (iocs && iocs.counts && iocs.counts.total) || 0;
     let compLabel;
-    if (email) compLabel = `${email.hop_count || 0} hops · ${email.attachment_count || 0} attachments`;
+    if (viewId) compLabel = `nested ${d.kind || "file"}`;
+    else if (email) compLabel = `${email.hop_count || 0} hops · ${email.attachment_count || 0} attachments`;
     else if (pdf) compLabel = `${pdf.page_count || 0} pages · ${(pdf.embedded || []).length} embedded`;
     else if (rtf) compLabel = `RTF · ${(rtf.objects || []).length} objects · ${(rtf.fields || []).length} fields`;
     else if (oleLegacy) compLabel = `${oleLegacy.kind || "ole"} · ${(oleLegacy.streams || []).length} streams`;
@@ -2187,6 +2224,13 @@ async function openComponents(analysisId, keepTab) {
     }
     if (nested && (nested.tree || []).length) {
       sections.push({ id: "nested", label: `Nested (${(nested.counts || {}).nodes || 0})`, html: paneNested(nested) });
+      if (!viewId) {
+        // a direct tab per FIRST-level child that has its own analysis
+        // (deeper ones: "Open analysis" in the Nested tree)
+        (nested.tree || []).filter((n) => n.view_id && childTabKind(n)).forEach((n) => {
+          sections.push({ id: `child-${n.view_id}`, label: `${childTabKind(n)} · ${n.filename}`, openView: n.view_id });
+        });
+      }
     }
     const yara = mods.yara;
     if (yara && yara.rule_count) {
@@ -2269,7 +2313,13 @@ async function openComponents(analysisId, keepTab) {
     const active = keepTab && sections.some((x) => x.id === keepTab) ? keepTab : sections[0].id;
     _compState = { sections, active, header: headerHtml, findings };
     renderSubtabs();
-    renderRerun(analysisId, d);
+    if (viewId) {
+      // re-runs act on the whole case: offered from the case view only
+      const act = document.getElementById("comp-actions");
+      if (act) act.innerHTML = `<span class="hint-line">Nested file — analysed as part of the case. Re-run from the case view.</span>`;
+    } else {
+      renderRerun(analysisId, d);
+    }
   } catch (err) {
     bodyEl.innerHTML = `<p class="hint-line">Could not load components.</p>`;
   }
