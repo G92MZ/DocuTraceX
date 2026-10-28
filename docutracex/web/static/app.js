@@ -1312,6 +1312,7 @@ function paneJavascript(js) {
       body += `<p class="hint-line"><span class="badge badge-bad">obfuscated</span> Scheme detected: ${escapeHtml((sc.deob_schemes || []).join(", "))} — unfolded by the sandbox.</p>`;
     }
     const jsLoc = sc.location || `javascript:${sc.id}`;
+    body += jsTechniquesHtml(sc.techniques || []);
     if (hits.length) {
       body += table(["Line", "Why", "Code", "Mark"], hits.map((h) => `<tr><td>${h.line_no}</td>
         <td class="${h.severity === "high" ? "bad-text" : ""}">${escapeHtml(h.label)}</td>
@@ -1355,6 +1356,23 @@ function paneJavascript(js) {
       <div style="padding:8px 10px">${body}</div></details>`;
   });
   return html;
+}
+
+// "Confirmed obfuscation techniques": numbered, technique in bold, concrete
+// evidence, and whether it was seen statically or resolved in the sandbox.
+function jsTechniquesHtml(techs) {
+  if (!techs.length) return "";
+  const sevCls = { high: "bad", medium: "warn", low: "muted", info: "muted" };
+  const items = techs.map((t, i) => `<li class="js-tech">
+      <span class="js-tech-n">${i + 1}.</span>
+      <b>${escapeHtml(t.name)}</b>
+      <span class="badge badge-${t.phase === "sandbox" ? "ok" : "muted"}" title="${t.phase === "sandbox" ? "Resolved by running the script in the sandbox" : "Detected by reading the original code"}">${t.phase === "sandbox" ? "sandbox" : "static"}</span>
+      <span class="badge badge-${sevCls[t.severity] || "warn"}">${escapeHtml(t.severity)}</span>
+      <div class="evidence mono">${escapeHtml(t.evidence || "")}</div>
+      ${t.payload ? `<details class="disclose"><summary>Payload (${t.payload.length} chars)</summary><pre class="text-sample">${escapeHtml(t.payload.slice(0, 20000))}</pre></details>` : ""}
+    </li>`).join("");
+  const nS = techs.filter((t) => t.phase !== "sandbox").length, nB = techs.length - nS;
+  return `<div class="js-techs"><p class="hint-line"><strong>Confirmed obfuscation techniques</strong> — ${nS} static · ${nB} resolved in the sandbox</p><ol class="js-tech-list">${items}</ol></div>`;
 }
 
 // Generic code-language pane (PowerShell, VBScript, …): same pattern as the
