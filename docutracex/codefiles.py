@@ -165,10 +165,12 @@ def input_files(extracted_dir: Path, limit: int) -> list[Path]:
     out = []
     for p in sorted(extracted_dir.rglob("*")):
         try:
-            top = p.relative_to(extracted_dir).parts[0]
-        except (ValueError, IndexError):
+            parts = p.relative_to(extracted_dir).parts
+        except ValueError:
             continue
-        if top in OWN_OUTPUT_DIRS or not p.is_file():
+        # own outputs at any depth (nested children keep their stages under
+        # nested/stages/…): analysed by the nested scanner, not here
+        if not parts or any(x in OWN_OUTPUT_DIRS for x in parts[:-1]) or not p.is_file():
             continue
         out.append(p)
         if len(out) >= limit:

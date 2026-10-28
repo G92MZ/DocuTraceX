@@ -252,6 +252,8 @@ def _t_exec_var(code: str) -> tuple[str, int]:
     return _sub_outside(rx, repl, code), n
 
 
+_STAGES: list[dict[str, Any]] | None = None
+
 _FOR = re.compile(r"(?ims)^[ \t]*For[ \t]+(?:Each[ \t]+(\w+)[ \t]+In[ \t]+(\w+)|(\w+)[ \t]*=[ \t]*([01])[ \t]+To[ \t]+"
                   r"(?:Len|UBound|LenB)\(\s*(\w+)\s*\)(?:[ \t]*-[ \t]*1)?(?:[ \t]+Step[ \t]+(\d))?)[ \t]*(?::|\r?\n)"
                   r"(.{0,600}?)(?:^|:)[ \t]*Next\b[^\n]*")
@@ -342,6 +344,11 @@ def _t_xor_loop(code: str) -> tuple[str, int]:
         if best is None or best[0] < 0.95 or not best[1].strip():
             return m.group(0)
         n += 1
+        hexed = isinstance(data, str) and (step == "2" or bool(re.search(r'(?i)"&H"\s*&\s*Mid', body)))
+        kdesc = (f"0x{key[0]:02x}" if len(key) == 1 else repr("".join(map(chr, key))))
+        if _STAGES is not None and len(best[1].strip()) >= 32:
+            _STAGES.append({"recipe": (["hex"] if hexed else ["array"] if not isinstance(data, str) else [])
+                            + [f"xor({kdesc})"], "text": best[1]})
         return f"{om.group(1)} = {_as_vstr(best[1])}"
 
     return _sub_outside(_FOR, repl, code), n
@@ -354,9 +361,12 @@ _TRANSFORMS = [("chr-code", _t_chr), ("concat-&", _t_concat),
 
 
 def deobfuscate(code: str) -> dict[str, Any]:
+    global _STAGES
     original = (code or "").replace("\r\n", "\n")
     cur = original
     methods: list[str] = []
+    stages: list[dict[str, Any]] = []
+    _STAGES = stages
     for _ in range(_MAX_PASSES):
         before = cur
         for name, fn in _TRANSFORMS:
@@ -370,7 +380,8 @@ def deobfuscate(code: str) -> dict[str, Any]:
                     methods.append(name)
         if cur == before:
             break
-    return {"changed": cur.strip() != original.strip(), "code": cur, "methods": methods}
+    _STAGES = None
+    return {"changed": cur.strip() != original.strip(), "code": cur, "methods": methods, "stages": stages[:10]}
 
 
 def static_hits(code: str) -> list[dict[str, Any]]:
@@ -505,6 +516,8 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> dic
                   "original_code": orig_code[:_KEEP_CODE] if deob["changed"] else "",
                   "original_truncated": deob["changed"] and len(full) > _KEEP_CODE,
                   "deob_methods": deob["methods"], "deob_schemes": [],
+                  "decoded_stages": [{"recipe": st["recipe"], "text": st["text"][:400_000]}
+                                     for st in deob.get("stages") or []],
                   "deob_size": len(deob_full) if deob["changed"] else 0,
                   "hits": hits, "metrics": mets, "_full_code": full}
         if deob["changed"]:
