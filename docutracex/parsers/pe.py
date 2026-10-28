@@ -14,7 +14,10 @@ Then:
 - resources / overlay: an embedded PE (a dropper carrying a second stage),
   appended overlay data;
 - TLS callbacks (early / anti-debug execution), Authenticode presence, and a
-  version-info masquerade check (OriginalFilename vs the real name).
+  version-info masquerade check (OriginalFilename vs the real name);
+- **LIEF** (:mod:`lief_info`, own process): imphash, Rich header, PDB path,
+  Authenticode verified, manifest, mitigations, checksum, forwarded exports,
+  overlay entropy.
 
 With **FLOSS** and **capa** provisioned (optional; Mandiant's standalone
 binaries under ``tools/floss/`` and ``tools/capa/``) the static, obfuscated,
@@ -264,6 +267,20 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
         v = _version_string(pe, key)
         if v:
             strings_for_ioc.append(v)
+
+    # --- LIEF: imphash, Rich header, PDB path, Authenticode verification,
+    # manifest, mitigations, checksum, forwarded exports, overlay (own process).
+    from . import lief_info
+    lf = lief_info.analyze(path, rel)
+    have = {x["rule"] for x in f}
+    for x in lf.pop("findings", []):
+        if x["rule"] == "lief_tls_callbacks" and "pe_tls_callback" in have:
+            continue
+        f.append(x)
+    item["lief"] = lf
+    for p in lf.get("pdb") or []:
+        if p.get("path"):
+            strings_for_ioc.append(p["path"])
 
     # --- packer / installer: detect, then unpack STATICALLY (first, so the real
     # code is what FLOSS/capa/YARA/IOCs see). PyInstaller has its own pipeline.

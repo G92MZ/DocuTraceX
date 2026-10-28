@@ -1359,6 +1359,112 @@ def exec_chain_py() -> bytes:
             "exec(_l.decompress(_b.b85decode(_d)).decode())\n").encode("utf-8")
 
 
+def lief_helper_dll() -> bytes:
+    """A minimal but valid PE32+ DLL built to exercise the LIEF analysis (inert:
+    its only code is ``ret``). It carries what an analyst pivots on:
+    a CodeView **PDB path** with the build user/project, a **forwarded export**
+    (proxy-DLL pattern: ``GetFileVersionInfoW`` → ``version.dll``), a manifest
+    with **requireAdministrator + autoElevate**, a wrong **header checksum** and
+    a high-entropy **overlay** (an appended encrypted blob)."""
+    import random
+
+    FA, SA = 0x200, 0x1000
+
+    def al(n: int, a: int) -> int:
+        return (n + a - 1) & ~(a - 1)
+
+    text_va, rdata_va, rsrc_va = 0x1000, 0x2000, 0x3000
+    text = b"\xc3"                                            # ret
+    # --- .rdata: export directory (with a forwarder) + debug directory + RSDS ---
+    rd = bytearray()
+
+    def put(blob: bytes, align: int = 4) -> int:
+        while len(rd) % align:
+            rd.append(0)
+        off = len(rd)
+        rd.extend(blob)
+        return rdata_va + off
+
+    exp_dir_off = len(rd)
+    rd.extend(b"\x00" * 40)
+    dll_name = put(b"invoice_helper.dll\x00", 1)
+    fwd = put(b"version.GetFileVersionInfoW\x00", 1)
+    n1 = put(b"GetFileVersionInfoW\x00", 1)
+    n2 = put(b"SyncInvoices\x00", 1)
+    funcs = put(struct.pack("<II", fwd, text_va))
+    names = put(struct.pack("<II", n1, n2))
+    ords = put(struct.pack("<HH", 0, 1))
+    exp_size = len(rd) - exp_dir_off
+    rd[exp_dir_off:exp_dir_off + 40] = struct.pack("<IIHHIIIIIII", 0, 0, 0, 0, dll_name, 1, 2, 2,
+                                                    funcs, names, ords)
+    pdb = rb"C:\Users\jmartin\source\repos\InvoiceSync\x64\Release\invoice_helper.pdb" + b"\x00"
+    guid = bytes(range(0x10, 0x20))
+    rsds = b"RSDS" + guid + struct.pack("<I", 3) + pdb
+    dbg_off = len(rd) + (-len(rd) % 4)
+    dbg_rva = put(b"\x00" * 28)
+    rsds_rva = put(rsds)
+    # --- .rsrc: RT_MANIFEST(24) / 1 / 1033 ---
+    manifest = (b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
+                b'<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">'
+                b'<assemblyIdentity name="InvoiceSync.Helper" version="1.0.0.0" type="win32"/>'
+                b'<trustInfo xmlns="urn:schemas-microsoft-com:asm.v3"><security><requestedPrivileges>'
+                b'<requestedExecutionLevel level="requireAdministrator" uiAccess="false"/>'
+                b'</requestedPrivileges></security></trustInfo>'
+                b'<application xmlns="urn:schemas-microsoft-com:asm.v3"><windowsSettings>'
+                b'<autoElevate xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true</autoElevate>'
+                b'</windowsSettings></application></assembly>')
+
+    def dirhdr(n_ids: int) -> bytes:
+        return struct.pack("<IIHHHH", 0, 0, 0, 0, 0, n_ids)
+
+    rs = bytearray()
+    rs += dirhdr(1) + struct.pack("<II", 24, 0x80000000 | 0x18)          # type → name dir @0x18
+    rs += dirhdr(1) + struct.pack("<II", 1, 0x80000000 | 0x30)           # name → lang dir @0x30
+    rs += dirhdr(1) + struct.pack("<II", 1033, 0x48)                     # lang → data entry @0x48
+    rs += struct.pack("<IIII", rsrc_va + 0x58, len(manifest), 65001, 0)  # data entry
+    rs += manifest
+    # --- headers ---
+    secdata = [(".text", text_va, text, 0x60000020),
+               (".rdata", rdata_va, bytes(rd), 0x40000040),
+               (".rsrc", rsrc_va, bytes(rs), 0x40000040)]
+    nsec = len(secdata)
+    e_lfanew, opt_size = 0x80, 240
+    size_headers = al(e_lfanew + 4 + 20 + opt_size + nsec * 40, FA)
+    secs, rawptr = [], size_headers
+    for name, va, data, ch in secdata:
+        raw = al(len(data), FA)
+        secs.append((name, va, len(data), rawptr, raw, data, ch))
+        rawptr += raw
+    size_image = al(rsrc_va + len(rs), SA)
+    # patch the debug directory (needs the RSDS file offset)
+    rd_file = secs[1][3]
+    dbg = struct.pack("<IIHHIIII", 0, 0, 0, 0, 2, len(rsds), rsds_rva, rd_file + (rsds_rva - rdata_va))
+    rd[dbg_off:dbg_off + 28] = dbg
+    secs[1] = secs[1][:5] + (bytes(rd),) + secs[1][6:]
+    dos = b"MZ" + b"\x00" * 0x3a + struct.pack("<I", e_lfanew) + b"\x00" * (e_lfanew - 0x40)
+    coff = struct.pack("<HHIIIHH", 0x8664, nsec, 0x66A1B2C3, 0, 0, opt_size, 0x2022)   # DLL
+    opt = struct.pack("<HBBIIIII", 0x20b, 14, 38, FA, al(len(rd), FA) + al(len(rs), FA), 0, text_va, text_va)
+    opt += struct.pack("<Q", 0x180000000)
+    opt += struct.pack("<IIHHHHHHIIIIHH", SA, FA, 6, 0, 0, 0, 6, 0, 0, size_image, size_headers,
+                       0x00012345, 2, 0x0160)   # wrong checksum; ASLR+DEP+high-entropy VA
+    opt += struct.pack("<QQQQ", 0x100000, 0x1000, 0x100000, 0x1000)
+    dirs = [(0, 0)] * 16
+    dirs[0] = (rdata_va + exp_dir_off, exp_size)
+    dirs[2] = (rsrc_va, len(rs))
+    dirs[6] = (dbg_rva, 28)
+    opt += struct.pack("<II", 0, 16) + b"".join(struct.pack("<II", *d) for d in dirs)
+    opt = opt[:opt_size].ljust(opt_size, b"\x00")
+    sectbl = b""
+    for name, va, vsize, rawp, raw, data, ch in secs:
+        sectbl += name.encode().ljust(8, b"\x00") + struct.pack("<IIII", vsize, va, raw, rawp)
+        sectbl += struct.pack("<IIHHI", 0, 0, 0, 0, ch)
+    body = (dos + b"PE\x00\x00" + coff + opt + sectbl).ljust(size_headers, b"\x00")
+    for name, va, vsize, rawp, raw, data, ch in secs:
+        body = body.ljust(rawp, b"\x00") + data.ljust(raw, b"\x00")
+    rnd = random.Random(20240613)
+    return body + bytes(rnd.randrange(256) for _ in range(8192))   # encrypted-looking overlay
+
+
 def build_all() -> dict[str, bytes]:
     out: dict[str, bytes] = {
         "sample.docx": word_docx(), "sample.docm": word_docm(),
@@ -1368,7 +1474,7 @@ def build_all() -> dict[str, bytes]:
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
         "sample_obf_techniques.js": obf_techniques_js(),
         "sample_chain_dropper.js": chain_dropper_js(), "sample_msxml_dropper.js": msxml_dropper_js(), "sample_wsh_selfread.js": wsh_selfread_dropper_js(), "sample_xor_stager.ps1": xor_stager_ps1(),
-        "sample_encoded_blobs.ps1": encoded_blobs_ps1(), "sample_crypto_loader.ps1": crypto_loader_ps1(), "sample_invoke_obfuscation.ps1": invoke_obfuscation_ps1(), "sample_xor_loader.vbs": xor_loader_vbs(), "sample_dosfuscation.bat": dosfuscation_bat(), "sample_exec_chain.py": exec_chain_py(),
+        "sample_encoded_blobs.ps1": encoded_blobs_ps1(), "sample_crypto_loader.ps1": crypto_loader_ps1(), "sample_invoke_obfuscation.ps1": invoke_obfuscation_ps1(), "sample_xor_loader.vbs": xor_loader_vbs(), "sample_dosfuscation.bat": dosfuscation_bat(), "sample_exec_chain.py": exec_chain_py(), "sample_lief_helper.dll": lief_helper_dll(),
         "sample_stage2.ps1": stage2_ps1(), "sample_dropper.vbs": dropper_vbs(),
         "sample_dropper.bat": dropper_bat(), "sample_ioc_noise.bat": ioc_noise_bat(), "sample_loader.hta": loader_hta(),
         "sample_shortcut.pdf.lnk": shortcut_lnk(), "sample_shortcut.url": internet_shortcut_url(),

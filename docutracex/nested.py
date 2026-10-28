@@ -86,6 +86,9 @@ def _kind(path: Path, name: str) -> str:
         return "shortcut"
     if head[:2] == b"MZ":                 # PE image
         return "binary"
+    if head[:4] in (b"\x7fELF", b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe",
+                    b"\xcf\xfa\xed\xfe"):   # ELF / Mach-O (LIEF)
+        return "binary"
     if head[:4] == b"\xd0\xcf\x11\xe0":
         return "ole"
     if head[:6] == b"7z\xbc\xaf\x27\x1c":
@@ -284,8 +287,7 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
             add_findings(it.get("findings"), "shortcut")
         elif kind == "binary":
             from .parsers import msi
-            it = (msi.analyze_msi(abs_path, name) if _ext(name) in (".msi", ".msp", ".msm")
-                  else msi.analyze_pe(abs_path, name))
+            it = msi.analyze_binary(abs_path, name)
             mods["msi"] = {"module": "msi", "items": [it], "findings": it.get("findings", [])}
             add_findings(it.get("findings"), "msi")
         elif kind == "java":
