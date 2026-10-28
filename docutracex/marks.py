@@ -159,9 +159,21 @@ def remove_manual(paths: CasePaths, finding_id: str) -> bool:
     return True
 
 
-def case_findings(paths: CasePaths) -> list[dict[str, Any]]:
-    """Automatic (consolidated) findings plus the analyst's manual ones."""
+def is_triage_only(f: dict[str, Any]) -> bool:
+    """YARA hits: shown in the YARA tab for triage, a finding only once marked."""
+    return f.get("source") == "yara" or str(f.get("rule", "")).startswith("yara:")
+
+
+def case_findings(paths: CasePaths, include_unreviewed_yara: bool = False) -> list[dict[str, Any]]:
+    """Automatic (consolidated) findings plus the analyst's manual ones.
+
+    YARA hits are left out until the analyst marks them (any state but
+    unreviewed); ``include_unreviewed_yara`` returns them all (YARA tab)."""
     stored = read_json(paths.subresult("findings")) or {}
     findings = stored.get("findings", []) if isinstance(stored, dict) else []
+    if not include_unreviewed_yara:
+        marks = read_marks(paths)
+        findings = [f for f in findings if not is_triage_only(f)
+                    or (marks.get(f.get("id", "")) or {}).get("state", DEFAULT_STATE) != DEFAULT_STATE]
     seen = {f.get("id") for f in findings}
     return list(findings) + [f for f in read_manual(paths) if f.get("id") not in seen]
