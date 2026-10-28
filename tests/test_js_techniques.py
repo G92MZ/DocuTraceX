@@ -490,3 +490,38 @@ def test_msxml_binary_drop(client) -> None:
     assert exe["kind"] == "binary" and exe["recipe"][-1] == "exe"
     b64 = "".join(re.findall(r'"([A-Za-z0-9+/=]+)"', js.decode().split("var xml")[0]))
     assert (res.parent / exe["stored_path"]).read_bytes() == base64.b64decode(b64)   # byte-identical
+
+
+@pytest.mark.parametrize("src", [
+    "&($env:ComSpec[4,15,25]-join'') ('Write-Host hi')",
+    ".( $PSHome[4]+$PSHome[30]+'x') ( -join ('ih tsoH-etirW'[-1..-13]) )",
+    "& (gcm *ke-e*) ( ('Write-Host XzYhiXzY' -replace 'XzY','') )",
+    "iex ( ('127~162~151~164~145~55~110~157~163~164~40~150~151'.Split('~') | ForEach-Object "
+    "{ [char]([convert]::ToInt16($_,8)) }) -join '' )",
+    "Set-Alias q9 Invoke-Expression; q9 (-join [regex]::Matches('ih tsoH-etirW','.','RightToLeft'))",
+    "( 'Write-Host '+'abc').Replace('abc','hi') | .( $ShellId[1]+$ShellId[13]+'x')",
+    "[ScriptBlock]::Create(-join [char[]](87,114,105,116,101,45,72,111,115,116,32,104,105)).Invoke()",
+    "${env:ComSpec}[4,24,25]-join'' | Out-Null; .($ExecutionContext.InvokeCommand.GetCmdlet('Invoke-Expression')) 'Write-Host hi'",
+])
+def test_invoke_obfuscation_tricks(src: str) -> None:
+    from docutracex.parsers.ps_deobf import deobfuscate
+    assert "Write-Host hi" in deobfuscate(src)["code"]
+
+
+def test_invoke_obfuscation_leaves_quoted_layers_and_plain_code_alone() -> None:
+    from docutracex.parsers.ps_deobf import deobfuscate
+    # Text inside a still-quoted layer is data: no slicing inside it.
+    r = deobfuscate("$s = 'see $PSHome[4] and (gcm *ke-e*)'")
+    assert "$PSHome[4]" in r["code"] and "gcm" in r["code"]
+    assert deobfuscate("if ($a) { Get-ChildItem C:\\ }")["changed"] is False
+
+
+def test_invoke_obfuscation_sample_end_to_end(client) -> None:
+    import json
+    _, res = _analyze(client, "sample_invoke_obfuscation.ps1", _ms().invoke_obfuscation_ps1())
+    ps = json.loads((res / "powershell.json").read_text())
+    assert "ps_invoke_obfuscation" in {f["rule"] for f in ps["findings"]}
+    assert "New-Object Net.WebClient" in ps["scripts"][0]["code"]
+    iocs = {i["value"] for i in json.loads((res / "iocs.json").read_text())["iocs"]}
+    assert {"http://billing.invoice-portal.example/Factura_2024-0613.pdf.ps1",
+            "http://203.0.113.17/inv.ps1"} <= iocs
