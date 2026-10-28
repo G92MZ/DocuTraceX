@@ -616,7 +616,9 @@ function findingRowsHtml(findings, ids) {
     const target = pivotTarget(f, ids);
     const pivot = target
       ? `<button class="btn btn-ghost btn-sm" data-pivot="${target}" title="Go to the ${target} evidence">↗ view</button>` : "";
-    return `<tr>
+    const hay = [f.severity, f.source, f.rule, f.detail, f.evidence, f.location, (f.mark && f.mark.state) || ""]
+      .join(" ").toLowerCase();
+    return `<tr data-frow data-hay="${escapeHtml(hay)}">
       <td><span class="badge badge-${SEV_CLASS[f.severity] || "warn"}">${escapeHtml(f.severity)}</span></td>
       <td>${escapeHtml(f.source)}</td>
       <td class="mono">${escapeHtml(f.rule)}</td>
@@ -628,7 +630,7 @@ function findingRowsHtml(findings, ids) {
 }
 
 const FINDING_HEADERS = ["Severity", "Source", "Rule", "Detail", "Location", "Mark"];
-let _findingsView = (() => { try { return localStorage.getItem("dtx.findingsView") || "tree"; } catch (e) { return "tree"; } })();
+let _findingsView = (() => { try { return localStorage.getItem("dtx.findingsView") || "source"; } catch (e) { return "source"; } })();
 
 // ctx: { filename, kind, tree } — the case file and its nested tree, so the
 // findings can be shown per file (default) or as one flat list.
@@ -637,10 +639,11 @@ function paneFindings(findings, ids, ctx) {
   ids = ids || (_compState.sections || []).map((s) => s.id);
   ctx = ctx || {};
   const toggle = `<div class="findings-toolbar">
-      <span class="seg"><button type="button" class="btn btn-ghost btn-sm${_findingsView === "tree" ? " is-on" : ""}" data-fview="tree">By file</button><button type="button" class="btn btn-ghost btn-sm${_findingsView === "list" ? " is-on" : ""}" data-fview="list">List</button></span>
+      <span class="seg"><button type="button" class="btn btn-ghost btn-sm${_findingsView === "source" ? " is-on" : ""}" data-fview="source">By source</button><button type="button" class="btn btn-ghost btn-sm${_findingsView === "tree" ? " is-on" : ""}" data-fview="tree">By file</button><button type="button" class="btn btn-ghost btn-sm${_findingsView === "list" ? " is-on" : ""}" data-fview="list">List</button></span>
       ${_findingsView === "tree" ? `<button class="btn btn-ghost btn-sm" type="button" onclick="this.closest('.subpane').querySelectorAll('details.ftree-findings').forEach(e=>e.open=true)">Expand all</button>
       <button class="btn btn-ghost btn-sm" type="button" onclick="this.closest('.subpane').querySelectorAll('details.ftree-findings').forEach(e=>e.open=false)">Collapse all</button>` : ""}
     </div>`;
+  if (_findingsView === "source") return toggle + paneFindingsBySource(findings, ids);
   if (_findingsView !== "tree" || !(ctx.tree || []).length) {
     return toggle + table(FINDING_HEADERS, findingRowsHtml(findings, ids));
   }
@@ -681,6 +684,124 @@ function paneFindings(findings, ids, ctx) {
   };
   const kids = (ctx.tree || []).map((n) => node(n, n.filename)).join("");
   return toggle + `<div class="nested-tree">${card(ctx.filename || "case file", ctx.kind ? `${ctx.kind} · case file` : "case file", root, kids, true)}</div>`;
+}
+
+// --- Findings by source (like the IOC tab: one collapsible group per tool) --------
+const FINDING_SOURCE_LABEL = {
+  pe: "PE (pefile)", lief: "LIEF", capa: "capa", floss: "FLOSS", unpack: "Unpacking", debloat: "Debloat",
+  msi: "MSI / binary", yara: "YARA", ml: "Machine Learning", javascript: "JavaScript", powershell: "PowerShell",
+  boxps: "PowerShell (box-ps)", vbscript: "VBScript", batch: "Batch", python: "Python", pyinstaller: "PyInstaller",
+  java: "Java", pdf: "PDF", pdftools: "PDF tools", officerules: "Office rules", oletools: "oletools",
+  olevba: "olevba", oleid: "oleid", mraptor: "mraptor", msodde: "msodde", oleobj: "oleobj",
+  msoffcrypto: "msoffcrypto", vipermonkey: "ViperMonkey", vbatools: "VBA tools", vba_deobf: "VBA deobfuscation",
+  officemalscanner: "OfficeMalScanner", xlmdeobf: "XLM deobfuscator", mailrules: "Email rules", email: "Email",
+  archive: "Archive", rtf: "RTF", onenote: "OneNote", shortcut: "Shortcut", netcheck: "Network checks",
+  manual: "Manual", hex: "Hex extracts", ole: "OLE", ooxml: "OOXML",
+};
+const MARK_SHORT = { true_positive: "TP", false_positive: "FP", suspicious: "suspicious",
+                     informational: "info", unreviewed: "unreviewed" };
+const _fgClosed = (() => { try { return new Set(JSON.parse(localStorage.getItem("dtx.findingGroupsClosed") || "[]")); } catch (e) { return new Set(); } })();
+
+function paneFindingsBySource(findings, ids) {
+  const by = {};
+  findings.forEach((f) => { const k = f.source || "other"; (by[k] = by[k] || []).push(f); });
+  const worstRank = (fs) => Math.min(...fs.map((f) => SEV_RANK[f.severity] ?? 4));
+  const keys = Object.keys(by).sort((a, b) => worstRank(by[a]) - worstRank(by[b]) || by[b].length - by[a].length
+                                              || a.localeCompare(b));
+  const label = (k) => FINDING_SOURCE_LABEL[k] || k;
+  const sevChips = (fs) => ["high", "medium", "low", "info"].map((sv) => {
+    const n = fs.filter((f) => f.severity === sv).length;
+    return n ? `<span class="badge badge-${SEV_CLASS[sv] || "muted"}">${n} ${sv}</span>` : "";
+  }).join(" ");
+  const markLine = (fs) => {
+    const c = {};
+    fs.forEach((f) => { const m = (f.mark && f.mark.state) || "unreviewed"; c[m] = (c[m] || 0) + 1; });
+    return Object.entries(c).sort((a, b) => (a[0] === "unreviewed") - (b[0] === "unreviewed") || b[1] - a[1])
+      .map(([m, n]) => `${n} ${MARK_SHORT[m] || m}`).join(" · ");
+  };
+  const opts = `<option value="">All sources (${findings.length})</option>` +
+    keys.map((k) => `<option value="${escapeHtml(k)}">${escapeHtml(label(k))} (${by[k].length})</option>`).join("");
+  const chips = keys.map((k) =>
+    `<button type="button" class="ioc-chip" data-fg-chip="${escapeHtml(k)}">${escapeHtml(label(k))} <b data-fg-count="${escapeHtml(k)}">${by[k].length}</b></button>`).join("");
+  const groups = keys.map((k) => {
+    const fs = by[k].slice().sort((a, b) => (SEV_RANK[a.severity] ?? 4) - (SEV_RANK[b.severity] ?? 4));
+    return `<details class="ioc-group fgroup" data-fg-group="${escapeHtml(k)}"${_fgClosed.has(k) ? "" : " open"}>
+      <summary><b>${escapeHtml(label(k))}</b> <span class="muted">· <span data-fg-gcount="${escapeHtml(k)}">${fs.length}</span></span>
+        <span class="fgroup-sev">${sevChips(fs)}</span> <span class="hint-line fgroup-marks">${escapeHtml(markLine(fs))}</span></summary>
+      ${table(FINDING_HEADERS, findingRowsHtml(fs, ids))}
+    </details>`;
+  }).join("");
+  return `<div class="fg-pane">
+    <div class="ioc-toolbar">
+      <select class="fg-source" aria-label="Show one source">${opts}</select>
+      <input class="fg-q" type="search" placeholder="filter findings…" aria-label="Filter findings">
+      <select class="fg-sev" aria-label="Minimum severity"><option value="">any severity</option>
+        <option value="0">high</option><option value="1">medium or higher</option><option value="2">low or higher</option></select>
+      <select class="fg-mark" aria-label="Mark"><option value="">any mark</option><option value="unreviewed">unreviewed</option>
+        <option value="true_positive">True positive</option><option value="false_positive">False positive</option>
+        <option value="suspicious">Suspicious</option><option value="informational">Informational</option></select>
+      <button class="btn btn-ghost btn-sm fg-reset" type="button">Reset</button>
+      <button class="btn btn-ghost btn-sm fg-expand" type="button">Expand all</button>
+      <button class="btn btn-ghost btn-sm fg-collapse" type="button">Collapse all</button>
+    </div>
+    <p class="hint-line fg-summary">${findings.length} finding(s) from ${keys.length} source(s)</p>
+    <div class="ioc-chips">${chips}</div>
+    ${groups}
+    <p class="hint-line fg-empty" hidden>No finding matches the filter.</p>
+  </div>`;
+}
+
+function wireFindingGroups(root) {
+  const pane = root.querySelector(".fg-pane");
+  if (!pane) return;
+  const src = pane.querySelector(".fg-source"), q = pane.querySelector(".fg-q");
+  const sev = pane.querySelector(".fg-sev"), mark = pane.querySelector(".fg-mark");
+  const groups = [...pane.querySelectorAll("[data-fg-group]")];
+  const save = () => { try { localStorage.setItem("dtx.findingGroupsClosed", JSON.stringify([..._fgClosed])); } catch (e) { /* per-viewer only */ } };
+  const apply = () => {
+    const only = src.value, needle = q.value.trim().toLowerCase();
+    const maxRank = sev.value === "" ? 9 : Number(sev.value), mk = mark.value;
+    let shown = 0, nsrc = 0;
+    groups.forEach((g) => {
+      const k = g.dataset.fgGroup;
+      let n = 0;
+      g.querySelectorAll("[data-frow]").forEach((r) => {
+        const h = r.dataset.hay;
+        const rank = SEV_RANK[h.split(" ", 1)[0]] ?? 4;
+        const msel = r.querySelector(".mark-select");      // live value: marks changed after load count
+        const state = msel ? msel.value : "unreviewed";
+        const ok = (!needle || h.includes(needle)) && rank <= maxRank && (!mk || state === mk);
+        r.hidden = !ok; if (ok) n++;
+      });
+      pane.querySelector(`[data-fg-gcount="${CSS.escape(k)}"]`).textContent = n;
+      pane.querySelector(`[data-fg-count="${CSS.escape(k)}"]`).textContent = n;
+      const chip = pane.querySelector(`[data-fg-chip="${CSS.escape(k)}"]`);
+      chip.classList.toggle("active", only === k);
+      chip.classList.toggle("empty", n === 0);
+      const vis = n > 0 && (!only || only === k);
+      g.hidden = !vis;
+      if (vis) { shown += n; nsrc++; }
+    });
+    const filtered = only || needle || sev.value || mk;
+    pane.querySelector(".fg-summary").textContent = `${shown} finding(s) from ${nsrc} source(s)` + (filtered ? " (filtered)" : "");
+    pane.querySelector(".fg-empty").hidden = shown > 0;
+  };
+  [src, sev, mark].forEach((el) => el.addEventListener("change", apply));
+  q.addEventListener("input", apply);
+  pane.querySelector(".fg-reset").addEventListener("click", () => { src.value = ""; q.value = ""; sev.value = ""; mark.value = ""; apply(); });
+  groups.forEach((g) => g.addEventListener("toggle", () => {
+    if (g.open) _fgClosed.delete(g.dataset.fgGroup); else _fgClosed.add(g.dataset.fgGroup);
+    save();
+  }));
+  pane.querySelector(".fg-expand").addEventListener("click", () => groups.forEach((g) => { g.open = true; }));
+  pane.querySelector(".fg-collapse").addEventListener("click", () => groups.forEach((g) => { g.open = false; }));
+  pane.querySelectorAll("[data-fg-chip]").forEach((c) => c.addEventListener("click", () => {
+    const k = c.dataset.fgChip;
+    src.value = src.value === k ? "" : k;
+    apply();
+    const g = pane.querySelector(`[data-fg-group="${CSS.escape(k)}"]`);
+    if (g && src.value) { g.open = true; g.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
+  }));
 }
 
 // chains present in the current nested tree (set while building the pane)
@@ -2213,6 +2334,7 @@ function renderSubtabs() {
   wireAddMarks(bodyEl, _openCaseId);
   wirePivots(bodyEl);
   wireIocs(bodyEl);
+  wireFindingGroups(bodyEl);
   wireNet(bodyEl, _openCaseId);
   wireUnlock(bodyEl, _openCaseId);
   wireFind(bodyEl);
