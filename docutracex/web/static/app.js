@@ -2304,15 +2304,18 @@ let _tasksPoll = null;
 
 function taskProgress(t) {
   if (TASK_ACTIVE.has(t.state)) {
+    // the step being run now (live), e.g. "● nested: recursive scan…"
+    const now = t.state === "running" && t.phase && !["analyzing", "network check", "queued"].includes(t.phase)
+      ? escapeHtml(t.phase.split(" · ")[0].slice(0, 60)) : "working";
     return t.progress == null
-      ? '<span class="spin" aria-label="working">●</span> working'
+      ? `<span class="spin" aria-label="working">●</span> ${now}`
       : `${Math.round(t.progress * 100)}%`;
   }
   return "—";
 }
 
 const STEP_STATE_CLS = {
-  ok: "ok", ok_with_findings: "warn", error: "bad", unavailable: "muted", skipped: "muted",
+  ok: "ok", ok_with_findings: "warn", error: "bad", unavailable: "muted", skipped: "muted", running: "warn",
 };
 
 function stepsTable(steps) {
@@ -2326,7 +2329,8 @@ function stepsTable(steps) {
     return `<tr>
       <td>${escapeHtml(s.step)}</td>
       <td><span class="badge badge-${cls}">${escapeHtml(s.status)}</span></td>
-      <td class="mono">${s.duration_s != null ? fmtDuration(s.duration_s) : ""}</td>
+      <td class="mono">${s.duration_s != null ? fmtDuration(s.duration_s)
+        : (s.status === "running" && s.started_utc ? `<span data-elapsed-from="${escapeHtml(s.started_utc)}">${fmtDuration(elapsedSince(s.started_utc))}</span>` : "")}</td>
       <td class="hint-line">${extra.join(" · ")}</td>
     </tr>`;
   }).join("");
