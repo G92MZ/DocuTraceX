@@ -43,6 +43,8 @@ tools = [
     # Deep binary parsing (PE: imphash, Rich header, PDB, Authenticode verified,
     # manifest, mitigations; ELF / Mach-O) — run in its own child process.
     "lief>=0.15",
+    # Binary padding removal (T1027.001): strips overlay/section/resource junk.
+    "debloat>=1.6",
     # Encrypted Office detection + default-password decryption (evasion check).
     "msoffcrypto-tool>=5.1",
     # Excel 4.0 (XLM) macro deobfuscation (hidden macro sheets, evasion).

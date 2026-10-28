@@ -122,7 +122,8 @@ def test_pe_analyze_skips_floss_capa_when_unpacked(tmp_path, monkeypatch) -> Non
     r = pe.analyze(p, "s.exe", run_tools=True, unpack_dir=tmp_path / "u")
     assert called == []
     assert r["floss"]["status"] == "skipped" and "unpacked" in r["floss"]["detail"]
-    assert r["_unpacked_files"] == [(str(tmp_path / "a.exe"), "a.exe")]
+    assert [(c["path"], c["filename"], c["recipe"][0]) for c in r["_children"]] == [
+        (str(tmp_path / "a.exe"), "a.exe", "unpack")]
     assert r["unpack"]["status"] == "unpacked" and "_files" not in r["unpack"]
 
 
@@ -171,7 +172,7 @@ def test_unpacked_files_become_nested_children(_client) -> None:
     import json
     res = _run(_client, "sample_packed.exe", _UPX_PE)
     item = json.loads((res / "msi.json").read_text())["items"][0]
-    assert item["unpack"]["status"] == "unpacked" and "_unpacked_files" not in item
+    assert item["unpack"]["status"] == "unpacked" and "_children" not in item
     tree = json.loads((res / "nested.json").read_text())["tree"]
     kids = {n["filename"]: n for n in tree if n.get("source") == "unpack"}
     assert set(kids) == {"payload.ps1", "inner.exe"}
@@ -196,3 +197,32 @@ def test_packed_pe_inside_an_archive_is_unpacked_too(_client) -> None:
     exe = next(n for n in nodes if n["filename"] == "factura_visor.exe")
     assert {"payload.ps1", "inner.exe"} <= {c["filename"] for c in exe.get("children") or []}
     assert next(c for c in exe["children"] if c["filename"] == "payload.ps1")["recipe"] == ["unpack", "upx"]
+
+
+@pytest.mark.skipif(__import__("importlib").util.find_spec("debloat") is None, reason="debloat not installed")
+def test_debloat_padded_pe(tmp_path) -> None:
+    from docutracex.parsers import debloat_pe
+    src = tmp_path / "big.exe"
+    src.write_bytes(ms.bloated_exe())
+    rec = debloat_pe.run(src, tmp_path / "out" / "big.exe")
+    assert rec["status"] == "debloated" and rec["removed"] > 20 * 1024 * 1024
+    assert (tmp_path / "out" / "big.exe").read_bytes()[:2] == b"MZ"
+    small = tmp_path / "small.exe"
+    small.write_bytes(ms.lief_helper_dll())
+    assert debloat_pe.run(small, tmp_path / "o2" / "s.exe")["status"] == "skipped"
+
+
+@pytest.mark.skipif(__import__("importlib").util.find_spec("debloat") is None, reason="debloat not installed")
+def test_bloated_case_real_binary_is_nested(_client) -> None:
+    import json
+    res = _run(_client, "sample_bloated_invoice.exe", ms.bloated_exe())
+    item = json.loads((res / "msi.json").read_text())["items"][0]
+    assert item["debloat"]["status"] == "debloated"
+    assert "pe_bloated" in {f["rule"] for f in item["findings"]}
+    assert item["unpack"]["status"] == "skipped"
+    tree = json.loads((res / "nested.json").read_text())["tree"]
+    child = next(n for n in tree if n.get("source") == "debloat")
+    assert child["recipe"][0] == "debloat" and child["kind"] == "binary"
+    # the real binary's own analysis (LIEF etc.) ran on the child
+    assert "lief_forwarded_exports" in {f["rule"] for f in child.get("findings") or []} or not \
+        __import__("importlib").util.find_spec("lief")

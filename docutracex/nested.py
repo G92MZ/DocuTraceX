@@ -291,12 +291,10 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
             from .parsers import msi
             it = msi.analyze_binary(abs_path, name,
                                     (work / msi.UNPACK_DIRNAME) if depth < MAX_DEPTH else None)
-            unpacked = it.pop("_unpacked_files", [])
-            up = it.get("unpack") or {}
-            for fp, fn in unpacked:
-                kids.append((Path(fp), Path(fn).name))
-                origins[str(Path(fp))] = f"unpacked from {name} ({up.get('tool') or up.get('family') or 'unpacker'})"
-                recipes[str(Path(fp))] = ["unpack", str(up.get("family") or up.get("tool") or "")]
+            for ch in it.pop("_children", []) or []:   # debloated / unpacked files
+                kids.append((Path(ch["path"]), ch["filename"]))
+                origins[str(Path(ch["path"]))] = ch["origin"]
+                recipes[str(Path(ch["path"]))] = ch.get("recipe") or []
             mods["msi"] = {"module": "msi", "items": [it], "findings": it.get("findings", [])}
             add_findings(it.get("findings"), "msi")
         elif kind == "java":
