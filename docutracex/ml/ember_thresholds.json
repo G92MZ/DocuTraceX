@@ -1,0 +1,101 @@
+{
+  "source": "EMBER2024 test + challenge sets, computed with .github/ember (CI) \u2014 threshold = score at 1% FPR",
+  "models": {
+    "Win32": {
+      "sha256": "b1e9fc174e4fcc6c0aba3ff29eb6d96ee9e240057f76940a8a1d6009ac0a4267",
+      "size": 3741926,
+      "num_feature": 2568,
+      "roc_auc": 0.9984451791820989,
+      "threshold_fpr_0.01": 0.5321910694858795,
+      "tpr_at_fpr_0.01": 0.9735944444444444,
+      "threshold_fpr_0.001": 0.9260534547829673,
+      "tpr_at_fpr_0.001": 0.9114833333333333,
+      "challenge_n": 3225,
+      "challenge_detected_at_1pct_fpr": 0.715968992248062
+    },
+    "Win64": {
+      "sha256": "8eddddc26eb346d74810a0dfcc672342eca5709ece4da259934d6d3c77ca971b",
+      "size": 3729014,
+      "num_feature": 2568,
+      "roc_auc": 0.9988507486111111,
+      "threshold_fpr_0.01": 0.5594784695202127,
+      "tpr_at_fpr_0.01": 0.9830833333333333,
+      "threshold_fpr_0.001": 0.9789164304927981,
+      "tpr_at_fpr_0.001": 0.9244,
+      "challenge_n": 814,
+      "challenge_detected_at_1pct_fpr": 0.597051597051597
+    },
+    "Dot_Net": {
+      "sha256": "cbd91b4a823d5dac3f56f38640a5599836501ccbd4fcce273d28c9aed0afc24c",
+      "size": 3697641,
+      "num_feature": 2568,
+      "roc_auc": 0.9979700455555556,
+      "threshold_fpr_0.01": 0.9329773180536799,
+      "tpr_at_fpr_0.01": 0.9566333333333333,
+      "threshold_fpr_0.001": 0.9977165624868561,
+      "tpr_at_fpr_0.001": 0.8416,
+      "challenge_n": 829,
+      "challenge_detected_at_1pct_fpr": 0.7973462002412546
+    },
+    "PDF": {
+      "sha256": "a7e30eb883f8918cf28aaa98b6124cf2eb25a98ea3d58f3053a4fb49e24c3161",
+      "size": 3749426,
+      "num_feature": 2568,
+      "roc_auc": 0.9912552777777778,
+      "threshold_fpr_0.01": 0.41298968182723267,
+      "tpr_at_fpr_0.01": 0.9275,
+      "threshold_fpr_0.001": 0.9817665312125924,
+      "tpr_at_fpr_0.001": 0.8443333333333334,
+      "challenge_n": 805,
+      "challenge_detected_at_1pct_fpr": 0.5714285714285714
+    },
+    "ELF": {
+      "sha256": "8e4072938955ac6020f80bca6cff7c12e97865102d578b3099e2011048eb9c43",
+      "size": 3764582,
+      "num_feature": 2568,
+      "roc_auc": 0.9929004444444444,
+      "threshold_fpr_0.01": 0.9957756021784342,
+      "tpr_at_fpr_0.01": 0.914,
+      "threshold_fpr_0.001": 0.999991000987029,
+      "tpr_at_fpr_0.001": 0.5836666666666667,
+      "challenge_n": 386,
+      "challenge_detected_at_1pct_fpr": 0.30310880829015546
+    },
+    "PE": {
+      "sha256": "4252027863492ac138785c8c18576f43dad77d00faddc14e8c0072e8db419f99",
+      "size": 3756042,
+      "num_feature": 2568,
+      "roc_auc": 0.9981880554115227,
+      "threshold_fpr_0.01": 0.6343062161056967,
+      "tpr_at_fpr_0.01": 0.9674333333333334,
+      "threshold_fpr_0.001": 0.955601735284901,
+      "tpr_at_fpr_0.001": 0.8850703703703704,
+      "challenge_n": 4868,
+      "challenge_detected_at_1pct_fpr": 0.5790879211175021,
+      "types": [
+        "Win32",
+        "Win64",
+        "Dot_Net"
+      ]
+    },
+    "all": {
+      "sha256": "af4ec038685797c586142d177965fe451cac96f424f631aeb66f8d116c161d07",
+      "size": 3759761,
+      "num_feature": 2568,
+      "roc_auc": 0.9977808099459153,
+      "threshold_fpr_0.01": 0.6639730654408015,
+      "tpr_at_fpr_0.01": 0.9610716845878137,
+      "threshold_fpr_0.001": 0.9573738613581335,
+      "tpr_at_fpr_0.001": 0.864831541218638,
+      "challenge_n": 6059,
+      "challenge_detected_at_1pct_fpr": 0.5292952632447598,
+      "types": [
+        "ELF",
+        "Win64",
+        "Dot_Net",
+        "PDF",
+        "Win32"
+      ]
+    }
+  }
+}

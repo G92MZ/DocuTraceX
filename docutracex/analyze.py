@@ -927,6 +927,20 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         prev_yara = read_json(paths.subresult("yara"))
         if prev_yara and prev_yara.get("rule_count") and "yara" not in ran:
             ran.append("yara")
+    # Machine Learning (EMBER2024 LightGBM) on every PE / PDF / ELF object of the
+    # case (original + nested, unpacked / debloated included). Like YARA: shown in
+    # its own tab, a finding only once the analyst marks it.
+    try:
+        from .ml import ember_ml
+        nested_tree = (read_json(paths.subresult("nested")) or {}).get("tree") or []
+        if ember_ml.targets(paths.root, original, nested_tree):
+            mres = run("ml: EMBER2024 LightGBM classifier on every PE / PDF / ELF object",
+                       lambda: ember_ml.analyze_case(paths.root, original, nested_tree))
+            write_subresult(paths, "ml", mres)
+            if "ml" not in ran:
+                ran.append("ml")
+    except Exception as exc:  # noqa: BLE001  (an optional layer never fails the case)
+        log.warning("ML classification skipped for %s: %s", paths.root.name, exc)
     # Network checks (on demand, Checks tab) are evidence too: kept as well.
     prev_net = read_json(paths.subresult("netcheck"))
     if prev_net and prev_net.get("checks"):
@@ -994,7 +1008,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto",
                "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole",
                "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules", "javascript", "rtf",
-               "powershell", "vbscript", "batch", "shortcut", "msi", "python", "java", "onenote")
+               "powershell", "vbscript", "batch", "shortcut", "msi", "python", "java", "onenote", "ml")
 # Modules whose findings feed the consolidated view (includes derived ones).
 _COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file", "pyinstaller")
 
@@ -1142,6 +1156,10 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
     elif module == "yara":
         from .parsers import yara_scan
         res = yara_scan.analyze(original, ed)
+    elif module == "ml":
+        from .ml import ember_ml
+        res = ember_ml.analyze_case(paths.root, original,
+                                    (read_json(paths.subresult("nested")) or {}).get("tree") or [])
     elif module == "ole":
         from .parsers import ole_legacy
         res = ole_legacy.analyze(original, ed)

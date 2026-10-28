@@ -2471,6 +2471,11 @@ async function openComponents(analysisId, keepTab, viewId) {
     if (yara && yara.rule_count) {
       sections.push({ id: "yara", label: `YARA (${yara.match_count || 0})`, render: () => paneYara(yara, d.yara_findings || findings, analysisId) });
     }
+    const mlm = mods.ml;
+    if (mlm && (mlm.items || []).length) {
+      sections.push({ id: "ml", label: `Machine Learning (${(mlm.items || []).filter((x) => x.status === "ok").length})`,
+                      render: () => paneMl(mlm, d.ml_findings || []) });
+    }
     const jsm = mods.javascript;
     if (jsm && (jsm.scripts || []).length) {
       sections.push({ id: "javascript", label: `JavaScript (${jsm.scripts.length})`, html: paneJavascript(jsm) });
@@ -3156,6 +3161,68 @@ function paneYara(yara, findings, analysisId) {
     </details>`;
   });
   return `<div class="yara-pane">${html}</div>`;
+}
+
+// --- Machine Learning (EMBER2024) ---------------------------------------------------
+// One row per classified object (original + nested PE / PDF / ELF); each row opens
+// with the score, the calibrated threshold and WHY (feature blocks + top features).
+// Like YARA: not a finding until the analyst marks it.
+function paneMl(ml, findings) {
+  const byId = {};
+  (findings || []).forEach((f) => { byId[f.id] = f; });
+  const items = ml.items || [];
+  const pct = (x) => (x == null ? "" : `${(100 * x).toFixed(1)}%`);
+  const head = `<p class="hint-line">Static classifier <b>${escapeHtml(ml.engine || "EMBER2024 · LightGBM")}</b> on every PE, .NET, PDF and ELF object of the case
+    (original, extracted, unpacked, debloated, decrypted). The score is compared with a threshold calibrated at a <b>1% false-positive rate</b>
+    on the EMBER2024 test set of that file type. It is a <b>complementary indicator, not a verdict</b>: on evasive malware that no antivirus
+    detected at first (EMBER2024 challenge set) only part is caught at that threshold (shown per model).
+    <b>Results are not findings until you mark them</b>; a marked result joins Findings and True positives reach the report.</p>`;
+  if (!items.length) return head + `<p class="hint-line">${escapeHtml(ml.detail || "No PE, PDF or ELF object in this case.")}</p>`;
+  const rows = items.map((it, i) => {
+    const f = byId[it.finding_id];
+    const verdict = it.status !== "ok" ? `<span class="badge badge-muted">${escapeHtml(it.status)}</span>`
+      : it.threshold == null ? '<span class="badge badge-muted">uncalibrated</span>'
+      : it.score >= it.threshold ? '<span class="badge badge-bad">above threshold</span>'
+      : '<span class="badge badge-ok">below threshold</span>';
+    const mk = f && f.mark && f.mark.state && f.mark.state !== "unreviewed" ? `<span class="badge badge-muted">${escapeHtml(f.mark.state)}</span>` : "";
+    return `<details class="disclose ml-item"${i === 0 && it.status === "ok" ? " open" : ""}>
+      <summary>
+        <span class="mono">${escapeHtml(it.label || "")}</span>
+        <span class="hint-line">${escapeHtml(it.format || it.file_type || "")}</span>
+        ${it.status === "ok" ? `<span class="mono"><b>${escapeHtml(it.score.toFixed(4))}</b></span>` : ""}
+        ${verdict} ${mk}
+      </summary>
+      <div style="padding:8px 10px">${mlDetail(it, f, pct)}</div>
+    </details>`;
+  }).join("");
+  return `<div class="ml-pane">${head}${rows}</div>`;
+}
+
+function mlDetail(it, f, pct) {
+  if (it.status !== "ok") return `<p class="hint-line">${escapeHtml(it.detail || it.status)}</p>`;
+  const m = it.metrics || {};
+  const info = kv([
+    ["Object", it.label], ["Model", it.model], ["Score", it.score.toFixed(6)],
+    ["Threshold (1% FPR)", it.threshold != null ? it.threshold.toFixed(6) : "not calibrated"],
+    ["Detection at that threshold", m["tpr_at_fpr_0.01"] != null ? `${pct(m["tpr_at_fpr_0.01"])} of the EMBER2024 test malware` : ""],
+    ["On evasive malware", m.challenge_detected_at_1pct_fpr != null ? `${pct(m.challenge_detected_at_1pct_fpr)} of the challenge set` : ""],
+    ["Recipe", (it.recipe || []).join(" → ")],
+  ]);
+  const mark = f ? markControlsHtml(f) : '<span class="hint-line">re-run Machine Learning to mark</span>';
+  const blocks = Object.entries(it.blocks || {}).filter(([, v]) => Math.abs(v) >= 0.01);
+  const max = Math.max(0.0001, ...blocks.map(([, v]) => Math.abs(v)));
+  const bars = blocks.map(([k, v]) => `<div class="ml-bar"><span class="ml-bar-label">${escapeHtml(k)}</span>
+      <span class="ml-bar-track"><span class="ml-bar-fill ${v > 0 ? "ml-pos" : "ml-neg"}" style="width:${(100 * Math.abs(v) / max).toFixed(1)}%"></span></span>
+      <span class="mono">${v > 0 ? "+" : ""}${v.toFixed(2)}</span></div>`).join("");
+  const top = itable(["Feature", "Block", "Value", "Contribution", "In this file"],
+    (it.top_features || []).map((t) => [t.feature, t.block, Number.isInteger(t.value) ? t.value : t.value.toFixed(4),
+      `${t.contribution > 0 ? "+" : ""}${t.contribution.toFixed(3)} ${t.contribution > 0 ? "→ malicious" : "→ benign"}`,
+      (t.matches || []).join(", ")]));
+  return `${mark}${info}
+    <h4>Why — contribution by feature block</h4>
+    <p class="hint-line">LightGBM TreeSHAP: positive pushes towards malicious, negative towards benign (log-odds; base ${escapeHtml((it.bias || 0).toFixed(2))}).</p>
+    <div class="ml-bars">${bars}</div>
+    <h4>Top features</h4>${top}`;
 }
 
 // --- Settings (network) --------------------------------------------------------

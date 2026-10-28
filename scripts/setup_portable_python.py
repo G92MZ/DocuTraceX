@@ -914,6 +914,67 @@ def install_capa() -> bool:
     return _install_mandiant_exe("capa", CAPA_URL, CAPA_SHA256, CAPA_DIR, "capa.exe")
 
 
+EMBER_DIR = ROOT / "tools" / "ember"
+EMBER_URL = "https://huggingface.co/joyce8/EMBER2024-benchmark-models/resolve/main/EMBER2024_{}.model"
+# patched oscrypto: PyPI's 1.3.0 cannot parse OpenSSL 3.0.1x version strings
+# (Linux/macOS); signify 0.7.1 (EMBER's Authenticode features) imports it.
+OSCRYPTO_FIX = "oscrypto @ git+https://github.com/wbond/oscrypto.git@d5f3437ed24257895ae1edd9e503cfb352e635a8"
+
+
+def _ember_models() -> dict:
+    import json
+    f = ROOT / "docutracex" / "ml" / "ember_thresholds.json"
+    try:
+        return json.loads(f.read_text(encoding="utf-8")).get("models") or {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _ember_ok() -> bool:
+    models = _ember_models()
+    return bool(models) and all((EMBER_DIR / f"EMBER2024_{k}.model").is_file() for k in models)
+
+
+def install_ember() -> bool:
+    """EMBER2024 LightGBM detection models (Machine Learning tab): ~26 MB from
+    Hugging Face, each verified against its pinned SHA-256."""
+    import hashlib
+
+    models = _ember_models()
+    if not models:
+        print("[!] ember: pinned model list (docutracex/ml/ember_thresholds.json) missing.")
+        return False
+    if not sys.platform.startswith("win"):
+        py = _portable_python()
+        r = subprocess.run([str(py), "-c", "import signify.authenticode"], capture_output=True, text=True)
+        if r.returncode != 0 and "libcrypto" in (r.stderr or ""):
+            print("[>] ember: installing the patched oscrypto (OpenSSL 3 version detection)")
+            subprocess.run([str(py), "-m", "pip", "install", "--force-reinstall", "--no-deps", OSCRYPTO_FIX],
+                           check=False)
+    EMBER_DIR.mkdir(parents=True, exist_ok=True)
+    ok = True
+    for name, meta in models.items():
+        dest = EMBER_DIR / f"EMBER2024_{name}.model"
+        if dest.is_file() and hashlib.sha256(dest.read_bytes()).hexdigest() == meta.get("sha256"):
+            continue
+        print(f"[>] ember: downloading EMBER2024_{name}.model")
+        try:
+            data = _get(EMBER_URL.format(name))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[!] ember: could not download {name} ({exc}).")
+            ok = False
+            continue
+        got = hashlib.sha256(data).hexdigest()
+        if got != meta.get("sha256"):
+            print(f"[!] ember: SHA-256 mismatch for {name} (got {got}) — NOT installed.")
+            ok = False
+            continue
+        dest.write_bytes(data)
+    if ok:
+        print(f"[+] EMBER2024 models at {EMBER_DIR}")
+    return ok
+
+
 def verify() -> None:
     py = _portable_python()
     print("[>] Verifying the portable runtime")
@@ -965,6 +1026,8 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
     install_cfr()        # CFR (.class decompiler jar; run with the host JVM)
     install_floss()      # Mandiant FLOSS standalone (PE obfuscated strings; Windows)
     install_capa()       # Mandiant capa standalone (PE capabilities/ATT&CK; Windows)
+    _clear_mark("ember")
+    install_ember()      # EMBER2024 LightGBM models (Machine Learning tab)
     verify()
 
 
@@ -1036,7 +1099,8 @@ def _ensure_optional() -> None:
                               ("pycdc", _pycdc_ok, install_pycdc),
                               ("cfr", _cfr_ok, install_cfr),
                               ("floss", _floss_ok, install_floss),
-                              ("capa", _capa_ok, install_capa)):
+                              ("capa", _capa_ok, install_capa),
+                              ("ember", _ember_ok, install_ember)):
         if name in ("floss", "capa") and not sys.platform.startswith("win"):
             continue  # Windows-only standalone builds
         try:

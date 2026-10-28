@@ -573,3 +573,13 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 .ftree-findings table { margin-top: 6px; }
 
 .nested-origin.recipe { font-size: 12px; color: var(--text-dim); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+
+/* Machine Learning tab */
+.ml-item summary { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.ml-bars { display: grid; gap: 4px; margin: 6px 0 12px; max-width: 640px; }
+.ml-bar { display: grid; grid-template-columns: 140px 1fr 64px; gap: 8px; align-items: center; font-size: 13px; }
+.ml-bar-track { height: 8px; background: #1b2330; border-radius: 4px; overflow: hidden; }
+.ml-bar-fill { display: block; height: 100%; border-radius: 4px; }
+.ml-pos { background: #f85149; }
+.ml-neg { background: #3fb950; }
+@media (max-width: 640px) { .ml-bar { grid-template-columns: 100px 1fr 56px; } }
