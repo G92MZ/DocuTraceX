@@ -655,7 +655,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             ran.append("archive")
             overall_counts["components"] = arc["counts"]["entries"]
             findings_total += arc["counts"]["findings"]
-        items = [{"path": f, "filename": Path(n).name} for f, n in files]
+        items = [{"path": f, "filename": Path(n).name, "member": n} for f, n in files]
         if items:
             nested_res = run("nested: recursive scan of archive entries",
                              lambda: nested.scan_children(items, paths, unlock_ctx={"user": user_pw}))

@@ -393,49 +393,74 @@ def noise(n: int, seed: int) -> bytes:
 
 def elf(*, strings: list[str], code: bytes = b"\xc3", interp: str | None = None,
         needed: list[str] | None = None, comment: str = "GCC: (Debian 12.2.0-14) 12.2.0",
-        extra: list[tuple[str, bytes]] | None = None) -> bytes:
-    """An inert ELF64 x86-64 executable: one PT_LOAD, entry = ``ret``; sections
-    .interp / .text / .rodata / .dynstr / .comment / extra / .shstrtab."""
-    base = 0x400000
-    secs: list[tuple[str, bytes, int, int]] = []          # name, data, type, flags
+        extra: list[tuple[str, bytes]] | None = None, shared: bool = False, soname: str | None = None,
+        machine: int = 0x3E) -> bytes:
+    """An inert ELF64 executable (or ``shared`` object): one PT_LOAD, entry =
+    ``ret``; sections .interp / .text / .rodata / .dynstr / .dynamic /
+    .comment / extra / .shstrtab. ``needed`` libraries become real DT_NEEDED
+    entries (PT_DYNAMIC), so LIEF / readelf list them like a real binary."""
+    base = 0 if shared else 0x400000
+    secs: list[list] = []                                   # name, data, type, flags, link, entsize
     if interp:
-        secs.append((".interp", interp.encode() + b"\x00", 1, 2))
-    secs.append((".text", code, 1, 6))
-    secs.append((".rodata", _strz(*strings), 1, 2))
-    if needed:
-        secs.append((".dynstr", b"\x00" + _strz(*needed), 3, 2))
-    secs.append((".comment", comment.encode() + b"\x00", 1, 0x30))
+        secs.append([".interp", interp.encode() + b"\x00", 1, 2, 0, 0])
+    secs.append([".text", code, 1, 6, 0, 0])
+    secs.append([".rodata", _strz(*strings), 1, 2, 0, 0])
+    dyn_names = list(needed or []) + ([soname] if soname else [])
+    if dyn_names:
+        dynstr = b"\x00"
+        offs = {}
+        for n in dyn_names:
+            offs[n] = len(dynstr)
+            dynstr += n.encode() + b"\x00"
+        secs.append([".dynstr", dynstr, 3, 2, 0, 0])
+        n_dyn = len(needed or []) + (1 if soname else 0) + 3
+        secs.append([".dynamic", b"\x00" * (16 * n_dyn), 6, 3, len(secs), 16])   # link → .dynstr index
+    secs.append([".comment", comment.encode() + b"\x00", 1, 0x30, 0, 0])
     for name, data in extra or []:
-        secs.append((name, data, 1, 2))
+        secs.append([name, data, 1, 2, 0, 0])
     shstr = b"\x00"
     name_off = []
-    for n, *_ in secs + [(".shstrtab", b"", 3, 0)]:
+    for sec in secs + [[".shstrtab"]]:
         name_off.append(len(shstr))
-        shstr += n.encode() + b"\x00"
-    phoff, phnum = 64, 1
+        shstr += sec[0].encode() + b"\x00"
+    names = [x[0] for x in secs]
+    phnum = 2 if dyn_names else 1
+    phoff = 64
     off = phoff + 56 * phnum
     layout = []
-    for name, data, typ, flags in secs:
+    for sec in secs:
         off = _al(off, 16)
         layout.append(off)
-        off += len(data)
+        off += len(sec[1])
+    if dyn_names:
+        ds, dy = names.index(".dynstr"), names.index(".dynamic")
+        ents = [(1, offs[n]) for n in needed or []]
+        if soname:
+            ents.append((14, offs[soname]))
+        ents += [(5, base + layout[ds]), (10, len(secs[ds][1])), (0, 0)]
+        secs[dy][1] = b"".join(struct.pack("<qQ", t, v) for t, v in ents)
     shstr_off = off
     off += len(shstr)
     shoff = _al(off, 8)
-    text_off = layout[[s[0] for s in secs].index(".text")]
+    text_off = layout[names.index(".text")]
     ehdr = b"\x7fELF" + bytes([2, 1, 1, 0]) + b"\x00" * 8
-    ehdr += struct.pack("<HHIQQQIHHHHHH", 2, 0x3E, 1, base + text_off, phoff, shoff, 0, 64, 56, phnum,
-                        64, len(secs) + 2, len(secs) + 1)
+    ehdr += struct.pack("<HHIQQQIHHHHHH", 3 if shared else 2, machine, 1, base + text_off, phoff, shoff, 0, 64, 56,
+                        phnum, 64, len(secs) + 2, len(secs) + 1)
     phdr = struct.pack("<IIQQQQQQ", 1, 5, 0, base, base, shoff, shoff, 0x1000)
+    if dyn_names:
+        dy = names.index(".dynamic")
+        phdr += struct.pack("<IIQQQQQQ", 2, 6, layout[dy], base + layout[dy], base + layout[dy],
+                            len(secs[dy][1]), len(secs[dy][1]), 8)
     body = bytearray(ehdr + phdr)
-    for (name, data, typ, flags), o in zip(secs, layout):
-        body = body.ljust(o, b"\x00") + data
+    for sec, o in zip(secs, layout):
+        body = body.ljust(o, b"\x00") + sec[1]
     body += shstr
     body = body.ljust(shoff, b"\x00")
     body += b"\x00" * 64                                   # SHN_UNDEF
-    for i, ((name, data, typ, flags), o) in enumerate(zip(secs, layout)):
+    for i, (sec, o) in enumerate(zip(secs, layout)):
+        name, data, typ, flags, link, entsize = sec
         body += struct.pack("<IIQQQQIIQQ", name_off[i], typ, flags, base + o if flags & 2 else 0, o,
-                            len(data), 0, 0, 16 if name == ".text" else 1, 0)
+                            len(data), link, 0, 16 if name == ".text" else 8 if typ == 6 else 1, entsize)
     body += struct.pack("<IIQQQQIIQQ", name_off[-1], 3, 0, 0, shstr_off, len(shstr), 0, 0, 1, 0)
     return bytes(body)
 

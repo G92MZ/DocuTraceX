@@ -138,7 +138,7 @@ def test_times_and_macs_are_not_ipv6() -> None:
             "real ones fe80::1ff:fe23:4567:890a and 2001:0db8:0000:0000:0000:ff00:0042:8329 and ::1")
     res = ioc.extract([{"module": "email", "location": "body", "text": text}])
     v6 = sorted(i["value"] for i in res["iocs"] if i["type"] == "ipv6")
-    assert v6 == ["2001:db8::ff00:42:8329", "::1", "fe80::1ff:fe23:4567:890a"]
+    assert v6 == ["2001:db8::ff00:42:8329", "fe80::1ff:fe23:4567:890a"]      # loopback ::1 is not an IOC
 
 
 def test_url_with_a_non_alphabetic_tld_is_not_an_ioc() -> None:
