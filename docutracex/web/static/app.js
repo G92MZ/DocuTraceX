@@ -2202,6 +2202,7 @@ function renderSubtabs() {
   wireUnlock(bodyEl, _openCaseId);
   wireFind(bodyEl);
   wireInnerTabs(bodyEl);
+  wireMlFamily(bodyEl);
   applyFind();
 }
 
@@ -3172,12 +3173,16 @@ function paneMl(ml, findings) {
   (findings || []).forEach((f) => { byId[f.id] = f; });
   const items = ml.items || [];
   const pct = (x) => (x == null ? "" : `${(100 * x).toFixed(1)}%`);
-  const head = `<p class="hint-line">Static classifier <b>${escapeHtml(ml.engine || "EMBER2024 · LightGBM")}</b> on every PE, .NET, PDF and ELF object of the case
+  const head = `<p class="hint-line">Static classifier <b>${escapeHtml(ml.engine || "EMBER2024 · LightGBM")}</b> on every PE, .NET, PDF, ELF and APK object of the case
     (original, extracted, unpacked, debloated, decrypted). The score is compared with a threshold calibrated at a <b>1% false-positive rate</b>
     on the EMBER2024 test set of that file type. It is a <b>complementary indicator, not a verdict</b>: on evasive malware that no antivirus
     detected at first (EMBER2024 challenge set) only part is caught at that threshold (shown per model).
     <b>Results are not findings until you mark them</b>; a marked result joins Findings and True positives reach the report.</p>`;
-  if (!items.length) return head + `<p class="hint-line">${escapeHtml(ml.detail || "No PE, PDF or ELF object in this case.")}</p>`;
+  const extras = `<p class="hint-line">Tag models: ${escapeHtml((ml.tag_models || []).join(", ") || "not installed")} ·
+    family model: ${ml.family_model ? "installed"
+      : `not installed <button class="btn btn-ghost btn-sm" type="button" data-ml-family>Download family model (459 MB)</button>
+         <span class="hint-line" data-ml-family-state></span>`}</p>`;
+  if (!items.length) return head + extras + `<p class="hint-line">${escapeHtml(ml.detail || "No PE, PDF, ELF or APK object in this case.")}</p>`;
   const rows = items.map((it, i) => {
     const f = byId[it.finding_id];
     const verdict = it.status !== "ok" ? `<span class="badge badge-muted">${escapeHtml(it.status)}</span>`
@@ -3191,11 +3196,68 @@ function paneMl(ml, findings) {
         <span class="hint-line">${escapeHtml(it.format || it.file_type || "")}</span>
         ${it.status === "ok" ? `<span class="mono"><b>${escapeHtml(it.score.toFixed(4))}</b></span>` : ""}
         ${verdict} ${mk}
+        ${(((it.labels || {}).family || [])[0] || {}).confidence === "high" ? `<span class="hint-line">family? ${escapeHtml(it.labels.family[0].name)}</span>` : ""}
       </summary>
       <div style="padding:8px 10px">${mlDetail(it, f, pct)}</div>
     </details>`;
   }).join("");
-  return `<div class="ml-pane">${head}${rows}</div>`;
+  return `<div class="ml-pane">${head}${extras}${rows}</div>`;
+}
+
+// "Download family model": background download in the web service, polled here;
+// when it is done the Machine Learning module is re-run for this case.
+function wireMlFamily(root) {
+  const btn = root.querySelector("[data-ml-family]");
+  if (!btn) return;
+  const out = root.querySelector("[data-ml-family-state]");
+  const mb = (n) => `${Math.round((n || 0) / 1048576)} MB`;
+  let started = false;
+  const poll = async () => {
+    const st = await fetch("/api/settings/ml/family").then((r) => r.json()).catch(() => ({}));
+    if (st.state === "downloading") {
+      btn.disabled = true;
+      out.textContent = `downloading ${mb(st.done)} / ${mb(st.total || st.size)}…`;
+      setTimeout(poll, 1500);
+    } else if ((st.installed || st.state === "done") && !started) {
+      btn.textContent = "Re-run Machine Learning with families";
+      btn.disabled = false;
+      out.textContent = "family model already downloaded.";
+    } else if (st.installed || st.state === "done") {
+      out.textContent = "downloaded — re-running Machine Learning…";
+      const r = await fetch(`/api/cases/${encodeURIComponent(_openCaseId)}/rerun`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ module: "ml" }) });
+      out.textContent = r.ok ? "downloaded — Machine Learning re-run queued (Tasks); reopen the case when it finishes."
+                             : "downloaded — re-run Machine Learning from the case to see families.";
+    } else if (st.state === "error") {
+      btn.disabled = false;
+      out.textContent = `error: ${st.error || "download failed"}`;
+    }
+  };
+  btn.addEventListener("click", async () => {
+    if (started) return;
+    started = true;
+    btn.disabled = true;
+    out.textContent = "starting…";
+    await fetch("/api/settings/ml/family", { method: "POST" });
+    poll();
+  });
+  poll();
+}
+
+const _ML_KIND = { family: "Family", behavior: "Behaviour", packer: "Packer / protector",
+                   file_property: "File property", exploit: "Exploit", group: "Threat group" };
+function mlLabels(it) {
+  const lab = it.labels || {};
+  const kinds = Object.keys(_ML_KIND).filter((k) => (lab[k] || []).length);
+  if (!kinds.length) return "";
+  const chip = (x) => `<span class="badge ${x.confidence === "high" ? "badge-ok" : "badge-muted"}" title="model output ${(100 * x.prob).toFixed(1)}%${x.precision != null ? ` · precision on EMBER2024 malware ${(100 * x.precision).toFixed(0)}%` : ""} · ${escapeHtml(x.confidence)} confidence">${escapeHtml(x.name)} ${(100 * x.prob).toFixed(0)}%</span>`;
+  const rows = kinds.map((k) => `<div><span class="hint-line">${_ML_KIND[k]}</span></div><div>${lab[k].map(chip).join(" ")}</div>`).join("");
+  return `<h4>What it looks like</h4>
+    <p class="hint-line">EMBER2024 family and tag models. Their output names were <b>reconstructed by DocuTraceX</b> (the authors did not publish them)
+      by matching each output with labelled EMBER2024 files. A tag is shown only above its own threshold — green: calibrated for ≥80% precision on
+      EMBER2024 malware with ≤0.2% firing on benign files; grey: ≥50% precision (tags less reliable than that were dropped). Only for objects above the detection threshold
+      (these models were trained on malware). Hints for triage, not attribution.</p>
+    <div class="kv">${rows}</div>`;
 }
 
 function mlDetail(it, f, pct) {
@@ -3218,7 +3280,7 @@ function mlDetail(it, f, pct) {
     (it.top_features || []).map((t) => [t.feature, t.block, Number.isInteger(t.value) ? t.value : t.value.toFixed(4),
       `${t.contribution > 0 ? "+" : ""}${t.contribution.toFixed(3)} ${t.contribution > 0 ? "→ malicious" : "→ benign"}`,
       (t.matches || []).join(", ")]));
-  return `${mark}${info}
+  return `${mark}${info}${mlLabels(it)}
     <h4>Why — contribution by feature block</h4>
     <p class="hint-line">LightGBM TreeSHAP: positive pushes towards malicious, negative towards benign (log-odds; base ${escapeHtml((it.bias || 0).toFixed(2))}).</p>
     <div class="ml-bars">${bars}</div>

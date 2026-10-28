@@ -113,7 +113,7 @@ TOOL_DEPS: list[Dependency] = [
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
     ),
     Dependency(
-        "sklearn", "scikit-learn", "Machine Learning tab: EMBER feature hashing",
+        "mmh3", "mmh3", "Machine Learning tab: EMBER feature hashing (MurmurHash3)",
         required=False,
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
     ),
