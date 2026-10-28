@@ -81,6 +81,10 @@ def _nested_section(nested: dict[str, Any] | None) -> str:
         head = (f"<div class='nnode'><b>{_e(n.get('filename'))}</b> "
                 f"<span class='chip'>{_e(n.get('kind'))}</span> "
                 f"<span class='muted'>{len(fnd)} finding(s)</span>")
+        if n.get("decrypted_from"):
+            recipe = " → ".join(n.get("recipe") or [])
+            head += (f"<div class='muted'>decoded/decrypted from {_e(n['decrypted_from'])}"
+                     + (f"<br>recipe: <code>{_e(recipe)}</code>" if recipe else "") + "</div>")
         inner = "".join(
             f"<div class='nfind'><span class='chip' style='border-color:{_SEV_COLOR.get(f.get('severity'), '#888')};"
             f"color:{_SEV_COLOR.get(f.get('severity'), '#888')}'>{_e(f.get('severity'))}</span> "
