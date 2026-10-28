@@ -854,8 +854,18 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     if other_ran or scripting_file:
         from . import decrypted, nested
         dmods = {m: read_json(paths.subresult(m)) for m in ("javascript", "powershell", "vbscript", "batch", "python")}
-        ditems = decrypted.write(decrypted.payloads_from({k: v for k, v in dmods.items() if v}),
-                                 paths.extracted_dir / decrypted.DIRNAME, {((manifest.get("original") or {}).get("hashes") or {}).get("sha256", "")})
+        # files already in the nested tree (e.g. an attachment whose script is
+        # also collected here) are not added again
+        known = {((manifest.get("original") or {}).get("hashes") or {}).get("sha256", "")}
+
+        def _shas(nodes):  # noqa: ANN001, ANN202
+            for nd in nodes or []:
+                known.add(nd.get("sha256") or "")
+                _shas(nd.get("children"))
+        prev_tree = (read_json(paths.subresult("nested")) or {}).get("tree") or []
+        _shas([nd for nd in prev_tree if not nd.get("decrypted_from")])
+        ditems = decrypted.write(decrypted.payloads_from({k: v for k, v in dmods.items() if v}, paths.root),
+                                 paths.extracted_dir / decrypted.DIRNAME, known)
         if ditems:
             dres = run(f"decrypted: {len(ditems)} recovered stage(s) → nested analysis",
                        lambda: nested.scan_children(ditems, paths, unlock_ctx={"user": user_pw}))
