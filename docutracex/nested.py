@@ -133,6 +133,16 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
         # AeWckx3pKh
         node["size_bytes"] = len(data)
         node["sha256"] = hashlib.sha256(data).hexdigest()
+        printable = sum(1 for b in data[:65536] if 32 <= b < 127 or b in (9, 10, 13))
+        if node["kind"] == "other" and data and printable < min(len(data), 65536) * 0.85:
+            # opaque data (e.g. a decoded blob): its entropy says encrypted /
+            # compressed (≈8) vs. structured
+            import math
+            counts = [0] * 256
+            for b in data[:4 * 1024 * 1024]:
+                counts[b] += 1
+            n = min(len(data), 4 * 1024 * 1024)
+            node["entropy"] = round(-sum(c / n * math.log2(c / n) for c in counts if c), 2)
     except OSError:
         node["error"] = "unreadable"
         return node
@@ -310,7 +320,7 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
     if depth < MAX_DEPTH:
         try:
             from . import decrypted
-            got = decrypted.write(decrypted.payloads_from(mods),
+            got = decrypted.write(decrypted.payloads_from(mods, paths.root),
                                   work / decrypted.DIRNAME / node["sha256"][:12], {node["sha256"]})
             for it in got:
                 kids.append((Path(it["path"]), it["filename"]))
@@ -330,6 +340,15 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
         s = dict(s)
         s["location"] = f"{this_chain} › {s.get('location') or s.get('module', '')}"
         sources_out.append(s)
+    # A plain-text child no analyzer claims (a decoded config, an .ini/.xml/
+    # .txt/.log stage…) is still mined for IOCs as text.
+    if node["kind"] == "other" and not mods and node.get("entropy") is None:
+        try:
+            text = data[:2 * 1024 * 1024].decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001
+            text = ""
+        if text.strip():
+            sources_out.append({"module": "text", "location": f"{this_chain} › text", "text": text})
 
     # The child's own analysis, saved whole so the UI can open it like a case
     # (its tabs: PE, PDF tools, VBA, email…) — "Open analysis" in Nested, and a

@@ -1925,7 +1925,11 @@ function nestedNode(n) {
         ${(n.findings || []).map((f) => `<div class="nested-finding"><span class="badge badge-${SEV_CLASS[f.severity] || "warn"}">${escapeHtml(f.severity)}</span>
           <span class="mono">${escapeHtml(f.tool)}/${escapeHtml(f.rule)}</span> ${escapeHtml(f.detail)}</div>`).join("")}
       </details>`
-    : (n.kind === "other" ? '<span class="badge badge-muted">not analyzable</span>' : '<span class="badge badge-ok">clean</span>');
+    : (n.kind === "other"
+      ? (n.entropy != null
+        ? `<span class="badge badge-${n.entropy >= 7.5 ? "warn" : "muted"}" title="Shannon entropy of the bytes (8 = random: encrypted or compressed)">opaque data · entropy ${n.entropy}${n.entropy >= 7.5 ? " (encrypted/compressed?)" : ""}</span>`
+        : '<span class="badge badge-muted">not analyzable</span>')
+      : '<span class="badge badge-ok">clean</span>');
   let html = `<div class="nested-card nested-${worst}">
     <div class="nested-row">
       <b class="mono nested-name">${escapeHtml(n.filename)}</b>
