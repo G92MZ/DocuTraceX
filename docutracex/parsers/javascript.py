@@ -353,6 +353,20 @@ def _sandbox_findings(sb: dict[str, Any], loc: str, out: list[dict[str, Any]]) -
         out.append(_finding("js_sandbox_smuggling", "high",
                             "Sandbox: builds a Blob and triggers a download (HTML smuggling)", loc,
                             "\n".join(f"{e['name']} {' '.join(e['args'])}" for e in logs if e["kind"] == "dom")[:800]))
+    drops = [e for e in logs if e["kind"] in ("drop", "drop_b64")]
+    if drops:
+        names = ", ".join(sorted({e["name"].rsplit("\\", 1)[-1] for e in drops})[:6])
+        binary = any(e["kind"] == "drop_b64" for e in drops)
+        out.append(_finding("js_sandbox_drop", "high",
+                            f"Sandbox: the script writes {len(drops)} file(s) to disk ({names})"
+                            + (" — binary content, decoded in the script (e.g. MSXML bin.base64)" if binary else "")
+                            + " — analysed as nested children", loc,
+                            "\n".join(e["name"] for e in drops[:8])))
+    decodes = [e for e in logs if e["kind"] == "decode"]
+    if decodes:
+        out.append(_finding("js_sandbox_b64_decode", "medium",
+                            "Sandbox: decodes binary data through MSXML (dataType bin.base64 / bin.hex)", loc,
+                            "\n".join(f"{e['name']}: {' '.join(e['args'])}" for e in decodes[:5])))
     exports = [e for e in logs if e["name"] == "this.exportDataObject"]
     if exports:
         out.append(_finding("pdf_js_export_launch", "high", "Sandbox: PDF script exports (and may launch) an attachment",
