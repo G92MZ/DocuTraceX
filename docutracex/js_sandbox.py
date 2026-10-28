@@ -51,8 +51,8 @@ def _rec(kind: str, name: str, args: list) -> None:
     keeps everything recorded even if it has to kill an endless script.
     Files the script writes ("drop") keep their whole content (up to
     MAX_DROP): they are the next stage, analysed as nested children."""
-    if len(_log) < MAX_LOG or kind == "drop":
-        cap = MAX_DROP if kind == "drop" else MAX_TEXT
+    if len(_log) < MAX_LOG or kind in ("drop", "drop_b64"):
+        cap = MAX_DROP if kind in ("drop", "drop_b64") else MAX_TEXT
         item = {"kind": kind, "name": name, "args": [_js_str(a)[:cap] for a in args]}
         _log.append(item)
         print(json.dumps({"event": item}), flush=True)
@@ -108,7 +108,22 @@ def _expand(s) -> str:
 
 
 def _drop(path, content) -> None:
-    path, content = str(path), str(content)
+    """A file the script writes. Text is logged as is ("drop"); binary (bytes,
+    e.g. a PE decoded through MSXML) as base64 ("drop_b64") so it stays intact."""
+    path = str(path)
+    if isinstance(content, (bytes, bytearray)):
+        data = bytes(content)
+        try:
+            text = data.decode("utf-8")
+            binary = any(ord(c) < 9 for c in text[:4096])
+        except UnicodeDecodeError:
+            text, binary = data.decode("latin-1"), True
+        _FILES[path.lower()] = text
+        if binary:
+            _rec("drop_b64", path, [base64.b64encode(data).decode()])
+            return
+        content = text
+    content = str(content)
     _FILES[path.lower()] = content
     _rec("drop", path, [content])
 
@@ -284,31 +299,103 @@ class _Shell(Recorder):
         return ""
 
 
+class _Bin:
+    """Binary data inside the sandbox (what MSXML's nodeTypedValue or a binary
+    ADODB.Stream hold): kept as bytes so a dropped PE comes out intact."""
+
+    def __init__(self, data: bytes) -> None:
+        self.data = bytes(data)
+        self.length = len(self.data)
+
+    def __str__(self) -> str:
+        return self.data.decode("latin-1")
+
+
+class _XmlNode(Recorder):
+    """MSXML element used as a base64/hex codec: dataType = "bin.base64" /
+    "bin.hex", then .text <-> .nodeTypedValue."""
+
+    def __init__(self, name) -> None:
+        super().__init__(f"XMLElement<{name}>")
+        self.dataType = ""
+        self.text = ""
+        self._bin: bytes | None = None
+        self.nodeName = str(name)
+
+    def _get_typed(self):
+        dt = str(self.dataType or "").lower()
+        if self._bin is not None:
+            return _Bin(self._bin)
+        raw = str(self.text or "")
+        try:
+            if dt == "bin.base64":
+                data = base64.b64decode("".join(raw.split()) + "===")
+            elif dt == "bin.hex":
+                data = bytes.fromhex("".join(raw.split()))
+            else:
+                return raw
+        except Exception:  # noqa: BLE001
+            return raw
+        _rec("decode", f"MSXML {dt}", [f"{len(data)} bytes"])
+        return _Bin(data)
+
+    def _set_typed(self, v) -> None:
+        data = v.data if isinstance(v, _Bin) else str(v).encode("latin-1", "replace")
+        self._bin = data
+        dt = str(self.dataType or "").lower()
+        self.text = base64.b64encode(data).decode() if dt == "bin.base64" else data.hex() if dt == "bin.hex" else str(v)
+
+    nodeTypedValue = property(_get_typed, _set_typed)
+
+
+class _XmlDoc(Recorder):
+    def __init__(self, progid) -> None:
+        super().__init__(str(progid))
+        self.async_ = False
+
+    def createElement(self, name):  # noqa: N802
+        return _XmlNode(name)
+
+    def loadXML(self, *a):  # noqa: N802
+        return True
+
+
 class _Stream(Recorder):
-    """ADODB.Stream: text written then saved to a file -> a drop."""
+    """ADODB.Stream: text or binary written, then saved to a file -> a drop
+    (binary kept whole: a PE decoded with MSXML comes out intact)."""
     def __init__(self) -> None:
         super().__init__("ADODB.Stream")
         self.Type, self.Charset, self.Position, self.Size = 1, "", 0, 0
-        self._buf: list[str] = []
+        self._buf: list[bytes] = []
+
+    def Open(self, *a):  # noqa: N802
+        return None
+
+    def Close(self, *a):  # noqa: N802
+        return None
+
+    def _add(self, s) -> None:
+        self._buf.append(s.data if isinstance(s, _Bin) else str(s).encode("latin-1", "replace"))
+        self.Size = sum(len(b) for b in self._buf)
 
     def WriteText(self, s, *a):  # noqa: N802
-        self._buf.append(str(s))
+        self._add(s)
 
     def Write(self, s):  # noqa: N802
-        self._buf.append(str(s))
+        self._add(s)
 
     def LoadFromFile(self, p):  # noqa: N802
-        self._buf = [_read(p)]
+        self._buf = [_read(p).encode("latin-1", "replace")]
 
     def ReadText(self, *a):  # noqa: N802
-        return "".join(self._buf)
+        return b"".join(self._buf).decode("latin-1")
 
     def Read(self, *a):  # noqa: N802
-        return "".join(self._buf)
+        return _Bin(b"".join(self._buf))
 
     def SaveToFile(self, p, *a):  # noqa: N802
         _rec("call", "ADODB.Stream.SaveToFile", [p])
-        _drop(p, "".join(self._buf))
+        _drop(p, b"".join(self._buf))
 
 
 class _Quit(Exception):
@@ -323,6 +410,8 @@ def _create(progid):
         return _Shell()
     if pid == "adodb.stream":
         return _Stream()
+    if pid.startswith(("msxml2.domdocument", "microsoft.xmldom", "msxml.domdocument", "msxml2.freethreadeddomdocument")):
+        return _XmlDoc(progid)
     return Recorder(str(progid))
 
 

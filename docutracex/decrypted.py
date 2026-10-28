@@ -339,6 +339,21 @@ def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[s
         # files the script wrote (FileSystemObject / ADODB.Stream), with the
         # extension of the path it gave them
         for e in (sc.get("sandbox") or {}).get("log") or []:
+            if isinstance(e, dict) and e.get("kind") == "drop_b64" and (e.get("args") or [""])[0]:
+                # a binary file the script wrote (e.g. a PE decoded via MSXML bin.base64)
+                name = str(e.get("name") or "")
+                try:
+                    data = base64.b64decode(e["args"][0])
+                except (binascii.Error, ValueError):
+                    continue
+                p = classify(data, "js-drop", f"JavaScript {loc}: wrote {name}",
+                             recipe=["js sandbox", f"wrote {name.rsplit(chr(92), 1)[-1]}"])
+                if p:
+                    if "data" in p and p.get("ext") == ".bin":
+                        ext = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name.rsplit("\\", 1)[-1] else ""
+                        p["ext"] = ext if 1 < len(ext) <= 6 else ".bin"
+                    out.append(p)
+        for e in (sc.get("sandbox") or {}).get("log") or []:
             if isinstance(e, dict) and e.get("kind") == "drop" and (e.get("args") or [""])[0].strip():
                 name = str(e.get("name") or "")
                 ext = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name.rsplit("\\", 1)[-1] else ""
