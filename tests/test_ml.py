@@ -107,3 +107,34 @@ def test_installer_pins_every_model() -> None:
     for name, meta in data["models"].items():
         assert len(meta["sha256"]) == 64 and meta["num_feature"] == 2568, name
         assert 0 < meta["threshold_fpr_0.01"] < 1
+
+
+def test_family_download_verifies_hash(tmp_path: Path, monkeypatch) -> None:
+    import hashlib
+    import io
+    import time
+
+    from docutracex.ml import family_download as fd
+    data = b"tree\nversion=v4\n" + b"x" * 5000
+    monkeypatch.setattr(fd, "target", lambda: tmp_path / "EMBER2024_family.model")
+
+    class R(io.BytesIO):
+        headers = {"Content-Length": str(len(data))}
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    class Opener:
+        def open(self, req, timeout=0): return R(data)
+
+    monkeypatch.setattr(fd.urllib.request, "build_opener", lambda *a: Opener())
+    for sha, want in (("0" * 64, "error"), (hashlib.sha256(data).hexdigest(), "done")):
+        monkeypatch.setattr(fd, "_meta", lambda sha=sha: {"sha256": sha, "size": len(data)})
+        fd._state.clear(); fd._state["state"] = "idle"
+        fd.start()
+        for _ in range(100):
+            if fd.status()["state"] != "downloading":
+                break
+            time.sleep(0.02)
+        assert fd.status()["state"] == want
+    assert (tmp_path / "EMBER2024_family.model").read_bytes() == data
+    assert not (tmp_path / "EMBER2024_family.model.part").exists()

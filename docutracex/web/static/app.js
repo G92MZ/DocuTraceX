@@ -2202,6 +2202,7 @@ function renderSubtabs() {
   wireUnlock(bodyEl, _openCaseId);
   wireFind(bodyEl);
   wireInnerTabs(bodyEl);
+  wireMlFamily(bodyEl);
   applyFind();
 }
 
@@ -3178,7 +3179,9 @@ function paneMl(ml, findings) {
     detected at first (EMBER2024 challenge set) only part is caught at that threshold (shown per model).
     <b>Results are not findings until you mark them</b>; a marked result joins Findings and True positives reach the report.</p>`;
   const extras = `<p class="hint-line">Tag models: ${escapeHtml((ml.tag_models || []).join(", ") || "not installed")} ·
-    family model: ${ml.family_model ? "installed" : "not installed (459 MB, optional: set <span class=\"mono\">DOCUTRACEX_EMBER_FAMILY=1</span> and run <span class=\"mono\">python install.py</span>)"}</p>`;
+    family model: ${ml.family_model ? "installed"
+      : `not installed <button class="btn btn-ghost btn-sm" type="button" data-ml-family>Download family model (459 MB)</button>
+         <span class="hint-line" data-ml-family-state></span>`}</p>`;
   if (!items.length) return head + extras + `<p class="hint-line">${escapeHtml(ml.detail || "No PE, PDF or ELF object in this case.")}</p>`;
   const rows = items.map((it, i) => {
     const f = byId[it.finding_id];
@@ -3199,6 +3202,46 @@ function paneMl(ml, findings) {
     </details>`;
   }).join("");
   return `<div class="ml-pane">${head}${extras}${rows}</div>`;
+}
+
+// "Download family model": background download in the web service, polled here;
+// when it is done the Machine Learning module is re-run for this case.
+function wireMlFamily(root) {
+  const btn = root.querySelector("[data-ml-family]");
+  if (!btn) return;
+  const out = root.querySelector("[data-ml-family-state]");
+  const mb = (n) => `${Math.round((n || 0) / 1048576)} MB`;
+  let started = false;
+  const poll = async () => {
+    const st = await fetch("/api/settings/ml/family").then((r) => r.json()).catch(() => ({}));
+    if (st.state === "downloading") {
+      btn.disabled = true;
+      out.textContent = `downloading ${mb(st.done)} / ${mb(st.total || st.size)}…`;
+      setTimeout(poll, 1500);
+    } else if ((st.installed || st.state === "done") && !started) {
+      btn.textContent = "Re-run Machine Learning with families";
+      btn.disabled = false;
+      out.textContent = "family model already downloaded.";
+    } else if (st.installed || st.state === "done") {
+      out.textContent = "downloaded — re-running Machine Learning…";
+      const r = await fetch(`/api/cases/${encodeURIComponent(_openCaseId)}/rerun`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ module: "ml" }) });
+      out.textContent = r.ok ? "downloaded — Machine Learning re-run queued (Tasks); reopen the case when it finishes."
+                             : "downloaded — re-run Machine Learning from the case to see families.";
+    } else if (st.state === "error") {
+      btn.disabled = false;
+      out.textContent = `error: ${st.error || "download failed"}`;
+    }
+  };
+  btn.addEventListener("click", async () => {
+    if (started) return;
+    started = true;
+    btn.disabled = true;
+    out.textContent = "starting…";
+    await fetch("/api/settings/ml/family", { method: "POST" });
+    poll();
+  });
+  poll();
 }
 
 const _ML_KIND = { family: "Family", behavior: "Behaviour", packer: "Packer / protector",

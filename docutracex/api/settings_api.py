@@ -108,3 +108,17 @@ async def refresh_tlds() -> dict:
         return await asyncio.to_thread(tlds.download, appsettings.proxy_url())
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"Could not download the IANA list: {exc}") from exc
+
+
+@router.get("/ml/family")
+async def ml_family_status() -> dict:
+    """Optional EMBER2024 family model (Machine Learning tab): download state."""
+    from ..ml import family_download
+    return family_download.status()
+
+
+@router.post("/ml/family")
+async def ml_family_download() -> dict:
+    """Start downloading the EMBER2024 family model (459 MB, SHA-256 pinned)."""
+    from ..ml import family_download
+    return family_download.start(appsettings.proxy_url())
