@@ -3250,11 +3250,13 @@ function mlLabels(it) {
   const lab = it.labels || {};
   const kinds = Object.keys(_ML_KIND).filter((k) => (lab[k] || []).length);
   if (!kinds.length) return "";
-  const chip = (x) => `<span class="badge ${x.confidence === "high" ? "badge-ok" : "badge-muted"}" title="model probability ${(100 * x.prob).toFixed(1)}% · name ${escapeHtml(x.confidence)} confidence">${escapeHtml(x.name)} ${(100 * x.prob).toFixed(0)}%</span>`;
+  const chip = (x) => `<span class="badge ${x.confidence === "high" ? "badge-ok" : "badge-muted"}" title="model output ${(100 * x.prob).toFixed(1)}%${x.precision != null ? ` · precision on EMBER2024 malware ${(100 * x.precision).toFixed(0)}%` : ""} · ${escapeHtml(x.confidence)} confidence">${escapeHtml(x.name)} ${(100 * x.prob).toFixed(0)}%</span>`;
   const rows = kinds.map((k) => `<div><span class="hint-line">${_ML_KIND[k]}</span></div><div>${lab[k].map(chip).join(" ")}</div>`).join("");
   return `<h4>What it looks like</h4>
     <p class="hint-line">EMBER2024 family and tag models. Their output names were <b>reconstructed by DocuTraceX</b> (the authors did not publish them)
-      by matching each output with labelled EMBER2024 files — green: high-confidence name, grey: medium. Hints for triage, trained on malware only.</p>
+      by matching each output with labelled EMBER2024 files. A tag is shown only above its own threshold, calibrated for precision on
+      EMBER2024 malware (tags too unreliable were dropped); green: ≥70% precision. Only for objects above the detection threshold
+      (these models were trained on malware). Hints for triage, not attribution.</p>
     <div class="kv">${rows}</div>`;
 }
 
