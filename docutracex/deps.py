@@ -108,6 +108,11 @@ TOOL_DEPS: list[Dependency] = [
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
     ),
     Dependency(
+        "debloat", "debloat", "Binary padding removal (T1027.001) before PE analysis",
+        required=False,
+        install_hint="run scripts/setup_portable_python.py (installed into the portable)",
+    ),
+    Dependency(
         "lief", "lief", "Deep binary parsing (PE/ELF/Mach-O): imphash, Rich header, PDB, signatures",
         required=False,
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
