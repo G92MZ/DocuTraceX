@@ -230,7 +230,8 @@ def analyze_msi(path: Path, rel: str) -> dict[str, Any]:
 def analyze_pe(path: Path, rel: str, unpack_dir: Path | None = None) -> dict[str, Any]:
     """PE image static triage (pefile) — delegated to :mod:`pe`. With
     ``unpack_dir`` a packed/installer PE is unpacked there; its files come back
-    in ``item["_unpacked_files"]`` for the caller to scan as nested children."""
+    (and the debloated binary) in ``item["_children"]`` for the caller to scan as
+    nested children."""
     from . import pe as pe_mod
     return pe_mod.analyze(path, rel, unpack_dir=unpack_dir)
 
