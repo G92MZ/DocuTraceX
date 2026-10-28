@@ -372,7 +372,14 @@ function fileActions(rel) {
   return `<span class="file-actions">
     <button class="btn btn-ghost btn-sm" data-reveal="${r}" title="Open containing folder">📁 Folder</button>
     <button class="btn btn-ghost btn-sm" data-download="${r}" title="Download">↓</button>
+    <button class="btn btn-ghost btn-sm" data-hex="${r}" title="Open in the Hex tab">Hex</button>
   </span>`;
+}
+
+// A "Hex" jump (any file, optionally at an offset with a highlighted length).
+function hexJump(rel, offset, length) {
+  return `<button class="btn btn-ghost btn-sm" data-hex="${escapeHtml(rel)}" data-hex-offset="${Number(offset) || 0}"
+    data-hex-len="${Number(length) || 0}" title="Open in the Hex tab at 0x${(Number(offset) || 0).toString(16)}">Hex ⤷</button>`;
 }
 
 function wireFileActions(root, analysisId) {
@@ -387,6 +394,14 @@ function wireFileActions(root, analysisId) {
             body: JSON.stringify({ path: btn.getAttribute("data-reveal") }) });
         btn.textContent = resp.ok ? label : "unavailable here";
       } catch (err) { btn.textContent = "unavailable here"; }
+    });
+  });
+  root.querySelectorAll("[data-hex]").forEach((btn) => {
+    btn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      hexOpen(btn.getAttribute("data-hex"), Number(btn.getAttribute("data-hex-offset") || 0),
+              Number(btn.getAttribute("data-hex-len") || 0));
     });
   });
   root.querySelectorAll("[data-download]").forEach((btn) => {
@@ -2203,6 +2218,7 @@ function renderSubtabs() {
   wireFind(bodyEl);
   wireInnerTabs(bodyEl);
   wireMlFamily(bodyEl);
+  wireHex(bodyEl);
   applyFind();
 }
 
@@ -2477,6 +2493,7 @@ async function openComponents(analysisId, keepTab, viewId) {
       sections.push({ id: "ml", label: `Machine Learning (${(mlm.items || []).filter((x) => x.status === "ok").length})`,
                       render: () => paneMl(mlm, d.ml_findings || []) });
     }
+    sections.push({ id: "hex", label: "Hex", render: () => paneHex() });
     const jsm = mods.javascript;
     if (jsm && (jsm.scripts || []).length) {
       sections.push({ id: "javascript", label: `JavaScript (${jsm.scripts.length})`, html: paneJavascript(jsm) });
@@ -3140,6 +3157,7 @@ function paneYara(yara, findings, analysisId) {
         <td class="mono">${escapeHtml(x.text || "")}</td>
         <td class="mono">${escapeHtml((x.data || "").replace(/(..)/g, "$1 ").trim())}</td>
         <td>${x.context ? `<details class="yara-ctx" open><summary>context</summary>${hexContext(x)}</details>` : ""}</td>
+        <td>${h.stored && x.offset != null ? hexJump(h.stored, x.offset, x.length) : ""}</td>
       </tr>`).join("");
       const mark = h.finding ? markControlsHtml(h.finding) : '<span class="hint-line">re-run YARA to mark</span>';
       return `<div class="yara-hit">
@@ -3148,7 +3166,7 @@ function paneYara(yara, findings, analysisId) {
           ${fileActions(h.stored)}
         </div>
         ${mark}
-        ${rows ? table(["String", "Offset", "Length", "Matched (text)", "Matched (hex)", "Context"], rows)
+        ${rows ? table(["String", "Offset", "Length", "Matched (text)", "Matched (hex)", "Context", ""], rows)
                : '<p class="hint-line">Condition-only match (no strings).</p>'}
       </div>`;
     }).join("");
@@ -3362,6 +3380,267 @@ function mlDetail(it, f, pct) {
     <p class="hint-line">LightGBM TreeSHAP: positive pushes towards malicious, negative towards benign (log-odds; base ${escapeHtml((it.bias || 0).toFixed(2))}).</p>
     <div class="ml-bars">${bars}</div>
     <h4>Top features</h4>${top}`;
+}
+
+// --- Hex tab ---------------------------------------------------------------------
+// One viewer for every file of the case: "Hex" buttons elsewhere (file actions,
+// YARA matches) open it here at the right offset. Bytes come from the server in
+// windows; search / entropy run server-side.
+const _hex = { caseId: null, path: "", offset: 0, width: 16, rows: 32, sel: null, mark: null,
+               cache: null, files: null, hits: [], hitIdx: -1, entropy: null, regions: [],
+               mode: "hex", query: "", icase: false, info: "" };
+
+function hexOpen(rel, offset, length) {
+  if (_hex.path !== rel) { _hex.entropy = null; _hex.regions = []; _hex.hits = []; _hex.hitIdx = -1; _hex.cache = null; }
+  _hex.path = rel;
+  _hex.offset = Math.max(0, Math.floor((offset || 0) / _hex.width) * _hex.width - 4 * _hex.width);
+  _hex.mark = length ? [offset, offset + length - 1] : null;
+  _hex.sel = length ? [offset, offset + length - 1] : (offset ? [offset, offset] : null);
+  if (_compState && _compState.sections.some((x) => x.id === "hex")) {
+    _compState.active = "hex";
+    renderSubtabs();
+  }
+}
+
+function paneHex() {
+  if (_hex.caseId !== _openCaseId) {
+    Object.assign(_hex, { caseId: _openCaseId, path: "", offset: 0, sel: null, mark: null, cache: null,
+                          files: null, hits: [], hitIdx: -1, entropy: null, regions: [] });
+  }
+  return `<div id="hex-root" class="hex-root">
+    <div class="hex-bar">
+      <select id="hex-file" class="hex-file" title="File of this case"><option>loading files…</option></select>
+      <span id="hex-size" class="hint-line"></span>
+    </div>
+    <canvas id="hex-entropy" class="hex-entropy" height="26" title="Entropy along the file (0–8): click to jump"></canvas>
+    <div class="hex-bar">
+      <label class="hint-line">Go to</label>
+      <input id="hex-goto" class="hex-input" placeholder="0x1F40 or 8000" spellcheck="false">
+      <select id="hex-region" title="Jump to a section / overlay"><option value="">region…</option></select>
+      <button class="btn btn-ghost btn-sm" type="button" data-hexnav="-page">◀ page</button>
+      <button class="btn btn-ghost btn-sm" type="button" data-hexnav="+page">page ▶</button>
+      <button class="btn btn-ghost btn-sm" type="button" data-hexnav="start">⇤</button>
+      <button class="btn btn-ghost btn-sm" type="button" data-hexnav="end">⇥</button>
+      <select id="hex-width"><option value="16">16 / row</option><option value="32">32 / row</option></select>
+    </div>
+    <div class="hex-bar">
+      <select id="hex-mode" title="Search mode">
+        <option value="hex">hex (?? = any byte)</option><option value="ascii">text (ASCII)</option>
+        <option value="utf16">text (UTF-16LE)</option><option value="regex">regex (bytes)</option>
+      </select>
+      <input id="hex-q" class="hex-input hex-q" placeholder="4D 5A ?? 00 · http · …" spellcheck="false">
+      <label class="hint-line"><input type="checkbox" id="hex-icase"> ignore case</label>
+      <button class="btn btn-sm" type="button" id="hex-find">Find</button>
+      <button class="btn btn-ghost btn-sm" type="button" data-hexhit="-1">↑</button>
+      <button class="btn btn-ghost btn-sm" type="button" data-hexhit="1">↓</button>
+      <span id="hex-hitinfo" class="hint-line"></span>
+    </div>
+    <div class="hex-main">
+      <div id="hex-grid" class="hex-grid" tabindex="0"></div>
+      <div id="hex-hits" class="hex-hits"></div>
+    </div>
+    <div class="hex-bar"><span id="hex-sel" class="hint-line mono"></span>
+      <button class="btn btn-ghost btn-sm" type="button" data-hexcopy="hex">copy hex</button>
+      <button class="btn btn-ghost btn-sm" type="button" data-hexcopy="text">copy text</button>
+    </div>
+  </div>`;
+}
+
+const _hexApi = (what, params) => fetch(`/api/cases/${encodeURIComponent(_openCaseId)}/hex/${what}?` +
+  new URLSearchParams(params)).then(async (r) => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.detail || r.statusText); return j; });
+
+const _hexFmt = (n) => "0x" + Number(n).toString(16).toUpperCase().padStart(8, "0");
+
+async function wireHex(root) {
+  const el = root.querySelector("#hex-root");
+  if (!el) return;
+  const $ = (id) => el.querySelector(id);
+  if (!_hex.files) {
+    try { _hex.files = (await _hexApi("files", {})).files || []; } catch (e) { _hex.files = []; }
+  }
+  const files = _hex.files;
+  if (!_hex.path && files.length) _hex.path = files[0].path;
+  $("#hex-file").innerHTML = files.map((f) => `<option value="${escapeHtml(f.path)}"${f.path === _hex.path ? " selected" : ""}>${escapeHtml(f.label)} (${f.size} B)</option>`).join("")
+    || "<option>no files</option>";
+  if (_hex.path && !files.some((f) => f.path === _hex.path)) {
+    $("#hex-file").insertAdjacentHTML("afterbegin", `<option value="${escapeHtml(_hex.path)}" selected>${escapeHtml(_hex.path)}</option>`);
+  }
+  $("#hex-width").value = String(_hex.width);
+  $("#hex-mode").value = _hex.mode;
+  $("#hex-q").value = _hex.query;
+  $("#hex-icase").checked = _hex.icase;
+  if (!_hex.path) return;
+
+  const size = () => (_hex.cache ? _hex.cache.size : 0);
+  const clamp = (o) => Math.max(0, Math.min(o, Math.max(0, Math.ceil(size() / _hex.width) * _hex.width - _hex.rows * _hex.width)));
+  async function ensure(off) {
+    const need = _hex.width * _hex.rows;
+    const c = _hex.cache;
+    if (c && c.path === _hex.path && off >= c.start && off + need <= c.start + c.bytes.length) return;
+    if (c && c.path === _hex.path && off >= c.size) return;
+    const start = Math.max(0, off - 8192);
+    const j = await _hexApi("read", { path: _hex.path, offset: start, length: 32768 });
+    const raw = atob(j.data);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    _hex.cache = { path: _hex.path, start: j.offset, bytes, size: j.size };
+  }
+  const inRange = (o, r) => r && o >= Math.min(r[0], r[1]) && o <= Math.max(r[0], r[1]);
+  function render() {
+    const c = _hex.cache;
+    if (!c) return;
+    $("#hex-size").textContent = `${c.size} bytes`;
+    const hitSet = new Set();
+    const vis0 = _hex.offset, vis1 = _hex.offset + _hex.width * _hex.rows;
+    _hex.hits.forEach(([o, l]) => { if (o < vis1 && o + l > vis0) for (let i = o; i < o + l; i++) hitSet.add(i); });
+    const cur = _hex.hits[_hex.hitIdx];
+    let html = "";
+    for (let r = 0; r < _hex.rows; r++) {
+      const base = _hex.offset + r * _hex.width;
+      if (base >= c.size) break;
+      let hx = "", tx = "";
+      for (let i = 0; i < _hex.width; i++) {
+        const o = base + i;
+        if (o >= c.size) { hx += '<span class="hb hb-pad">  </span>'; continue; }
+        const b = c.bytes[o - c.start];
+        const cls = ["hb", inRange(o, _hex.sel) ? "hb-sel" : "", inRange(o, _hex.mark) ? "hb-mark" : "",
+                     hitSet.has(o) ? (cur && o >= cur[0] && o < cur[0] + cur[1] ? "hb-cur" : "hb-hit") : "",
+                     b === 0 ? "hb-zero" : (b >= 32 && b < 127 ? "hb-print" : "")].filter(Boolean).join(" ");
+        hx += `<span class="${cls}" data-o="${o}">${b.toString(16).padStart(2, "0")}</span>`;
+        tx += `<span class="${cls}" data-o="${o}">${b >= 32 && b < 127 ? escapeHtml(String.fromCharCode(b)) : "."}</span>`;
+      }
+      html += `<div class="hr"><span class="ho">${_hexFmt(base)}</span><span class="hx">${hx}</span><span class="ht">${tx}</span></div>`;
+    }
+    $("#hex-grid").innerHTML = html;
+    const s = _hex.sel;
+    if (s) {
+      const a = Math.min(s[0], s[1]), b = Math.max(s[0], s[1]);
+      $("#hex-sel").textContent = `selection ${_hexFmt(a)} – ${_hexFmt(b)} · ${b - a + 1} byte(s) · ${a} (dec)`;
+    } else {
+      $("#hex-sel").textContent = `offset ${_hexFmt(_hex.offset)} · click a byte to select, shift-click to extend`;
+    }
+    drawEntropy();
+  }
+  async function go(off) {
+    let o = Math.floor(Math.max(0, off) / _hex.width) * _hex.width;
+    if (!_hex.cache || _hex.cache.path !== _hex.path) await ensure(o);   // learn the size first
+    o = clamp(o);
+    await ensure(o);
+    _hex.offset = o;
+    render();
+  }
+  function drawEntropy() {
+    const cv = $("#hex-entropy");
+    const e = _hex.entropy;
+    if (!cv || !e || !e.values.length) return;
+    const w = cv.clientWidth || 800;
+    cv.width = w;
+    const g = cv.getContext("2d");
+    g.clearRect(0, 0, w, cv.height);
+    const n = e.values.length;
+    e.values.forEach((v, i) => {
+      const x0 = Math.floor(i * w / n), x1 = Math.ceil((i + 1) * w / n);
+      const t = v / 8;
+      g.fillStyle = t > 0.9 ? "#f85149" : t > 0.75 ? "#d29922" : t > 0.4 ? "#3b88b8" : t > 0.05 ? "#2a4d63" : "#1b2330";
+      const h = Math.max(2, Math.round(t * cv.height));
+      g.fillRect(x0, cv.height - h, x1 - x0, h);
+    });
+    const sz = e.size || 1;
+    g.fillStyle = "#ffffff";
+    const vx = Math.floor(_hex.offset / sz * w);
+    g.fillRect(vx, 0, Math.max(2, Math.ceil(_hex.width * _hex.rows / sz * w)), cv.height);
+  }
+
+  $("#hex-file").addEventListener("change", (e) => { hexOpen(e.target.value, 0, 0); });
+  $("#hex-width").addEventListener("change", (e) => { _hex.width = Number(e.target.value); go(_hex.offset); });
+  $("#hex-goto").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    const v = e.target.value.trim();
+    const n = /^0x/i.test(v) ? parseInt(v, 16) : (/^[0-9]+$/.test(v) ? parseInt(v, 10) : parseInt(v, 16));
+    if (!isNaN(n)) { _hex.sel = [n, n]; go(n - 4 * _hex.width); }
+  });
+  $("#hex-region").addEventListener("change", (e) => {
+    const r = _hex.regions[Number(e.target.value)];
+    if (r) { _hex.mark = [r.offset, r.offset + Math.max(1, r.length) - 1]; _hex.sel = [r.offset, r.offset]; go(r.offset); }
+  });
+  el.querySelectorAll("[data-hexnav]").forEach((b) => b.addEventListener("click", () => {
+    const k = b.getAttribute("data-hexnav"), page = _hex.width * _hex.rows;
+    go(k === "start" ? 0 : k === "end" ? size() : _hex.offset + (k === "+page" ? page : -page));
+  }));
+  $("#hex-grid").addEventListener("wheel", (e) => { e.preventDefault(); go(_hex.offset + Math.sign(e.deltaY) * 3 * _hex.width); }, { passive: false });
+  $("#hex-grid").addEventListener("keydown", (e) => {
+    const page = _hex.width * _hex.rows;
+    const m = { PageDown: page, PageUp: -page, ArrowDown: _hex.width, ArrowUp: -_hex.width }[e.key];
+    if (m) { e.preventDefault(); go(_hex.offset + m); }
+  });
+  $("#hex-grid").addEventListener("click", (e) => {
+    const o = e.target.getAttribute && e.target.getAttribute("data-o");
+    if (o == null) return;
+    const n = Number(o);
+    _hex.sel = e.shiftKey && _hex.sel ? [_hex.sel[0], n] : [n, n];
+    render();
+  });
+  $("#hex-entropy").addEventListener("click", (e) => {
+    const r = e.target.getBoundingClientRect();
+    go(Math.floor((e.clientX - r.left) / r.width * size()));
+  });
+  const showHits = () => {
+    const box = $("#hex-hits");
+    const h = _hex.hits;
+    $("#hex-hitinfo").textContent = _hex.info || (h.length ? `${_hex.hitIdx + 1} / ${h.length}${_hex.truncated ? "+" : ""}` : "");
+    box.innerHTML = h.length ? h.slice(0, 500).map(([o, l], i) => `<div class="hex-hit${i === _hex.hitIdx ? " is-cur" : ""}" data-hit="${i}">${_hexFmt(o)} <span class="hint-line">${l} B</span></div>`).join("") : "";
+    box.querySelectorAll("[data-hit]").forEach((d) => d.addEventListener("click", () => jumpHit(Number(d.getAttribute("data-hit")))));
+  };
+  const jumpHit = (i) => {
+    if (!_hex.hits.length) return;
+    _hex.hitIdx = (i + _hex.hits.length) % _hex.hits.length;
+    const [o, l] = _hex.hits[_hex.hitIdx];
+    _hex.sel = [o, o + l - 1];
+    showHits();
+    go(o - 4 * _hex.width);
+  };
+  const find = async () => {
+    _hex.mode = $("#hex-mode").value; _hex.query = $("#hex-q").value; _hex.icase = $("#hex-icase").checked;
+    _hex.info = "searching…"; showHits();
+    try {
+      const r = await _hexApi("search", { path: _hex.path, q: _hex.query, mode: _hex.mode, ignore_case: _hex.icase });
+      _hex.hits = r.hits || []; _hex.truncated = r.truncated; _hex.info = r.error || (_hex.hits.length ? "" : "no matches");
+      _hex.hitIdx = -1;
+      showHits();
+      if (_hex.hits.length) jumpHit(0); else render();
+    } catch (err) { _hex.hits = []; _hex.info = String(err.message || err); showHits(); }
+  };
+  $("#hex-find").addEventListener("click", find);
+  $("#hex-q").addEventListener("keydown", (e) => { if (e.key === "Enter") find(); });
+  el.querySelectorAll("[data-hexhit]").forEach((b) => b.addEventListener("click", () => jumpHit(_hex.hitIdx + Number(b.getAttribute("data-hexhit")))));
+  el.querySelectorAll("[data-hexcopy]").forEach((b) => b.addEventListener("click", async () => {
+    const s = _hex.sel;
+    if (!s) return;
+    const a = Math.min(s[0], s[1]), n = Math.min(Math.max(s[0], s[1]) - a + 1, 65536);
+    const j = await _hexApi("read", { path: _hex.path, offset: a, length: n });
+    const raw = atob(j.data);
+    const txt = b.getAttribute("data-hexcopy") === "hex"
+      ? Array.from(raw, (ch) => ch.charCodeAt(0).toString(16).padStart(2, "0")).join(" ")
+      : Array.from(raw, (ch) => { const c = ch.charCodeAt(0); return c >= 32 && c < 127 ? ch : "."; }).join("");
+    try { await navigator.clipboard.writeText(txt); b.textContent = "copied"; } catch (e) { b.textContent = "copy failed"; }
+    setTimeout(() => { b.textContent = b.getAttribute("data-hexcopy") === "hex" ? "copy hex" : "copy text"; }, 1200);
+  }));
+
+  try { await go(_hex.offset); } catch (err) { $("#hex-grid").textContent = String(err.message || err); return; }
+  showHits();
+  if (!_hex.entropy) {
+    _hexApi("entropy", { path: _hex.path }).then((e) => { _hex.entropy = e; drawEntropy(); }).catch(() => {});
+  } else drawEntropy();
+  if (!_hex.regions.length) {
+    _hexApi("regions", { path: _hex.path }).then((r) => {
+      _hex.regions = r.regions || [];
+      $("#hex-region").innerHTML = '<option value="">region…</option>' + _hex.regions.map((x, i) =>
+        `<option value="${i}">${escapeHtml(x.name)} @ ${_hexFmt(x.offset)} (${x.length} B)</option>`).join("");
+    }).catch(() => {});
+  } else {
+    $("#hex-region").innerHTML = '<option value="">region…</option>' + _hex.regions.map((x, i) =>
+      `<option value="${i}">${escapeHtml(x.name)} @ ${_hexFmt(x.offset)} (${x.length} B)</option>`).join("");
+  }
 }
 
 // --- Settings (network) --------------------------------------------------------
