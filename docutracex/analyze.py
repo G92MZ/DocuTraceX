@@ -747,10 +747,32 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 
         msi_res = run("binary: MSI tables/strings → scripting engine · PE triage",
                       lambda: msi.analyze(original, paths.extracted_dir))
+        unpacked = []
+        for it in msi_res.get("items") or []:
+            up = it.get("unpack") or {}
+            for fp, fn in it.pop("_unpacked_files", []) or []:
+                unpacked.append({"path": fp, "filename": Path(fn).name, "source": "unpack",
+                                 "origin": f"unpacked from {original.name} ({up.get('tool') or up.get('family')})",
+                                 "recipe": ["unpack", str(up.get("family") or up.get("tool") or "")]})
         if msi_res.get("items"):
             write_subresult(paths, "msi", msi_res)
             ran.append("msi")
             findings_total += msi_res.get("counts", {}).get("findings", 0)
+        if unpacked:
+            # Packed / installer PE unpacked statically (UPX, AutoIt, Inno, NSIS,
+            # SFX, Nuitka, Enigma VB): the real files are analysed as children.
+            from . import nested
+            ures = run(f"nested: {len(unpacked)} unpacked file(s) → recursive analysis",
+                       lambda: nested.scan_children(unpacked, paths, unlock_ctx={"user": user_pw}))
+            if ures.get("tree"):
+                prev = read_json(paths.subresult("nested"))
+                had = bool(prev and prev.get("tree"))
+                merged = nested.merge(prev, ures)
+                write_subresult(paths, "nested", merged)
+                if "nested" not in ran:
+                    ran.append("nested")
+                findings_total += merged.get("counts", {}).get("findings", 0) - (
+                    prev.get("counts", {}).get("findings", 0) if had else 0)
         if original.suffix.lower() not in (".msi", ".msp", ".msm"):
             # A PE is still a first-class case: keep the generic file record
             # (hashes, YARA on demand, marks, report) exactly as any other binary.

@@ -153,6 +153,8 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
     this_chain = f"{chain} › {name}" if chain else name
     work = paths.extracted_dir / "nested"
     kids: list[tuple[Path, str]] = []
+    origins: dict[str, str] = {}          # child path -> how it was obtained (decrypted / unpacked)
+    recipes: dict[str, list[str]] = {}
     kind = node["kind"]
 
     # tag: gmzpt
@@ -287,7 +289,14 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
             add_findings(it.get("findings"), "shortcut")
         elif kind == "binary":
             from .parsers import msi
-            it = msi.analyze_binary(abs_path, name)
+            it = msi.analyze_binary(abs_path, name,
+                                    (work / msi.UNPACK_DIRNAME) if depth < MAX_DEPTH else None)
+            unpacked = it.pop("_unpacked_files", [])
+            up = it.get("unpack") or {}
+            for fp, fn in unpacked:
+                kids.append((Path(fp), Path(fn).name))
+                origins[str(Path(fp))] = f"unpacked from {name} ({up.get('tool') or up.get('family') or 'unpacker'})"
+                recipes[str(Path(fp))] = ["unpack", str(up.get("family") or up.get("tool") or "")]
             mods["msi"] = {"module": "msi", "items": [it], "findings": it.get("findings", [])}
             add_findings(it.get("findings"), "msi")
         elif kind == "java":
@@ -318,8 +327,6 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
 
     # Stages this child decrypted (XOR results, dropped payloads, base64 that is
     # really a PE/ZIP…) become its children, analysed by whatever fits them.
-    origins: dict[str, str] = {}
-    recipes: dict[str, list[str]] = {}
     if depth < MAX_DEPTH:
         try:
             from . import decrypted
@@ -504,6 +511,8 @@ def scan_children(items: list[dict[str, Any]], paths: CasePaths,
             if it.get("origin"):
                 child["decrypted_from"] = it["origin"]
                 child["recipe"] = it.get("recipe") or []
+                if it.get("source"):
+                    child["source"] = it["source"]
             result["tree"].append(child)
     flat: list[dict[str, Any]] = []
     _flatten(result["tree"], flat)
@@ -521,9 +530,16 @@ def merge(base: dict[str, Any] | None, extra: dict[str, Any]) -> dict[str, Any]:
     out = dict(base)
     # A re-analysis recomputes the decrypted stages: drop the previous run's
     # (top-level nodes carrying ``decrypted_from``) so they are not listed twice.
-    old = [n for n in base.get("tree") or [] if not n.get("decrypted_from")]
+    # Nodes of the same kind as the new batch are replaced (decrypted stages by
+    # decrypted stages, unpacked files by unpacked files); the rest is kept.
+    kinds = {n.get("source") or "" for n in extra.get("tree") or []}
+
+    def replaced(n: dict[str, Any]) -> bool:
+        return bool(n.get("decrypted_from")) and (n.get("source") or "") in kinds
+
+    old = [n for n in base.get("tree") or [] if not replaced(n)]
     out["tree"] = old + list(extra.get("tree") or [])
-    stale = {n.get("filename") for n in base.get("tree") or [] if n.get("decrypted_from")}
+    stale = {n.get("filename") for n in base.get("tree") or [] if replaced(n)}
     keep = [x for x in base.get("ioc_sources") or []
             if not any(str(x.get("location", "")).startswith(f) for f in stale if f)]
     out["ioc_sources"] = keep + list(extra.get("ioc_sources") or [])

