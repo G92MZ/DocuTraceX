@@ -175,3 +175,22 @@ def test_help_data_has_metrics_and_labels() -> None:
     assert {"Win32", "Win64", "Dot_Net", "PDF", "ELF", "APK"} <= set(h["models"])
     assert 0.8 < h["models"]["Win32"]["tpr_at_fpr_0.01"] < 1
     assert "upx" in h["labels"]["packer"]["high"] and h["labels"]["family"]["high"][0] == "berbew"
+
+
+def test_crlf_tag_model_loads_and_is_repaired(tmp_path: Path) -> None:
+    """Tag boosters converted on Windows by older installs have CRLF line ends,
+    which break LightGBM's tree_sizes offsets ("expect a tree here")."""
+    import lightgbm as lgb
+    import numpy as np
+
+    from docutracex.ml import ember_ml
+
+    X = np.random.default_rng(0).random((200, 4))
+    y = (X[:, 0] > 0.5).astype(int)
+    text = lgb.train({"objective": "binary", "verbose": -1}, lgb.Dataset(X, y), num_boost_round=3).model_to_string()
+    f = tmp_path / "tags" / "packer" / "000.txt"
+    f.parent.mkdir(parents=True)
+    f.write_bytes(text.replace("\n", "\r\n").encode())
+    extra = ember_ml._load_extra(tmp_path, lgb)
+    assert len(extra["packer"]) == 1 and extra["packer"][0].num_trees() == 3
+    assert b"\r\n" not in f.read_bytes()           # fixed on disk once
