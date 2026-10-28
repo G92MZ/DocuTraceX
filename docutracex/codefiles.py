@@ -12,6 +12,8 @@ re-runs and on-demand recomputes don't churn the disk.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import re
 from typing import Any
 
@@ -148,3 +150,28 @@ def annotate(modules: dict[str, Any], paths: CasePaths) -> set[str]:
             changed.add("xlmdeobf")
 
     return changed
+
+
+# Folders under extracted/ that the app itself writes (code dumps, recovered
+# stages): input collectors must not read them back as if they came from the
+# sample, or every re-run re-analyses the previous run's output.
+OWN_OUTPUT_DIRS = ("code", "stages")
+
+
+def input_files(extracted_dir: Path, limit: int) -> list[Path]:
+    """Files extracted FROM the sample, sorted, without the app's own outputs."""
+    if not extracted_dir.is_dir():
+        return []
+    out = []
+    for p in sorted(extracted_dir.rglob("*")):
+        try:
+            top = p.relative_to(extracted_dir).parts[0]
+        except (ValueError, IndexError):
+            continue
+        if top in OWN_OUTPUT_DIRS or not p.is_file():
+            continue
+        out.append(p)
+        if len(out) >= limit:
+            break
+    return out
+
