@@ -217,6 +217,8 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> dic
                   "original_code": orig_code[:_KEEP_CODE] if deob["changed"] else "",
                   "original_truncated": deob["changed"] and len(full) > _KEEP_CODE,
                   "deob_methods": deob["methods"], "deob_schemes": [],
+                  "decoded_stages": [{"recipe": st["recipe"], "text": st["text"][:400_000]}
+                                     for st in deob.get("stages") or []],
                   "deob_size": len(deob_full) if deob["changed"] else 0,
                   "hits": hits, "metrics": mets, "_full_code": full}
         if deob["changed"]:
