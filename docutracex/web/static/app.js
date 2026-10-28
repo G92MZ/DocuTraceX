@@ -1942,6 +1942,10 @@ function nestedNode(n) {
       ${addMarkCell("nested", `Nested item ${n.filename}`, n.stored_path || "nested", n.kind || "")}</span>
     </div>`;
   if (n.decrypted_from) html += `<div class="nested-origin hint-line">↳ from ${escapeHtml(n.decrypted_from)}</div>`;
+  if ((n.recipe || []).length) {
+    // the transformations that produced this stage, CyberChef-style
+    html += `<div class="nested-origin recipe" title="Transformations that produced this file">recipe: ${n.recipe.map((r) => `<span class="badge badge-muted mono">${escapeHtml(r)}</span>`).join(" → ")}</div>`;
+  }
   if (fcount) html += fList;
   if ((n.children || []).length) {
     html += `<div class="nested-children">` + n.children.map(nestedNode).join("") + `</div>`;

@@ -536,3 +536,5 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 .ftree-findings > summary::before { content: "▸ "; color: var(--text-dim); }
 .ftree-findings[open] > summary::before { content: "▾ "; }
 .ftree-findings table { margin-top: 6px; }
+
+.nested-origin.recipe { font-size: 12px; color: var(--text-dim); display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
