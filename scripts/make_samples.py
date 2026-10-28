@@ -1153,6 +1153,37 @@ wmi.Get("Win32_Process").Create("powershell -nop -w hidden -ep Bypass -f " + dir
     return (js + marker + ps.replace("\r\n", "\\n")).encode("utf-8")
 
 
+def encoded_blobs_ps1() -> bytes:
+    """PowerShell loader whose data hides in literals its own helper functions
+    decode (so the static deobfuscator leaves them as they are): a base64 of a
+    GZIP'ed config (with the C2 URL), an encrypted-looking base64 blob, and a
+    hex-encoded PE (MZ + text stub, inert). Every one must come out as a
+    nested child: config text (IOCs), opaque blob (entropy), PE."""
+    import base64
+    import gzip
+    import random
+
+    cfg = ("[sync]\r\nserver=http://billing-portal.example/inv/c2\r\ninterval=3600\r\n"
+           "drop=%APPDATA%\\InvoiceSync\\upd.exe\r\n")
+    cfg_b64 = base64.b64encode(gzip.compress(cfg.encode(), mtime=0)).decode()
+    rnd = random.Random(20240613)
+    blob_b64 = base64.b64encode(bytes(rnd.randrange(256) for _ in range(768))).decode()
+    pe = (b"MZ" + b"\x90" * 58 + b"\x80\x00\x00\x00" + b"This program cannot be run in DOS mode. "
+          b"Inert DocuTraceX sample stub (invoice-2024-0613), not a real executable." * 2)
+    pe_hex = pe.hex()
+    return "\r\n".join([
+        "# invoice-2024-0613 sync agent (own codecs: the deobfuscator cannot fold them)",
+        "function Get-Cfg($s) { $b = [Convert]::FromBase64String($s); $m = New-Object IO.MemoryStream(,$b)",
+        "  (New-Object IO.StreamReader((New-Object IO.Compression.GZipStream($m, 0)))).ReadToEnd() }",
+        "function Get-Bytes($h) { [byte[]]($h -split '(..)' | ? { $_ } | % { [Convert]::ToByte($_, 16) }) }",
+        f"$cfg = Get-Cfg '{cfg_b64}'",
+        f"$key = '{blob_b64}'",
+        f"$img = Get-Bytes '{pe_hex}'",
+        "[IO.File]::WriteAllBytes(\"$env:TEMP\\upd.exe\", $img)",
+        "",
+    ]).encode("utf-8")
+
+
 def build_all() -> dict[str, bytes]:
     out: dict[str, bytes] = {
         "sample.docx": word_docx(), "sample.docm": word_docm(),
@@ -1162,6 +1193,7 @@ def build_all() -> dict[str, bytes]:
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
         "sample_obf_techniques.js": obf_techniques_js(),
         "sample_chain_dropper.js": chain_dropper_js(), "sample_wsh_selfread.js": wsh_selfread_dropper_js(), "sample_xor_stager.ps1": xor_stager_ps1(),
+        "sample_encoded_blobs.ps1": encoded_blobs_ps1(),
         "sample_stage2.ps1": stage2_ps1(), "sample_dropper.vbs": dropper_vbs(),
         "sample_dropper.bat": dropper_bat(), "sample_ioc_noise.bat": ioc_noise_bat(), "sample_loader.hta": loader_hta(),
         "sample_shortcut.pdf.lnk": shortcut_lnk(), "sample_shortcut.url": internet_shortcut_url(),
