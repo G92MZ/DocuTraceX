@@ -970,8 +970,84 @@ def install_ember() -> bool:
             ok = False
             continue
         dest.write_bytes(data)
+    ok = _install_ember_extra() and ok
     if ok:
         print(f"[+] EMBER2024 models at {EMBER_DIR}")
+    return ok
+
+
+_EMBER_CONVERT = r"""
+import io, pickle, sys
+from pathlib import Path
+import lightgbm
+
+SAFE = {("lightgbm.basic", "Booster"), ("collections", "defaultdict"), ("collections", "OrderedDict"),
+        ("builtins", "dict"), ("builtins", "list"), ("builtins", "set"), ("builtins", "tuple"),
+        ("builtins", "int"), ("builtins", "float"), ("builtins", "str"), ("builtins", "bool"),
+        ("numpy", "dtype"), ("numpy.core.multiarray", "scalar"), ("numpy._core.multiarray", "scalar"),
+        ("numpy.core.multiarray", "_reconstruct"), ("numpy._core.multiarray", "_reconstruct"),
+        ("numpy", "ndarray")}
+
+class Only(pickle.Unpickler):          # data containers + LightGBM boosters only
+    def find_class(self, module, name):
+        if (module, name) in SAFE:
+            return super().find_class(module, name)
+        raise pickle.UnpicklingError(f"blocked {module}.{name}")
+
+src, dst = Path(sys.argv[1]), Path(sys.argv[2])
+boosters = Only(io.BytesIO(src.read_bytes())).load()
+dst.mkdir(parents=True, exist_ok=True)
+for i, b in enumerate(boosters):
+    (dst / f"{i:03d}.txt").write_text(b.model_to_string(), encoding="utf-8")
+print(len(boosters))
+"""
+
+
+def _install_ember_extra() -> bool:
+    """Tag models (behaviour, packer, file property, exploit, group: one LightGBM
+    booster per tag, published as a pickle) → plain text boosters under
+    tools/ember/tags/<kind>/, loaded with an unpickler that only builds Boosters.
+    The family model (459 MB) only with DOCUTRACEX_EMBER_FAMILY=1."""
+    import hashlib
+    import json
+    import os
+
+    f = ROOT / "docutracex" / "ml" / "ember_thresholds.json"
+    try:
+        extra = json.loads(f.read_text(encoding="utf-8")).get("extra_models") or {}
+    except (OSError, ValueError):
+        return True
+    ok = True
+    py = _portable_python()
+    for kind, meta in extra.items():
+        if kind == "family":
+            dest = EMBER_DIR / "EMBER2024_family.model"
+            if dest.is_file() or os.environ.get("DOCUTRACEX_EMBER_FAMILY") != "1":
+                continue
+        elif any((EMBER_DIR / "tags" / kind).glob("*.txt")):
+            continue
+        print(f"[>] ember: downloading EMBER2024_{kind}.model ({meta.get('size', 0) >> 20} MB)")
+        try:
+            data = _get(EMBER_URL.format(kind))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[!] ember: could not download {kind} ({exc}).")
+            ok = False
+            continue
+        if hashlib.sha256(data).hexdigest() != meta.get("sha256"):
+            print(f"[!] ember: SHA-256 mismatch for {kind} — NOT installed.")
+            ok = False
+            continue
+        if kind == "family":
+            (EMBER_DIR / "EMBER2024_family.model").write_bytes(data)
+            continue
+        tmp = EMBER_DIR / f"{kind}.pickle.tmp"
+        tmp.write_bytes(data)
+        r = subprocess.run([str(py), "-c", _EMBER_CONVERT, str(tmp), str(EMBER_DIR / "tags" / kind)],
+                           capture_output=True, text=True)
+        tmp.unlink(missing_ok=True)
+        if r.returncode != 0:
+            print(f"[!] ember: could not convert {kind}: {(r.stderr or '').strip()[-300:]}")
+            ok = False
     return ok
 
 

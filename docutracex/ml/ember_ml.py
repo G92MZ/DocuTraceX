@@ -31,12 +31,29 @@ import sys
 from pathlib import Path
 from typing import Any
 
-MODEL_TYPES = ("Win32", "Win64", "Dot_Net", "PDF", "ELF", "PE", "all")
+MODEL_TYPES = ("Win32", "Win64", "Dot_Net", "PDF", "ELF", "APK", "PE", "all")
 THRESHOLDS_FILE = Path(__file__).with_name("ember_thresholds.json")
+LABELS_FILE = Path(__file__).with_name("ember_labels.json")
+TAG_KINDS = ("behavior", "packer", "file_property", "exploit", "group")
+TAG_MIN_PROB = 0.5
+FAMILY_TOP = 3
 MAX_BYTES = 256 * 1024 * 1024
 TOP_N = 10
 
-_FORMAT_LABEL = {"Win32": "PE (Win32)", "Win64": "PE (Win64)", "Dot_Net": ".NET", "PDF": "PDF", "ELF": "ELF"}
+_FORMAT_LABEL = {"Win32": "PE (Win32)", "Win64": "PE (Win64)", "Dot_Net": ".NET", "PDF": "PDF", "ELF": "ELF",
+                 "APK": "APK (Android)"}
+
+
+def _is_apk(path: Path, head: bytes) -> bool:
+    """An Android package: a ZIP holding AndroidManifest.xml (and usually classes.dex)."""
+    if head[:4] != b"PK\x03\x04":
+        return False
+    try:
+        import zipfile
+        with zipfile.ZipFile(path) as z:
+            return "AndroidManifest.xml" in set(z.namelist()[:5000])
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def models_dir() -> Path:
@@ -48,15 +65,19 @@ def status() -> dict[str, Any]:
     import importlib.util
     d = models_dir()
     have = [t for t in MODEL_TYPES if (d / f"EMBER2024_{t}.model").is_file()]
-    deps = all(importlib.util.find_spec(m) is not None for m in ("lightgbm", "sklearn", "signify", "pefile"))
-    return {"models": have, "dir": str(d), "deps": deps,
+    deps = all(importlib.util.find_spec(m) is not None for m in ("lightgbm", "mmh3", "signify", "pefile"))
+    tags = [k for k in TAG_KINDS if any((d / "tags" / k).glob("*.txt"))]
+    return {"models": have, "dir": str(d), "deps": deps, "tags": tags,
+            "family": (d / "EMBER2024_family.model").is_file(),
             "available": deps and bool(have), "calibrated": THRESHOLDS_FILE.is_file()}
 
 
 def file_type(head: bytes, path: Path) -> str | None:
-    """EMBER model family for a file: Win32 / Win64 / Dot_Net / PDF / ELF, or None."""
+    """EMBER model family for a file: Win32 / Win64 / Dot_Net / PDF / ELF / APK, or None."""
     if head[:4] == b"\x7fELF":
         return "ELF"
+    if _is_apk(path, head):
+        return "APK"
     if head[:5] == b"%PDF-" or b"%PDF-" in head[:1024]:
         return "PDF"
     if head[:2] != b"MZ":
@@ -141,8 +162,10 @@ def feature_names(ex: Any) -> list[tuple[str, str]]:
 
 
 def _bucket(s: str, n: int) -> int:
-    from sklearn.utils import murmurhash3_32
-    return abs(murmurhash3_32(s, seed=0)) % n
+    import mmh3
+
+    from .hashing import _index
+    return _index(mmh3.hash(s.encode("utf-8"), 0, signed=True), n)
 
 
 def _resolve_hashed(raw: dict[str, Any]) -> dict[str, list[str]]:
@@ -176,6 +199,51 @@ def _resolve_hashed(raw: dict[str, Any]) -> dict[str, list[str]]:
     return res
 
 
+# --- family / tags (reconstructed label maps) ------------------------------------------
+
+def _load_extra(mdir: Path, lgb: Any) -> dict[str, Any]:
+    """Tag models (one booster per output, text) and the optional family model."""
+    extra: dict[str, Any] = {}
+    for k in TAG_KINDS:
+        files = sorted((mdir / "tags" / k).glob("*.txt"))
+        if files:
+            extra[k] = [lgb.Booster(model_file=str(f)) for f in files]
+    fam = mdir / "EMBER2024_family.model"
+    if fam.is_file():
+        extra["family"] = lgb.Booster(model_file=str(fam))
+    return extra
+
+
+def _labels(extra: dict[str, Any], X: Any, labels: dict[str, Any]) -> dict[str, Any]:
+    """Behaviour / packer / file property / exploit / group tags (probability >=
+    TAG_MIN_PROB and a named output) and the top family guesses."""
+    out: dict[str, Any] = {}
+    for k in TAG_KINDS:
+        bs = extra.get(k)
+        if not bs:
+            continue
+        names = (labels.get(k) or {}).get("labels") or {}
+        hits = []
+        for i, b in enumerate(bs):
+            lab = names.get(str(i))
+            if not lab:
+                continue
+            pr = float(b.predict(X)[0])
+            if pr >= float(lab.get("threshold", TAG_MIN_PROB)):
+                hits.append({"name": lab["name"], "prob": round(pr, 4), "confidence": lab["confidence"],
+                             "precision": lab.get("precision")})
+        out[k] = sorted(hits, key=lambda h: -h["prob"])
+    fam = extra.get("family")
+    if fam is not None:
+        names = (labels.get("family") or {}).get("labels") or {}
+        pr = fam.predict(X)[0]
+        top = sorted(range(len(pr)), key=lambda i: -pr[i])[:FAMILY_TOP]
+        out["family"] = [{"name": (names.get(str(i)) or {}).get("name") or f"unnamed class #{i}",
+                          "prob": round(float(pr[i]), 4),
+                          "confidence": (names.get(str(i)) or {}).get("confidence") or "none"} for i in top]
+    return out
+
+
 # --- classification (child process) -----------------------------------------------
 
 def _classify(paths: list[str], mdir: str) -> list[dict[str, Any]]:
@@ -194,6 +262,11 @@ def _classify(paths: list[str], mdir: str) -> list[dict[str, Any]]:
     ex = ef.PEFeatureExtractor()
     names = feature_names(ex)
     boosters: dict[str, Any] = {}
+    try:
+        extra = _load_extra(Path(mdir), lgb)
+        label_maps = (json.loads(LABELS_FILE.read_text()).get("models") or {}) if LABELS_FILE.is_file() else {}
+    except Exception:  # noqa: BLE001  (optional layer)
+        extra, label_maps = {}, {}
     out = []
     for p in paths:
         rec: dict[str, Any] = {"path": p}
@@ -202,9 +275,10 @@ def _classify(paths: list[str], mdir: str) -> list[dict[str, Any]]:
             data = path.read_bytes()[:MAX_BYTES]
             ftype = file_type(data[:4096], path)
             if ftype is None:
-                out.append({**rec, "status": "unsupported", "detail": "not a PE, PDF or ELF file"})
+                out.append({**rec, "status": "unsupported", "detail": "not a PE, PDF, ELF or APK file"})
                 continue
-            model = ftype if (Path(mdir) / f"EMBER2024_{ftype}.model").is_file() else "all"
+            chain = [ftype] + (["PE"] if ftype in ("Win32", "Win64", "Dot_Net") else []) + ["all"]
+            model = next((m for m in chain if (Path(mdir) / f"EMBER2024_{m}.model").is_file()), "all")
             mfile = Path(mdir) / f"EMBER2024_{model}.model"
             if not mfile.is_file():
                 out.append({**rec, "status": "no_model", "file_type": ftype,
@@ -243,7 +317,11 @@ def _classify(paths: list[str], mdir: str) -> list[dict[str, Any]]:
                                     if k in ("tpr_at_fpr_0.01", "roc_auc", "challenge_detected_at_1pct_fpr")},
                         "bias": float(contrib[-1]),
                         "blocks": dict(sorted(blocks.items(), key=lambda kv: -abs(kv[1]))),
-                        "top_features": top, "feature_version": ef.FEATURE_VERSION})
+                        "top_features": top, "feature_version": ef.FEATURE_VERSION,
+                        # tag/family models were trained on malware only: shown only when
+                        # the detector puts the object above its threshold
+                        "labels": (_labels(extra, X, label_maps)
+                                   if extra and th is not None and score >= th else {})})
         except Exception as exc:  # noqa: BLE001
             out.append({**rec, "status": "error", "detail": f"{type(exc).__name__}: {exc}"[:300]})
     return out
@@ -255,7 +333,7 @@ def classify(paths: list[Path], timeout: int | None = None) -> list[dict[str, An
     st = status()
     if not st["deps"]:
         return [{"path": str(p), "status": "not_installed",
-                 "detail": "lightgbm / scikit-learn / signify not installed in the portable Python"} for p in paths]
+                 "detail": "lightgbm / mmh3 / signify not installed in the portable Python"} for p in paths]
     if not st["models"]:
         return [{"path": str(p), "status": "no_model",
                  "detail": f"EMBER2024 models not provisioned ({st['dir']}) — run install.py"} for p in paths]
@@ -291,7 +369,7 @@ def _supported(path: Path) -> bool:
             head = fh.read(1024)
     except OSError:
         return False
-    return head[:2] == b"MZ" or head[:4] == b"\x7fELF" or b"%PDF-" in head
+    return head[:2] == b"MZ" or head[:4] == b"\x7fELF" or b"%PDF-" in head or _is_apk(path, head)
 
 
 def targets(root: Path, original: Path, nested_tree: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -343,11 +421,12 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
     st = status()
     res: dict[str, Any] = {"module": "ml", "status": "ok", "engine": "EMBER2024 · LightGBM",
                            "models": st["models"], "calibrated": st["calibrated"], "items": [], "findings": [],
+                           "tag_models": st["tags"], "family_model": st["family"],
                            "triage_only": True}
     tg = targets(root, original, nested_tree)
     if not tg:
         res["status"] = "not_applicable"
-        res["detail"] = "no PE, PDF or ELF object in this case"
+        res["detail"] = "no PE, PDF, ELF or APK object in this case"
         return res
     results = classify([Path(t["path"]) for t in tg])
     for t, r in zip(tg, results):

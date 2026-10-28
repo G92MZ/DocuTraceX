@@ -1472,6 +1472,29 @@ def bloated_exe() -> bytes:
     return lief_helper_dll() + b"\x00" * (24 * 1024 * 1024)
 
 
+def invoice_viewer_apk() -> bytes:
+    """Inert Android package (Machine Learning tab, APK model): a ZIP with a
+    stub AndroidManifest.xml, a stub classes.dex and resources that carry the
+    invoice story (*.example URL, SMS-stealer style strings). Not installable."""
+    import io
+    import zipfile
+
+    manifest = (b"\x03\x00\x08\x00" + b"\x00" * 28
+                + "com.example.facturaviewer android.permission.RECEIVE_SMS "
+                  "android.permission.READ_SMS android.permission.INTERNET".encode("utf-16-le"))
+    dex = (b"dex\n035\x00" + b"\x00" * 104
+           + b"Lcom/example/facturaviewer/SmsReceiver;\x00onReceive\x00getMessageBody\x00"
+           + b"https://invoice-viewer.example/api/upload\x00Factura_2024-0613\x00")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("AndroidManifest.xml", manifest)
+        z.writestr("classes.dex", dex)
+        z.writestr("res/values/strings.xml",
+                   '<resources><string name="app_name">Factura 2024-0613</string></resources>')
+        z.writestr("META-INF/MANIFEST.MF", "Manifest-Version: 1.0\r\n")
+    return buf.getvalue()
+
+
 def build_all() -> dict[str, bytes]:
     out: dict[str, bytes] = {
         "sample.docx": word_docx(), "sample.docm": word_docm(),
@@ -1481,7 +1504,7 @@ def build_all() -> dict[str, bytes]:
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
         "sample_obf_techniques.js": obf_techniques_js(),
         "sample_chain_dropper.js": chain_dropper_js(), "sample_msxml_dropper.js": msxml_dropper_js(), "sample_wsh_selfread.js": wsh_selfread_dropper_js(), "sample_xor_stager.ps1": xor_stager_ps1(),
-        "sample_encoded_blobs.ps1": encoded_blobs_ps1(), "sample_crypto_loader.ps1": crypto_loader_ps1(), "sample_invoke_obfuscation.ps1": invoke_obfuscation_ps1(), "sample_xor_loader.vbs": xor_loader_vbs(), "sample_dosfuscation.bat": dosfuscation_bat(), "sample_exec_chain.py": exec_chain_py(), "sample_lief_helper.dll": lief_helper_dll(), "sample_bloated_invoice.exe": bloated_exe(),
+        "sample_encoded_blobs.ps1": encoded_blobs_ps1(), "sample_crypto_loader.ps1": crypto_loader_ps1(), "sample_invoke_obfuscation.ps1": invoke_obfuscation_ps1(), "sample_xor_loader.vbs": xor_loader_vbs(), "sample_dosfuscation.bat": dosfuscation_bat(), "sample_exec_chain.py": exec_chain_py(), "sample_lief_helper.dll": lief_helper_dll(), "sample_bloated_invoice.exe": bloated_exe(), "ml/sample_invoice_viewer.apk": invoice_viewer_apk(),
         "sample_stage2.ps1": stage2_ps1(), "sample_dropper.vbs": dropper_vbs(),
         "sample_dropper.bat": dropper_bat(), "sample_ioc_noise.bat": ioc_noise_bat(), "sample_loader.hta": loader_hta(),
         "sample_shortcut.pdf.lnk": shortcut_lnk(), "sample_shortcut.url": internet_shortcut_url(),

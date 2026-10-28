@@ -12,8 +12,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 from test_js_techniques import _analyze, _ms, client  # noqa: E402,F401
 
-_DEPS = all(importlib.util.find_spec(m) for m in ("lightgbm", "sklearn", "signify"))
-pytestmark = pytest.mark.skipif(not _DEPS, reason="lightgbm / scikit-learn / signify not installed")
+_DEPS = all(importlib.util.find_spec(m) for m in ("lightgbm", "mmh3", "signify"))
+pytestmark = pytest.mark.skipif(not _DEPS, reason="lightgbm / mmh3 / signify not installed")
 
 from docutracex.config import settings  # noqa: E402
 
@@ -107,3 +107,63 @@ def test_installer_pins_every_model() -> None:
     for name, meta in data["models"].items():
         assert len(meta["sha256"]) == 64 and meta["num_feature"] == 2568, name
         assert 0 < meta["threshold_fpr_0.01"] < 1
+
+
+def test_family_download_verifies_hash(tmp_path: Path, monkeypatch) -> None:
+    import hashlib
+    import io
+    import time
+
+    from docutracex.ml import family_download as fd
+    data = b"tree\nversion=v4\n" + b"x" * 5000
+    monkeypatch.setattr(fd, "target", lambda: tmp_path / "EMBER2024_family.model")
+
+    class R(io.BytesIO):
+        headers = {"Content-Length": str(len(data))}
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    class Opener:
+        def open(self, req, timeout=0): return R(data)
+
+    monkeypatch.setattr(fd.urllib.request, "build_opener", lambda *a: Opener())
+    for sha, want in (("0" * 64, "error"), (hashlib.sha256(data).hexdigest(), "done")):
+        monkeypatch.setattr(fd, "_meta", lambda sha=sha: {"sha256": sha, "size": len(data)})
+        fd._state.clear(); fd._state["state"] = "idle"
+        fd.start()
+        for _ in range(100):
+            if fd.status()["state"] != "downloading":
+                break
+            time.sleep(0.02)
+        assert fd.status()["state"] == want
+    assert (tmp_path / "EMBER2024_family.model").read_bytes() == data
+    assert not (tmp_path / "EMBER2024_family.model.part").exists()
+
+
+def test_hasher_matches_sklearn_exactly() -> None:
+    sk = pytest.importorskip("sklearn.feature_extraction")
+    import random
+
+    import numpy as np
+
+    from docutracex.ml.hashing import FeatureHasher
+    rnd = random.Random(7)
+    alph = "abcXYZ09:._-ñ€\x00"
+    for _ in range(500):
+        n = rnd.choice([10, 32, 50, 128, 256, 1024])
+        it = rnd.choice(["string", "pair"])
+        alt = rnd.choice([True, False])
+        word = lambda k: "".join(rnd.choice(alph) for _ in range(rnd.randint(0, k)))  # noqa: E731
+        x = ([word(12) for _ in range(rnd.randint(1, 30))] if it == "string" else
+             [(word(8), rnd.choice([0, 1, 2.5, -3, rnd.random() * 1e6, "v1", 7])) for _ in range(rnd.randint(1, 30))])
+        a = sk.FeatureHasher(n, input_type=it, alternate_sign=alt).transform([x]).toarray()[0]
+        b = FeatureHasher(n, input_type=it, alternate_sign=alt).transform([x]).toarray()[0]
+        assert np.array_equal(a.astype(np.float32), b.astype(np.float32))
+
+
+@pytest.mark.skipif(not (settings.tools_dir / "ember" / "EMBER2024_APK.model").is_file(), reason="APK model not provisioned")
+def test_apk_is_classified(client) -> None:
+    _, res = _analyze(client, "sample_invoice_viewer.apk", _ms().invoice_viewer_apk())
+    items = json.loads((res / "ml.json").read_text())["items"]
+    apk = next(i for i in items if i.get("file_type") == "APK")
+    assert apk["status"] == "ok" and apk["model"] == "EMBER2024_APK"
