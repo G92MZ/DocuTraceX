@@ -319,6 +319,9 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 
     for stale in ("unlock", "msoffcrypto", "archive"):
         paths.subresult(stale).unlink(missing_ok=True)
+    # nested child views of a previous run (rebuilt by this run's nested scans)
+    import shutil as _shutil
+    _shutil.rmtree(paths.results_dir / "nested_views", ignore_errors=True)
     unlock_rec: dict[str, Any] = {}
     det = unlock_mod.detect(original)
     if det["encrypted"] and det["kind"] in ("office", "pdf"):

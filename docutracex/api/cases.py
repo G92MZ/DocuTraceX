@@ -106,6 +106,56 @@ async def get_components(analysis_id: str) -> dict:
     }
 
 
+@router.get("/{analysis_id}/nested/{view_id}/components")
+async def get_nested_components(analysis_id: str, view_id: str) -> dict:
+    """A nested child's own analysis, shaped like ``/components`` so the UI can
+    open it like a case (its tabs), plus its place in the tree."""
+    import re as _re
+
+    from .. import nested as nested_mod
+    from ..storage import CasePaths, read_json
+
+    if not _re.fullmatch(r"[0-9a-f]{16}-[0-9a-f]{6}", view_id):
+        raise HTTPException(status_code=400, detail="bad view id")
+    try:
+        case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    paths = CasePaths(analysis_id)
+    view = read_json(nested_mod.view_path(paths, view_id))
+    if not view:
+        raise HTTPException(status_code=404, detail="nested view not found (re-analyse the case)")
+    # the child's own children, as its Nested tab
+    tree = (read_json(paths.subresult("nested")) or {}).get("tree") or []
+
+    def find(nodes):  # noqa: ANN001, ANN202
+        for n in nodes:
+            if n.get("view_id") == view_id:
+                return n
+            hit = find(n.get("children") or [])
+            if hit:
+                return hit
+        return None
+    node = find(tree) or {}
+    modules = dict(view.get("modules") or {})
+    # nested keeps an Office child's semantic result as "office": expose it
+    # under its format (word/excel/powerpoint), the key the case view uses
+    off = modules.get("office")
+    if isinstance(off, dict) and off.get("format") in ("word", "excel", "powerpoint"):
+        modules.setdefault(off["format"], off)
+    if node.get("children"):
+        modules["nested"] = {"module": "nested", "tree": node["children"],
+                             "counts": {"nodes": len(node["children"])}}
+    return {
+        "analysis_id": analysis_id, "view_id": view_id, "nested_view": True,
+        "filename": view.get("filename"), "chain": view.get("chain"), "kind": view.get("kind"),
+        "state": "nested", "modules": modules, "iocs": view.get("iocs"),
+        # nested findings carry "tool"; the findings table reads "source"
+        "findings": [{**f, "source": f.get("source") or f.get("tool") or "nested"}
+                     for f in view.get("findings") or []],
+    }
+
+
 @router.get("/{analysis_id}/report")
 async def case_report(analysis_id: str):
     """Render a self-contained HTML report for the case (printable to PDF)."""

@@ -331,6 +331,15 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
         s["location"] = f"{this_chain} › {s.get('location') or s.get('module', '')}"
         sources_out.append(s)
 
+    # The child's own analysis, saved whole so the UI can open it like a case
+    # (its tabs: PE, PDF tools, VBA, email…) — "Open analysis" in Nested, and a
+    # direct tab in the case for first-level children.
+    if mods:
+        try:
+            _save_view(paths, node, this_chain, mods, ioc)
+        except Exception as exc:  # noqa: BLE001  (presentation only)
+            node.setdefault("code_error", f"view: {exc}")
+
     if depth < MAX_DEPTH:
         for i, (cpath, cname) in enumerate(kids[:MAX_CHILDREN]):
             if ctx["_budget"][0] <= 0:      # node cap for the whole tree reached
@@ -353,6 +362,35 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
     elif kids:
         node["truncated_children"] = len(kids)
     return node
+
+
+VIEWS_DIR = "nested_views"
+
+
+def view_path(paths: CasePaths, view_id: str) -> Path:
+    return paths.results_dir / VIEWS_DIR / f"{view_id}.json"
+
+
+def _jsonable(obj: Any) -> Any:
+    """Module results minus private ``_`` keys (full code kept in files)."""
+    if isinstance(obj, dict):
+        return {k: _jsonable(v) for k, v in obj.items() if not str(k).startswith("_")}
+    if isinstance(obj, list):
+        return [_jsonable(v) for v in obj]
+    return obj
+
+
+def _save_view(paths: CasePaths, node: dict[str, Any], chain: str, mods: dict[str, Any], ioc) -> None:  # noqa: ANN001
+    view_id = f"{node['sha256'][:16]}-{hashlib.sha1(chain.encode('utf-8', 'replace')).hexdigest()[:6]}"
+    iocs = ioc.extract(ioc.sources_from_modules(mods))
+    from .storage import write_json
+    write_json(view_path(paths, view_id), {
+        "view_id": view_id, "filename": node["filename"], "kind": node["kind"], "chain": chain,
+        "stored_path": node.get("stored_path"), "sha256": node.get("sha256"),
+        "modules": _jsonable(mods), "findings": node.get("findings", []), "iocs": iocs,
+    })
+    node["view_id"] = view_id
+    node["view_modules"] = sorted(k for k in mods if not k.startswith("_"))
 
 
 def _scan_code_languages(abs_path: Path, paths: CasePaths, node: dict[str, Any],
