@@ -382,6 +382,41 @@ table.cases td.mono { word-break: break-all; }
   .subtab { min-width: 0; padding: 7px 12px; font-size: 13px; }
 }
 
+/* Inner tabs: one per analysis inside a sub-tab (Binary → File · pefile · LIEF · FLOSS · capa) */
+.itabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0 14px;
+  border-bottom: 1px solid var(--panel-border);
+}
+.itab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  margin-bottom: -1px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: 2px solid transparent;
+  border-radius: 7px 7px 0 0;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.itab:hover { color: var(--text); background: #161e29; }
+.itab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.itab.is-active { color: #fff; background: #172131; border-color: var(--panel-border); border-bottom: 2px solid #3b88b8; }
+.itab-status { padding: 0 6px; border-radius: 999px; font-size: 11px; line-height: 1.6; background: #222c3a; color: var(--text-dim); }
+.itab-ok { background: rgba(63, 185, 80, 0.16); color: #7ee2a8; }
+.itab-skip, .itab-off { background: #222c3a; color: var(--text-dim); }
+.itab-bad { background: rgba(248, 81, 73, 0.16); color: #ff9b95; }
+.ipane[hidden] { display: none; }
+@media (max-width: 640px) { .itab { padding: 6px 9px; font-size: 12px; } }
+
 /* Find in code (lupa) */
 .code-find {
   display: flex;
