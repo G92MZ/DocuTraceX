@@ -40,6 +40,9 @@ tools = [
     "LnkParse3>=1.3",
     # PE (.exe/.dll) static triage: header, sections/entropy, imports, resources.
     "pefile>=2024.8.26",
+    # Deep binary parsing (PE: imphash, Rich header, PDB, Authenticode verified,
+    # manifest, mitigations; ELF / Mach-O) — run in its own child process.
+    "lief>=0.15",
     # Encrypted Office detection + default-password decryption (evasion check).
     "msoffcrypto-tool>=5.1",
     # Excel 4.0 (XLM) macro deobfuscation (hidden macro sheets, evasion).

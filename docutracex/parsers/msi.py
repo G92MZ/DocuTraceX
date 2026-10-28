@@ -233,14 +233,59 @@ def analyze_pe(path: Path, rel: str) -> dict[str, Any]:
     return pe_mod.analyze(path, rel)
 
 
+NATIVE_MAGIC = (b"\x7fELF", b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe",
+                b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
+
+
+def native_kind(path: Path) -> str | None:
+    """'pe' / 'native' (ELF, Mach-O) by magic, else None."""
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(8)
+    except OSError:
+        return None
+    if head[:2] == b"MZ":
+        return "pe"
+    if head[:4] in NATIVE_MAGIC:
+        # 0xCAFEBABE is also a Java class: a Mach-O fat header has a small arch count
+        if head[:4] == b"\xca\xfe\xba\xbe" and int.from_bytes(head[4:8], "big") > 30:
+            return None
+        return "native"
+    return None
+
+
+def analyze_native(path: Path, rel: str) -> dict[str, Any]:
+    """ELF / Mach-O: parsed with LIEF (format, libraries, symbols, sections)."""
+    from . import lief_info
+    lf = lief_info.analyze(path, rel)
+    item: dict[str, Any] = {"kind": "native", "file": rel, "findings": lf.pop("findings", []),
+                            "format": lf.get("format", ""), "lief": lf}
+    try:
+        item["size"] = path.stat().st_size
+    except OSError:
+        pass
+    if lf.get("status") != "ok":
+        item["error"] = lf.get("detail", "")
+    return item
+
+
+def analyze_binary(path: Path, rel: str) -> dict[str, Any]:
+    """MSI, PE or ELF/Mach-O — by extension, then by magic."""
+    ext = path.suffix.lower()
+    if ext in _MSI_EXT:
+        return analyze_msi(path, rel)
+    kind = native_kind(path)
+    if kind == "native":
+        return analyze_native(path, rel)
+    return analyze_pe(path, rel)
+
+
 def analyze(original: Path, extracted_dir: Path | None = None,
             modules: dict[str, Any] | None = None) -> dict[str, Any]:
     res: dict[str, Any] = {"module": "msi", "status": "ok", "items": [], "findings": []}
     ext = original.suffix.lower()
-    if ext in _MSI_EXT:
-        item = analyze_msi(original, original.name)
-    elif ext in _PE_EXT:
-        item = analyze_pe(original, original.name)
+    if ext in _MSI_EXT or ext in _PE_EXT or native_kind(original):
+        item = analyze_binary(original, original.name)
     else:
         return res
     res["items"].append(item)
