@@ -19,6 +19,7 @@ from typing import Any
 
 from . import structure
 from .logging_config import get_logger
+from .config import tmo
 
 log = get_logger(__name__)
 
@@ -166,7 +167,7 @@ def _run_libmagic(path: Path) -> dict[str, Any]:
             proc = subprocess.run(
                 [str(portable), "-I", "-c", _MAGIC_PROBE, str(path)],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=30, env=native.subprocess_env(),
+                timeout=tmo(30), env=native.subprocess_env(),
             )
             if proc.returncode == 0 and proc.stdout.strip():
                 return _json.loads(proc.stdout)

@@ -41,12 +41,13 @@ _MAX_BYTES = 64 * 1024 * 1024
 
 # External static tools (FLOSS / capa): per-run time limits and output caps.
 import os as _os
+from ..config import tmo
 
-FLOSS_TIMEOUT = int(_os.environ.get("DOCUTRACEX_FLOSS_TIMEOUT", "1200"))   # 20 min
+FLOSS_TIMEOUT = int(_os.environ.get("DOCUTRACEX_FLOSS_TIMEOUT", str(tmo(1200))))   # 20 min x factor
 # FLOSS arguments (besides --json / --quiet, which the parser needs):
 # --large-file lifts FLOSS's 16 MB limit; -n 7 = minimum string length.
 FLOSS_EXTRA_ARGS = ["--large-file", "-n", "7"]
-CAPA_TIMEOUT = int(_os.environ.get("DOCUTRACEX_CAPA_TIMEOUT", "1800"))   # 30 min
+CAPA_TIMEOUT = int(_os.environ.get("DOCUTRACEX_CAPA_TIMEOUT", str(tmo(1800))))   # 30 min x factor
 _FLOSS_MAX_STRINGS = 7000
 _CAPA_MAX_RULES = 300
 # PyInstaller CArchive cookie (same as parsers.pyinstaller.MAGIC), searched in

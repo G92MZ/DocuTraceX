@@ -14,6 +14,7 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any
+from .config import tmo
 
 OUTPUT_BOUND = 60000
 
@@ -29,7 +30,7 @@ def env() -> dict[str, str]:
     return e
 
 
-def run(cmd: list[str], shown: str, timeout: int = 180, cwd: Path | None = None,
+def run(cmd: list[str], shown: str, timeout: int = tmo(180), cwd: Path | None = None,
         bound: int = OUTPUT_BOUND, extra_env: dict[str, str] | None = None,
         input_text: str | None = None) -> dict[str, Any]:
     """Run ``cmd``; return {command, returncode, output, stderr, duration_s, ...}.

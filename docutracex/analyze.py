@@ -20,6 +20,7 @@ from typing import Any
 
 from .logging_config import get_logger
 from .storage import CasePaths, read_json, write_json, write_subresult
+from .config import tmo
 
 log = get_logger(__name__)
 
@@ -187,12 +188,34 @@ def set_step_listener(fn) -> None:  # noqa: ANN001
 
 
 def _notify_step(event: str, rec: dict[str, Any]) -> None:
+    if event == "start":
+        _step_local.current = rec.get("step")
     fn = getattr(_step_local, "fn", None)
     if fn:
         try:
             fn(event, rec)
         except Exception:  # noqa: BLE001  (reporting must never break the analysis)
             pass
+
+
+_progress_lock = _threading.Lock()
+
+
+def step_progress_reporter():
+    """A callable ``report(detail)`` that shows progress *inside* the step that
+    is running now (e.g. "script 7/23"). Bound to this thread's listener and
+    step, so worker threads of a step can call it too. No-op without a listener."""
+    fn = getattr(_step_local, "fn", None)
+    step = getattr(_step_local, "current", None)
+
+    def report(detail: str) -> None:
+        if fn and step:
+            with _progress_lock:
+                try:
+                    fn("progress", {"step": step, "detail": str(detail)[:120]})
+                except Exception:  # noqa: BLE001
+                    pass
+    return report
 
 
 def analyze_case(case_root: Path) -> dict[str, Any]:
@@ -1153,7 +1176,7 @@ def run_analysis(case_root: Path, module: str | None = None) -> None:
                 cmd,
                 # Generous: every tool (incl. ViperMonkey emulation) runs per case;
                 # no limit when trying every word of an email as a password.
-                timeout=None if case_wordlist(CasePaths(case_root.name, cases_dir=case_root.parent)) else 3600,
+                timeout=None if case_wordlist(CasePaths(case_root.name, cases_dir=case_root.parent)) else tmo(3600),
                 listener=getattr(_step_local, "fn", None),
             )
         except Exception as exc:  # noqa: BLE001
@@ -1204,4 +1227,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    # Run through the canonical module, not this ``__main__`` copy: parsers
+    # import ``docutracex.analyze`` (step progress, listeners), and two copies
+    # of the module would each have their own per-thread state.
+    from docutracex.analyze import main as _main
+    raise SystemExit(_main())

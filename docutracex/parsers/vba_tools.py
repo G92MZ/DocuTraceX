@@ -30,6 +30,7 @@ from typing import Any
 from .. import quiet, toolrun
 from ..logging_config import get_logger
 from .didier import didier_dir
+from ..config import tmo
 
 log = get_logger(__name__)
 
@@ -44,7 +45,7 @@ def _finding(rule: str, severity: str, detail: str, location: str, evidence: str
             "location": location, "evidence": evidence[:2000]}
 
 
-def _py(target: str, args: list[str], shown: str, script: bool = False, timeout: int = 180,
+def _py(target: str, args: list[str], shown: str, script: bool = False, timeout: int = tmo(180),
         cwd: Path | None = None) -> dict[str, Any]:
     return toolrun.run(quiet.python_tool_cmd(target, args, script), shown, timeout=timeout,
                        cwd=cwd, extra_env=toolrun.with_package_path())

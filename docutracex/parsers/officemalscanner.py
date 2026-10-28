@@ -28,12 +28,13 @@ from typing import Any
 
 from ..config import settings
 from ..logging_config import get_logger
+from ..config import tmo
 
 log = get_logger(__name__)
 
 EXE_NAME = "OfficeMalScanner.exe"
 _OUTPUT_BOUND = 60000
-_TIMEOUT = 180
+_TIMEOUT = tmo(180)
 
 # OfficeMalScanner prints a "Malicious Index = N" summary line.
 _MALICIOUS_INDEX = re.compile(r"Malicious Index\s*=\s*(\d+)", re.IGNORECASE)

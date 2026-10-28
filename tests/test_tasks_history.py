@@ -106,7 +106,8 @@ def test_live_steps_from_the_portable_subprocess(client: TestClient, tmp_path: P
     wrapper.chmod(0o755)
     if os.name == "nt":
         pytest.skip("shell wrapper")
-    r = client.post("/api/cases", files={"file": ("c.bat", b"@echo off\r\npowershell -nop -c whoami\r\n")}).json()
+    page = "<html>" + "".join(f"<script>var a{i} = {i};</script>" for i in range(3)) + "</html>"
+    r = client.post("/api/cases", files={"file": ("c.html", page.encode())}).json()
     _wait(client, r["task"]["id"])
     monkeypatch.setattr(settings, "portable_python", lambda: wrapper)
     monkeypatch.setenv("PYTHONPATH", str(Path(__file__).resolve().parents[1]))
@@ -114,7 +115,9 @@ def test_live_steps_from_the_portable_subprocess(client: TestClient, tmp_path: P
     # if it silently fell back to in-process, no step would be reported
     monkeypatch.setattr(analyze, "analyze_case", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("in-process")))
     events: list[tuple[str, str]] = []
-    analyze.set_step_listener(lambda ev, rec: events.append((ev, rec.get("step", ""))))
+    details: list[str] = []
+    analyze.set_step_listener(lambda ev, rec: (events.append((ev, rec.get("step", ""))),
+                                               details.append(rec.get("detail", "")) if ev == "progress" else None))
     try:
         analyze.run_analysis(Path(settings.cases_dir) / r["analysis_id"])
     finally:
@@ -122,4 +125,5 @@ def test_live_steps_from_the_portable_subprocess(client: TestClient, tmp_path: P
     starts = [s for e, s in events if e == "start"]
     ends = [s for e, s in events if e == "end"]
     assert starts and any(s.startswith("batch") for s in starts)
+    assert "script 3/3" in details        # progress inside the JS step crosses the process boundary
     assert set(starts) <= set(ends) | {s for s in starts if s.startswith("ioc") or s.startswith("findings")}

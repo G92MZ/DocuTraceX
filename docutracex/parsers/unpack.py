@@ -38,11 +38,12 @@ from pathlib import Path
 from typing import Any
 
 from ..logging_config import get_logger
+from ..config import tmo
 
 log = get_logger(__name__)
 
-UNPACK_TIMEOUT = int(os.environ.get("DOCUTRACEX_UNPACK_TIMEOUT", "300"))
-DIE_TIMEOUT = 90
+UNPACK_TIMEOUT = int(os.environ.get("DOCUTRACEX_UNPACK_TIMEOUT", str(tmo(300))))
+DIE_TIMEOUT = tmo(90)
 _MAX_LISTED = 200          # unpacked files listed in the result
 _MAX_SCRIPT = 200_000      # chars of a recovered script kept in the result
 
@@ -142,7 +143,7 @@ def _has_module(name: str) -> bool:
     py = _portable()
     try:
         r = subprocess.run([str(py), "-I", "-c", f"import {name}"], capture_output=True,
-                           timeout=30, stdin=subprocess.DEVNULL)
+                           timeout=tmo(30), stdin=subprocess.DEVNULL)
         return r.returncode == 0
     except Exception:  # noqa: BLE001
         return False
