@@ -63,3 +63,32 @@ def test_nested_limits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         items.append({"path": str(f), "filename": f.name})
     res = nested.scan_children(items, CasePaths("c1", cases_dir=root.parent))
     assert len(res["tree"]) == 3 and res["truncated_children"] == 3
+
+
+def test_steps_are_reported_live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """While a task runs, each step appears as 'running' and is replaced by its
+    timed record when it ends."""
+    from docutracex import analyze
+    seen: list[list[dict]] = []
+    mgr = tasks.TaskManager()
+    monkeypatch.setattr(settings, "cases_dir", tmp_path / "cases")
+    (tmp_path / "cases").mkdir()
+
+    def fake_run_analysis(root, module=None):  # noqa: ANN001
+        t = next(iter(mgr._tasks.values()))
+        for name in ("javascript: x", "nested: y"):
+            analyze._notify_step("start", {"step": name})
+            seen.append([dict(s) for s in t.steps])
+            analyze._notify_step("end", {"step": name, "status": "ok", "duration_s": 0.01})
+        seen.append([dict(s) for s in t.steps])
+
+    monkeypatch.setattr(analyze, "run_analysis", fake_run_analysis)
+    (tmp_path / "cases" / "c1" / "results").mkdir(parents=True)
+    tid = mgr.submit("analyze", "c1", "x.js", cases_dir=tmp_path / "cases").id
+    for _ in range(200):
+        if (mgr.get(tid) or {}).get("state") in ("completed", "failed"):
+            break
+        time.sleep(0.02)
+    assert seen[0][-1]["status"] == "running" and seen[0][-1]["started_utc"].endswith("Z")
+    assert seen[1][0]["status"] == "ok" and seen[1][-1]["status"] == "running"
+    assert [s["status"] for s in seen[-1]] == ["ok", "ok"]
