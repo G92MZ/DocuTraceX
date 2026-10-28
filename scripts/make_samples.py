@@ -1659,6 +1659,27 @@ def ml_samples() -> dict[str, bytes]:
     return out
 
 
+def native_libs_apk() -> bytes:
+    """Inert Android package with the same native library for two ABIs
+    (lib/arm64-v8a/libapp.so, lib/x86_64/libapp.so): ELF shared objects whose
+    DT_NEEDED libraries (liblog.so, libc.so…) must not become "domains" (.so is
+    also a ccTLD), with an "::" string that is not an IPv6. Exercises the ELF
+    tab label, the per-ABI tab names and the IOC filters."""
+    import binkit as bk
+
+    def lib(machine: int) -> bytes:
+        return bk.elf(shared=True, soname="libapp.so", machine=machine,
+                      needed=["liblog.so", "libandroid.so", "libm.so", "libdl.so", "libc.so"],
+                      strings=["::", "Java_com_example_facturalector_Native_sync",
+                               "https://api.facturas-lector.example/v1/sync", f"Factura {INVOICE}",
+                               "std::vector", "1.2.3"])
+    return bk.apk(package="com.example.facturalector",
+                  permissions=["android.permission.INTERNET"],
+                  dex_strings=["Lcom/example/facturalector/Native;", "System", "loadLibrary", "app"],
+                  app_name="Lector de facturas",
+                  extra={"lib/arm64-v8a/libapp.so": lib(0xB7), "lib/x86_64/libapp.so": lib(0x3E)})
+
+
 def build_all() -> dict[str, bytes]:
     out: dict[str, bytes] = {
         "sample.docx": word_docx(), "sample.docm": word_docm(),
@@ -1679,6 +1700,7 @@ def build_all() -> dict[str, bytes]:
         "sample_cabinet.cab": cabinet_cab(), "sample_image.iso": optical_image_iso(),
         "sample_archive.tar.gz": tarball_tgz(), "sample_notes.one": onenote_one(),
         "sample_packed.exe": packed_pe_exe(),
+        "sample_native_libs.apk": native_libs_apk(),
         "lab/dropper_bundle.zip": dropper_bundle_zip(),
     }
     for ext in X_CT:

@@ -192,10 +192,25 @@ def _valid_ipv4(value: str) -> bool:
 
 
 def _valid_ipv6(value: str) -> str | None:
+    """A real IPv6 address: not the unspecified ``::`` or loopback ``::1``, and
+    with at least three written groups (``1::``, ``a:b::`` are code / string
+    fragments, not addresses)."""
     try:
-        return ipaddress.IPv6Address(value).compressed
+        addr = ipaddress.IPv6Address(value)
     except ValueError:
         return None
+    if addr.is_unspecified or addr.is_loopback:
+        return None
+    if sum(1 for g in value.split(":") if g) < 3:
+        return None
+    return addr.compressed
+
+
+def _random_hex(value: str) -> bool:
+    """A digest is random-looking: no long runs of one nibble (``00000000``,
+    ``ffffffff`` — padding in a hex dump) and enough distinct hex digits."""
+    v = value.lower()
+    return not re.search(r"(.)\1{7,}", v) and len(set(v)) >= min(10, len(v) // 4)
 
 
 def _clean_url(url: str) -> str:
@@ -240,8 +255,14 @@ def _known_tld(domain: str, strict: bool = False) -> bool:
 _CODE_NAMESPACES = ("java.", "javax.", "android.", "androidx.", "kotlin.", "jdk.", "sun.")
 
 
+# Shared objects: libc.so, libapp.so, libssl.so.3 — .so is also a ccTLD (Somalia),
+# so only lib*.so names are treated as files; notion.so stays a domain.
+_SHARED_LIB = re.compile(r"(?i)^lib[\w+-]*\.so$")
+
+
 def _looks_like_filename(domain: str) -> bool:
-    return domain.rsplit(".", 1)[-1].lower() in _FILE_TLDS or domain.lower().startswith(_CODE_NAMESPACES)
+    return (domain.rsplit(".", 1)[-1].lower() in _FILE_TLDS or domain.lower().startswith(_CODE_NAMESPACES)
+            or bool(_SHARED_LIB.match(domain)))
 
 
 # URLs of the analysis tools themselves (banners, help text, tracebacks): never
@@ -339,6 +360,10 @@ def _valid_filepath(value: str) -> bool:
     # escaped byte runs (\x4d\x5a...) are binary noise, not a path
     if re.search(r"(?i)(\\x[0-9a-f]{2}){2}", value):
         return False
+    # RTF control syntax ({\fldrslt, }}{\*\...) is markup, not a path; a GUID
+    # folder (\{3F2504E0-...}\) never has "{\", "}{" or "}}"
+    if re.search(r"\{\\|\}\{|\}\}|\\\*\\", value):
+        return False
 
     # Absolute drive path, e.g. C:\\Windows\\cmd.exe
     if re.match(r"(?i)^[a-z]:\\", value):
@@ -348,6 +373,9 @@ def _valid_filepath(value: str) -> bool:
     elif value.startswith("\\\\"):
         parts = value[2:].split("\\")
         if len(parts) < 2 or not parts[0] or not parts[1]:
+            return False
+        # the host is a name, an IP or a WebDAV host@SSL@port — not "d}}{"
+        if not re.fullmatch(r"[A-Za-z0-9._$-]+(?:@[A-Za-z0-9]+)*|\?|\.|\[[0-9A-Fa-f:.]+\]", parts[0]):
             return False
         components = parts
 
@@ -522,6 +550,8 @@ def _scan_text(
             )
 
     for match in _HASH_RE.finditer(text):
+        if not _random_hex(match.group(0)):
+            continue
         col.add(
             "hash_like", match.group(0).lower(), module, location,
             _ctx(text, match.start(), match.end()),
@@ -614,6 +644,7 @@ def _scan_text(
             _looks_like_filename(domain)
             or not _known_tld(domain, strict)
             or domain in _NAMESPACE_HOSTS
+            or (domain.endswith(".so") and re.match(r"\.\d", text[match.end():match.end() + 2]))  # libfoo.so.1
         ):
             continue
 
@@ -728,6 +759,19 @@ _SKIP_MODULES = {"yara", "ml", "netcheck", "file", "unlock", "findings", "iocs",
 # names like "visor.py" or "notas.one" are not domains).
 _MODULE_SKIP_PATHS = {
     "archive": re.compile(r"entries\[\d+\]/(?:name|stored_path|path)$"),
+    # Binary analysis: the file's own name, the libraries / DLLs / sections it
+    # declares (libc.so, KERNEL32.dll, .text), and capa's capability / ATT&CK /
+    # MBC names ("query or enumerate registry key", "Query Registry") describe
+    # the binary, they are not indicators. Strings, PDB paths, version info and
+    # signatures are still mined.
+    "msi": re.compile(
+        r"items\[\d+\]/(?:file|kind|machine|subsystem|imports_dll(?:\[\d+\])?|capa(?:[/\[].*)?"
+        r"|lief/(?:libraries|imports|delay_imports|export_name|exports|sections|format|resource_types|linker"
+        r"|mitigations|dll_characteristics)(?:[/\[].*)?)$"),
+    # emldump's dump of a non-text MIME part (an RTF / Office / binary
+    # attachment) is markup and hex, not prose: the attachment itself is
+    # analysed as a nested child, which is where its IOCs come from.
+    "mailrules": re.compile(r"tools/emldump part \d+ \((?!text/)[^)]*\)/output$"),
 }
 
 
