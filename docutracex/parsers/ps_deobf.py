@@ -11,7 +11,12 @@ layers obfuscated loaders stack, statically — nothing is executed:
 - ``[char]0x41`` / ``[char]65`` char codes;
 - string concatenation (``'a'+'b'``) and the format operator
   (``'{0}{1}' -f 'a','b'``);
-- unwrapping ``Invoke-Expression`` / ``iex`` / ``&`` of a string literal.
+- unwrapping ``Invoke-Expression`` / ``iex`` / ``&`` of a string literal;
+- compressed stages: ``StreamReader(DeflateStream|GZipStream(MemoryStream(
+  [Convert]::FromBase64String('..'))))`` -> the decompressed text;
+- XOR: base64 bytes decrypted in a ``-bxor`` loop with a numeric or string key,
+  and number arrays mapped through ``[char]($_ -bxor K)`` -> the plain text.
+  Each decrypted stage is put back in place so the next pass keeps peeling.
 
 ``deobfuscate(cmd)`` returns ``{changed, code, methods}``.
 """
@@ -21,6 +26,7 @@ from __future__ import annotations
 import base64
 import binascii
 import re
+import zlib
 from typing import Any, Callable
 
 _MAX_PASSES = 30
@@ -121,7 +127,9 @@ def _t_frombase64(code: str) -> tuple[str, int]:
     def repl_bare(m: re.Match) -> str:
         nonlocal n
         text = _b64_to_text(_lit_value(m.group(1)))
-        if text is None:
+        # binary (compressed/encrypted bytes) stays as base64: a later stage
+        # (decompress / XOR) or the analyst handles it, not latin-1 garbage
+        if text is None or not _looks_text(text):
             return m.group(0)
         n += 1
         return _as_lit(text)
@@ -224,8 +232,168 @@ def _t_unwrap_iex(code: str) -> tuple[str, int]:
     return _IEX.sub(repl, code), n
 
 
+# --- compression and XOR stages ---------------------------------------------
+
+def _looks_text(text: str) -> bool:
+    """Script-like text: almost all printable ASCII. Random bytes decoded as
+    UTF-16 give "printable" CJK, so plain isprintable() is not enough."""
+    if not text:
+        return False
+    ok = sum(1 for c in text if (" " <= c <= "~") or c in "\r\n\t")
+    return ok >= len(text) * 0.85
+
+def _bytes_text(raw: bytes) -> str | None:
+    """Readable text from decrypted/decompressed bytes (UTF-16LE or 8-bit)."""
+    if not raw:
+        return None
+    cands = []
+    if len(raw) > 3 and raw[1:8:2] == b"\0" * len(raw[1:8:2]):
+        cands.append("utf-16-le")
+    cands += ["utf-8", "latin-1"]
+    for enc in cands:
+        try:
+            text = raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+        if _looks_text(text):
+            return text
+    return None
+
+
+_B64_LIT = r"\[(?:System\.)?Convert\]::FromBase64String\(\s*(" + _STRLIT + r")\s*\)"
+_DECOMP_HEAD = (r"(?is)(?:\(\s*)?(?:New-Object\s+(?:System\.)?IO\.StreamReader\s*\(?\s*)?"
+                r"\(?\s*New-Object\s+(?:System\.)?IO\.Compression\.(Deflate|GZip)Stream\s*\(?.{0,160}?" + _B64_LIT)
+# with a StreamReader(...).ReadToEnd() wrapper (taken whole), or the bare stream
+_DECOMPS = (re.compile(_DECOMP_HEAD + r"[^\n]{0,300}?\.ReadToEnd\(\s*\)\s*\)?"),
+            re.compile(_DECOMP_HEAD + r"[^\n]{0,200}?\)"))
+
+
+_MS_ASSIGN = re.compile(r"(?i)(\$[\w:]+)\s*=\s*(?:New-Object\s+(?:System\.)?IO\.MemoryStream\s*\(\s*,?\s*|"
+                        r"\[(?:System\.)?IO\.MemoryStream\]\s*)" + _B64_LIT + r"\s*\)?")
+
+
+def _t_decompress(code: str) -> tuple[str, int]:
+    n = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal n
+        try:
+            raw = base64.b64decode(re.sub(r"\s+", "", _lit_value(m.group(2))) + "===")
+            raw = zlib.decompress(raw, -15 if m.group(1).lower() == "deflate" else 31)
+        except (binascii.Error, ValueError, zlib.error):
+            return m.group(0)
+        text = _bytes_text(raw)
+        if text is None:
+            return m.group(0)
+        n += 1
+        return _as_lit(text)
+
+    for rx in _DECOMPS:
+        code = rx.sub(repl, code)
+    # MemoryStream in a variable, decompressed further down:
+    #   $s = New-Object IO.MemoryStream(,[Convert]::FromBase64String('..'))
+    #   ... New-Object IO.Compression.DeflateStream($s, ...)
+    for am in list(_MS_ASSIGN.finditer(code)):
+        sm = re.search(r"(?i)IO\.Compression\.(Deflate|GZip)Stream\s*\(\s*" + re.escape(am.group(1)) + r"\b",
+                       code[am.end():am.end() + 1500])
+        if not sm:
+            continue
+        try:
+            raw = base64.b64decode(re.sub(r"\s+", "", _lit_value(am.group(2))) + "===")
+            raw = zlib.decompress(raw, -15 if sm.group(1).lower() == "deflate" else 31)
+        except (binascii.Error, ValueError, zlib.error):
+            continue
+        text = _bytes_text(raw)
+        if text is None:
+            continue
+        n += 1
+        code = code.replace(am.group(0), f"{am.group(1)} = <# {sm.group(1)}-decompressed #> " + _as_lit(text), 1)
+        code += "\n" + text + "\n"
+    return code, n
+
+
+_NUM = r"(?:0x[0-9a-fA-F]+|\d+)"
+_VAR = r"\$[\w:]+"
+_B64_ASSIGN = re.compile(r"(?i)(" + _VAR + r")\s*=\s*" + _B64_LIT)
+_BXOR = re.compile(r"(?i)-bxor\s*(" + _NUM + r"|" + _VAR + r"(?:\s*\[[^\]]{1,60}\])?)")
+_STR_ASSIGN = r"(?i)\{v}\s*=\s*(" + _STRLIT + r")"
+
+
+def _key_bytes(code: str, key: str) -> bytes | None:
+    if re.fullmatch(_NUM, key):
+        return bytes([int(key, 0) & 0xFF])
+    var = key.split("[", 1)[0].strip()
+    m = re.search(r"(?i)" + re.escape(var) + r"\s*=\s*(" + _STRLIT + r")", code)
+    if m:
+        return _lit_value(m.group(1)).encode("latin-1", "replace") or None
+    m = re.search(r"(?i)" + re.escape(var) + r"\s*=\s*(" + _NUM + r")\b", code)
+    if m:
+        return bytes([int(m.group(1), 0) & 0xFF])
+    m = re.search(r"(?i)" + re.escape(var) + r"\s*=\s*(?:\[byte\[\]\]\s*)?\(?\s*(" + _NUM +
+                  r"(?:\s*,\s*" + _NUM + r")+)\s*\)?", code)
+    if m:
+        return bytes(int(x, 0) & 0xFF for x in re.split(r"\s*,\s*", m.group(1)))
+    return None
+
+
+def _t_xor_base64(code: str) -> tuple[str, int]:
+    """``$b = [Convert]::FromBase64String('..')`` + a ``$b[$i] -bxor KEY`` loop."""
+    n = 0
+    for am in list(_B64_ASSIGN.finditer(code)):
+        var = am.group(1)
+        tail = code[am.end():am.end() + 1500]
+        xm = None
+        for cand in _BXOR.finditer(tail):
+            if re.escape(var.lower()) and var.lower() in tail[max(0, cand.start() - 120):cand.start()].lower():
+                xm = cand
+                break
+        if not xm:
+            continue
+        key = _key_bytes(code, xm.group(1))
+        if not key:
+            continue
+        try:
+            raw = base64.b64decode(re.sub(r"\s+", "", _lit_value(am.group(2))) + "===")
+        except (binascii.Error, ValueError):
+            continue
+        text = _bytes_text(bytes(b ^ key[i % len(key)] for i, b in enumerate(raw)))
+        if text is None:
+            continue
+        n += 1
+        # Put the decrypted stage where the blob was; the loop stays as context.
+        code = code.replace(am.group(0), f"{var} = <# XOR-decrypted (key {key!r}) #> " + _as_lit(text), 1)
+        code += "\n" + text + "\n"
+    return code, n
+
+
+_CHAR_XOR = re.compile(
+    r"(?i)(?:-join\s*)?\(?\s*(?:\[(?:byte|int|char)\[\]\]\s*)?\(\s*(" + _NUM + r"(?:\s*,\s*" + _NUM + r"){3,})\s*\)\s*"
+    r"\|\s*(?:%|ForEach-Object|foreach)\s*\{\s*\[char\]\s*\(\s*(?:\[int\])?\$_\s*-bxor\s*(" + _NUM + r")\s*\)\s*\}\s*\)?"
+    r"(?:\s*-join\s*(?:''|\"\"))?"
+)
+
+
+def _t_char_xor(code: str) -> tuple[str, int]:
+    n = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal n
+        k = int(m.group(2), 0)
+        try:
+            text = "".join(chr((int(x, 0) ^ k) & 0xFFFF) for x in re.split(r"\s*,\s*", m.group(1)))
+        except ValueError:
+            return m.group(0)
+        n += 1
+        return _as_lit(text)
+
+    return _CHAR_XOR.sub(repl, code), n
+
+
 _TRANSFORMS: list[tuple[str, Callable[[str], tuple[str, int]]]] = [
     ("encoded-command", _t_encoded_command),
+    ("decompress", _t_decompress),
+    ("xor-base64", _t_xor_base64),
+    ("xor-char-array", _t_char_xor),
     ("FromBase64String", _t_frombase64),
     ("backtick-strip", _t_strip_backticks),
     ("char-code", _t_charcode),
