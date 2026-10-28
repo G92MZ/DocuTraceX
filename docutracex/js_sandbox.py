@@ -62,6 +62,10 @@ class Recorder:
     def __getattr__(self, attr: str):
         if attr.startswith("__"):
             raise AttributeError(attr)
+        if attr in ("toString", "valueOf", "toJSON"):
+            # string coercion (``fso.GetSpecialFolder(2) + "\\x.vbs"``) must
+            # yield a primitive, or V8 throws and the script stops there
+            return lambda *a: str(self)
         name = f"{self._name}.{attr}"
 
         def call(*args):

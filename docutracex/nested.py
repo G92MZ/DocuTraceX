@@ -73,6 +73,8 @@ def _kind(path: Path, name: str) -> str:
         return "onenote"
     if ext in (".msi", ".msp", ".msm", ".exe", ".dll", ".scr", ".sys", ".ocx", ".cpl", ".com"):
         return "binary"
+    if ext in (".js", ".jse", ".vbs", ".vbe", ".wsf", ".hta", ".ps1", ".psm1", ".bat", ".cmd", ".html", ".htm"):
+        return "script"   # analysed by the code-language phase (JS sandbox, PowerShell, VBScript, batch)
     try:
         with path.open("rb") as fh:
             head = fh.read(8)
@@ -302,6 +304,22 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
     except Exception as exc:  # noqa: BLE001
         node.setdefault("code_error", str(exc))
 
+    # Stages this child decrypted (XOR results, dropped payloads, base64 that is
+    # really a PE/ZIP…) become its children, analysed by whatever fits them.
+    origins: dict[str, str] = {}
+    if depth < MAX_DEPTH:
+        try:
+            from . import decrypted
+            got = decrypted.write(decrypted.payloads_from(mods),
+                                  work / decrypted.DIRNAME / node["sha256"][:12], {node["sha256"]})
+            for it in got:
+                kids.append((Path(it["path"]), it["filename"]))
+                origins[it["path"]] = it["origin"]
+            if got:
+                node["decrypted"] = [{"filename": it["filename"], "origin": it["origin"]} for it in got]
+        except Exception as exc:  # noqa: BLE001
+            node.setdefault("code_error", str(exc))
+
     # Full IOC material of THIS child: every analyzer sub-result gathered above,
     # reduced to {module, location, text} by the common builder — so a child is
     # mined as deeply as a top-level file, past the caps that finding evidence
@@ -328,8 +346,10 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
                     alt = cpath
                 cpath = alt
             if cpath.is_file():
-                node["children"].append(
-                    _scan_one(cpath, cname, paths, depth + 1, this_chain, ctx, sources_out))
+                child = _scan_one(cpath, cname, paths, depth + 1, this_chain, ctx, sources_out)
+                if str(cpath) in origins:
+                    child["decrypted_from"] = origins[str(cpath)]
+                node["children"].append(child)
     elif kids:
         node["truncated_children"] = len(kids)
     return node
@@ -344,7 +364,7 @@ def _scan_code_languages(abs_path: Path, paths: CasePaths, node: dict[str, Any],
     in siblings and files the top-level pass already handles. The recovered,
     deobfuscated code is merged back into ``mods`` so the common IOC builder
     mines it, and the complete source is dumped under ``extracted/code/.../nested/``."""
-    from . import codefiles
+    from . import codefiles, decrypted
     from .parsers import batch, javascript, powershell, python, vbscript
 
     # A path that does not exist, so each collector's ``extracted_dir.rglob``
@@ -352,10 +372,16 @@ def _scan_code_languages(abs_path: Path, paths: CasePaths, node: dict[str, Any],
     empty = paths.extracted_dir / "nested" / "__none__"
     prefix = (node.get("sha256") or "child")[:12]
     specs = (
-        ("javascript", lambda: javascript.analyze(abs_path, empty, mods, run_sandbox=False), "js", "js"),
-        ("powershell", lambda: powershell.analyze(abs_path, empty, mods), "powershell", "ps1"),
+        # The V8 sandbox is skipped on ordinary children (heavy), but a stage
+        # that was itself decrypted runs in it: that is how the next layer
+        # (XOR result, dropped payload) is recovered and followed.
+        ("javascript", lambda: javascript.analyze(abs_path, empty, mods,
+                                                  run_sandbox=decrypted.is_decrypted(abs_path)), "js", "js"),
+        # VBScript / batch before PowerShell: PowerShell mines the commands
+        # they launch (each result is merged into ``mods`` as it completes).
         ("vbscript", lambda: vbscript.analyze(abs_path, empty, mods), "vbscript", "vbs"),
         ("batch", lambda: batch.analyze(abs_path, empty, mods), "batch", "bat"),
+        ("powershell", lambda: powershell.analyze(abs_path, empty, mods), "powershell", "ps1"),
         ("python", lambda: python.analyze(abs_path, empty, mods), "python", "py"),
     )
     for key, fn, sub, ext in specs:
@@ -409,8 +435,10 @@ def scan_children(items: list[dict[str, Any]], paths: CasePaths,
             break
         p = Path(it["path"])
         if p.is_file():
-            result["tree"].append(
-                _scan_one(p, it.get("filename") or p.name, paths, 1, "", unlock_ctx, isrc))
+            child = _scan_one(p, it.get("filename") or p.name, paths, 1, "", unlock_ctx, isrc)
+            if it.get("origin"):
+                child["decrypted_from"] = it["origin"]
+            result["tree"].append(child)
     flat: list[dict[str, Any]] = []
     _flatten(result["tree"], flat)
     result["findings"] = flat
@@ -418,6 +446,21 @@ def scan_children(items: list[dict[str, Any]], paths: CasePaths,
     if flat:
         result["status"] = "ok_with_findings"
     return result
+
+
+def merge(base: dict[str, Any] | None, extra: dict[str, Any]) -> dict[str, Any]:
+    """Append the nodes of a second scan (e.g. decrypted stages) to a nested result."""
+    if not base or not base.get("tree"):
+        return extra
+    out = dict(base)
+    out["tree"] = list(base.get("tree") or []) + list(extra.get("tree") or [])
+    out["ioc_sources"] = list(base.get("ioc_sources") or []) + list(extra.get("ioc_sources") or [])
+    flat: list[dict[str, Any]] = []
+    _flatten(out["tree"], flat)
+    out["findings"] = flat
+    out["counts"] = {"findings": len(flat), "nodes": _count_nodes(out["tree"])}
+    out["status"] = "ok_with_findings" if flat else "ok"
+    return out
 
 
 def _count_nodes(nodes: list[dict[str, Any]]) -> int:
