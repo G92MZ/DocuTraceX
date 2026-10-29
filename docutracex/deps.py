@@ -616,7 +616,7 @@ def run_checks() -> dict[str, Any]:
             status="ok" if pycdc else "warn",
             detail=f"pycdc at {pycdc}" if pycdc else "not provisioned (optional)",
             remedy="" if pycdc else
-                   "run scripts/setup_portable_python.py (built from source with CMake); "
+                   "press Retry (compiled from source; on Windows with a Zig toolchain fetched from PyPI, no Build Tools needed); "
                    "without it .pyc is disassembled + string-mined, not decompiled",
             purpose="Decompiles .pyc back to Python source (loose .pyc and unpacked PyInstaller)",
             retry="pycdc",

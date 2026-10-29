@@ -39,6 +39,11 @@ when there is none, on a portable Eclipse Temurin 21 JRE (GPL-2.0 with the
 Classpath Exception) downloaded into `tools/jre/`. `python run.py` provisions
 the optional runtimes on start when they are missing; a failed attempt is not
 repeated until the next update — press **Retry** in Diagnostics to try again.
+pycdc is compiled locally from a pinned upstream commit, without CMake: with
+the system C++ compiler on macOS/Linux when there is one, otherwise (always on
+Windows) with Zig's C++ compiler — the `ziglang` package from PyPI, MIT —
+fetched into a temporary folder and removed after the build, so no Visual
+Studio Build Tools are needed.
 
 ## Optional components
 
