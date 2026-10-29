@@ -13,7 +13,7 @@ Internet through your proxy**, your own **YARA** rules, a machine-learning secon
 marks, a one-click report — and an **AI assistant / MCP server** that can read the case for you.
 **Nothing in the sample is ever executed.**
 
-![Python](https://img.shields.io/badge/Python-3.11+-blue)
+![Python](https://img.shields.io/badge/Python-3.10+-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-local-009688)
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue)
 ![Offline](https://img.shields.io/badge/offline-unless%20you%20ask-success)
@@ -23,6 +23,15 @@ marks, a one-click report — and an **AI assistant / MCP server** that can read
 ---
 
 ## 🚀 Quickstart
+
+**Requirements on your machine (the host):** Python **3.10 or newer** (tested on 3.10–3.14) with
+`pip`, on Windows, Linux or macOS, and Internet access the first time. Only the web service is
+installed on it — `fastapi`, `uvicorn`, `jinja2` and `python-multipart` — so its version does not
+limit the analysis: every analysis library runs on a separate **portable Python 3.13** that
+`install.py` downloads into `tools/` (nothing to install by hand). x86-64 or ARM64.
+Optional, only for a few extras: a **Java runtime** (decompiling Java classes) and **CMake + a C/C++
+compiler** (building two optional components); without them those parts are skipped and Diagnostics
+says so.
 
 ```bash
 python install.py             # once: sets everything up
