@@ -167,7 +167,7 @@ async def get_nested_components(analysis_id: str, view_id: str) -> dict:
 
 
 @router.get("/{analysis_id}/report")
-async def case_report(analysis_id: str):
+async def case_report(analysis_id: str, iocs: str = "marked"):
     """Render a self-contained HTML report for the case (printable to PDF)."""
     from fastapi.responses import HTMLResponse
 
@@ -177,7 +177,7 @@ async def case_report(analysis_id: str):
         case_service.get_case(analysis_id)
     except CaseError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    html = report_mod.build_report_html(analysis_id, cases_dir=settings.cases_dir)
+    html = report_mod.build_report_html(analysis_id, cases_dir=settings.cases_dir, all_iocs=(iocs == "all"))
     # Persist a copy under reports/ as the single current report for the case.
     try:
         from ..storage import CasePaths

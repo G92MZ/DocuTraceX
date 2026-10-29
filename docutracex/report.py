@@ -57,17 +57,44 @@ def _findings_section(findings: list[dict[str, Any]]) -> str:
             + "".join(rows) + "</tbody></table>")
 
 
-def _iocs_section(iocs: dict[str, Any] | None) -> str:
+# IOC marks that put an indicator in the report (False positive keeps it out).
+IOC_REPORT_STATES = ("true_positive", "suspicious", "informational")
+
+
+def ioc_marks(findings: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """{ioc value: mark} from the IOCs the analyst marked (IOCs tab → "＋ mark",
+    stored as manual findings ``manual:ioc`` whose detail is "<Type>: <value>")."""
+    out: dict[str, dict[str, Any]] = {}
+    for f in findings:
+        if f.get("rule") != "manual:ioc" or ": " not in str(f.get("detail") or ""):
+            continue
+        out[str(f["detail"]).split(": ", 1)[1]] = f.get("mark") or {}
+    return out
+
+
+def _iocs_section(iocs: dict[str, Any] | None, marks: dict[str, dict[str, Any]] | None = None,
+                  all_iocs: bool = False) -> str:
+    """IOCs table. By default only the IOCs the analyst marked (True positive,
+    Suspicious or Informational); ``all_iocs`` lists every extracted IOC."""
+    marks = marks or {}
     items = (iocs or {}).get("iocs", [])
+    if not all_iocs:
+        items = [i for i in items
+                 if (marks.get(str(i.get("value"))) or {}).get("state") in IOC_REPORT_STATES]
     if not items:
-        return "<p class='muted'>No IOCs.</p>"
+        return ("<p class='muted'>No IOCs.</p>" if all_iocs else
+                "<p class='muted'>No IOCs marked. Mark them in the IOCs tab (＋ mark) to include them here.</p>")
     rows = []
     for i in items:
         where = ", ".join(sorted({f"{o.get('module')}/{o.get('location')}"
                                   for o in i.get("occurrences", [])}))
+        mk = marks.get(str(i.get("value"))) or {}
+        state = mk.get("state", "unreviewed")
         rows.append(_row([_e(i.get("type")), f"<code>{_e(i.get('value'))}</code>",
-                          _e(i.get("count")), _e(where)]))
-    return ("<table><thead><tr><th>Type</th><th>Value</th><th>Count</th><th>Provenance</th>"
+                          _e(i.get("count")), _e(where),
+                          _e(_MARK_LABEL.get(state, state)) + (f"<div class='muted'>{_e(mk.get('comment'))}</div>"
+                                                               if mk.get("comment") else "")]))
+    return ("<table><thead><tr><th>Type</th><th>Value</th><th>Count</th><th>Provenance</th><th>Mark</th>"
             "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
 
 
@@ -160,7 +187,7 @@ def _ml_section(ml: dict[str, Any] | None, marks: dict[str, dict[str, Any]]) -> 
             "<th>Hints (tags, family)</th><th>Mark</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
 
 
-def build_report_html(analysis_id: str, cases_dir=None) -> str:
+def build_report_html(analysis_id: str, cases_dir=None, all_iocs: bool = False) -> str:
     paths = CasePaths(analysis_id, cases_dir=cases_dir)
     manifest = read_json(paths.manifest) or {}
     summary = read_json(paths.summary) or {}
@@ -174,6 +201,7 @@ def build_report_html(analysis_id: str, cases_dir=None) -> str:
                if read_json(paths.subresult(m)) is not None}
 
     orig = manifest.get("original", {})
+    hashes = orig.get("hashes") or {}   # the manifest keeps them under original.hashes
     fmt = manifest.get("format", {})
     disc = fmt.get("discrepancy", {})
     det = fmt.get("detected", {})
@@ -193,7 +221,9 @@ def build_report_html(analysis_id: str, cases_dir=None) -> str:
         ("Detected type", f"{_e(det.get('mime'))} <span class='muted'>{_e(det.get('name'))}</span>"),
         ("Type match", _e(disc.get("status"))),
         ("Size", _e(orig.get("size_bytes")) + " bytes"),
-        ("SHA-256", f"<code>{_e(orig.get('sha256'))}</code>"),
+        ("MD5", f"<code>{_e(hashes.get('md5'))}</code>"),
+        ("SHA-1", f"<code>{_e(hashes.get('sha1'))}</code>"),
+        ("SHA-256", f"<code>{_e(hashes.get('sha256') or orig.get('sha256'))}</code>"),
         ("State", _e(manifest.get("state"))),
         ("Modules run", _e(", ".join(summary.get("modules_run", [])))),
     ])
@@ -202,6 +232,14 @@ def build_report_html(analysis_id: str, cases_dir=None) -> str:
         f"<span class='chip' style='border-color:{_SEV_COLOR[s]};color:{_SEV_COLOR[s]}'>{sev_counts[s]} {s}</span>"
         for s in _SEV_ORDER if sev_counts[s])
     ioc_total = (iocs or {}).get("counts", {}).get("total", 0)
+    imarks = ioc_marks(findings)
+    ioc_marked = sum(1 for i in (iocs or {}).get("iocs", [])
+                     if (imarks.get(str(i.get("value"))) or {}).get("state") in IOC_REPORT_STATES)
+    ioc_title = (f"Indicators of compromise ({ioc_total})" if all_iocs else
+                 f"Indicators of compromise — marked ({ioc_marked} of {ioc_total})")
+    ioc_note = ("" if all_iocs else
+                "<p class='muted'>Only the IOCs you marked True positive, Suspicious or Informational in the "
+                f"IOCs tab. The other {ioc_total - ioc_marked} extracted IOC(s) are left out.</p>")
 
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -228,14 +266,15 @@ def build_report_html(analysis_id: str, cases_dir=None) -> str:
 <div class="summary-chips">{sev_chips or "<span class='chip'>no confirmed findings</span>"}
   <span class="chip">{tp_count} confirmed (TP)</span>
   <span class="chip">{len(findings)} total reviewed</span>
-  <span class="chip">{ioc_total} IOCs</span></div>
+  <span class="chip">{ioc_total if all_iocs else ioc_marked} IOCs</span></div>
 <h2>Case</h2>
 <table><tbody>{header_rows}</tbody></table>
 <h2>Confirmed findings — True positive ({tp_count} of {len(findings)})</h2>
 <p class="muted">This report lists only the findings marked <b>True positive</b>, from any source (YARA included). The other {len(findings) - tp_count} finding(s) were reviewed and not confirmed.</p>
 {_findings_section(tp_findings)}
-<h2>Indicators of compromise ({ioc_total})</h2>
-{_iocs_section(iocs)}
+<h2>{ioc_title}</h2>
+{ioc_note}
+{_iocs_section(iocs, imarks, all_iocs)}
 {_ml_section(_ml_enriched(paths), marks_service.read_marks(paths))}
 {_nested_section(modules.get('nested'))}
 {_metadata_section(modules)}
