@@ -156,7 +156,7 @@ def extract(path: Path, data: bytes) -> dict[str, Any] | None:
     if ver:
         summary["Version (guess)"] = ver
     return {"family": "Cobalt Strike", "kind": kind, "method": res["method"],
-            "confidence": "high" if "OK" in res.get("sanity", "OK") else "medium",
+            "confidence": "medium" if "fail" in res.get("sanity", "").lower() else "high",
             "summary": summary, "c2": hosts,
             "fields": {k: f.get("value") for k, f in res["fields"].items() if k != "publickey"},
             "_messages": res.get("_messages", [])}

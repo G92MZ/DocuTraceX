@@ -203,6 +203,10 @@ campaign's (`cdn-update.example.net`, `203.0.113.47`).
 | `c2/sample_remcos.exe` | Remcos | RC4-encrypted `SETTINGS` RCDATA resource | C2 `cdn-update.example.net:2404` (TLS) and `203.0.113.47:2404`, campaign `Factura-2026`, mutex `Rmc-F4C7A1` |
 | `c2/sample_asyncrat.exe` | AsyncRAT | .NET settings, AES-256 + HMAC, PBKDF2 key | hosts `cdn-update.example.net`, `203.0.113.47`, ports 6606/7707/8808, version 0.5.8, mutex `AsyncMutex_6SI8OkPnk` |
 | `c2/sample_quasar.exe` | QuasarRAT | .NET settings (Quasar 1.4 scheme) | `cdn-update.example.net:4782`, `203.0.113.47:4782`, version 1.4.1, mutex `QSR_MUTEX_k3Hd9xA1Lm` |
+| `c2/sample_njrat.exe` | njRAT | plain .NET settings strings | `cdn-update.example.net:5552`, campaign `Factura_2026`, version `0.7d`, `Server.exe` in `TEMP`, splitter `\|'\|'\|` |
+| `c2/sample_xworm.exe` | XWorm | .NET settings, AES-256-ECB with key from the mutex | `cdn-update.example.net` and `203.0.113.47` on port 7000, splitter `<Xwormmm>`, `USB.exe`, mutex `Kz3FvP9qLmX2bWsA` |
+| `c2/sample_agenttesla.exe` | AgentTesla-like stealer | exfiltration channel in clear + browser / mail credential paths | SMTP `mail.billing-portal.example:587`, accounts, Telegram-style bot token and chat id on `api.telegram-relay.example` |
+| `c2/sample_nanocore.exe` | NanoCore | type names (identification only) | family identified; settings encrypted in a resource, not decrypted (a medium finding) |
 
 Analyse any of them (or the whole `c2/` folder zipped) and open **C2 / Beacons**:
 each configuration is already a finding, its C2 values are in **IOCs** (ready to

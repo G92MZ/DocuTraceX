@@ -8,6 +8,8 @@ the implants it recognises, without running anything:
 * Metasploit / Meterpreter stagers (shellcode shapes)
 * Remcos (RC4 ``SETTINGS`` resource)
 * AsyncRAT / DcRAT / QuasarRAT (.NET, AES + HMAC settings)
+* njRAT (plain settings), XWorm (AES-ECB, key from the mutex), AgentTesla-style
+  stealers (exfiltration channel in clear), NanoCore (identification only)
 
 Each configuration becomes a high-severity finding with the C2 endpoints in
 its evidence, and its values feed the common IOC extractor.
@@ -24,7 +26,8 @@ log = get_logger(__name__)
 
 MAX_FILES = 500
 MAX_SIZE = 64 * 1024 * 1024
-FAMILIES = ("Cobalt Strike", "Metasploit / Meterpreter", "Remcos", "AsyncRAT", "DcRAT", "QuasarRAT")
+FAMILIES = ("Cobalt Strike", "Metasploit / Meterpreter", "Remcos", "AsyncRAT", "DcRAT", "QuasarRAT",
+            "njRAT", "XWorm", "AgentTesla", "NanoCore")
 
 
 def _targets(original: Path, extracted_dir: Path):
@@ -42,7 +45,7 @@ def _targets(original: Path, extracted_dir: Path):
 
 def scan_object(path: Path, data: bytes) -> list[dict[str, Any]]:
     """Every configuration found in one object (normally zero or one)."""
-    from . import cobalt, dotnet_rats, metasploit, remcos
+    from . import cobalt, dotnet_more, dotnet_rats, metasploit, remcos
 
     out: list[dict[str, Any]] = []
     for name, fn in (("cobalt", lambda: cobalt.extract(path, data)),
@@ -56,6 +59,11 @@ def scan_object(path: Path, data: bytes) -> list[dict[str, Any]]:
             continue
         if res:
             out.append(res)
+    if not any(r.get("kind") == "RAT" for r in out):
+        try:
+            out += dotnet_more.extract_all(data)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("c2 extractor dotnet_more failed on %s: %s", path.name, exc)
     # A Cobalt Strike stager also matches the generic block_api shape: keep CS.
     if any(r["family"] == "Cobalt Strike" for r in out):
         out = [r for r in out if not r["family"].startswith("Metasploit")]
@@ -68,7 +76,7 @@ def _finding(cfg: dict[str, Any]) -> dict[str, Any]:
     detail = f"{cfg['family']} configuration ({cfg['kind']})" + (f": C2 {', '.join(c2[:4])}" if c2 else "")
     evidence = "; ".join(f"{k}: {', '.join(map(str, v)) if isinstance(v, list) else v}"
                          for k, v in s.items())[:1500]
-    sev = "high" if cfg.get("confidence") != "low" else "medium"
+    sev = "high" if c2 and cfg.get("confidence") != "low" else "medium"
     return {"tool": "c2", "rule": "c2:" + cfg["family"].split(" /")[0].split(" ")[0].lower(),
             "severity": sev, "detail": detail, "location": cfg.get("object", ""), "evidence": evidence}
 
