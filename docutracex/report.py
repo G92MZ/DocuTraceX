@@ -144,7 +144,9 @@ def _ml_section(ml: dict[str, Any] | None, marks: dict[str, dict[str, Any]]) -> 
             _e(it.get("label")) + (f"<div class='muted'><code>{_e(it.get('sha256'))}</code></div>" if it.get("sha256") else ""),
             _e(it.get("model", "").replace("EMBER2024_", "")),
             f"<code style='white-space:nowrap'>{it['score']:.4f}{thr}</code>",
-            verdict + (f"<div class='muted'>why: {_e(why)}</div>" if why else ""),
+            verdict + (f"<div class='muted'>{_e((it.get('score_ref') or {}).get('reading'))}</div>"
+                       if (it.get("score_ref") or {}).get("reading") else "")
+            + (f"<div class='muted'>why: {_e(why)}</div>" if why else ""),
             (_e(", ".join(hints)) or "<span class='muted'>—</span>")
             + (f"<div class='muted'>⚠ {_e(it['family_note'])}</div>" if it.get("family_note") else ""),
             _e(_MARK_LABEL.get(state, state)) + (f"<div class='muted'>{_e(mk.get('comment'))}</div>" if mk.get("comment") else ""),

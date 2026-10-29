@@ -101,3 +101,47 @@ def feature_ref(model: str, idx: int, value: float, name: str = "") -> dict[str,
         text = f"≈ p{pm:.0f} of malware · p{pb:.0f} of goodware"
     out["text"] = text
     return out
+
+
+def _p(x: float) -> str:
+    if x <= 0:
+        return "0%"
+    if x < 0.001:
+        return "<0.1%"
+    if x > 0.999 and x < 1:
+        return ">99.9%"
+    return f"{x * 100:.1f}%".replace(".0%", "%")
+
+
+def reading(score: float, threshold: float | None, ref: dict[str, Any] | None) -> str:
+    """One plain-language reading of a score against the threshold and the
+    EMBER2024 test files (what the curve shows for this file)."""
+    if not ref:
+        return ""
+    mal, ben = float(ref.get("malicious_ge", 0)), float(ref.get("benign_ge", 0))
+    nben = int((ref.get("n") or {}).get("benign") or 0)
+    ben_txt = (f"none of the {nben:,} test goodware files" if ben == 0 and nben else f"{_p(ben)} of test goodware")
+    s = f"{score:.4f}"
+    above = threshold is not None and score >= threshold
+    head = (f"Above the threshold ({threshold:.4f}): flagged. " if above else
+            f"Below the threshold ({threshold:.4f}): not flagged. " if threshold is not None else "")
+    if above:
+        if ben < 0.001:
+            body = (f"Hardly any goodware scores this high ({ben_txt}), while {_p(mal)} of test "
+                    "malware does — a strong indication, still to be confirmed with the other findings.")
+        else:
+            body = (f"{_p(ben)} of test goodware also scores {s} or more, so a false positive is possible; "
+                    f"{_p(mal)} of test malware does.")
+        if mal < 0.5:
+            body += " Few malware samples score this high: this is among the most clearly malicious-looking files."
+    elif ben <= 0.05:
+        body = (f"But {s} is higher than {_p(1 - ben)} of test goodware, while {_p(mal)} of test malware scores at "
+                "least this — a grey zone: weigh the top features and the other findings.")
+    elif ben <= 0.25:
+        body = (f"{_p(ben)} of test goodware scores at least {s}: uncommon but not rare for legitimate software; "
+                f"{_p(mal)} of test malware scores at least this.")
+    else:
+        body = (f"A score typical of legitimate software: {_p(ben)} of test goodware scores {s} or more. "
+                f"Malware evading the model can also score this low ({_p(1 - mal)} of test malware scores lower).")
+    return head + body
+

@@ -3547,6 +3547,12 @@ function mlScoreChart(ref, score, th) {
     <polyline points="${line(ref.q.benign)}" class="mlc-ben"/>
     ${th != null ? `<line x1="${x(th)}" y1="${T}" x2="${x(th)}" y2="${y(0)}" class="mlc-th"><title>threshold ${th.toFixed(4)}</title></line>` : ""}
     <line x1="${x(score)}" y1="${T}" x2="${x(score)}" y2="${y(0)}" class="mlc-me"><title>this file ${score.toFixed(4)}</title></line>
+    ${[["malicious", "mlc-mal-dot"], ["benign", "mlc-ben-dot"]].map(([k, cls]) => {
+      const v = k === "malicious" ? ref.malicious_ge : ref.benign_ge, cy = y(v);
+      const right = x(score) < W - 70;                 // label on the side with room
+      return `<circle cx="${x(score)}" cy="${cy}" r="3.5" class="${cls}"/>
+        <text x="${x(score) + (right ? 6 : -6)}" y="${cy + (k === "malicious" ? 11 : -4)}" class="mlc-lbl ${cls}" text-anchor="${right ? "start" : "end"}">${(100 * v).toFixed(v < 0.01 && v > 0 ? 2 : 1)}%</text>`;
+    }).join("")}
   </svg>
   <div class="hint-line"><span class="mlc-key mlc-key-mal"></span>malware <span class="mlc-key mlc-key-ben"></span>goodware —
     share of EMBER2024 test files scoring at or above each score (logit scale) · dashed: threshold · solid: this file</div>`;
@@ -3562,7 +3568,8 @@ function mlDetail(it, f, pct) {
     ["On evasive malware", m.challenge_detected_at_1pct_fpr != null ? `${pct(m.challenge_detected_at_1pct_fpr)} of the challenge set` : ""],
     ["Recipe", (it.recipe || []).join(" → ")],
     ["Compared with EMBER2024", it.score_ref ? `a score of ${it.score.toFixed(4)} or more: ${pct(it.score_ref.malicious_ge)} of test malware, ${pct(it.score_ref.benign_ge)} of test goodware` : ""],
-  ]) + (it.score_ref ? mlScoreChart(it.score_ref, it.score, it.threshold) : "");
+  ]) + (it.score_ref ? (it.score_ref.reading ? `<p class="ml-reading">${escapeHtml(it.score_ref.reading)}</p>` : "")
+        + mlScoreChart(it.score_ref, it.score, it.threshold) : "");
   const mark = f ? markControlsHtml(f) : '<span class="hint-line">re-run Machine Learning to mark</span>';
   const blocks = Object.entries(it.blocks || {}).filter(([, v]) => Math.abs(v) >= 0.01);
   const max = Math.max(0.0001, ...blocks.map(([, v]) => Math.abs(v)));
