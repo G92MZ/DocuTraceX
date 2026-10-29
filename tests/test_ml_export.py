@@ -47,7 +47,7 @@ def test_ml_csv_and_report(client) -> None:  # noqa: F811
     assert [x["object"] for x in rows] == ["factura.exe", "nested › helper.dll", "nested › broken.pdf"]
     a, b, c = rows
     assert a["verdict"] == "above threshold" and a["score"] == "0.999100" and a["model"] == "EMBER2024_Win32"
-    assert a["tags"] == "behavior:downloader (0.91)" and a["family"].startswith("guloader (0.62, high)")
+    assert a["tags"] == "behavior:downloader (0.91)" and a["family"].startswith("guloader (0.62, high, unknown)")
     assert "imports: imported function #12 (+1.500)" in a["top_features"]
     assert a["mark"] == "true_positive" and a["mark_comment"] == "downloader, confirmed"
     assert b["mark"] == "unreviewed" and b["verdict"] == "below threshold"
@@ -55,7 +55,7 @@ def test_ml_csv_and_report(client) -> None:  # noqa: F811
 
     html = client.get(f"/api/cases/{cid}/report").text
     assert "Machine Learning — EMBER2024 (1 of 3 above threshold)" in html
-    assert "behavior:downloader (0.91)" in html and "family: guloader (0.62, high)" in html
+    assert "behavior:downloader (0.91)" in html and "family: guloader (0.62, high, unknown)" in html
     assert "unnamed class" not in html                       # only high-confidence families in the report
     assert "True positive" in html and "parse error" in html
 

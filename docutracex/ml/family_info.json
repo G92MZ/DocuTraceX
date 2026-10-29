@@ -1,0 +1,3538 @@
+{
+ "_note": "Own one-line descriptions of the EMBER2024 family-model outputs (no third-party text). type: what kind of malware / software it is; generic: an AV detection name, not a family; malpedia: the Malpedia id when verified (otherwise the app links a Malpedia search).",
+ "families": {
+  "1clickdownload": {
+   "type": "adware / PUA",
+   "about": "Download manager that bundles adware offers."
+  },
+  "2144flashplayer": {
+   "type": "adware / PUA",
+   "about": "Chinese \"Flash player\" installer that bundles adware."
+  },
+  "4dots": {
+   "type": "adware / PUA",
+   "about": "Utility installers flagged for bundled offers."
+  },
+  "7ev3n": {
+   "type": "ransomware",
+   "about": "7ev3n ransomware, which also locks the system."
+  },
+  "7zip": {
+   "type": "legitimate / dual-use software",
+   "about": "7-Zip archiver; legitimate, often bundled or abused to unpack payloads."
+  },
+  "888rat": {
+   "type": "RAT / backdoor",
+   "about": "888 RAT, Windows/Android remote access trojan spread through cracked builds."
+  },
+  "abarw": {
+   "type": "unknown"
+  },
+  "acser": {
+   "type": "unknown"
+  },
+  "ad2345": {
+   "type": "adware / PUA",
+   "about": "2345.com software bundle / browser hijacker (China)."
+  },
+  "adaebook": {
+   "type": "unknown"
+  },
+  "adamantiumtheif": {
+   "type": "stealer",
+   "about": "Adamantium Thief, open-source credential stealer."
+  },
+  "adaptivebee": {
+   "type": "unknown"
+  },
+  "adaware": {
+   "type": "adware / PUA",
+   "about": "Adaware / Lavasoft software, flagged for bundled offers."
+  },
+  "addlyrics": {
+   "type": "adware / PUA",
+   "about": "Adware that injects lyrics and ads into web pages."
+  },
+  "adlice": {
+   "type": "legitimate / dual-use software",
+   "about": "Adlice security tools, sometimes flagged as hacktools."
+  },
+  "adlo": {
+   "type": "unknown"
+  },
+  "adpack": {
+   "type": "adware / PUA",
+   "about": "Adware bundle."
+  },
+  "advertload": {
+   "type": "adware / PUA",
+   "about": "Adware loader."
+  },
+  "adwind": {
+   "type": "RAT / backdoor",
+   "about": "Adwind / jRAT, cross-platform Java RAT sold as a service."
+  },
+  "aenjaris": {
+   "type": "unknown"
+  },
+  "agentbypass": {
+   "type": "unknown"
+  },
+  "agenttb": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic AV detection name."
+  },
+  "agnet": {
+   "type": "unknown"
+  },
+  "agobot": {
+   "type": "worm / botnet",
+   "about": "Agobot / Gaobot, classic IRC worm-bot."
+  },
+  "ahmyth": {
+   "type": "RAT / backdoor",
+   "about": "AhMyth, open-source Android RAT."
+  },
+  "ahrun": {
+   "type": "unknown"
+  },
+  "airadinstaller": {
+   "type": "adware / PUA",
+   "about": "Adware installer."
+  },
+  "akira": {
+   "type": "ransomware",
+   "about": "Akira ransomware, double extortion (2023 onwards)."
+  },
+  "alcaul": {
+   "type": "unknown"
+  },
+  "alien": {
+   "type": "banking trojan",
+   "about": "Alien, Android banking trojan derived from Cerberus."
+  },
+  "allaple": {
+   "type": "worm / botnet",
+   "about": "Allaple, polymorphic network worm."
+  },
+  "allegato": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic name for malicious attachments."
+  },
+  "allegatorat": {
+   "type": "unknown"
+  },
+  "allesgreh": {
+   "type": "unknown"
+  },
+  "almanahe": {
+   "type": "file infector",
+   "about": "Almanahe, file infector / worm."
+  },
+  "amadey": {
+   "type": "loader / downloader",
+   "about": "Amadey, botnet loader that drops stealers and other payloads.",
+   "malpedia": "win.amadey"
+  },
+  "andariel": {
+   "type": "RAT / backdoor",
+   "about": "Malware attributed to Andariel, a Lazarus sub-group (North Korea)."
+  },
+  "andreed": {
+   "type": "unknown"
+  },
+  "andrmonitor": {
+   "type": "spyware / stalkerware",
+   "about": "AndrMonitor, Android stalkerware."
+  },
+  "androlua": {
+   "type": "unknown"
+  },
+  "anmalpro": {
+   "type": "unknown"
+  },
+  "antavmu": {
+   "type": "unknown"
+  },
+  "antzip": {
+   "type": "unknown"
+  },
+  "apollo": {
+   "type": "unknown"
+  },
+  "appacker": {
+   "type": "unknown"
+  },
+  "ares": {
+   "type": "RAT / backdoor",
+   "about": "Ares, open-source Python botnet / RAT."
+  },
+  "arhost": {
+   "type": "unknown"
+  },
+  "arrowrat": {
+   "type": "RAT / backdoor",
+   "about": "Arrow RAT, remote access with hidden desktop."
+  },
+  "arsink": {
+   "type": "RAT / backdoor",
+   "about": "Android RAT."
+  },
+  "asktoolbar": {
+   "type": "adware / PUA",
+   "about": "Ask.com toolbar, browser hijacker."
+  },
+  "aspxspy": {
+   "type": "web shell",
+   "about": "ASPXSpy, ASP.NET web shell."
+  },
+  "asyncrat": {
+   "type": "RAT / backdoor",
+   "about": "AsyncRAT, open-source .NET RAT widely used by criminals.",
+   "malpedia": "win.asyncrat"
+  },
+  "atbot": {
+   "type": "unknown"
+  },
+  "atros7": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic AV detection name."
+  },
+  "autinject": {
+   "type": "unknown"
+  },
+  "autoitgenome": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic name for AutoIt-compiled malware."
+  },
+  "autojs": {
+   "type": "legitimate / dual-use software",
+   "about": "Auto.js Android automation framework, abused by malicious apps."
+  },
+  "avbdiscsoft": {
+   "type": "adware / PUA",
+   "about": "Disc-imaging software installers flagged for bundled offers."
+  },
+  "avemaria": {
+   "type": "RAT / backdoor",
+   "about": "Ave Maria / WarZone RAT."
+  },
+  "avgsecurebrowser": {
+   "type": "adware / PUA",
+   "about": "Bundled browser installer flagged as PUA."
+  },
+  "axespec": {
+   "type": "unknown"
+  },
+  "azbreg": {
+   "type": "unknown"
+  },
+  "azero": {
+   "type": "unknown"
+  },
+  "azorult": {
+   "type": "stealer",
+   "about": "AZORult, information stealer."
+  },
+  "azovwiper": {
+   "type": "wiper",
+   "about": "Azov, destructive wiper posing as ransomware that also infects files."
+  },
+  "babonock": {
+   "type": "unknown"
+  },
+  "babuk": {
+   "type": "ransomware",
+   "about": "Babuk ransomware; its leaked source is reused by many groups."
+  },
+  "badiis": {
+   "type": "RAT / backdoor",
+   "about": "BadIIS, malicious IIS modules for SEO fraud and backdoor access."
+  },
+  "badinterop": {
+   "type": "unknown"
+  },
+  "badpack": {
+   "type": "crypter / packer",
+   "about": "Android packages with tampered headers to defeat analysis."
+  },
+  "bahamut": {
+   "type": "spyware / stalkerware",
+   "about": "Bahamut, mercenary group behind mobile surveillance apps."
+  },
+  "baidence": {
+   "type": "unknown"
+  },
+  "baidusearch": {
+   "type": "adware / PUA",
+   "about": "Search hijacker / bundle."
+  },
+  "balrok": {
+   "type": "unknown"
+  },
+  "bancteian": {
+   "type": "banking trojan",
+   "about": "Banking trojan."
+  },
+  "banito": {
+   "type": "unknown"
+  },
+  "bankcerberus": {
+   "type": "banking trojan",
+   "about": "Cerberus, Android banking trojan sold as a service."
+  },
+  "banload": {
+   "type": "loader / downloader",
+   "about": "Banload, Brazilian downloader for banking trojans."
+  },
+  "baofeng": {
+   "type": "adware / PUA",
+   "about": "Chinese media player installer flagged for bundled offers."
+  },
+  "barrio": {
+   "type": "unknown"
+  },
+  "baru": {
+   "type": "unknown"
+  },
+  "basdoor": {
+   "type": "unknown"
+  },
+  "basebridge": {
+   "type": "SMS fraud (mobile)",
+   "about": "BaseBridge, early Android trojan with premium-SMS fraud."
+  },
+  "batavprockill": {
+   "type": "unknown"
+  },
+  "batterydoctor": {
+   "type": "adware / PUA",
+   "about": "Android \"battery saver\" adware."
+  },
+  "bayrob": {
+   "type": "RAT / backdoor",
+   "about": "Bayrob, backdoor and fraud botnet."
+  },
+  "bbtok": {
+   "type": "banking trojan",
+   "about": "BBTok, Latin-American banking trojan."
+  },
+  "bccrypt": {
+   "type": "unknown"
+  },
+  "bedep": {
+   "type": "loader / downloader",
+   "about": "Bedep, ad-fraud downloader spread by exploit kits."
+  },
+  "beebone": {
+   "type": "loader / downloader",
+   "about": "Beebone, polymorphic downloader botnet."
+  },
+  "begseabug": {
+   "type": "unknown"
+  },
+  "berbew": {
+   "type": "RAT / backdoor",
+   "about": "Berbew, backdoor and password stealer."
+  },
+  "betabot": {
+   "type": "RAT / backdoor",
+   "about": "Beta Bot, backdoor / banking botnet."
+  },
+  "betload": {
+   "type": "unknown"
+  },
+  "bflient": {
+   "type": "worm / botnet",
+   "about": "Bflient, worm / botnet kit."
+  },
+  "bianlian": {
+   "type": "ransomware",
+   "about": "BianLian, data-extortion group and ransomware (Go)."
+  },
+  "bifroset": {
+   "type": "RAT / backdoor",
+   "about": "Bifrost, classic backdoor / RAT."
+  },
+  "birddog": {
+   "type": "unknown"
+  },
+  "bithief": {
+   "type": "unknown"
+  },
+  "bitmin": {
+   "type": "miner",
+   "about": "Bitcoin miner."
+  },
+  "bjlog": {
+   "type": "unknown"
+  },
+  "blackbit": {
+   "type": "ransomware",
+   "about": "BlackBit ransomware (LokiLocker variant)."
+  },
+  "blackenergy": {
+   "type": "RAT / backdoor",
+   "about": "BlackEnergy, modular malware used against Ukraine's power grid."
+  },
+  "blackhole": {
+   "type": "exploit",
+   "about": "Blackhole exploit kit."
+  },
+  "blackmatter": {
+   "type": "ransomware",
+   "about": "BlackMatter ransomware (DarkSide successor)."
+  },
+  "blackmoon": {
+   "type": "banking trojan",
+   "about": "BlackMoon, banking trojan (East Asia)."
+  },
+  "blacknet": {
+   "type": "RAT / backdoor",
+   "about": "BlackNET, .NET botnet / RAT."
+  },
+  "blackshades": {
+   "type": "RAT / backdoor",
+   "about": "Blackshades RAT."
+  },
+  "blihan": {
+   "type": "unknown"
+  },
+  "bodelph": {
+   "type": "unknown"
+  },
+  "bogent": {
+   "type": "unknown"
+  },
+  "boogr": {
+   "type": "unknown"
+  },
+  "boomslang": {
+   "type": "unknown"
+  },
+  "boratrat": {
+   "type": "RAT / backdoor",
+   "about": "Borat RAT, .NET RAT with ransomware and DDoS features."
+  },
+  "boxer": {
+   "type": "SMS fraud (mobile)",
+   "about": "Boxer, Android premium-SMS fraud."
+  },
+  "boxersms": {
+   "type": "SMS fraud (mobile)",
+   "about": "Boxer, Android premium-SMS fraud."
+  },
+  "bqcb": {
+   "type": "unknown"
+  },
+  "breakpass": {
+   "type": "unknown"
+  },
+  "bredolab": {
+   "type": "loader / downloader",
+   "about": "Bredolab, downloader botnet."
+  },
+  "brontok": {
+   "type": "worm / botnet",
+   "about": "Brontok, mass-mailing worm."
+  },
+  "bropass": {
+   "type": "unknown"
+  },
+  "browbot": {
+   "type": "unknown"
+  },
+  "browsefox": {
+   "type": "adware / PUA",
+   "about": "BrowseFox, adware browser extension."
+  },
+  "browserad": {
+   "type": "adware / PUA",
+   "about": "Browser adware."
+  },
+  "bundlore": {
+   "type": "adware / PUA",
+   "about": "Bundlore, macOS adware bundler."
+  },
+  "bundpil": {
+   "type": "worm / botnet",
+   "about": "Bundpil, USB worm."
+  },
+  "burden": {
+   "type": "unknown"
+  },
+  "buterat": {
+   "type": "RAT / backdoor",
+   "about": "Buterat backdoor."
+  },
+  "bxrat": {
+   "type": "RAT / backdoor",
+   "about": "Remote access trojan."
+  },
+  "bytepress": {
+   "type": "adware / PUA",
+   "about": "Software bundler."
+  },
+  "canesspy": {
+   "type": "unknown"
+  },
+  "caosoft": {
+   "type": "unknown"
+  },
+  "carberp": {
+   "type": "banking trojan",
+   "about": "Carberp, banking trojan whose source leaked in 2013."
+  },
+  "cardspy": {
+   "type": "unknown"
+  },
+  "casino": {
+   "type": "unknown"
+  },
+  "catwatchful": {
+   "type": "spyware / stalkerware",
+   "about": "CatWatchful, Android stalkerware."
+  },
+  "cayunamer": {
+   "type": "unknown"
+  },
+  "cerber": {
+   "type": "ransomware",
+   "about": "Cerber, ransomware-as-a-service."
+  },
+  "cerberus": {
+   "type": "banking trojan",
+   "about": "Cerberus, Android banking trojan sold as a service."
+  },
+  "certify": {
+   "type": "hacktool / offensive tool",
+   "about": "Certify, Active Directory Certificate Services abuse tool."
+  },
+  "cheatengine": {
+   "type": "legitimate / dual-use software",
+   "about": "Cheat Engine, game memory editor (dual-use)."
+  },
+  "cheathappens": {
+   "type": "legitimate / dual-use software",
+   "about": "Game trainers."
+  },
+  "chinachopper": {
+   "type": "web shell",
+   "about": "China Chopper, compact web shell."
+  },
+  "chinky": {
+   "type": "unknown"
+  },
+  "chir": {
+   "type": "file infector",
+   "about": "Chir, mass-mailing worm and file infector."
+  },
+  "chisel": {
+   "type": "hacktool / offensive tool",
+   "about": "Chisel, TCP/UDP tunnel over HTTP (dual-use)."
+  },
+  "chromepyjacker": {
+   "type": "stealer",
+   "about": "Browser data stealer."
+  },
+  "chydo": {
+   "type": "unknown"
+  },
+  "cjishu": {
+   "type": "unknown"
+  },
+  "clevercontrol": {
+   "type": "spyware / stalkerware",
+   "about": "CleverControl, employee monitoring software."
+  },
+  "cleversort": {
+   "type": "unknown"
+  },
+  "climap": {
+   "type": "unknown"
+  },
+  "clinix": {
+   "type": "unknown"
+  },
+  "clipbanker": {
+   "type": "stealer",
+   "about": "ClipBanker, clipboard hijacker that swaps crypto-wallet addresses."
+  },
+  "cloudm": {
+   "type": "unknown"
+  },
+  "cobaltstrike": {
+   "type": "hacktool / offensive tool",
+   "about": "Cobalt Strike, commercial red-team framework widely abused by attackers."
+  },
+  "comame": {
+   "type": "unknown"
+  },
+  "cometer": {
+   "type": "unknown"
+  },
+  "confuser": {
+   "type": "crypter / packer",
+   "about": "ConfuserEx, .NET obfuscator."
+  },
+  "congur": {
+   "type": "unknown"
+  },
+  "connectback": {
+   "type": "RAT / backdoor",
+   "about": "Reverse shell."
+  },
+  "connectscreen": {
+   "type": "legitimate / dual-use software",
+   "about": "ScreenConnect remote access (legitimate, often abused)."
+  },
+  "connectwise": {
+   "type": "legitimate / dual-use software",
+   "about": "ConnectWise remote access (legitimate, often abused)."
+  },
+  "convertad": {
+   "type": "adware / PUA",
+   "about": "Adware."
+  },
+  "coolmirage": {
+   "type": "unknown"
+  },
+  "coper": {
+   "type": "banking trojan",
+   "about": "Coper / Octo, Android banking trojan."
+  },
+  "cordimik": {
+   "type": "unknown"
+  },
+  "corewarrior": {
+   "type": "unknown"
+  },
+  "cosmicduke": {
+   "type": "RAT / backdoor",
+   "about": "CosmicDuke, espionage malware linked to APT29."
+  },
+  "cosmu": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic AV detection name."
+  },
+  "cossta": {
+   "type": "unknown"
+  },
+  "cozyduke": {
+   "type": "RAT / backdoor",
+   "about": "CozyDuke, backdoor linked to APT29."
+  },
+  "cpuminer": {
+   "type": "miner",
+   "about": "CPU cryptocurrency miner."
+  },
+  "crealstealer": {
+   "type": "stealer",
+   "about": "Information stealer."
+  },
+  "credlik": {
+   "type": "unknown"
+  },
+  "crifi": {
+   "type": "unknown"
+  },
+  "crossrider": {
+   "type": "adware / PUA",
+   "about": "Crossrider, adware extension platform."
+  },
+  "crycrypt": {
+   "type": "ransomware",
+   "about": "Ransomware."
+  },
+  "crypmodadv": {
+   "type": "ransomware",
+   "about": "Ransomware."
+  },
+  "crypt0l0cker": {
+   "type": "ransomware",
+   "about": "Crypt0L0cker / TorrentLocker ransomware."
+  },
+  "cryptnot": {
+   "type": "unknown"
+  },
+  "cryptonote": {
+   "type": "miner",
+   "about": "CryptoNote-based cryptocurrency miner."
+  },
+  "cryptowall": {
+   "type": "ransomware",
+   "about": "CryptoWall ransomware."
+  },
+  "cryptran": {
+   "type": "unknown"
+  },
+  "cryrar": {
+   "type": "ransomware",
+   "about": "Ransomware that locks files in password-protected archives."
+  },
+  "crysant": {
+   "type": "unknown"
+  },
+  "crytex": {
+   "type": "unknown"
+  },
+  "cuegoe": {
+   "type": "unknown"
+  },
+  "cyberpss": {
+   "type": "unknown"
+  },
+  "cycbot": {
+   "type": "RAT / backdoor",
+   "about": "Cycbot, backdoor."
+  },
+  "cycler": {
+   "type": "unknown"
+  },
+  "cyfin": {
+   "type": "unknown"
+  },
+  "cymulate": {
+   "type": "test / simulation",
+   "about": "Breach-and-attack simulation test sample."
+  },
+  "cymulion": {
+   "type": "unknown"
+  },
+  "cyns": {
+   "type": "unknown"
+  },
+  "dampatch": {
+   "type": "unknown"
+  },
+  "danabot": {
+   "type": "banking trojan",
+   "about": "DanaBot, modular banking trojan and loader."
+  },
+  "darkcrystal": {
+   "type": "RAT / backdoor",
+   "about": "DarkCrystal RAT (DCRat)."
+  },
+  "darkeye": {
+   "type": "RAT / backdoor",
+   "about": "Remote access trojan."
+  },
+  "darkmart": {
+   "type": "unknown"
+  },
+  "darknexus": {
+   "type": "worm / botnet",
+   "about": "Dark Nexus, IoT DDoS botnet."
+  },
+  "darkshell": {
+   "type": "RAT / backdoor",
+   "about": "Backdoor."
+  },
+  "darktortilla": {
+   "type": "crypter / packer",
+   "about": ".NET crypter that hides and launches commodity malware (often AgentTesla, AsyncRAT, Remcos…)."
+  },
+  "daserf": {
+   "type": "RAT / backdoor",
+   "about": "Daserf, backdoor used by the Tick group."
+  },
+  "datastealer": {
+   "type": "stealer",
+   "about": "Information stealer."
+  },
+  "davs": {
+   "type": "unknown"
+  },
+  "dbsrat": {
+   "type": "RAT / backdoor",
+   "about": "Remote access trojan."
+  },
+  "dcom": {
+   "type": "unknown"
+  },
+  "dcstl": {
+   "type": "unknown"
+  },
+  "ddosia": {
+   "type": "worm / botnet",
+   "about": "DDosia, volunteer DDoS client of the NoName057(16) group."
+  },
+  "dealply": {
+   "type": "adware / PUA",
+   "about": "DealPly, adware browser extension."
+  },
+  "debrisa": {
+   "type": "unknown"
+  },
+  "debrisb": {
+   "type": "unknown"
+  },
+  "dedok": {
+   "type": "unknown"
+  },
+  "deltree": {
+   "type": "unknown"
+  },
+  "democry": {
+   "type": "unknown"
+  },
+  "desktopmania": {
+   "type": "adware / PUA",
+   "about": "Adware."
+  },
+  "dexel": {
+   "type": "unknown"
+  },
+  "diacam": {
+   "type": "unknown"
+  },
+  "diagnosticdriver": {
+   "type": "unknown"
+  },
+  "dibik": {
+   "type": "unknown"
+  },
+  "dibizor": {
+   "type": "unknown"
+  },
+  "dinwod": {
+   "type": "unknown"
+  },
+  "diple": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic AV detection name."
+  },
+  "diplugem": {
+   "type": "adware / PUA",
+   "about": "Diplugem, adware browser extension."
+  },
+  "disgrab": {
+   "type": "stealer",
+   "about": "Discord token grabber."
+  },
+  "disguisedxmrigminer": {
+   "type": "miner",
+   "about": "XMRig miner disguised as another program."
+  },
+  "diztakun": {
+   "type": "unknown"
+  },
+  "dndownloader": {
+   "type": "loader / downloader",
+   "about": "Downloader."
+  },
+  "dogerat": {
+   "type": "RAT / backdoor",
+   "about": "DogeRAT, Android RAT."
+  },
+  "domaiq": {
+   "type": "adware / PUA",
+   "about": "DomaIQ, adware bundler."
+  },
+  "donbot": {
+   "type": "unknown"
+  },
+  "dorifel": {
+   "type": "file infector",
+   "about": "Dorifel, infector of documents and executables."
+  },
+  "dorv": {
+   "type": "unknown"
+  },
+  "dostre": {
+   "type": "unknown"
+  },
+  "dotnetguard": {
+   "type": "crypter / packer",
+   "about": ".NET protector / obfuscator."
+  },
+  "dotsetupio": {
+   "type": "unknown"
+  },
+  "downer": {
+   "type": "unknown"
+  },
+  "downloadassistant": {
+   "type": "adware / PUA",
+   "about": "Download manager with bundled offers."
+  },
+  "downloadguide": {
+   "type": "adware / PUA",
+   "about": "DownloadGuide, download manager with bundled offers."
+  },
+  "downloadsponsor": {
+   "type": "adware / PUA",
+   "about": "Download manager with bundled offers."
+  },
+  "dphe": {
+   "type": "unknown"
+  },
+  "dragonbosssolutions": {
+   "type": "adware / PUA",
+   "about": "Adware publisher."
+  },
+  "dridex": {
+   "type": "banking trojan",
+   "about": "Dridex, banking trojan and loader."
+  },
+  "driverreviver": {
+   "type": "adware / PUA",
+   "about": "Driver updater flagged as PUA."
+  },
+  "drivload": {
+   "type": "unknown"
+  },
+  "drmsoft": {
+   "type": "unknown"
+  },
+  "droidkungfu": {
+   "type": "RAT / backdoor",
+   "about": "DroidKungFu, Android backdoor that roots the device."
+  },
+  "droidrooter": {
+   "type": "exploit",
+   "about": "Android rooting exploit."
+  },
+  "drolnux": {
+   "type": "unknown"
+  },
+  "drvsky": {
+   "type": "unknown"
+  },
+  "dstudio": {
+   "type": "unknown"
+  },
+  "duba": {
+   "type": "adware / PUA",
+   "about": "Chinese security suite installer flagged for bundled offers."
+  },
+  "dumpex": {
+   "type": "unknown"
+  },
+  "dursg": {
+   "type": "unknown"
+  },
+  "durumminer": {
+   "type": "miner",
+   "about": "Cryptocurrency miner."
+  },
+  "dybalom": {
+   "type": "unknown"
+  },
+  "dynara": {
+   "type": "unknown"
+  },
+  "ebury": {
+   "type": "RAT / backdoor",
+   "about": "Ebury, OpenSSH backdoor and credential stealer (Linux)."
+  },
+  "echelon": {
+   "type": "stealer",
+   "about": "Echelon, information stealer."
+  },
+  "echoac": {
+   "type": "unknown"
+  },
+  "eclz": {
+   "type": "unknown"
+  },
+  "ekstak": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic AV detection name."
+  },
+  "electraworkslimited": {
+   "type": "adware / PUA",
+   "about": "Adware publisher."
+  },
+  "ellell": {
+   "type": "unknown"
+  },
+  "emdup": {
+   "type": "unknown"
+  },
+  "empire": {
+   "type": "hacktool / offensive tool",
+   "about": "PowerShell Empire, post-exploitation framework."
+  },
+  "engimastealer": {
+   "type": "stealer",
+   "about": "Information stealer."
+  },
+  "equationdrug": {
+   "type": "RAT / backdoor",
+   "about": "EquationDrug, espionage platform of the Equation Group."
+  },
+  "eris": {
+   "type": "ransomware",
+   "about": "Ransomware."
+  },
+  "ermak": {
+   "type": "unknown"
+  },
+  "esfury": {
+   "type": "worm / botnet",
+   "about": "USB worm."
+  },
+  "evilinst": {
+   "type": "unknown"
+  },
+  "evrial": {
+   "type": "stealer",
+   "about": "Evrial, stealer and clipboard hijacker."
+  },
+  "exceldna": {
+   "type": "loader / downloader",
+   "about": "Malicious Excel-DNA (.xll) add-ins used as loaders."
+  },
+  "exent": {
+   "type": "adware / PUA",
+   "about": "Game service installer flagged as PUA."
+  },
+  "exescript": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic name for compiled scripts."
+  },
+  "exnuma": {
+   "type": "unknown"
+  },
+  "expiro": {
+   "type": "file infector",
+   "about": "Expiro, file infector that also steals data."
+  },
+  "extgen": {
+   "type": "unknown"
+  },
+  "extinstaller": {
+   "type": "adware / PUA",
+   "about": "Browser-extension installer flagged as PUA."
+  },
+  "eyoorun": {
+   "type": "unknown"
+  },
+  "facestealer": {
+   "type": "stealer",
+   "about": "FaceStealer, Android Facebook credential stealer."
+  },
+  "facido": {
+   "type": "unknown"
+  },
+  "fadok": {
+   "type": "unknown"
+  },
+  "fakeadblocker": {
+   "type": "adware / PUA",
+   "about": "Fake ad blocker, Android adware."
+  },
+  "fakecalls": {
+   "type": "banking trojan",
+   "about": "FakeCalls, Android banking trojan that hijacks phone calls."
+  },
+  "fakecert": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic name for fake / forged certificates."
+  },
+  "fakeinstsms": {
+   "type": "SMS fraud (mobile)",
+   "about": "FakeInst, Android premium-SMS fraud."
+  },
+  "fakelogo": {
+   "type": "unknown"
+  },
+  "fakenotify": {
+   "type": "unknown"
+  },
+  "fakens": {
+   "type": "unknown"
+  },
+  "fakeplayer": {
+   "type": "SMS fraud (mobile)",
+   "about": "FakePlayer, early Android premium-SMS trojan."
+  },
+  "fakerean": {
+   "type": "adware / PUA",
+   "about": "Rogue (\"fake\") antivirus."
+  },
+  "fakerun": {
+   "type": "unknown"
+  },
+  "fakewallet": {
+   "type": "stealer",
+   "about": "Fake cryptocurrency wallet apps that steal recovery phrases."
+  },
+  "famalis": {
+   "type": "unknown"
+  },
+  "fanny": {
+   "type": "worm / botnet",
+   "about": "Fanny, USB worm of the Equation Group."
+  },
+  "fasong": {
+   "type": "unknown"
+  },
+  "fastrek": {
+   "type": "unknown"
+  },
+  "fastreverseproxy": {
+   "type": "hacktool / offensive tool",
+   "about": "FRP (fast reverse proxy), tunnelling tool (dual-use)."
+  },
+  "fauppod": {
+   "type": "unknown"
+  },
+  "fbtaken": {
+   "type": "unknown"
+  },
+  "feccea6a": {
+   "type": "unknown"
+  },
+  "fesber": {
+   "type": "unknown"
+  },
+  "fileless": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic name for fileless techniques."
+  },
+  "filepatcher": {
+   "type": "hacktool / offensive tool",
+   "about": "File patcher / crack."
+  },
+  "finspy": {
+   "type": "spyware / stalkerware",
+   "about": "FinSpy / FinFisher, commercial surveillance spyware."
+  },
+  "firseria": {
+   "type": "adware / PUA",
+   "about": "Firseria, adware bundler."
+  },
+  "fitin": {
+   "type": "unknown"
+  },
+  "flashserv": {
+   "type": "unknown"
+  },
+  "floxif": {
+   "type": "file infector",
+   "about": "Floxif, file infector."
+  },
+  "flyagent": {
+   "type": "RAT / backdoor",
+   "about": "FlyAgent, backdoor."
+  },
+  "flysfx": {
+   "type": "unknown"
+  },
+  "flystudio": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Programs built with the Chinese E-language (FlyStudio)."
+  },
+  "fplus": {
+   "type": "unknown"
+  },
+  "frethoq": {
+   "type": "unknown"
+  },
+  "fscan": {
+   "type": "hacktool / offensive tool",
+   "about": "fscan, internal network scanner (dual-use)."
+  },
+  "fujacks": {
+   "type": "file infector",
+   "about": "Fujacks (\"Panda Burning Incense\"), file-infecting worm."
+  },
+  "fullscreen": {
+   "type": "unknown"
+  },
+  "funkybot": {
+   "type": "unknown"
+  },
+  "funshion": {
+   "type": "adware / PUA",
+   "about": "Chinese video player installer flagged as adware."
+  },
+  "fusioncore": {
+   "type": "adware / PUA",
+   "about": "FusionCore, software bundler."
+  },
+  "fyben": {
+   "type": "unknown"
+  },
+  "gafgyt": {
+   "type": "worm / botnet",
+   "about": "Gafgyt / Bashlite, IoT DDoS botnet."
+  },
+  "galleryeye": {
+   "type": "unknown"
+  },
+  "game850": {
+   "type": "unknown"
+  },
+  "gamech": {
+   "type": "unknown"
+  },
+  "gamecrack": {
+   "type": "hacktool / offensive tool",
+   "about": "Game crack / keygen."
+  },
+  "gamehuck": {
+   "type": "adware / PUA",
+   "about": "Game installer flagged as PUA."
+  },
+  "gamevance": {
+   "type": "adware / PUA",
+   "about": "GameVance, adware."
+  },
+  "gamup": {
+   "type": "unknown"
+  },
+  "gandcrab": {
+   "type": "ransomware",
+   "about": "GandCrab, ransomware-as-a-service."
+  },
+  "gappusin": {
+   "type": "adware / PUA",
+   "about": "Android adware / downloader."
+  },
+  "gator": {
+   "type": "adware / PUA",
+   "about": "Gator / Claria adware."
+  },
+  "gduu": {
+   "type": "unknown"
+  },
+  "geegly": {
+   "type": "unknown"
+  },
+  "gendarmerie": {
+   "type": "unknown"
+  },
+  "gepys": {
+   "type": "unknown"
+  },
+  "geral": {
+   "type": "unknown"
+  },
+  "gerphish": {
+   "type": "phishing",
+   "about": "Phishing."
+  },
+  "gigex": {
+   "type": "unknown"
+  },
+  "gimemo": {
+   "type": "ransomware",
+   "about": "Gimemo, screen-locker ransomware."
+  },
+  "ginmaster": {
+   "type": "RAT / backdoor",
+   "about": "GinMaster, Android trojan."
+  },
+  "gippers": {
+   "type": "unknown"
+  },
+  "globeimposter": {
+   "type": "ransomware",
+   "about": "GlobeImposter ransomware."
+  },
+  "glupteba": {
+   "type": "worm / botnet",
+   "about": "Glupteba, botnet with miner, proxy and backdoor modules."
+  },
+  "goblin": {
+   "type": "unknown"
+  },
+  "gobot": {
+   "type": "unknown"
+  },
+  "godpotato": {
+   "type": "hacktool / offensive tool",
+   "about": "GodPotato, Windows privilege-escalation tool."
+  },
+  "godzilla": {
+   "type": "web shell",
+   "about": "Godzilla web shell."
+  },
+  "gofot": {
+   "type": "unknown"
+  },
+  "goft": {
+   "type": "unknown"
+  },
+  "golddig": {
+   "type": "unknown"
+  },
+  "golddigger": {
+   "type": "banking trojan",
+   "about": "GoldDigger, mobile banking trojan."
+  },
+  "gominer": {
+   "type": "miner",
+   "about": "Cryptocurrency miner."
+  },
+  "gomlab": {
+   "type": "adware / PUA",
+   "about": "Media player installer flagged for bundled offers."
+  },
+  "gonana": {
+   "type": "unknown"
+  },
+  "goodbyedpi": {
+   "type": "legitimate / dual-use software",
+   "about": "GoodbyeDPI, censorship-circumvention tool."
+  },
+  "goodpic": {
+   "type": "unknown"
+  },
+  "gooxion": {
+   "type": "unknown"
+  },
+  "goshell": {
+   "type": "RAT / backdoor",
+   "about": "Backdoor / reverse shell."
+  },
+  "grandoreiro": {
+   "type": "banking trojan",
+   "about": "Grandoreiro, Latin-American banking trojan."
+  },
+  "growtopia": {
+   "type": "stealer",
+   "about": "Growtopia game account stealer."
+  },
+  "gruntstager": {
+   "type": "hacktool / offensive tool",
+   "about": "Covenant \"Grunt\" stager (red-team C2)."
+  },
+  "gtbot": {
+   "type": "worm / botnet",
+   "about": "GTBot, IRC bot."
+  },
+  "guanbi": {
+   "type": "unknown"
+  },
+  "gudex": {
+   "type": "unknown"
+  },
+  "guildma": {
+   "type": "banking trojan",
+   "about": "Guildma / Astaroth, Brazilian banking trojan."
+  },
+  "gunex": {
+   "type": "unknown"
+  },
+  "hackkms": {
+   "type": "hacktool / offensive tool",
+   "about": "KMS activator (unlicensed Windows / Office activation)."
+  },
+  "hacktoolkms": {
+   "type": "hacktool / offensive tool",
+   "about": "KMS activator (unlicensed Windows / Office activation)."
+  },
+  "hafen": {
+   "type": "unknown"
+  },
+  "hajime": {
+   "type": "worm / botnet",
+   "about": "Hajime, P2P IoT botnet."
+  },
+  "hamob": {
+   "type": "unknown"
+  },
+  "hanoone": {
+   "type": "unknown"
+  },
+  "haofeng": {
+   "type": "unknown"
+  },
+  "haperlock": {
+   "type": "unknown"
+  },
+  "havoc": {
+   "type": "hacktool / offensive tool",
+   "about": "Havoc, open-source C2 framework."
+  },
+  "hawkshaw": {
+   "type": "unknown"
+  },
+  "hckpk": {
+   "type": "unknown"
+  },
+  "hdmr": {
+   "type": "unknown"
+  },
+  "hematite": {
+   "type": "unknown"
+  },
+  "hero": {
+   "type": "unknown"
+  },
+  "hexon": {
+   "type": "unknown"
+  },
+  "hiamoe": {
+   "type": "unknown"
+  },
+  "hiddad": {
+   "type": "adware / PUA",
+   "about": "HiddAd, Android adware that hides its icon."
+  },
+  "hidden": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic AV detection name."
+  },
+  "hiddenbee": {
+   "type": "miner",
+   "about": "HiddenBee, miner loader."
+  },
+  "hidinstsfx": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic name for silent self-extracting installers."
+  },
+  "hidmar": {
+   "type": "unknown"
+  },
+  "hofosoft": {
+   "type": "unknown"
+  },
+  "hookchain": {
+   "type": "unknown"
+  },
+  "horuseyes": {
+   "type": "RAT / backdoor",
+   "about": "HorusEyes RAT."
+  },
+  "hploki": {
+   "type": "stealer",
+   "about": "LokiBot, information stealer."
+  },
+  "hqwar": {
+   "type": "crypter / packer",
+   "about": "HQWar, Android dropper / packer."
+  },
+  "httpbot": {
+   "type": "RAT / backdoor",
+   "about": "HTTP bot / backdoor."
+  },
+  "hudun": {
+   "type": "adware / PUA",
+   "about": "Chinese software installer flagged for bundled offers."
+  },
+  "hwidchanger": {
+   "type": "hacktool / offensive tool",
+   "about": "Hardware-ID spoofer."
+  },
+  "hworld": {
+   "type": "unknown"
+  },
+  "hypay": {
+   "type": "unknown"
+  },
+  "ibank": {
+   "type": "banking trojan",
+   "about": "Banking trojan."
+  },
+  "iboysoft": {
+   "type": "legitimate / dual-use software",
+   "about": "Data-recovery software."
+  },
+  "ibryte": {
+   "type": "adware / PUA",
+   "about": "iBryte, installer with bundled offers."
+  },
+  "iconosys": {
+   "type": "adware / PUA",
+   "about": "Adware publisher."
+  },
+  "ilagent": {
+   "type": "unknown"
+  },
+  "imali": {
+   "type": "unknown"
+  },
+  "imlog": {
+   "type": "unknown"
+  },
+  "imminent": {
+   "type": "RAT / backdoor",
+   "about": "Imminent Monitor RAT."
+  },
+  "imwee": {
+   "type": "unknown"
+  },
+  "inbox": {
+   "type": "unknown"
+  },
+  "incransom": {
+   "type": "ransomware",
+   "about": "INC Ransom, ransomware."
+  },
+  "inegery": {
+   "type": "unknown"
+  },
+  "injeber": {
+   "type": "unknown"
+  },
+  "injectoragen": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic name for process injectors."
+  },
+  "injectpyinc": {
+   "type": "unknown"
+  },
+  "inmobi": {
+   "type": "adware / PUA",
+   "about": "Android ad SDK flagged as adware."
+  },
+  "innobundle": {
+   "type": "adware / PUA",
+   "about": "Software bundler."
+  },
+  "innovativeconnecting": {
+   "type": "adware / PUA",
+   "about": "Adware publisher."
+  },
+  "insassis": {
+   "type": "unknown"
+  },
+  "installbrain": {
+   "type": "adware / PUA",
+   "about": "InstallBrain, installer with bundled offers."
+  },
+  "installcore": {
+   "type": "adware / PUA",
+   "about": "InstallCore, installer with bundled offers."
+  },
+  "installmetrix": {
+   "type": "adware / PUA",
+   "about": "Installer with bundled offers."
+  },
+  "installrex": {
+   "type": "adware / PUA",
+   "about": "InstallRex, installer with bundled offers."
+  },
+  "instantaccess": {
+   "type": "adware / PUA",
+   "about": "Adware."
+  },
+  "iobot": {
+   "type": "unknown"
+  },
+  "ipamor": {
+   "type": "file infector",
+   "about": "Ipamor, file infector."
+  },
+  "ipguard": {
+   "type": "unknown"
+  },
+  "iyeclore": {
+   "type": "unknown"
+  },
+  "jadtre": {
+   "type": "rootkit / bootkit",
+   "about": "Jadtre, rootkit / infector."
+  },
+  "jalapeno": {
+   "type": "unknown"
+  },
+  "jeefo": {
+   "type": "file infector",
+   "about": "Jeefo, file infector."
+  },
+  "jenxcus": {
+   "type": "worm / botnet",
+   "about": "Jenxcus (H-Worm), VBScript worm / RAT."
+  },
+  "jiagu": {
+   "type": "crypter / packer",
+   "about": "Jiagu, Android app protector (packer)."
+  },
+  "jovanest": {
+   "type": "unknown"
+  },
+  "jpgiframe": {
+   "type": "unknown"
+  },
+  "juched": {
+   "type": "unknown"
+  },
+  "kdmapper": {
+   "type": "hacktool / offensive tool",
+   "about": "kdmapper, loads unsigned drivers through a vulnerable driver."
+  },
+  "kdutil": {
+   "type": "unknown"
+  },
+  "kegrelodr": {
+   "type": "unknown"
+  },
+  "kelihos": {
+   "type": "worm / botnet",
+   "about": "Kelihos, spam botnet."
+  },
+  "kelios": {
+   "type": "unknown"
+  },
+  "keniu": {
+   "type": "unknown"
+  },
+  "keydoor": {
+   "type": "unknown"
+  },
+  "keyiso": {
+   "type": "unknown"
+  },
+  "killall": {
+   "type": "unknown"
+  },
+  "kilonepag": {
+   "type": "unknown"
+  },
+  "kingsoft": {
+   "type": "adware / PUA",
+   "about": "Chinese software installer flagged for bundled offers."
+  },
+  "kiosk": {
+   "type": "unknown"
+  },
+  "kipodtoolscby": {
+   "type": "adware / PUA",
+   "about": "Adware."
+  },
+  "kiser": {
+   "type": "unknown"
+  },
+  "klogger": {
+   "type": "stealer",
+   "about": "Keylogger."
+  },
+  "kmsauto": {
+   "type": "hacktool / offensive tool",
+   "about": "KMSAuto, unlicensed Windows / Office activator."
+  },
+  "knigsfot": {
+   "type": "unknown"
+  },
+  "knownbe4": {
+   "type": "test / simulation",
+   "about": "Security-awareness simulation file."
+  },
+  "koala": {
+   "type": "unknown"
+  },
+  "kolab": {
+   "type": "unknown"
+  },
+  "kolovorot": {
+   "type": "unknown"
+  },
+  "kranet": {
+   "type": "unknown"
+  },
+  "krocomain": {
+   "type": "unknown"
+  },
+  "krunchy": {
+   "type": "unknown"
+  },
+  "kryptex": {
+   "type": "miner",
+   "about": "Kryptex, cryptocurrency-mining software."
+  },
+  "kuaiba": {
+   "type": "adware / PUA",
+   "about": "Chinese adware."
+  },
+  "kuaizip": {
+   "type": "adware / PUA",
+   "about": "KuaiZip, Chinese archiver bundling adware."
+  },
+  "kufgal": {
+   "type": "unknown"
+  },
+  "kuguo": {
+   "type": "adware / PUA",
+   "about": "Android ad SDK flagged as adware."
+  },
+  "kutaki": {
+   "type": "stealer",
+   "about": "Kutaki, stealer / keylogger."
+  },
+  "kuwo": {
+   "type": "adware / PUA",
+   "about": "Chinese music player installer flagged for bundled offers."
+  },
+  "lameupdater": {
+   "type": "unknown"
+  },
+  "launcher": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic AV detection name."
+  },
+  "lazagne": {
+   "type": "hacktool / offensive tool",
+   "about": "LaZagne, open-source credential recovery tool."
+  },
+  "ldpinch": {
+   "type": "stealer",
+   "about": "LdPinch, password stealer."
+  },
+  "lebreat": {
+   "type": "unknown"
+  },
+  "legmir": {
+   "type": "stealer",
+   "about": "Legmir, online-game password stealer."
+  },
+  "leivion": {
+   "type": "unknown"
+  },
+  "liberat": {
+   "type": "unknown"
+  },
+  "lidared": {
+   "type": "unknown"
+  },
+  "lightdd": {
+   "type": "unknown"
+  },
+  "lightmoon": {
+   "type": "unknown"
+  },
+  "lightstone": {
+   "type": "unknown"
+  },
+  "ligolo": {
+   "type": "hacktool / offensive tool",
+   "about": "Ligolo, tunnelling tool."
+  },
+  "ligooc": {
+   "type": "unknown"
+  },
+  "limerat": {
+   "type": "RAT / backdoor",
+   "about": "LimeRAT, .NET RAT."
+  },
+  "linkury": {
+   "type": "adware / PUA",
+   "about": "Linkury, adware / browser hijacker."
+  },
+  "lirva": {
+   "type": "worm / botnet",
+   "about": "Lirva, mass-mailing worm."
+  },
+  "lodbak": {
+   "type": "unknown"
+  },
+  "loderka": {
+   "type": "unknown"
+  },
+  "lokilocker": {
+   "type": "ransomware",
+   "about": "LokiLocker ransomware."
+  },
+  "lolbot": {
+   "type": "unknown"
+  },
+  "lolopak": {
+   "type": "unknown"
+  },
+  "lotok": {
+   "type": "unknown"
+  },
+  "loudoffer": {
+   "type": "adware / PUA",
+   "about": "Adware."
+  },
+  "lovetrap": {
+   "type": "unknown"
+  },
+  "lscpt": {
+   "type": "unknown"
+  },
+  "ludashi": {
+   "type": "adware / PUA",
+   "about": "Chinese system tool installer flagged for bundled offers."
+  },
+  "ludbaruma": {
+   "type": "worm / botnet",
+   "about": "Ludbaruma, worm."
+  },
+  "lulusoftware": {
+   "type": "adware / PUA",
+   "about": "Adware publisher."
+  },
+  "lummastealer": {
+   "type": "stealer",
+   "about": "Lumma Stealer (LummaC2), information stealer sold as a service.",
+   "malpedia": "win.lumma"
+  },
+  "lunam": {
+   "type": "unknown"
+  },
+  "lunastorm": {
+   "type": "unknown"
+  },
+  "lydra": {
+   "type": "unknown"
+  },
+  "lynxransom": {
+   "type": "ransomware",
+   "about": "Lynx ransomware."
+  },
+  "lyposit": {
+   "type": "ransomware",
+   "about": "Ransomware."
+  },
+  "mabezat": {
+   "type": "file infector",
+   "about": "Mabezat, file infector."
+  },
+  "madangel": {
+   "type": "unknown"
+  },
+  "maener": {
+   "type": "unknown"
+  },
+  "magania": {
+   "type": "stealer",
+   "about": "Magania, online-game password stealer."
+  },
+  "mailru": {
+   "type": "adware / PUA",
+   "about": "Mail.ru software and toolbars bundled with installers."
+  },
+  "makoob": {
+   "type": "unknown"
+  },
+  "makop": {
+   "type": "ransomware",
+   "about": "Makop ransomware."
+  },
+  "malcrack": {
+   "type": "hacktool / offensive tool",
+   "about": "Malicious crack / keygen."
+  },
+  "malex": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic AV detection name."
+  },
+  "mamont": {
+   "type": "banking trojan",
+   "about": "Mamont, Android banking trojan."
+  },
+  "manbat": {
+   "type": "unknown"
+  },
+  "mapstosteal": {
+   "type": "unknown"
+  },
+  "maran": {
+   "type": "unknown"
+  },
+  "mbrlock": {
+   "type": "ransomware",
+   "about": "MBR locker that blocks booting."
+  },
+  "mediaget": {
+   "type": "adware / PUA",
+   "about": "MediaGet torrent client, flagged for bundled offers."
+  },
+  "mepaow": {
+   "type": "unknown"
+  },
+  "meredrop": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic name for droppers."
+  },
+  "meretam": {
+   "type": "unknown"
+  },
+  "meshagent": {
+   "type": "legitimate / dual-use software",
+   "about": "MeshCentral agent, legitimate remote management (often abused)."
+  },
+  "metamorfo": {
+   "type": "banking trojan",
+   "about": "Metamorfo, Latin-American banking trojan."
+  },
+  "metasploit": {
+   "type": "hacktool / offensive tool",
+   "about": "Metasploit payloads (Meterpreter and others)."
+  },
+  "mettle": {
+   "type": "hacktool / offensive tool",
+   "about": "Mettle, Metasploit's native Meterpreter."
+  },
+  "mewsspy": {
+   "type": "unknown"
+  },
+  "miancha": {
+   "type": "unknown"
+  },
+  "microfake": {
+   "type": "unknown"
+  },
+  "milam": {
+   "type": "unknown"
+  },
+  "mimaila": {
+   "type": "unknown"
+  },
+  "mimic": {
+   "type": "ransomware",
+   "about": "Mimic ransomware."
+  },
+  "mindspark": {
+   "type": "adware / PUA",
+   "about": "Mindspark, browser hijacker toolbars."
+  },
+  "minernet": {
+   "type": "miner",
+   "about": "Cryptocurrency miner."
+  },
+  "ming": {
+   "type": "unknown"
+  },
+  "minix": {
+   "type": "unknown"
+  },
+  "minprys": {
+   "type": "unknown"
+  },
+  "mintluks": {
+   "type": "unknown"
+  },
+  "mirai": {
+   "type": "worm / botnet",
+   "about": "Mirai, IoT DDoS botnet.",
+   "malpedia": "elf.mirai"
+  },
+  "mobby": {
+   "type": "unknown"
+  },
+  "mobhey": {
+   "type": "unknown"
+  },
+  "mobidash": {
+   "type": "adware / PUA",
+   "about": "MobiDash, Android adware."
+  },
+  "mobiletracker": {
+   "type": "spyware / stalkerware",
+   "about": "Phone tracking / monitoring app."
+  },
+  "mobiletx": {
+   "type": "unknown"
+  },
+  "mobtes": {
+   "type": "unknown"
+  },
+  "mocrt": {
+   "type": "unknown"
+  },
+  "modiloader": {
+   "type": "loader / downloader",
+   "about": "ModiLoader (DBatLoader), Delphi loader."
+  },
+  "mofksys": {
+   "type": "unknown"
+  },
+  "monitorminor": {
+   "type": "spyware / stalkerware",
+   "about": "MonitorMinor, Android stalkerware."
+  },
+  "monivisor": {
+   "type": "spyware / stalkerware",
+   "about": "Monitoring software."
+  },
+  "moqhao": {
+   "type": "banking trojan",
+   "about": "MoqHao, Android smishing / banking trojan."
+  },
+  "morstar": {
+   "type": "adware / PUA",
+   "about": "Morstar, installer with bundled offers."
+  },
+  "mozi": {
+   "type": "worm / botnet",
+   "about": "Mozi, P2P IoT botnet."
+  },
+  "msildrop": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic name for .NET droppers."
+  },
+  "msposer": {
+   "type": "unknown"
+  },
+  "mufila": {
+   "type": "unknown"
+  },
+  "mulad": {
+   "type": "unknown"
+  },
+  "muldropnet": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic name for .NET droppers."
+  },
+  "multiplier": {
+   "type": "unknown"
+  },
+  "multiplug": {
+   "type": "adware / PUA",
+   "about": "Multiplug, adware browser extension."
+  },
+  "murofet": {
+   "type": "banking trojan",
+   "about": "Murofet, Zeus variant."
+  },
+  "musecador": {
+   "type": "unknown"
+  },
+  "mutopy": {
+   "type": "unknown"
+  },
+  "mybot": {
+   "type": "worm / botnet",
+   "about": "Mybot, IRC bot."
+  },
+  "mycellspy": {
+   "type": "spyware / stalkerware",
+   "about": "Phone monitoring app."
+  },
+  "mydoom": {
+   "type": "worm / botnet",
+   "about": "MyDoom, mass-mailing worm."
+  },
+  "myrecover": {
+   "type": "unknown"
+  },
+  "nanocore": {
+   "type": "RAT / backdoor",
+   "about": "NanoCore RAT.",
+   "malpedia": "win.nanocore"
+  },
+  "neconyd": {
+   "type": "unknown"
+  },
+  "necurs": {
+   "type": "worm / botnet",
+   "about": "Necurs, spam botnet."
+  },
+  "nemty": {
+   "type": "ransomware",
+   "about": "Nemty ransomware."
+  },
+  "nemucod": {
+   "type": "loader / downloader",
+   "about": "Nemucod, JScript downloader."
+  },
+  "neojit": {
+   "type": "unknown"
+  },
+  "neoreklami": {
+   "type": "adware / PUA",
+   "about": "Neoreklami, adware."
+  },
+  "neshta": {
+   "type": "file infector",
+   "about": "Neshta, file infector."
+  },
+  "netmail": {
+   "type": "unknown"
+  },
+  "netpass": {
+   "type": "hacktool / offensive tool",
+   "about": "Network password recovery tool (dual-use)."
+  },
+  "netscanner": {
+   "type": "hacktool / offensive tool",
+   "about": "Network scanner."
+  },
+  "nevereg": {
+   "type": "unknown"
+  },
+  "ngrbot": {
+   "type": "worm / botnet",
+   "about": "NgrBot, IRC worm (Dorkbot family)."
+  },
+  "nicehashminer": {
+   "type": "miner",
+   "about": "NiceHash miner (legitimate, often abused)."
+  },
+  "nilage": {
+   "type": "unknown"
+  },
+  "nimda": {
+   "type": "worm / botnet",
+   "about": "Nimda worm."
+  },
+  "nitol": {
+   "type": "worm / botnet",
+   "about": "Nitol, DDoS botnet."
+  },
+  "njrat": {
+   "type": "RAT / backdoor",
+   "about": "njRAT (Bladabindi), .NET RAT."
+  },
+  "njrat01": {
+   "type": "RAT / backdoor",
+   "about": "njRAT (Bladabindi), .NET RAT."
+  },
+  "njrat02": {
+   "type": "RAT / backdoor",
+   "about": "njRAT (Bladabindi), .NET RAT."
+  },
+  "njrat04": {
+   "type": "RAT / backdoor",
+   "about": "njRAT (Bladabindi), .NET RAT."
+  },
+  "noobyprotect": {
+   "type": "crypter / packer",
+   "about": "NoobyProtect obfuscator."
+  },
+  "nosok": {
+   "type": "unknown"
+  },
+  "npmod": {
+   "type": "unknown"
+  },
+  "nsismod": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic name for modified NSIS installers."
+  },
+  "nuqel": {
+   "type": "worm / botnet",
+   "about": "Nuqel, worm."
+  },
+  "nystprac": {
+   "type": "unknown"
+  },
+  "oberal": {
+   "type": "unknown"
+  },
+  "oceanlotus": {
+   "type": "RAT / backdoor",
+   "about": "Malware of OceanLotus (APT32)."
+  },
+  "oexsi": {
+   "type": "unknown"
+  },
+  "offercore": {
+   "type": "adware / PUA",
+   "about": "Installer with bundled offers."
+  },
+  "offloader": {
+   "type": "adware / PUA",
+   "about": "OffLoader, installer with bundled offers."
+  },
+  "oficla": {
+   "type": "loader / downloader",
+   "about": "Oficla / Sasfis, downloader."
+  },
+  "ogneglazka": {
+   "type": "unknown"
+  },
+  "olext": {
+   "type": "unknown"
+  },
+  "onescan": {
+   "type": "unknown"
+  },
+  "opanki": {
+   "type": "worm / botnet",
+   "about": "Opanki, instant-messaging worm."
+  },
+  "openbullet": {
+   "type": "hacktool / offensive tool",
+   "about": "OpenBullet, credential-stuffing tool."
+  },
+  "opencandy": {
+   "type": "adware / PUA",
+   "about": "OpenCandy, adware SDK."
+  },
+  "opener": {
+   "type": "unknown"
+  },
+  "openinstall": {
+   "type": "unknown"
+  },
+  "opensupdater": {
+   "type": "adware / PUA",
+   "about": "OpenSUpdater, installer with bundled offers."
+  },
+  "opfake": {
+   "type": "SMS fraud (mobile)",
+   "about": "OpFake, Android premium-SMS fraud."
+  },
+  "orbus": {
+   "type": "unknown"
+  },
+  "orcusrat": {
+   "type": "RAT / backdoor",
+   "about": "Orcus RAT."
+  },
+  "ousaban": {
+   "type": "banking trojan",
+   "about": "Ousaban, Brazilian banking trojan."
+  },
+  "oxypumper": {
+   "type": "adware / PUA",
+   "about": "Adware."
+  },
+  "pacex": {
+   "type": "unknown"
+  },
+  "packy": {
+   "type": "unknown"
+  },
+  "packz": {
+   "type": "unknown"
+  },
+  "pajetbin": {
+   "type": "unknown"
+  },
+  "palevo": {
+   "type": "worm / botnet",
+   "about": "Palevo / Rimecud, worm and botnet."
+  },
+  "pancar": {
+   "type": "unknown"
+  },
+  "pandora": {
+   "type": "ransomware",
+   "about": "Ransomware."
+  },
+  "pardona": {
+   "type": "unknown"
+  },
+  "pariham": {
+   "type": "unknown"
+  },
+  "pasta": {
+   "type": "unknown"
+  },
+  "pcacceleratepro": {
+   "type": "adware / PUA",
+   "about": "Rogue system optimiser."
+  },
+  "pcaccelerator": {
+   "type": "adware / PUA",
+   "about": "Rogue system optimiser."
+  },
+  "pcappstore": {
+   "type": "adware / PUA",
+   "about": "App store installer flagged as PUA."
+  },
+  "pcclient": {
+   "type": "RAT / backdoor",
+   "about": "PcClient, backdoor."
+  },
+  "pcclient2": {
+   "type": "RAT / backdoor",
+   "about": "PcClient, backdoor."
+  },
+  "pcspeedcat": {
+   "type": "adware / PUA",
+   "about": "Rogue system optimiser."
+  },
+  "pdfjsc": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic name for PDFs with malicious JavaScript."
+  },
+  "pemalform": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic name for malformed PE files."
+  },
+  "pemtaka": {
+   "type": "unknown"
+  },
+  "penetho": {
+   "type": "hacktool / offensive tool",
+   "about": "Wi-Fi password hacktool."
+  },
+  "pentera": {
+   "type": "test / simulation",
+   "about": "Automated penetration-testing payload."
+  },
+  "perion": {
+   "type": "adware / PUA",
+   "about": "Browser hijacker toolbars."
+  },
+  "petitpotam": {
+   "type": "hacktool / offensive tool",
+   "about": "PetitPotam, NTLM authentication coercion tool."
+  },
+  "phemedrone": {
+   "type": "stealer",
+   "about": "Phemedrone, information stealer."
+  },
+  "phishbank": {
+   "type": "phishing",
+   "about": "Banking phishing."
+  },
+  "phishinggame": {
+   "type": "phishing",
+   "about": "Game account phishing."
+  },
+  "phishleonem": {
+   "type": "phishing",
+   "about": "Phishing."
+  },
+  "phobos": {
+   "type": "ransomware",
+   "about": "Phobos ransomware."
+  },
+  "phonespy": {
+   "type": "spyware / stalkerware",
+   "about": "Phone monitoring app."
+  },
+  "phorpiex": {
+   "type": "worm / botnet",
+   "about": "Phorpiex, worm / botnet (spam, sextortion, crypto clipping)."
+  },
+  "picsys": {
+   "type": "worm / botnet",
+   "about": "Picsys, P2P worm."
+  },
+  "pidief": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic name for malicious PDFs."
+  },
+  "pigetrl": {
+   "type": "unknown"
+  },
+  "pikabot": {
+   "type": "loader / downloader",
+   "about": "Pikabot, loader."
+  },
+  "pincav": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic AV detection name."
+  },
+  "pinduo": {
+   "type": "unknown"
+  },
+  "pintu": {
+   "type": "unknown"
+  },
+  "piom": {
+   "type": "unknown"
+  },
+  "pistolar": {
+   "type": "unknown"
+  },
+  "pitou": {
+   "type": "rootkit / bootkit",
+   "about": "Pitou, spam bootkit."
+  },
+  "pkeylog": {
+   "type": "stealer",
+   "about": "Keylogger."
+  },
+  "plankton": {
+   "type": "adware / PUA",
+   "about": "Plankton, Android adware."
+  },
+  "playanext": {
+   "type": "unknown"
+  },
+  "plemood": {
+   "type": "unknown"
+  },
+  "plugx": {
+   "type": "RAT / backdoor",
+   "about": "PlugX, RAT used by China-nexus groups."
+  },
+  "plyromt": {
+   "type": "unknown"
+  },
+  "pochi": {
+   "type": "unknown"
+  },
+  "poker": {
+   "type": "unknown"
+  },
+  "polarwind": {
+   "type": "unknown"
+  },
+  "polazert": {
+   "type": "stealer",
+   "about": "Polazert / Jupyter, .NET stealer and backdoor."
+  },
+  "polip": {
+   "type": "file infector",
+   "about": "Polip, polymorphic file infector."
+  },
+  "polypatch": {
+   "type": "unknown"
+  },
+  "pondfull": {
+   "type": "unknown"
+  },
+  "pophot": {
+   "type": "unknown"
+  },
+  "poshc2": {
+   "type": "hacktool / offensive tool",
+   "about": "PoshC2, red-team C2 framework."
+  },
+  "povertystealer": {
+   "type": "stealer",
+   "about": "Poverty Stealer."
+  },
+  "powerrun": {
+   "type": "legitimate / dual-use software",
+   "about": "PowerRun, runs programs with elevated privileges (dual-use)."
+  },
+  "powerspider": {
+   "type": "unknown"
+  },
+  "ppfull": {
+   "type": "unknown"
+  },
+  "prepscram": {
+   "type": "adware / PUA",
+   "about": "PrepScram, installer with bundled offers."
+  },
+  "presenoker": {
+   "type": "unknown"
+  },
+  "primarypass": {
+   "type": "unknown"
+  },
+  "printspoofer": {
+   "type": "hacktool / offensive tool",
+   "about": "PrintSpoofer, Windows privilege-escalation tool."
+  },
+  "prometei": {
+   "type": "worm / botnet",
+   "about": "Prometei, botnet with a Monero miner."
+  },
+  "prometheus": {
+   "type": "unknown"
+  },
+  "protux": {
+   "type": "RAT / backdoor",
+   "about": "Protux backdoor."
+  },
+  "provis": {
+   "type": "unknown"
+  },
+  "pscrypt": {
+   "type": "unknown"
+  },
+  "psixbot": {
+   "type": "RAT / backdoor",
+   "about": "PsiXBot, modular backdoor."
+  },
+  "pswbjlog": {
+   "type": "unknown"
+  },
+  "puce": {
+   "type": "unknown"
+  },
+  "pucrpt": {
+   "type": "unknown"
+  },
+  "pullupdate": {
+   "type": "adware / PUA",
+   "about": "Installer with bundled offers."
+  },
+  "purityscan": {
+   "type": "adware / PUA",
+   "about": "PurityScan adware."
+  },
+  "purplefox": {
+   "type": "rootkit / bootkit",
+   "about": "Purple Fox, rootkit and botnet."
+  },
+  "pyarmid": {
+   "type": "unknown"
+  },
+  "pyfatget": {
+   "type": "unknown"
+  },
+  "pykspa": {
+   "type": "worm / botnet",
+   "about": "Pykspa, instant-messaging worm."
+  },
+  "qhost": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Hosts-file hijacker (generic)."
+  },
+  "qihoo360": {
+   "type": "adware / PUA",
+   "about": "Chinese security suite installer flagged for bundled offers."
+  },
+  "qiyi": {
+   "type": "adware / PUA",
+   "about": "Chinese video software installer flagged for bundled offers."
+  },
+  "qjwmonkey": {
+   "type": "unknown"
+  },
+  "qqhack": {
+   "type": "unknown"
+  },
+  "qqrob": {
+   "type": "stealer",
+   "about": "QQ account stealer."
+  },
+  "quantloader": {
+   "type": "loader / downloader",
+   "about": "Quant Loader."
+  },
+  "r77rootkit": {
+   "type": "rootkit / bootkit",
+   "about": "r77, user-mode rootkit."
+  },
+  "raden": {
+   "type": "unknown"
+  },
+  "rainberry": {
+   "type": "unknown"
+  },
+  "rainbowrat": {
+   "type": "RAT / backdoor",
+   "about": "Remote access trojan."
+  },
+  "ramsay": {
+   "type": "RAT / backdoor",
+   "about": "Ramsay, espionage framework able to reach air-gapped networks."
+  },
+  "rancor": {
+   "type": "RAT / backdoor",
+   "about": "Malware of the Rancor espionage group."
+  },
+  "ranpax": {
+   "type": "unknown"
+  },
+  "ransomhub": {
+   "type": "ransomware",
+   "about": "RansomHub, ransomware-as-a-service."
+  },
+  "rasket": {
+   "type": "unknown"
+  },
+  "rdpbrute": {
+   "type": "hacktool / offensive tool",
+   "about": "RDP brute-forcer."
+  },
+  "realrat": {
+   "type": "RAT / backdoor",
+   "about": "Android RAT."
+  },
+  "rebhipb": {
+   "type": "unknown"
+  },
+  "recmads": {
+   "type": "unknown"
+  },
+  "reconyc": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic AV detection name."
+  },
+  "redline": {
+   "type": "stealer",
+   "about": "RedLine Stealer, information stealer sold as a service.",
+   "malpedia": "win.redline_stealer"
+  },
+  "refinka": {
+   "type": "unknown"
+  },
+  "regcleanpro": {
+   "type": "adware / PUA",
+   "about": "RegClean Pro, rogue system optimiser."
+  },
+  "registrydisabler": {
+   "type": "unknown"
+  },
+  "rekoobe": {
+   "type": "RAT / backdoor",
+   "about": "Rekoobe, Linux backdoor."
+  },
+  "relevantknowledge": {
+   "type": "adware / PUA",
+   "about": "RelevantKnowledge, market-research PUA."
+  },
+  "remloader": {
+   "type": "unknown"
+  },
+  "remoh": {
+   "type": "unknown"
+  },
+  "remoteutilities": {
+   "type": "legitimate / dual-use software",
+   "about": "Remote Utilities, legitimate remote access (often abused)."
+  },
+  "remsim": {
+   "type": "unknown"
+  },
+  "resharer": {
+   "type": "unknown"
+  },
+  "resinject": {
+   "type": "unknown"
+  },
+  "revenge": {
+   "type": "RAT / backdoor",
+   "about": "Revenge RAT."
+  },
+  "reverse64": {
+   "type": "unknown"
+  },
+  "reversessh": {
+   "type": "hacktool / offensive tool",
+   "about": "Reverse SSH tunnel tool."
+  },
+  "revil": {
+   "type": "ransomware",
+   "about": "REvil / Sodinokibi, ransomware-as-a-service."
+  },
+  "revpn": {
+   "type": "unknown"
+  },
+  "revshell": {
+   "type": "RAT / backdoor",
+   "about": "Reverse shell."
+  },
+  "rewardsteal": {
+   "type": "stealer",
+   "about": "RewardSteal, Android phishing / banking-data stealer."
+  },
+  "ribaj": {
+   "type": "unknown"
+  },
+  "rifdoor": {
+   "type": "RAT / backdoor",
+   "about": "Rifdoor backdoor (Lazarus)."
+  },
+  "riodrv": {
+   "type": "unknown"
+  },
+  "risepro": {
+   "type": "stealer",
+   "about": "RisePro, information stealer."
+  },
+  "rising": {
+   "type": "adware / PUA",
+   "about": "Chinese security suite installer flagged for bundled offers."
+  },
+  "risis": {
+   "type": "unknown"
+  },
+  "rostpay": {
+   "type": "unknown"
+  },
+  "ruanmei": {
+   "type": "unknown"
+  },
+  "rubeus": {
+   "type": "hacktool / offensive tool",
+   "about": "Rubeus, Kerberos abuse toolkit."
+  },
+  "rubinurd": {
+   "type": "worm / botnet",
+   "about": "Worm."
+  },
+  "rudedevil": {
+   "type": "unknown"
+  },
+  "rugmi": {
+   "type": "loader / downloader",
+   "about": "Rugmi, loader."
+  },
+  "rugond": {
+   "type": "unknown"
+  },
+  "runarg": {
+   "type": "unknown"
+  },
+  "rundis": {
+   "type": "unknown"
+  },
+  "rungbu": {
+   "type": "unknown"
+  },
+  "rustdesk": {
+   "type": "legitimate / dual-use software",
+   "about": "RustDesk, open-source remote desktop (often abused)."
+  },
+  "rustregion": {
+   "type": "unknown"
+  },
+  "rzelt": {
+   "type": "unknown"
+  },
+  "sake": {
+   "type": "unknown"
+  },
+  "salgorea": {
+   "type": "unknown"
+  },
+  "sality": {
+   "type": "file infector",
+   "about": "Sality, file infector and P2P botnet."
+  },
+  "salrenmetie": {
+   "type": "unknown"
+  },
+  "samsam": {
+   "type": "ransomware",
+   "about": "SamSam ransomware."
+  },
+  "sasfis": {
+   "type": "loader / downloader",
+   "about": "Sasfis / Oficla, downloader."
+  },
+  "satana": {
+   "type": "ransomware",
+   "about": "Satana, ransomware that also overwrites the MBR."
+  },
+  "savenow": {
+   "type": "adware / PUA",
+   "about": "SaveNow adware."
+  },
+  "savestealer": {
+   "type": "stealer",
+   "about": "Information stealer."
+  },
+  "sbadur": {
+   "type": "unknown"
+  },
+  "schoolgirl": {
+   "type": "unknown"
+  },
+  "scrambler": {
+   "type": "unknown"
+  },
+  "screenshoter": {
+   "type": "spyware / stalkerware",
+   "about": "Screen-capture spyware."
+  },
+  "sdwipe": {
+   "type": "wiper",
+   "about": "Wiper."
+  },
+  "searchhook": {
+   "type": "adware / PUA",
+   "about": "Search hijacker."
+  },
+  "seatbelt": {
+   "type": "hacktool / offensive tool",
+   "about": "Seatbelt, host enumeration tool."
+  },
+  "securashield": {
+   "type": "adware / PUA",
+   "about": "Rogue security software."
+  },
+  "senta": {
+   "type": "unknown"
+  },
+  "servent": {
+   "type": "unknown"
+  },
+  "sestealer": {
+   "type": "stealer",
+   "about": "Information stealer."
+  },
+  "setag": {
+   "type": "unknown"
+  },
+  "seznam": {
+   "type": "adware / PUA",
+   "about": "Toolbar bundled with installers."
+  },
+  "sfone": {
+   "type": "SMS fraud (mobile)",
+   "about": "Android premium-SMS fraud."
+  },
+  "sfuzuan": {
+   "type": "unknown"
+  },
+  "shamoon": {
+   "type": "wiper",
+   "about": "Shamoon (Disttrack), disk wiper."
+  },
+  "shandagames": {
+   "type": "adware / PUA",
+   "about": "Game publisher installer flagged as PUA."
+  },
+  "shaosmine": {
+   "type": "miner",
+   "about": "Cryptocurrency miner."
+  },
+  "shapsime": {
+   "type": "unknown"
+  },
+  "sharphound": {
+   "type": "hacktool / offensive tool",
+   "about": "SharpHound, Active Directory data collector for BloodHound."
+  },
+  "shastrosms": {
+   "type": "SMS fraud (mobile)",
+   "about": "Android premium-SMS fraud."
+  },
+  "shedun": {
+   "type": "adware / PUA",
+   "about": "Shedun, Android adware that roots the device."
+  },
+  "shellexec": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic AV detection name."
+  },
+  "shellreg": {
+   "type": "unknown"
+  },
+  "shelpak": {
+   "type": "unknown"
+  },
+  "shenzhen": {
+   "type": "unknown"
+  },
+  "shifu": {
+   "type": "banking trojan",
+   "about": "Shifu, banking trojan."
+  },
+  "shipshape": {
+   "type": "unknown"
+  },
+  "shodi": {
+   "type": "file infector",
+   "about": "Shodi, file infector."
+  },
+  "shyape": {
+   "type": "unknown"
+  },
+  "silby": {
+   "type": "unknown"
+  },
+  "silentall": {
+   "type": "unknown"
+  },
+  "silentinstallbuilder": {
+   "type": "legitimate / dual-use software",
+   "about": "Installer builder, abused to wrap malware."
+  },
+  "sillyfdc": {
+   "type": "worm / botnet",
+   "about": "SillyFDC, USB worm."
+  },
+  "simay": {
+   "type": "unknown"
+  },
+  "simbot": {
+   "type": "unknown"
+  },
+  "simda": {
+   "type": "RAT / backdoor",
+   "about": "Simda, backdoor botnet."
+  },
+  "sisproc": {
+   "type": "unknown"
+  },
+  "sisron": {
+   "type": "unknown"
+  },
+  "sixxpack": {
+   "type": "crypter / packer",
+   "about": "Packer."
+  },
+  "skeeeyah": {
+   "type": "unknown"
+  },
+  "skillis": {
+   "type": "unknown"
+  },
+  "sleepobf": {
+   "type": "unknown"
+  },
+  "slimware": {
+   "type": "adware / PUA",
+   "about": "Driver updater flagged as PUA."
+  },
+  "sliver": {
+   "type": "hacktool / offensive tool",
+   "about": "Sliver, open-source C2 framework."
+  },
+  "slocker": {
+   "type": "ransomware",
+   "about": "SLocker, Android ransomware."
+  },
+  "smbscan": {
+   "type": "hacktool / offensive tool",
+   "about": "SMB scanner."
+  },
+  "smokeloader": {
+   "type": "loader / downloader",
+   "about": "SmokeLoader, modular loader."
+  },
+  "smseye": {
+   "type": "unknown"
+  },
+  "smsforw": {
+   "type": "SMS fraud (mobile)",
+   "about": "Android SMS forwarder."
+  },
+  "smsreg": {
+   "type": "SMS fraud (mobile)",
+   "about": "Android premium-SMS subscription fraud."
+  },
+  "smwnd": {
+   "type": "unknown"
+  },
+  "smyb": {
+   "type": "unknown"
+  },
+  "snackarcin": {
+   "type": "unknown"
+  },
+  "snaffler": {
+   "type": "hacktool / offensive tool",
+   "about": "Snaffler, network-share credential hunting tool."
+  },
+  "snojan": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic AV detection name."
+  },
+  "snoload": {
+   "type": "unknown"
+  },
+  "snovir": {
+   "type": "unknown"
+  },
+  "soft32downloader": {
+   "type": "adware / PUA",
+   "about": "Download manager with bundled offers."
+  },
+  "softcnapp": {
+   "type": "adware / PUA",
+   "about": "Chinese app installer flagged as PUA."
+  },
+  "softonic": {
+   "type": "adware / PUA",
+   "about": "Download manager with bundled offers."
+  },
+  "softpulse": {
+   "type": "adware / PUA",
+   "about": "SoftPulse, installer with bundled offers."
+  },
+  "solimba": {
+   "type": "adware / PUA",
+   "about": "Solimba, installer with bundled offers."
+  },
+  "soltern": {
+   "type": "unknown"
+  },
+  "soumnibot": {
+   "type": "banking trojan",
+   "about": "SoumniBot, Android banking trojan."
+  },
+  "spectreloader": {
+   "type": "unknown"
+  },
+  "speedingupmypc": {
+   "type": "adware / PUA",
+   "about": "Rogue system optimiser."
+  },
+  "speesipro": {
+   "type": "adware / PUA",
+   "about": "Rogue system optimiser."
+  },
+  "spinok": {
+   "type": "adware / PUA",
+   "about": "SpinOk, Android SDK flagged as adware / spyware."
+  },
+  "sprotector": {
+   "type": "crypter / packer",
+   "about": "Protector / packer."
+  },
+  "spybanker": {
+   "type": "banking trojan",
+   "about": "Banking trojan."
+  },
+  "spyeye": {
+   "type": "banking trojan",
+   "about": "SpyEye, banking trojan."
+  },
+  "spyloan": {
+   "type": "spyware / stalkerware",
+   "about": "SpyLoan, predatory loan apps that harvest phone data."
+  },
+  "spymax": {
+   "type": "RAT / backdoor",
+   "about": "SpyMax, Android RAT."
+  },
+  "spyoo": {
+   "type": "spyware / stalkerware",
+   "about": "Phone monitoring app."
+  },
+  "spyrix": {
+   "type": "spyware / stalkerware",
+   "about": "Spyrix, monitoring software."
+  },
+  "spyvoltar": {
+   "type": "unknown"
+  },
+  "srbminer": {
+   "type": "miner",
+   "about": "SRBMiner, cryptocurrency miner."
+  },
+  "sshdoor": {
+   "type": "RAT / backdoor",
+   "about": "Trojanised SSH (backdoor)."
+  },
+  "staffcop": {
+   "type": "spyware / stalkerware",
+   "about": "StaffCop, employee monitoring software."
+  },
+  "stantinko": {
+   "type": "RAT / backdoor",
+   "about": "Stantinko, botnet for ad fraud and mining."
+  },
+  "stealc": {
+   "type": "stealer",
+   "about": "Stealc, information stealer."
+  },
+  "stercogs": {
+   "type": "unknown"
+  },
+  "stihat": {
+   "type": "unknown"
+  },
+  "stoned": {
+   "type": "rootkit / bootkit",
+   "about": "Stoned, boot-sector virus."
+  },
+  "stonedrill": {
+   "type": "wiper",
+   "about": "StoneDrill, wiper."
+  },
+  "stop": {
+   "type": "ransomware",
+   "about": "STOP / Djvu ransomware."
+  },
+  "stormattack": {
+   "type": "unknown"
+  },
+  "stormser": {
+   "type": "unknown"
+  },
+  "styricka": {
+   "type": "unknown"
+  },
+  "suloc": {
+   "type": "unknown"
+  },
+  "supershell": {
+   "type": "hacktool / offensive tool",
+   "about": "Supershell, C2 platform."
+  },
+  "support": {
+   "type": "unknown"
+  },
+  "surubat": {
+   "type": "unknown"
+  },
+  "swisyn": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic AV detection name."
+  },
+  "syncopate": {
+   "type": "unknown"
+  },
+  "syringe": {
+   "type": "unknown"
+  },
+  "sys01": {
+   "type": "stealer",
+   "about": "SYS01, information stealer."
+  },
+  "systemrequirementslab": {
+   "type": "adware / PUA",
+   "about": "Software flagged as PUA."
+  },
+  "systemsecurity": {
+   "type": "adware / PUA",
+   "about": "Rogue security software."
+  },
+  "systemtool": {
+   "type": "unknown"
+  },
+  "systex": {
+   "type": "unknown"
+  },
+  "tacticalrmm": {
+   "type": "legitimate / dual-use software",
+   "about": "Tactical RMM, legitimate remote management (often abused)."
+  },
+  "taily": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic AV detection name."
+  },
+  "tainp": {
+   "type": "unknown"
+  },
+  "tambir": {
+   "type": "unknown"
+  },
+  "taranis": {
+   "type": "unknown"
+  },
+  "taskun": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic AV detection name."
+  },
+  "tekwon": {
+   "type": "unknown"
+  },
+  "tempedreve": {
+   "type": "worm / botnet",
+   "about": "Tempedreve, worm."
+  },
+  "tencent": {
+   "type": "adware / PUA",
+   "about": "Chinese software installer flagged for bundled offers."
+  },
+  "tencentprotect": {
+   "type": "crypter / packer",
+   "about": "Android app protector (packer)."
+  },
+  "tenga": {
+   "type": "file infector",
+   "about": "Tenga, file infector."
+  },
+  "teslacrypt": {
+   "type": "ransomware",
+   "about": "TeslaCrypt ransomware."
+  },
+  "testsample": {
+   "type": "test / simulation",
+   "about": "Test file."
+  },
+  "tftpd32": {
+   "type": "legitimate / dual-use software",
+   "about": "Tftpd32, legitimate TFTP server."
+  },
+  "thamera": {
+   "type": "file infector",
+   "about": "Thamera, file infector."
+  },
+  "tifamily": {
+   "type": "unknown"
+  },
+  "timewaste": {
+   "type": "unknown"
+  },
+  "tinba": {
+   "type": "banking trojan",
+   "about": "Tinba (\"Tiny Banker\"), banking trojan."
+  },
+  "tinydow": {
+   "type": "unknown"
+  },
+  "tinyloader": {
+   "type": "loader / downloader",
+   "about": "Small downloader."
+  },
+  "titirez": {
+   "type": "unknown"
+  },
+  "tofsee": {
+   "type": "worm / botnet",
+   "about": "Tofsee, spam botnet."
+  },
+  "tompai": {
+   "type": "unknown"
+  },
+  "torloader": {
+   "type": "unknown"
+  },
+  "toxicbattery": {
+   "type": "adware / PUA",
+   "about": "Android adware."
+  },
+  "traca": {
+   "type": "unknown"
+  },
+  "trackview": {
+   "type": "spyware / stalkerware",
+   "about": "TrackView, monitoring app."
+  },
+  "tracx": {
+   "type": "unknown"
+  },
+  "triada": {
+   "type": "RAT / backdoor",
+   "about": "Triada, modular Android backdoor."
+  },
+  "trickbot": {
+   "type": "banking trojan",
+   "about": "TrickBot, banking trojan and loader."
+  },
+  "triusor": {
+   "type": "unknown"
+  },
+  "trueupdate": {
+   "type": "unknown"
+  },
+  "udangasteal": {
+   "type": "stealer",
+   "about": "Information stealer."
+  },
+  "ulise": {
+   "type": "unknown"
+  },
+  "ulises": {
+   "type": "unknown"
+  },
+  "umbald": {
+   "type": "unknown"
+  },
+  "umbra": {
+   "type": "unknown"
+  },
+  "umbralstealer": {
+   "type": "stealer",
+   "about": "Umbral Stealer."
+  },
+  "unruy": {
+   "type": "unknown"
+  },
+  "upatre": {
+   "type": "loader / downloader",
+   "about": "Upatre, downloader."
+  },
+  "urelas": {
+   "type": "unknown"
+  },
+  "ursnif": {
+   "type": "banking trojan",
+   "about": "Ursnif / Gozi, banking trojan."
+  },
+  "utorrent": {
+   "type": "adware / PUA",
+   "about": "Torrent client installer flagged for bundled offers."
+  },
+  "uztuby": {
+   "type": "unknown"
+  },
+  "vague": {
+   "type": "unknown"
+  },
+  "vantomrat": {
+   "type": "RAT / backdoor",
+   "about": "Remote access trojan."
+  },
+  "vbclone": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic AV detection name."
+  },
+  "vbinder": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic name for file binders."
+  },
+  "veilev": {
+   "type": "unknown"
+  },
+  "vemply": {
+   "type": "unknown"
+  },
+  "veriato": {
+   "type": "spyware / stalkerware",
+   "about": "Veriato, employee monitoring software."
+  },
+  "veryfast": {
+   "type": "unknown"
+  },
+  "vilsel": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic AV detection name."
+  },
+  "vindor": {
+   "type": "unknown"
+  },
+  "vipspace": {
+   "type": "unknown"
+  },
+  "virbox": {
+   "type": "crypter / packer",
+   "about": "Virbox Protector (packer)."
+  },
+  "virlock": {
+   "type": "ransomware",
+   "about": "VirLock, ransomware that also infects files."
+  },
+  "virut": {
+   "type": "file infector",
+   "about": "Virut, file infector and botnet."
+  },
+  "vkontaktedj": {
+   "type": "unknown"
+  },
+  "vobfus": {
+   "type": "worm / botnet",
+   "about": "Vobfus, worm."
+  },
+  "vools": {
+   "type": "unknown"
+  },
+  "vrbrothers": {
+   "type": "unknown"
+  },
+  "vulgar": {
+   "type": "unknown"
+  },
+  "wabot": {
+   "type": "worm / botnet",
+   "about": "Wabot, IRC worm."
+  },
+  "wacatac": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic detection name used by Microsoft Defender for many unrelated threats — not a real family."
+  },
+  "wannacry": {
+   "type": "ransomware",
+   "about": "WannaCry, ransomware worm (2017)."
+  },
+  "wapron": {
+   "type": "unknown"
+  },
+  "wavipeg": {
+   "type": "unknown"
+  },
+  "webcompanion": {
+   "type": "adware / PUA",
+   "about": "Web Companion, browser add-on flagged as PUA."
+  },
+  "wecod": {
+   "type": "unknown"
+  },
+  "weecnaw": {
+   "type": "unknown"
+  },
+  "weenloc": {
+   "type": "unknown"
+  },
+  "weidie": {
+   "type": "unknown"
+  },
+  "wemaeye": {
+   "type": "unknown"
+  },
+  "wenper": {
+   "type": "unknown"
+  },
+  "wews87": {
+   "type": "unknown"
+  },
+  "whisperer": {
+   "type": "unknown"
+  },
+  "widdit": {
+   "type": "adware / PUA",
+   "about": "Widdit, adware."
+  },
+  "windef": {
+   "type": "generic AV name",
+   "generic": true,
+   "about": "Generic AV detection name."
+  },
+  "winloader": {
+   "type": "unknown"
+  },
+  "winlocker": {
+   "type": "ransomware",
+   "about": "Screen-locker ransomware."
+  },
+  "winlocknet": {
+   "type": "ransomware",
+   "about": "Screen-locker ransomware."
+  },
+  "winmaster": {
+   "type": "unknown"
+  },
+  "wipelock": {
+   "type": "unknown"
+  },
+  "wisecleaner": {
+   "type": "adware / PUA",
+   "about": "System cleaner flagged as PUA."
+  },
+  "witch": {
+   "type": "unknown"
+  },
+  "woner": {
+   "type": "unknown"
+  },
+  "worgtop": {
+   "type": "unknown"
+  },
+  "wqmobile": {
+   "type": "unknown"
+  },
+  "wronginf": {
+   "type": "unknown"
+  },
+  "xanfpezes": {
+   "type": "unknown"
+  },
+  "xiang": {
+   "type": "unknown"
+  },
+  "xiaoba": {
+   "type": "file infector",
+   "about": "Xiaoba, file infector / ransomware."
+  },
+  "xmrig": {
+   "type": "miner",
+   "about": "XMRig, Monero miner."
+  },
+  "xolxo": {
+   "type": "unknown"
+  },
+  "xorddos": {
+   "type": "worm / botnet",
+   "about": "XorDDoS, Linux DDoS botnet."
+  },
+  "xorist": {
+   "type": "ransomware",
+   "about": "Xorist ransomware."
+  },
+  "xpan": {
+   "type": "ransomware",
+   "about": "Ransomware."
+  },
+  "xploder": {
+   "type": "unknown"
+  },
+  "xworm": {
+   "type": "RAT / backdoor",
+   "about": "XWorm, .NET RAT."
+  },
+  "xylauncher": {
+   "type": "unknown"
+  },
+  "xyligan": {
+   "type": "unknown"
+  },
+  "yahoopass": {
+   "type": "stealer",
+   "about": "Password stealer."
+  },
+  "yaiver": {
+   "type": "unknown"
+  },
+  "yandex": {
+   "type": "adware / PUA",
+   "about": "Browser / toolbar bundled with installers."
+  },
+  "yanismastealer": {
+   "type": "stealer",
+   "about": "Information stealer."
+  },
+  "yebao": {
+   "type": "unknown"
+  },
+  "yelloader": {
+   "type": "unknown"
+  },
+  "yobdam": {
+   "type": "unknown"
+  },
+  "youmi": {
+   "type": "adware / PUA",
+   "about": "Android ad SDK flagged as adware."
+  },
+  "youtubedownloaderguru": {
+   "type": "adware / PUA",
+   "about": "Downloader app flagged as PUA."
+  },
+  "youxun": {
+   "type": "unknown"
+  },
+  "ytdownloader": {
+   "type": "adware / PUA",
+   "about": "Downloader app flagged as PUA."
+  },
+  "yuner": {
+   "type": "unknown"
+  },
+  "yunsip": {
+   "type": "unknown"
+  },
+  "yzhcsms": {
+   "type": "SMS fraud (mobile)",
+   "about": "Android premium-SMS fraud."
+  },
+  "zegost": {
+   "type": "RAT / backdoor",
+   "about": "Zegost, backdoor."
+  },
+  "zenosearch": {
+   "type": "adware / PUA",
+   "about": "Search hijacker."
+  },
+  "zeus": {
+   "type": "banking trojan",
+   "about": "Zeus, banking trojan."
+  },
+  "zitmo": {
+   "type": "banking trojan",
+   "about": "ZitMo, \"Zeus in the mobile\"."
+  },
+  "znyonm": {
+   "type": "unknown"
+  },
+  "zonidel": {
+   "type": "unknown"
+  },
+  "ztorg": {
+   "type": "RAT / backdoor",
+   "about": "Ztorg, Android rooting trojan."
+  },
+  "zuhaowan": {
+   "type": "unknown"
+  },
+  "zvuzona": {
+   "type": "unknown"
+  },
+  "zylom": {
+   "type": "adware / PUA",
+   "about": "Game installer flagged for bundled offers."
+  }
+ }
+}
