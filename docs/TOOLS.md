@@ -31,15 +31,18 @@ DocuTraceX is Apache-2.0 and ships no GPL code. GPL/LGPL tools (pcodedmp,
 peepdf-3, py7zr, box-ps and pycdc — GPL-3.0 —, UPX, 7-Zip) are installed into
 the portable at provisioning time or picked up from `tools/`, and invoked as
 separate processes, never shipped in this repository. PowerShell Core, Node and
-webcrack are MIT. webcrack pulls `isolated-vm`, which builds from source, so it
-needs Node build tools on the host; if the build fails, webcrack stays disabled
-and the pure-Python JavaScript cascade is the fallback. `python run.py`
-provisions webcrack and box-ps on start when they are missing, but only once —
-re-run `scripts/setup_portable_python.py` to retry.
+webcrack are MIT. webcrack pulls `isolated-vm`, which ships prebuilt binaries
+for Windows x64, Linux and Apple Silicon (elsewhere it builds from source and
+needs Node build tools); if that fails, webcrack stays disabled and the
+pure-Python JavaScript cascade is the fallback. CFR runs on the host's Java or,
+when there is none, on a portable Eclipse Temurin 21 JRE (GPL-2.0 with the
+Classpath Exception) downloaded into `tools/jre/`. `python run.py` provisions
+the optional runtimes on start when they are missing; a failed attempt is not
+repeated until the next update — press **Retry** in Diagnostics to try again.
 
 ## Optional components
 
-FLOSS, capa, pycdc, CFR (needs a JVM), webcrack, box-ps, the PE unpackers and
+FLOSS, capa, pycdc, CFR, webcrack, box-ps, the PE unpackers and
 the Machine Learning family model (459 MB, `DOCUTRACEX_EMBER_FAMILY=1` at
 install or the button in the Machine Learning tab) are optional: provisioned
 when possible, skipped cleanly when absent.

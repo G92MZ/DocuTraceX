@@ -34,6 +34,13 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# The portable must see only its own site-packages. Without this, a per-user
+# site (e.g. %APPDATA%\Python\Python313\site-packages left by another Python
+# 3.13) makes pip report packages as "already satisfied" there and skip them,
+# and the isolated (-I) tool checks then miss yaml / idna / pydantic.
+import os as _os  # noqa: E402
+_os.environ["PYTHONNOUSERSITE"] = "1"
 TOOLS = ROOT / "tools"
 PY_DIR = TOOLS / "python"
 LIBMAGIC_DIR = TOOLS / "libmagic"
@@ -170,12 +177,13 @@ def install_python(version: str, force: bool) -> None:
 def install_deps() -> None:
     py = _portable_python()
     print("[>] Upgrading pip in the portable interpreter")
-    subprocess.run([str(py), "-m", "pip", "install", "--upgrade", "pip"], check=False)
+    subprocess.run([str(py), "-s", "-m", "pip", "install", "--upgrade", "pip"], check=False)
     print("[>] Installing DocuTraceX + the analysis toolchain into the portable interpreter")
     # The [tools] extra carries every analysis dependency (oletools, YARA,
     # STPyV8, Playwright, pikepdf, …) — they land ONLY on the portable, never on
     # the user's Python. The web service deps come along as base requirements.
-    subprocess.run([str(py), "-m", "pip", "install", "-e", f"{ROOT}[tools]"], check=True)
+    subprocess.run([str(py), "-s", "-m", "pip", "install", "--no-warn-script-location",
+                    "-e", f"{ROOT}[tools]"], check=True)
 
 
 def install_libmagic_windows() -> None:
@@ -586,6 +594,11 @@ def _webcrack_build_env(node: Path) -> dict:
     env["npm_config_target_arch"] = env["npm_config_arch"]
     # A fresh, project-local header cache, never the user's shared one.
     env["npm_config_devdir"] = str((TOOLS / ".node-gyp").resolve())
+    # isolated-vm's install script runs `node-gyp-build`, which calls plain
+    # `node`: with the portable Node first on PATH it picks the bundled
+    # prebuilt binary (no compiler needed) instead of failing with
+    # '"node" is not recognized' and falling back to a source build.
+    env["PATH"] = str(node.parent.resolve()) + os.pathsep + env.get("PATH", "")
     return env
 
 
@@ -814,8 +827,91 @@ CFR_VERSION = "0.152"                           # MIT
 CFR_URL = f"https://github.com/leibnitz27/cfr/releases/download/{CFR_VERSION}/cfr-{CFR_VERSION}.jar"
 
 
-def _cfr_ok() -> bool:
+def _cfr_jar_ok() -> bool:
     return CFR_DIR.is_dir() and any(CFR_DIR.glob("cfr*.jar"))
+
+
+def _cfr_ok() -> bool:
+    return _cfr_jar_ok() and _java() is not None
+
+
+# Portable JRE (Eclipse Temurin 21, GPLv2 + Classpath Exception) for CFR, only
+# when the host has no JVM. Pinned release; each archive verified by SHA-256.
+JRE_DIR = TOOLS / "jre"
+JRE_TAG, JRE_VER = "jdk-21.0.12+8", "21.0.12_8"
+JRE_BASE = "https://github.com/adoptium/temurin21-binaries/releases/download/"
+JRE_SHA256 = {
+    ("windows", "x86_64"): "b8aa18fef5edb69bee8618f99677d66d0873d22cb40d974c15ac9ffcdecf73ba",
+    ("windows", "aarch64"): "a50ed83b6a88d3127d406713f5057d78f845c3412d59e201dac6db37714af85c",
+    ("linux", "x86_64"): "8a379a67c91a3ae61ffb33d46e0a40c7ba35e70713c4db31cfca30492f792eff",
+    ("linux", "aarch64"): "5f9c96b656827b9d14ebeda7739e25be554fa6d25669b03847c1df6e869c0679",
+    ("mac", "x86_64"): "539706197baea8189c9a677aea5bf44671b74a71baa42dde436e312f2158fa3a",
+    ("mac", "aarch64"): "36bb71d6fa5184e12a6483e7662783c2cbd383f5dca8034140f0a84dd5aa797d",
+}
+
+
+def _java() -> Path | None:
+    """A JVM: tools/jre/, then JAVA_HOME, then java on PATH (like the app)."""
+    import os
+    for c in (JRE_DIR / "bin" / "java.exe", JRE_DIR / "bin" / "java"):
+        if c.is_file():
+            return c
+    jh = os.environ.get("JAVA_HOME")
+    if jh:
+        for c in (Path(jh) / "bin" / "java.exe", Path(jh) / "bin" / "java"):
+            if c.is_file():
+                return c
+    found = shutil.which("java")
+    return Path(found) if found else None
+
+
+def install_jre() -> bool:
+    """Download the pinned Temurin JRE into tools/jre/ (bin/java directly under it)."""
+    import hashlib
+    import io
+
+    osname = "windows" if sys.platform.startswith("win") else ("mac" if sys.platform == "darwin" else "linux")
+    arch = _arch()
+    sha = JRE_SHA256.get((osname, arch))
+    if not sha:
+        print(f"[!] No portable JRE for {osname}/{arch}; install a Java runtime to decompile .class files.")
+        return False
+    ext = "zip" if osname == "windows" else "tar.gz"
+    name = f"OpenJDK21U-jre_{'x64' if arch == 'x86_64' else 'aarch64'}_{osname}_hotspot_{JRE_VER}.{ext}"
+    print(f"[>] Downloading a portable Java runtime (Temurin 21 JRE, ~45 MB) into tools/jre/: {name}")
+    try:
+        data = _get(JRE_BASE + JRE_TAG.replace("+", "%2B") + "/" + name)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] Could not download the JRE ({exc}); .class decompilation stays disabled.")
+        return False
+    if hashlib.sha256(data).hexdigest() != sha:
+        print("[!] JRE SHA-256 mismatch — NOT installed.")
+        return False
+    tmp = TOOLS / ".jre_extract"
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir(parents=True)
+    if ext == "zip":
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            z.extractall(tmp)
+    else:
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as t:
+            try:
+                t.extractall(tmp, filter="tar")   # keeps the executable bits
+            except TypeError:
+                t.extractall(tmp)
+    home = next((p.parent.parent for p in tmp.rglob("java*") if p.parent.name == "bin"
+                 and p.name in ("java", "java.exe")), None)
+    if home is None:
+        print("[!] The JRE archive had no bin/java.")
+        shutil.rmtree(tmp, ignore_errors=True)
+        return False
+    shutil.rmtree(JRE_DIR, ignore_errors=True)
+    shutil.move(str(home), str(JRE_DIR))
+    shutil.rmtree(tmp, ignore_errors=True)
+    java = _java()
+    ok = java is not None and JRE_DIR in java.parents
+    print(f"[+] Java runtime at {JRE_DIR}" if ok else "[!] JRE extracted but java was not found.")
+    return ok
 
 
 def install_cfr() -> bool:
@@ -824,19 +920,22 @@ def install_cfr() -> bool:
     engine falls back to .class constant-pool mining."""
     if _cfr_ok():
         return True
-    print("[>] Downloading the CFR Java decompiler into tools/cfr/")
-    try:
-        data = _get(CFR_URL)
-    except Exception as exc:  # noqa: BLE001
-        print(f"[!] Could not download CFR ({exc}); .class decompilation stays disabled.")
-        return False
-    CFR_DIR.mkdir(parents=True, exist_ok=True)
-    (CFR_DIR / f"cfr-{CFR_VERSION}.jar").write_bytes(data)
-    if _cfr_ok():
+    if not _cfr_jar_ok():
+        print("[>] Downloading the CFR Java decompiler into tools/cfr/")
+        try:
+            data = _get(CFR_URL)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[!] Could not download CFR ({exc}); .class decompilation stays disabled.")
+            return False
+        CFR_DIR.mkdir(parents=True, exist_ok=True)
+        (CFR_DIR / f"cfr-{CFR_VERSION}.jar").write_bytes(data)
+        if not _cfr_jar_ok():
+            print("[!] CFR download did not produce a jar.")
+            return False
         print(f"[+] CFR at {CFR_DIR}")
-        return True
-    print("[!] CFR download did not produce a jar.")
-    return False
+    if _java() is None and not install_jre():   # no JVM on the host → a portable one
+        return False
+    return _cfr_ok()
 
 
 # --- Mandiant FLOSS + capa (standalone Windows binaries) --------------------------
@@ -1148,15 +1247,30 @@ def _mark_path(name: str) -> Path:
     return TOOLS / f".{name}_provision_failed"
 
 
+def _app_version() -> str:
+    try:
+        return (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
 def _marked(name: str) -> bool:
-    return _mark_path(name).exists()
+    """A failed attempt is remembered only for the version that made it: after
+    an update (which may carry the fix) the install is tried once more."""
+    try:
+        first = _mark_path(name).read_text(encoding="utf-8").splitlines()[0].strip()
+    except (OSError, IndexError):
+        return False
+    return first == f"version {_app_version()}"
 
 
 def _mark_failed(name: str) -> None:
     try:
         TOOLS.mkdir(parents=True, exist_ok=True)
         _mark_path(name).write_text(
-            "Provisioning failed. Delete this file, or run scripts/setup_portable_python.py, to retry.\n")
+            f"version {_app_version()}\n"
+            "Provisioning failed. Press Retry in Diagnostics, delete this file, or run "
+            "scripts/setup_portable_python.py, to retry.\n", encoding="utf-8")
     except OSError:
         pass
 

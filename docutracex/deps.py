@@ -639,10 +639,10 @@ def run_checks() -> dict[str, Any]:
             status="ok" if ok else "warn",
             detail=detail,
             remedy="" if ok else
-                   "run scripts/setup_portable_python.py (downloads cfr.jar); needs a JVM on PATH/JAVA_HOME; "
+                   "press Retry (downloads cfr.jar and, if there is no Java, a portable JRE into tools/jre/); "
                    "without it .class is analysed from the constant pool, not decompiled",
             purpose="Decompiles .class back to Java source (jar/war and loose classes)",
-            retry="cfr" if not cfr else "",
+            retry="cfr",
         ))
     except Exception:  # noqa: BLE001
         pass
@@ -695,13 +695,15 @@ def run_checks() -> dict[str, Any]:
         md = models_dir()
         have = [t for t in MODEL_TYPES if (md / f"EMBER2024_{t}.model").is_file()]
         fam = (md / "EMBER2024_family.model").is_file()
-        full = len(have) == len(MODEL_TYPES) and fam
+        full = len(have) == len(MODEL_TYPES)
         checks.append(Check(
             category="Machine learning",
             name="EMBER2024 models",
             status="ok" if full else "warn",
             detail=f"{len(have)}/{len(MODEL_TYPES)} detection models in tools/ember/"
-                   + ("" if fam else " · family model missing (no family hints)"),
+                   + (" · family model present" if fam else
+                      " · optional family model (459 MB) not downloaded — use the button in the "
+                      "Machine Learning tab to get it"),
             remedy="" if full else "run scripts/setup_portable_python.py",
             purpose="Malware score of PE / .NET / PDF / ELF / APK objects (Machine Learning tab)",
             retry="ember",
