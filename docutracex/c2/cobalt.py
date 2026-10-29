@@ -9,12 +9,16 @@ TLV config block XOR-ed with 0x69 (3.x) or 0x2e (4.x).
 
 from __future__ import annotations
 
+import ast
 import json
+import logging
 import struct
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 HEADER = b"\x00\x01\x00\x01\x00\x02"          # setting 1 (payload type), type short, len 2
 KEYS = (0x2E, 0x69)
@@ -57,13 +61,23 @@ def _run_1768(path: Path, data: bytes) -> dict[str, Any] | None:
         args.append("-r")
     try:
         r = subprocess.run(args + [str(path)], capture_output=True, text=True, check=False,
-                           encoding="utf-8", errors="replace", timeout=120)
+                           encoding="utf-8", errors="replace", timeout=120,
+                           stdin=subprocess.DEVNULL)
         out = json.loads(r.stdout or "{}")
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        log.warning("1768.py failed on %s: %s", path.name, exc)
         return None
     cfg = out.get("config") or {}
     if not cfg:
-        return None
+        # No beacon config, but 1768.py may have decoded a stager (shellcode XOR-ed
+        # with a 4-byte key inside a PE): it reports it as messages, not as config.
+        msgs = [m for m in out.get("messages") or [] if isinstance(m, str)]
+        stager = _stager_from_messages(msgs)
+        if stager is None:
+            err = next((m for m in msgs if m.startswith("Error")), "")
+            if err:
+                log.info("1768.py on %s: %s", path.name, err)
+        return stager
     fields = {}
     for k, v in cfg.items():
         name = v.get("id") or f"0x{int(k):04x}"
@@ -76,6 +90,67 @@ def _run_1768(path: Path, data: bytes) -> dict[str, Any] | None:
     sanity = next((m for m in msgs if m.startswith("Sanity check")), "")
     return {"fields": fields, "method": "1768.py" + (f" (XOR 0x{xor})" if xor else ""),
             "sanity": sanity, "_messages": msgs}
+
+
+_ALLOC_SIZES = {0x40, 0x1000, 0x2000, 0x3000, 0x4000, 0x400000}
+
+
+def _bytes_lit(s: str) -> str:
+    """b'...' repr printed by 1768.py → text."""
+    s = s.strip()
+    try:
+        v = ast.literal_eval(s)
+        return v.decode("latin-1") if isinstance(v, bytes) else str(v)
+    except (ValueError, SyntaxError):
+        return s
+
+
+def _stager_from_messages(msgs: list[str]) -> dict[str, Any] | None:
+    """Parse 1768.py's 'Probably found shellcode' report (stager in a PE).
+
+    Lines used:  ``Parameter: <off> b'<host>'``, ``push : <off> <value> b'..'``,
+    ``String: <off> b'<text>'`` and ``intxorkey: 0x........``.
+    """
+    if not any("Probably found shellcode" in m for m in msgs):
+        return None
+    hosts, ports, strings = [], [], []
+    xor = ""
+    for m in msgs:
+        if m.startswith("Parameter:"):
+            parts = m.split(None, 2)
+            if len(parts) == 3:
+                hosts.append(_bytes_lit(parts[2]))
+        elif m.startswith("push"):
+            parts = m.split(":", 1)[1].split()
+            if len(parts) >= 2 and parts[1].isdigit():
+                v = int(parts[1])
+                if 0 < v < 65536 and v not in _ALLOC_SIZES:
+                    ports.append(v)
+        elif m.startswith("String:"):
+            parts = m.split(None, 2)
+            if len(parts) == 3:
+                strings.append(_bytes_lit(parts[2]))
+        elif m.startswith("intxorkey:") and not m.endswith("0x00000000"):
+            xor = m.split()[-1]
+    hosts = [h for h in dict.fromkeys(hosts) if h]
+    if not hosts:
+        return None
+    port = ports[0] if ports else None
+    fields: dict[str, Any] = {
+        "payload type": {"value": "stager", "raw": None},
+        "server,get-uri": {"value": ",".join(f"{h}," for h in hosts).rstrip(","), "raw": None},
+    }
+    if port:
+        fields["port"] = {"value": str(port), "raw": port}
+    ua = next((s.split(":", 1)[1].strip() for s in strings if s.lower().startswith("user-agent:")), "")
+    if ua:
+        fields["useragent"] = {"value": ua, "raw": None}
+    uris = [s for s in strings if s.startswith("/")]
+    if uris:
+        fields["server,get-uri"]["value"] = ",".join(f"{h},{uris[0]}" for h in hosts)
+    return {"fields": fields, "kind": "stager",
+            "method": "1768.py stager shellcode" + (f" (XOR {xor})" if xor else ""),
+            "sanity": "", "_messages": msgs}
 
 
 def _decode_tlv(buf: bytes) -> dict[str, Any]:
@@ -151,7 +226,7 @@ def extract(path: Path, data: bytes) -> dict[str, Any] | None:
     summary, hosts = summarise(res["fields"])
     if not hosts and "Pipe" not in summary:
         return None
-    kind = "stager" if "stager" in json.dumps(res.get("_messages", [])).lower() else "beacon"
+    kind = res.get("kind") or ("stager" if "stager" in json.dumps(res.get("_messages", [])).lower() else "beacon")
     ver = next((m.split(":", 1)[1].strip() for m in res.get("_messages", []) if m.startswith("Guessing Cobalt Strike version")), "")
     if ver:
         summary["Version (guess)"] = ver
