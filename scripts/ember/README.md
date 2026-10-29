@@ -38,3 +38,26 @@ reconstructed them:
 
 The sample over-represents rare tags/families, so real-world precision of rare
 labels is lower than measured.
+
+### Family label map v4
+
+v3 named only 987 of the family model's 2,538 outputs: it voted with each
+family's top-1 output, and a few popular outputs (generic names such as
+*wacatac*) win top-1 for files of hundreds of families. v4 (CI run on a
+temporary branch, ~25 min):
+
+7. `collect_family.py TYPE` — streams the labelled EMBER2024 test **and train**
+   sets (up to 80 files per family; 175,059 files, 6,776 families in all),
+   runs the family model and keeps only aggregates per (family, output): sum
+   of probabilities, top-1 and top-3 counts.
+8. `labelmap_family_v4.py` — names an output after the family whose files
+   raise it most *specifically* (mean probability ÷ mean over all files) when
+   family and output are each other's best match; confidence from top-3
+   purity (high ≥ 0.6 with ≥ 5 files, medium ≥ 0.35).
+
+Merged into `ember_labels.json`: v4 names (high / medium), v3 names where v4
+named nothing, v4 winning conflicts when its confidence is high; an output
+whose name another output already carries (with stronger evidence) is left
+unnamed. Result: **2,462 of 2,538 outputs named** (2,208 high, 254 medium);
+v4 reproduced 827 of the 849 v3 names it could compare (97%).
+`docutracex/ml/family_info.json` describes what each named family is.
