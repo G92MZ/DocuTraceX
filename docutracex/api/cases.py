@@ -93,6 +93,9 @@ async def get_components(analysis_id: str) -> dict:
         data = read_json(paths.subresult(module))
         if data is not None:
             modules[module] = data
+    if modules.get("ml"):
+        from ..ml import family_info
+        modules["ml"] = family_info.enrich(modules["ml"])
     iocs = read_json(paths.subresult("iocs"))
     marked = _load_findings_with_marks(analysis_id)
     # every YARA hit with its mark, for the YARA tab (unmarked ones are not findings)
