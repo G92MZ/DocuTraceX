@@ -745,7 +745,9 @@ def install_boxps() -> bool:
 
 
 PYCDC_DIR = TOOLS / "pycdc"
-PYCDC_ZIP = "https://github.com/zrax/pycdc/archive/refs/heads/master.zip"  # MIT
+# Pinned upstream commit (GPL-3.0; built locally, never redistributed).
+PYCDC_COMMIT = "b4289760970dbc399684f1e155ec6d1ea1cc787e"
+PYCDC_ZIP = f"https://github.com/zrax/pycdc/archive/{PYCDC_COMMIT}.zip"
 
 
 def _pycdc_ok() -> bool:
@@ -756,16 +758,88 @@ def _pycdc_ok() -> bool:
     return False
 
 
+# pycdc is compiled directly (no CMake): with the system C++ compiler on
+# macOS/Linux when there is one, otherwise with Zig's bundled clang (``zig c++``)
+# installed from PyPI into a throw-away folder — so no Visual Studio Build Tools
+# are needed on Windows. The sources are small and need no code generation.
+ZIG_PIP = "ziglang==0.15.2"
+
+
+def _pycdc_sources(src: Path) -> list[Path]:
+    """Everything pycdc links: the top-level .cpp files except the separate
+    disassembler (pycdas), plus every bytecode table under bytes/."""
+    return sorted(p for p in src.glob("*.cpp") if p.name != "pycdas.cpp") + sorted((src / "bytes").glob("*.cpp"))
+
+
+def _compile_pycdc(cxx: list[str], src: Path, out: Path, env: dict | None = None) -> bool:
+    cmd = [*cxx, "-std=c++11", "-O2", f"-I{src}", *map(str, _pycdc_sources(src)), "-o", str(out)]
+    print(f"[>] pycdc: compiling with {Path(cxx[0]).name} {' '.join(cxx[1:])} (about a minute)...")
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", env=env, timeout=1800)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] pycdc: build failed ({exc})")
+        return False
+    ok = r.returncode == 0 and out.is_file() and out.stat().st_size > 0
+    if not ok:
+        print(f"[!] pycdc: build failed:\n{((r.stdout or '') + (r.stderr or ''))[-1500:]}")
+        out.unlink(missing_ok=True)
+    return ok
+
+
+def _build_pycdc_system(src: Path, out: Path) -> bool:
+    """macOS / Linux: the system C++ compiler (Xcode CLT, gcc, clang) if any."""
+    if sys.platform.startswith("win"):
+        return False
+    cxx = next((shutil.which(c) for c in ("c++", "clang++", "g++") if shutil.which(c)), None)
+    return bool(cxx) and _compile_pycdc([cxx], src, out)
+
+
+def _build_pycdc_zig(src: Path, out: Path) -> bool:
+    import os
+
+    py = _portable_python() if _portable_present() else Path(sys.executable)
+    zdir = TOOLS / ".zig"
+    print(f"[>] pycdc: fetching the Zig C++ toolchain from PyPI ({ZIG_PIP}, ~100 MB, removed after the build)")
+    r = subprocess.run([str(py), "-s", "-m", "pip", "install", "--quiet", "--no-deps",
+                        "--disable-pip-version-check", "--target", str(zdir), ZIG_PIP])
+    zig = next((c for c in (zdir / "ziglang" / "zig.exe", zdir / "ziglang" / "zig") if c.is_file()), None)
+    if r.returncode != 0 or zig is None:
+        print("[!] pycdc: could not get the Zig toolchain.")
+        shutil.rmtree(zdir, ignore_errors=True)
+        return False
+    env = dict(os.environ)
+    env["ZIG_GLOBAL_CACHE_DIR"] = str(zdir / "cache")
+    env["ZIG_LOCAL_CACHE_DIR"] = str(zdir / "cache-local")
+    try:
+        return _compile_pycdc([str(zig), "c++", "-s"], src, out, env)
+    finally:
+        shutil.rmtree(zdir, ignore_errors=True)
+
+
+def _build_pycdc_cmake(src: Path) -> Path | None:
+    """Fallback: the host's CMake + compiler, when present."""
+    if shutil.which("cmake") is None:
+        return None
+    build = src / "build"
+    try:
+        subprocess.run(["cmake", "-S", str(src), "-B", str(build), "-DCMAKE_BUILD_TYPE=Release"], check=True)
+        subprocess.run(["cmake", "--build", str(build), "--target", "pycdc", "--config", "Release"], check=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] pycdc CMake build failed ({exc}).")
+        return None
+    for c in (build / "pycdc", build / "Release" / "pycdc.exe", build / "pycdc.exe"):
+        if c.is_file():
+            return c
+    return next((h for h in build.rglob("pycdc*") if h.is_file() and h.suffix in ("", ".exe")), None)
+
+
 def install_pycdc() -> bool:
-    """pycdc / Decompyle++ (MIT) into tools/pycdc/ — optional .pyc decompiler.
-    Built from source with CMake (like webcrack's native dep); when absent the
-    Python engine falls back to bytecode disassembly + string mining."""
+    """pycdc / Decompyle++ (GPL-3.0) into tools/pycdc/ — optional .pyc
+    decompiler, built from source with Zig's C++ compiler (fetched from PyPI),
+    or the host's CMake as a fallback. When absent the Python engine falls
+    back to bytecode disassembly + string mining."""
     if _pycdc_ok():
         return True
-    if shutil.which("cmake") is None:
-        print("[!] cmake not found; skipping pycdc (the .pyc decompiler is optional — "
-              "the Python engine still disassembles and mines strings).")
-        return False
     print("[>] Provisioning pycdc (.pyc decompiler) into tools/pycdc/ — building from source")
     import io
     try:
@@ -773,6 +847,7 @@ def install_pycdc() -> bool:
     except Exception as exc:  # noqa: BLE001
         print(f"[!] Could not download pycdc ({exc}); decompilation stays disabled.")
         return False
+    exe = "pycdc.exe" if sys.platform.startswith("win") else "pycdc"
     with tempfile.TemporaryDirectory() as td:
         tdp = Path(td)
         try:
@@ -786,30 +861,17 @@ def install_pycdc() -> bool:
             print("[!] Unexpected pycdc archive layout.")
             return False
         src = tops[0]
-        build = src / "build"
-        try:
-            subprocess.run(["cmake", "-S", str(src), "-B", str(build),
-                            "-DCMAKE_BUILD_TYPE=Release"], check=True)
-            subprocess.run(["cmake", "--build", str(build), "--target", "pycdc",
-                            "--config", "Release"], check=True)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[!] pycdc build failed ({exc}); decompilation stays disabled.")
-            return False
-        found = None
-        for c in (build / "pycdc", build / "Release" / "pycdc.exe", build / "pycdc.exe"):
-            if c.is_file():
-                found = c
-                break
+        built = tdp / exe
+        found = (built if (_build_pycdc_system(src, built) or _build_pycdc_zig(src, built))
+                 else _build_pycdc_cmake(src))
         if not found:
-            hits = list(build.rglob("pycdc*"))
-            found = next((h for h in hits if h.is_file() and h.suffix in ("", ".exe")), None)
-        if not found:
-            print("[!] pycdc built but the binary was not found.")
+            print("[!] pycdc could not be built; decompilation stays disabled "
+                  "(the Python engine still disassembles and mines strings).")
             return False
         if PYCDC_DIR.exists():
             shutil.rmtree(PYCDC_DIR)
         PYCDC_DIR.mkdir(parents=True, exist_ok=True)
-        dest = PYCDC_DIR / found.name
+        dest = PYCDC_DIR / exe
         shutil.copy2(str(found), str(dest))
         try:
             dest.chmod(0o755)
