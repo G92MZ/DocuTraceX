@@ -64,3 +64,36 @@ def test_report_contains_findings_iocs_and_evidence(client: TestClient, tmp_path
 
 def test_report_missing_case_404(client: TestClient) -> None:
     assert client.get("/api/cases/nope/report").status_code == 404
+
+
+@has_samples
+def test_report_lists_only_marked_iocs_by_default(client: TestClient) -> None:
+    import time
+
+    with (SAMPLES / "sample.xlsm").open("rb") as fh:
+        cid = client.post("/api/cases", files={"file": ("sample.xlsm", fh.read())}).json()["analysis_id"]
+    for _ in range(1200):
+        if client.get(f"/api/cases/{cid}").json().get("state") in ("completed", "error"):
+            break
+        time.sleep(0.1)
+    iocs = client.get(f"/api/cases/{cid}/components").json()["iocs"]["iocs"]
+    assert len(iocs) >= 2
+    keep, other = iocs[0], iocs[1]
+
+    body = client.get(f"/api/cases/{cid}/report").text
+    assert "No IOCs marked" in body and f"marked (0 of {len(iocs)})" in body
+    assert f"<code>{other['value']}</code>" not in body
+
+    # Mark one IOC (IOCs tab → "+ mark"): it is the only one in the report.
+    r = client.post(f"/api/cases/{cid}/manual-findings",
+                    json={"kind": "ioc", "detail": f"X: {keep['value']}", "location": "iocs",
+                          "state": "suspicious", "severity": "medium", "comment": "c2"})
+    assert r.status_code in (200, 201), r.text
+    body = client.get(f"/api/cases/{cid}/report").text
+    assert f"marked (1 of {len(iocs)})" in body
+    assert f"<code>{keep['value']}</code>" in body and "Suspicious" in body
+    assert f"<code>{other['value']}</code>" not in body
+
+    # ?iocs=all (Reports tab → "include all IOCs") lists every extracted IOC.
+    all_body = client.get(f"/api/cases/{cid}/report?iocs=all").text
+    assert f"<code>{other['value']}</code>" in all_body
