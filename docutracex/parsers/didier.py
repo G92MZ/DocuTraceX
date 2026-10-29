@@ -34,6 +34,7 @@ SCRIPTS = {
     "emldump": "emldump.py",
     "rtfdump": "rtfdump.py",
     "decode-vbe": "decode-vbe.py",
+    "1768": "1768.py",            # Cobalt Strike configs, run by docutracex.c2 (not per family)
 }
 
 # oledump plugins (run with ``oledump.py -p plugin_x.py``).

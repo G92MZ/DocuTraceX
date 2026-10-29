@@ -685,3 +685,6 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 .ml-chart .mlc-mal-dot { fill: #e8795a; } .ml-chart .mlc-ben-dot { fill: #5fd38b; }
 .ml-chart .mlc-lbl { font-size: 10px; font-weight: 600; }
 .ml-reading { margin: 6px 0 2px; padding: 6px 10px; border-left: 3px solid var(--panel-border); background: rgba(127, 127, 127, 0.06); border-radius: 4px; font-size: 12.5px; }
+
+.c2-kv th { width: 160px; white-space: nowrap; }
+.c2-kv td .mono, .c2-kv td.mono { word-break: break-all; }

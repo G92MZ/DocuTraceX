@@ -200,27 +200,42 @@ MANIFEST = (b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
             b'</requestedPrivileges></security></trustInfo></assembly>\r\n')
 
 
-def _rsrc(va: int, items: list[tuple[int, bytes]]) -> bytes:
-    """Resource tree type → id 1 → lang 0x0C0A, one entry per (type, data)."""
+def _rsrc(va: int, items: list[tuple]) -> bytes:
+    """Resource tree type → id 1 (or a name) → lang 0x0C0A, one entry per
+    (type, data) or (type, data, name) — named entries as RCDATA "SETTINGS" uses."""
     n = len(items)
-    dir_hdr = lambda cnt: struct.pack("<IIHHHH", 0, 0, 0, 0, 0, cnt)  # noqa: E731
-    root = dir_hdr(n)
+    dir_hdr = lambda named, ids: struct.pack("<IIHHHH", 0, 0, 0, 0, named, ids)  # noqa: E731
+    root = dir_hdr(0, n)
     off = 16 + 8 * n
     name_dirs, lang_dirs, entries = b"", b"", b""
     name_base = off
     lang_base = name_base + n * 24
     entry_base = lang_base + n * 24
-    data_base = entry_base + n * 16
+    str_base = entry_base + n * 16
+    strings = b""
+    name_ref = []
+    for it in items:
+        if len(it) > 2 and it[2]:
+            name_ref.append(0x80000000 | (str_base + len(strings)))
+            strings += struct.pack("<H", len(it[2])) + it[2].encode("utf-16-le")
+            strings += b"\x00" * (-len(strings) % 4)
+        else:
+            name_ref.append(None)
+    data_base = str_base + len(strings)
     data_blob = b""
-    for i, (typ, data) in enumerate(items):
+    for i, it in enumerate(items):
+        typ, data = it[0], it[1]
         root += struct.pack("<II", typ, 0x80000000 | (name_base + 24 * i))
-        name_dirs += dir_hdr(1) + struct.pack("<II", 1, 0x80000000 | (lang_base + 24 * i))
-        lang_dirs += dir_hdr(1) + struct.pack("<II", 0x0C0A, entry_base + 16 * i)
+        if name_ref[i] is None:
+            name_dirs += dir_hdr(0, 1) + struct.pack("<II", 1, 0x80000000 | (lang_base + 24 * i))
+        else:
+            name_dirs += dir_hdr(1, 0) + struct.pack("<II", name_ref[i], 0x80000000 | (lang_base + 24 * i))
+        lang_dirs += dir_hdr(0, 1) + struct.pack("<II", 0x0C0A, entry_base + 16 * i)
         while len(data_blob) % 8:
             data_blob += b"\x00"
         entries += struct.pack("<IIII", va + data_base + len(data_blob), len(data), 0, 0)
         data_blob += data
-    return root + name_dirs + lang_dirs + entries + data_blob
+    return root + name_dirs + lang_dirs + entries + strings + data_blob
 
 
 def pe(*, bits: int = 32, dll: bool = False, gui: bool = True,
@@ -229,7 +244,8 @@ def pe(*, bits: int = 32, dll: bool = False, gui: bool = True,
        wstrings: list[str] | None = None, dotnet: dict | None = None, overlay: bytes = b"",
        timestamp: int = 0x6713A2C0, code: bytes = b"\xc3", text_name: str = ".text",
        text_flags: int = 0x60000020, pdb: str | None = None, version: dict[str, str] | None = None,
-       manifest: bool = False, rich: bool = False, reloc: bool = False, checksum: bool = False) -> bytes:
+       manifest: bool = False, rich: bool = False, reloc: bool = False, checksum: bool = False,
+       rcdata: list[tuple[str, bytes]] | None = None) -> bytes:
     """An inert PE32 / PE32+. ``sections`` are extra (name, data, characteristics).
     ``pdb`` / ``version`` / ``manifest`` / ``rich`` / ``reloc`` / ``checksum`` add
     what a normal MSVC build carries (debug directory, version resource, Rich
@@ -302,7 +318,7 @@ def pe(*, bits: int = 32, dll: bool = False, gui: bool = True,
         secs.append([name, va, data, flags])
         va = _al(va + max(len(data), 1), SA)
     rsrc_dir = (0, 0)
-    res_items = []
+    res_items: list[tuple] = [(10, data, name) for name, data in (rcdata or [])]   # RT_RCDATA
     if version:
         res_items.append((16, _version_info(version, (1, 4, 2, 0))))
     if manifest:
