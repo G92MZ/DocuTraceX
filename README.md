@@ -25,8 +25,8 @@ marks, a one-click report — and an **AI assistant / MCP server** that can read
 ## 🚀 Quickstart
 
 **Requirements on your machine (the host):** Python **3.10 or newer, 64-bit** (tested on 3.10–3.14)
-with `pip`, on Windows, Linux or macOS — a 32-bit Python may ask for C++ Build Tools to compile
-dependencies, and Internet access the first time. Only the web service is
+with `pip`, on Windows, Linux or macOS, and Internet access the first time (a 32-bit Python may ask
+for the C++ Build Tools to compile dependencies). Only the web service is
 installed on it — `fastapi`, `uvicorn`, `jinja2` and `python-multipart` — so its version does not
 limit the analysis: every analysis library runs on a separate **portable Python 3.13** that
 `install.py` downloads into `tools/` (nothing to install by hand). x86-64 or ARM64.
