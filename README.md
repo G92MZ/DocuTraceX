@@ -30,9 +30,8 @@ for the C++ Build Tools to compile dependencies). Only the web service is
 installed on it — `fastapi`, `uvicorn`, `jinja2` and `python-multipart` — so its version does not
 limit the analysis: every analysis library runs on a separate **portable Python 3.13** that
 `install.py` downloads into `tools/` (nothing to install by hand). x86-64 or ARM64.
-Optional: **CMake + a C/C++ compiler**, only to build one optional component (without them it is
-skipped and Diagnostics says so). A Java runtime is not needed: if there is none, a portable one is
-downloaded into `tools/`.
+No compiler, Build Tools or Java needed: the one component that has to be compiled uses a toolchain
+fetched for the purpose, and a portable Java runtime is downloaded when there is none.
 
 ```bash
 python install.py             # once: sets everything up

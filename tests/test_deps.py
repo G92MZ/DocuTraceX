@@ -188,3 +188,20 @@ def test_portable_children_ignore_the_user_site(monkeypatch: pytest.MonkeyPatch,
     from docutracex import native
     monkeypatch.setattr(settings, "portable_python", lambda: tmp_path / "python.exe")
     assert native.subprocess_env()["PYTHONNOUSERSITE"] == "1"
+
+
+def test_pycdc_sources_skip_the_disassembler(tmp_path: Path) -> None:
+    mod = _setup_module()
+    for n in ("pycdc.cpp", "pycdas.cpp", "ASTree.cpp", "bytes/python_3_13.cpp", "tests/x.cpp"):
+        (tmp_path / n).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / n).write_text("")
+    names = [p.relative_to(tmp_path).as_posix() for p in mod._pycdc_sources(tmp_path)]
+    assert names == ["ASTree.cpp", "pycdc.cpp", "bytes/python_3_13.cpp"]
+
+
+def test_pycdc_failed_compile_leaves_no_binary(tmp_path: Path) -> None:
+    mod = _setup_module()
+    out = tmp_path / "pycdc"
+    fake = [sys.executable, "-c", "import sys; open(sys.argv[-1], 'w').close(); sys.exit(1)"]
+    assert mod._compile_pycdc(fake, tmp_path, out) is False
+    assert not out.exists()

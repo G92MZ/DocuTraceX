@@ -88,7 +88,7 @@ def test_pyc_disassembled(tmp_path: Path) -> None:
     (tmp_path / "d.pyc").write_bytes(_pyc(_SRC))
     r = python.analyze(tmp_path / "d.pyc", tmp_path / "none")
     sc = r["scripts"][0]
-    assert sc["source"] in ("disassembled", "decompiled")
+    assert sc["source"] in ("disassembled", "decompiled", "decompiled + bytecode")  # pycdc optional
     assert sc["python_version"].startswith("3.")
     assert "py_download" in {f["rule"] for f in r["findings"]}
 
@@ -152,7 +152,7 @@ def test_case_pyc(client: TestClient) -> None:
     _wait(client, cid)
     comp = client.get(f"/api/cases/{cid}/components").json()
     assert "python" in comp["modules"]
-    assert comp["modules"]["python"]["scripts"][0]["source"] in ("disassembled", "decompiled")
+    assert comp["modules"]["python"]["scripts"][0]["source"] in ("disassembled", "decompiled", "decompiled + bytecode")
 
 
 def test_case_pyinstaller_exe(client: TestClient) -> None:
