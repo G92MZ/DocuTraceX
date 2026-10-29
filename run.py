@@ -23,6 +23,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+if sys.version_info < (3, 10):
+    sys.exit(f"DocuTraceX needs Python 3.10 or newer to run the web app (this is "
+             f"{sys.version.split()[0]}). Analysis runs on its own portable Python.")
+
 HERE = Path(__file__).resolve().parent
 
 

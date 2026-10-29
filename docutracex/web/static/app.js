@@ -238,6 +238,56 @@ if (concInput) {
 
 const STATUS_CLASS = { ok: "ok", warn: "warn", fail: "bad" };
 
+// --- Diagnostics: retry one component's installation -------------------------
+let diagRetryBusy = "";      // component being installed ("" = none)
+let diagRetryTimer = null;
+
+function showDiagRetry(st) {
+  const box = document.getElementById("diag-retry");
+  if (!box || !st || st.state === "idle") return;
+  box.hidden = false;
+  const title = document.getElementById("diag-retry-title");
+  const label = { running: "Installing", done: "Installed", failed: "Installation failed:" }[st.state] || st.state;
+  title.textContent = `${label} ${st.component}` + (st.state === "running" ? "…" : "");
+  title.className = st.state === "done" ? "ok-text" : (st.state === "failed" ? "bad-text" : "");
+  const log = document.getElementById("diag-retry-log");
+  log.textContent = (st.log || []).join("\n") || "(waiting for output…)";
+  log.scrollTop = log.scrollHeight;
+  document.getElementById("diag-retry-close").hidden = st.state === "running";
+}
+
+async function pollDiagRetry() {
+  clearTimeout(diagRetryTimer);
+  let st;
+  try { st = await fetch("/api/diagnostics/retry").then((r) => r.json()); } catch { st = null; }
+  if (!st) { diagRetryTimer = setTimeout(pollDiagRetry, 3000); return; }
+  showDiagRetry(st);
+  if (st.state === "running") {
+    if (diagRetryBusy !== st.component) { diagRetryBusy = st.component; loadDiagnostics(); }
+    diagRetryTimer = setTimeout(pollDiagRetry, 1500);
+  } else if (diagRetryBusy) {
+    diagRetryBusy = "";
+    loadDiagnostics();   // refresh the checks with the result
+  }
+}
+
+async function startDiagRetry(component) {
+  if (!component || diagRetryBusy) return;
+  const r = await fetch("/api/diagnostics/retry", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ component }),
+  });
+  const st = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    showDiagRetry({ state: "failed", component, log: [st.error || `HTTP ${r.status}`] });
+    return;
+  }
+  diagRetryBusy = component;
+  showDiagRetry(st);
+  loadDiagnostics();
+  pollDiagRetry();
+}
+
 async function loadDiagnostics() {
   const summary = document.getElementById("diag-summary");
   const groupsEl = document.getElementById("diag-groups");
@@ -270,18 +320,25 @@ async function loadDiagnostics() {
         const cls = STATUS_CLASS[ch.status] || "warn";
         const remedy = (ch.status !== "ok" && ch.remedy)
           ? `<div class="hint-line">${escapeHtml(ch.remedy)}</div>` : "";
+        const retry = (ch.status !== "ok" && ch.retry)
+          ? `<button class="btn btn-ghost btn-sm diag-retry-btn" type="button" data-component="${escapeHtml(ch.retry)}"
+               title="Run this component's installation again"${diagRetryBusy ? " disabled" : ""}>${
+               diagRetryBusy === ch.retry ? "Installing…" : "Retry"}</button>` : "";
         return `<tr>
           <td class="file">${escapeHtml(ch.name)}
             ${ch.purpose ? `<div class="hint-line">${escapeHtml(ch.purpose)}</div>` : ""}</td>
           <td>${escapeHtml(ch.detail || "")}${remedy}</td>
           <td><span class="badge badge-${cls}">${escapeHtml(ch.status)}</span></td>
+          <td class="diag-action">${retry}</td>
         </tr>`;
       }).join("");
       return `<h3 class="formats-title">${escapeHtml(cat)}</h3>
         <table class="cases"><thead>
-          <tr><th>Check</th><th>Detail</th><th>Status</th></tr>
+          <tr><th>Check</th><th>Detail</th><th>Status</th><th></th></tr>
         </thead><tbody>${rows}</tbody></table>`;
     }).join("");
+    groupsEl.querySelectorAll(".diag-retry-btn").forEach((b) =>
+      b.addEventListener("click", () => startDiagRetry(b.dataset.component)));
   } catch (err) {
     summary.textContent = "Could not load diagnostics.";
   }
@@ -4716,6 +4773,10 @@ function setupTabs() {
 
 const diagRefresh = document.getElementById("diag-refresh");
 if (diagRefresh) diagRefresh.addEventListener("click", loadDiagnostics);
+document.getElementById("diag-retry-close")?.addEventListener("click", () => {
+  document.getElementById("diag-retry").hidden = true;
+});
+pollDiagRetry(); // resume showing a retry that is still running (e.g. after a reload)
 
 setupTabs();
 setupYara();
