@@ -638,7 +638,9 @@ function findingRowsHtml(findings, ids) {
 }
 
 const FINDING_HEADERS = ["Severity", "Source", "Rule", "Detail", "Location", "Mark"];
-let _findingsView = (() => { try { return localStorage.getItem("dtx.findingsView") || "source"; } catch (e) { return "source"; } })();
+// Findings always open grouped by source; "By file" / "List" last until the page reloads.
+let _findingsView = "source";
+try { localStorage.removeItem("dtx.findingsView"); } catch (e) { /* old saved choice, no longer used */ }
 
 // ctx: { filename, kind, tree } — the case file and its nested tree, so the
 // findings can be shown per file (default) or as one flat list.
@@ -2326,7 +2328,6 @@ function renderSubtabs() {
   bodyEl.querySelectorAll("[data-fview]").forEach((btn) => {
     btn.addEventListener("click", () => {
       _findingsView = btn.getAttribute("data-fview");
-      try { localStorage.setItem("dtx.findingsView", _findingsView); } catch (e) { /* per-viewer preference only */ }
       renderSubtabs();
     });
   });
