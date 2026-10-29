@@ -666,3 +666,14 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 /* ML: explained top features */
 .ml-top td { vertical-align: top; }
 .ml-ev { max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+
+/* ML: score compared with EMBER2024 test files */
+.ml-chart { display: block; margin: 6px 0 2px; max-width: 100%; height: auto; }
+.ml-chart .mlc-grid { stroke: var(--panel-border); stroke-width: 1; }
+.ml-chart .mlc-ax { fill: var(--text-dim); font-size: 9px; }
+.ml-chart .mlc-mal { fill: none; stroke: #e8795a; stroke-width: 2; }
+.ml-chart .mlc-ben { fill: none; stroke: #5fd38b; stroke-width: 2; }
+.ml-chart .mlc-th { stroke: var(--text-dim); stroke-width: 1; stroke-dasharray: 3 3; }
+.ml-chart .mlc-me { stroke: var(--text); stroke-width: 2; }
+.mlc-key { display: inline-block; width: 10px; height: 3px; vertical-align: middle; margin: 0 3px 0 6px; }
+.mlc-key-mal { background: #e8795a; } .mlc-key-ben { background: #5fd38b; }

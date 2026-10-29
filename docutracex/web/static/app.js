@@ -3453,6 +3453,9 @@ function mlHelp(ml) {
         malicious (red) or benign (green). Each top feature is said in plain words for this file ("not a DLL", "no debug
         directory", "compiled 2019-07-22", "2 strings contain IPv4 addresses"), with the evidence (the strings that matched,
         the import, the section) and a <b>Hex ⤷</b> button that opens the Hex tab right on it.</li>
+      <li><b>Compared with EMBER2024</b> — how this file's score and features sit among the EMBER2024 test files of the same
+        type: the share of test malware and goodware scoring at least as high (with the curve of both), and for each top
+        feature how many files of each class have it, or which percentile of each class its value reaches.</li>
       <li><b>What it looks like</b> — family, behaviour, packer, exploit, threat-group and file-property hints, only for objects above
         the threshold (those models were trained on malware only). Each family says <b>what kind of thing it is</b> (stealer, RAT,
         crypter, adware…; DocuTraceX's own one-line descriptions) with a Malpedia link. <b>Generic AV names</b> (e.g. <i>wacatac</i>)
@@ -3516,6 +3519,38 @@ function mlLabels(it) {
     <div class="kv">${rows}</div>`;
 }
 
+// Share of EMBER2024 test files (malicious / benign) scoring at or above each
+// score, from the 101 quantiles of each class; this file's score and the
+// threshold marked. Inline SVG, theme colours from CSS.
+function mlScoreChart(ref, score, th) {
+  if (!ref || !ref.q) return "";
+  const W = 360, H = 96, L = 34, B = 18, T = 6, R = 8, K = 8;     // logit axis: -8..8 spreads 0.001 / 0.999
+  const lg = (p) => { const q = Math.min(Math.max(p, 1e-6), 1 - 1e-6); return Math.max(-K, Math.min(K, Math.log(q / (1 - q)))); };
+  const x = (s) => L + (lg(s) + K) / (2 * K) * (W - L - R), y = (v) => T + (1 - v) * (H - T - B);
+  const ge = (qs, s) => {           // share of files with score >= s
+    let i = qs.findIndex((q) => q >= s);
+    if (i < 0) return 0;
+    if (i === 0) return 1;
+    const lo = qs[i - 1], hi = qs[i], f = hi > lo ? (s - lo) / (hi - lo) : 1;
+    return 1 - (i - 1 + f) / (qs.length - 1);
+  };
+  const grid = Array.from({ length: 161 }, (_, k) => 1 / (1 + Math.exp(-(-K + k * 2 * K / 160))));
+  const line = (qs) => grid.map((g) => `${x(g).toFixed(1)},${y(ge(qs, g)).toFixed(1)}`).join(" ");
+  const tick = (v) => `<text x="${x(v)}" y="${H - 4}" class="mlc-ax" text-anchor="middle">${v}</text>`;
+  return `<svg class="ml-chart" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img"
+      aria-label="Share of EMBER2024 test files scoring at or above each score">
+    <line x1="${L}" y1="${y(0)}" x2="${W - R}" y2="${y(0)}" class="mlc-grid"/><line x1="${L}" y1="${y(1)}" x2="${W - R}" y2="${y(1)}" class="mlc-grid"/>
+    <text x="${L - 4}" y="${y(1) + 4}" class="mlc-ax" text-anchor="end">100%</text><text x="${L - 4}" y="${y(0)}" class="mlc-ax" text-anchor="end">0</text>
+    ${tick(0.001)}${tick(0.05)}${tick(0.5)}${tick(0.95)}${tick(0.999)}
+    <polyline points="${line(ref.q.malicious)}" class="mlc-mal"/>
+    <polyline points="${line(ref.q.benign)}" class="mlc-ben"/>
+    ${th != null ? `<line x1="${x(th)}" y1="${T}" x2="${x(th)}" y2="${y(0)}" class="mlc-th"><title>threshold ${th.toFixed(4)}</title></line>` : ""}
+    <line x1="${x(score)}" y1="${T}" x2="${x(score)}" y2="${y(0)}" class="mlc-me"><title>this file ${score.toFixed(4)}</title></line>
+  </svg>
+  <div class="hint-line"><span class="mlc-key mlc-key-mal"></span>malware <span class="mlc-key mlc-key-ben"></span>goodware —
+    share of EMBER2024 test files scoring at or above each score (logit scale) · dashed: threshold · solid: this file</div>`;
+}
+
 function mlDetail(it, f, pct) {
   if (it.status !== "ok") return `<p class="hint-line">${escapeHtml(it.detail || it.status)}</p>`;
   const m = it.metrics || {};
@@ -3525,7 +3560,8 @@ function mlDetail(it, f, pct) {
     ["Detection at that threshold", m["tpr_at_fpr_0.01"] != null ? `${pct(m["tpr_at_fpr_0.01"])} of the EMBER2024 test malware` : ""],
     ["On evasive malware", m.challenge_detected_at_1pct_fpr != null ? `${pct(m.challenge_detected_at_1pct_fpr)} of the challenge set` : ""],
     ["Recipe", (it.recipe || []).join(" → ")],
-  ]);
+    ["Compared with EMBER2024", it.score_ref ? `a score of ${it.score.toFixed(4)} or more: ${pct(it.score_ref.malicious_ge)} of test malware, ${pct(it.score_ref.benign_ge)} of test goodware` : ""],
+  ]) + (it.score_ref ? mlScoreChart(it.score_ref, it.score, it.threshold) : "");
   const mark = f ? markControlsHtml(f) : '<span class="hint-line">re-run Machine Learning to mark</span>';
   const blocks = Object.entries(it.blocks || {}).filter(([, v]) => Math.abs(v) >= 0.01);
   const max = Math.max(0.0001, ...blocks.map(([, v]) => Math.abs(v)));
@@ -3537,11 +3573,12 @@ function mlDetail(it, f, pct) {
       <span class="hint-line">${t.contribution > 0 ? "→ malicious" : "→ benign"}</span>`;
   // explained (results from v1.67.1 on): plain words, the data in this file, a jump to it
   const top = tf.some((t) => t.plain)
-    ? `<table class="cases ml-top"><thead><tr><th>What it is in this file</th><th>Contribution</th><th>Evidence</th><th></th></tr></thead><tbody>${
+    ? `<table class="cases ml-top"><thead><tr><th>What it is in this file</th><th>Contribution</th><th>Evidence</th><th title="Among EMBER2024 test files of this type: how many have this feature, or the percentile its value reaches in each class (p90 = higher than 90% of them)">Among EMBER2024 files</th><th></th></tr></thead><tbody>${
         tf.map((t, i) => `<tr${i >= 10 ? ' class="ml-more" hidden' : ""}>
           <td>${escapeHtml(t.plain || t.feature)}<div class="hint-line mono" title="EMBER feature (block)">${escapeHtml(t.feature)} · ${escapeHtml(t.block)}</div></td>
           <td>${contribCell(t)}</td>
           <td class="mono">${(t.evidence || []).map((e) => `<div class="ml-ev">${escapeHtml(e)}</div>`).join("")}</td>
+          <td class="hint-line">${t.ref ? escapeHtml(t.ref.text) : ""}</td>
           <td>${t.at && it.stored_path ? `<button class="btn btn-ghost btn-sm" data-hex="${escapeHtml(it.stored_path)}"
             data-hex-offset="${Number(t.at.offset) || 0}" data-hex-len="${Number(t.at.length) || 0}"
             title="${escapeHtml(t.at.label || "")} — open in the Hex tab at 0x${(Number(t.at.offset) || 0).toString(16)}">Hex ⤷</button>` : ""}</td>
