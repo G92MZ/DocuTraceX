@@ -3072,16 +3072,22 @@ function loadReports(analysisId) {
     frame.srcdoc = `<p style="font:14px sans-serif;color:#8a98ab;padding:16px">Select a case in Overview to generate its report.</p>`;
     return;
   }
-  const url = `/api/cases/${encodeURIComponent(analysisId)}/report`;
+  const base = `/api/cases/${encodeURIComponent(analysisId)}/report`;
+  const urlFor = () => base + (document.getElementById("report-all-iocs")?.checked ? "?iocs=all" : "?iocs=marked");
   caseLine.innerHTML = `Case <span class="mono">${escapeHtml(analysisId)}</span>`;
   summary.textContent = "";
   actions.innerHTML = `<button id="report-refresh" class="btn btn-ghost btn-sm" type="button">Regenerate</button>
-    <a class="btn btn-ghost btn-sm" href="${url}" target="_blank" rel="noopener">Open in new tab</a>
+    <a id="report-open" class="btn btn-ghost btn-sm" href="${urlFor()}" target="_blank" rel="noopener">Open in new tab</a>
+    <label class="hint-line" title="By default the report lists only the IOCs you marked"><input id="report-all-iocs" type="checkbox"> include all IOCs</label>
     <span class="hint-line">Use your browser's Print → Save as PDF to export.</span>`;
   frame.removeAttribute("srcdoc");
-  frame.src = url + "?t=" + Date.now();
-  const btn = document.getElementById("report-refresh");
-  if (btn) btn.addEventListener("click", () => { frame.src = url + "?t=" + Date.now(); });
+  const refresh = () => {
+    document.getElementById("report-open").href = urlFor();
+    frame.src = urlFor() + "&t=" + Date.now();
+  };
+  refresh();
+  document.getElementById("report-refresh").addEventListener("click", refresh);
+  document.getElementById("report-all-iocs").addEventListener("change", refresh);
 }
 
 // --- YARA management ---------------------------------------------------------
