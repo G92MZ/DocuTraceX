@@ -14,7 +14,7 @@ The **Diagnostics** tab shows which ones are available; a **Retry** button on a 
 | Office / VBA | oletools (olevba, oleid, mraptor, msodde, oleobj, rtfobj), pcodedmp, pcode2code, ViperMonkey (on PyPy 2.7), msoffcrypto-tool, XLMMacroDeobfuscator, pyxlsb2, OfficeMalScanner / RTFScan |
 | PDF | pikepdf, peepdf-3, pyHanko, pdfium, zxing-cpp |
 | Email | extract-msg, dkimpy |
-| Didier Stevens Suite | oledump (+ plugins), zipdump, pdfid, pdf-parser, emldump, rtfdump, decode-vbe |
+| Didier Stevens Suite | oledump (+ plugins), zipdump, pdfid, pdf-parser, emldump, rtfdump, decode-vbe, 1768 (Cobalt Strike configurations) |
 | Shortcuts | LnkParse3 |
 | Binaries | pefile, LIEF, debloat, FLOSS, capa, UPX, AutoIt-Ripper, innoextract, 7-Zip, nuitka-extractor, evbunpack, Detect It Easy |
 | Python / Java | pycdc, CFR |

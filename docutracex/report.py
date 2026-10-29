@@ -98,6 +98,37 @@ def _iocs_section(iocs: dict[str, Any] | None, marks: dict[str, dict[str, Any]] 
             "</tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
 
 
+def _c2_section(c2: dict[str, Any] | None, findings: list[dict[str, Any]]) -> str:
+    """Implant configurations the analyst marked (True positive, Suspicious or
+    Informational) — like the IOCs, unmarked ones stay out."""
+    cfgs = (c2 or {}).get("configs") or []
+    if not cfgs:
+        return ""
+    by_id = {f.get("id"): f for f in findings}
+    keep = []
+    for c in cfgs:
+        mk = (by_id.get(c.get("finding_id")) or {}).get("mark") or {}
+        if mk.get("state") in IOC_REPORT_STATES:
+            keep.append((c, mk))
+    head = (f"<h2>C2 / implant configurations — marked ({len(keep)} of {len(cfgs)})</h2>"
+            "<p class='muted'>Configurations extracted statically (nothing was executed); only the ones you "
+            "marked True positive, Suspicious or Informational in the C2 / Beacons tab.</p>")
+    if not keep:
+        return head + "<p class='muted'>None marked.</p>"
+    rows = []
+    for c, mk in keep:
+        s = c.get("summary") or {}
+        kv = "".join(f"<div><b>{_e(k)}:</b> <code>{_e(', '.join(map(str, v)) if isinstance(v, list) else v)}</code></div>"
+                     for k, v in s.items())
+        state = mk.get("state", "unreviewed")
+        rows.append(_row([f"<b>{_e(c.get('family'))}</b><div class='muted'>{_e(c.get('kind'))}</div>",
+                          f"<code>{_e(c.get('object'))}</code>", kv, _e(c.get("method")),
+                          _e(_MARK_LABEL.get(state, state))
+                          + (f"<div class='muted'>{_e(mk.get('comment'))}</div>" if mk.get("comment") else "")]))
+    return (head + "<table><thead><tr><th>Family</th><th>Object</th><th>Configuration</th><th>Read with</th>"
+            "<th>Mark</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
+
+
 def _nested_section(nested: dict[str, Any] | None) -> str:
     tree = (nested or {}).get("tree", [])
     if not tree:
@@ -275,6 +306,7 @@ def build_report_html(analysis_id: str, cases_dir=None, all_iocs: bool = False) 
 <h2>{ioc_title}</h2>
 {ioc_note}
 {_iocs_section(iocs, imarks, all_iocs)}
+{_c2_section(modules.get('c2'), findings)}
 {_ml_section(_ml_enriched(paths), marks_service.read_marks(paths))}
 {_nested_section(modules.get('nested'))}
 {_metadata_section(modules)}

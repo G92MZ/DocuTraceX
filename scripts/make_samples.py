@@ -1699,6 +1699,130 @@ def marker_drop_js() -> bytes:
     ).encode()
 
 
+# --- C2 / Beacons tab: implant configurations ----------------------------------------
+# Inert: the beacon and stager are config blocks / code fragments inside an "MZ" +
+# text stub (nothing that runs), the RATs are binkit stubs whose only code is
+# ``ret``. Their configurations use the real formats, so the extractors read them
+# exactly as they would a real sample: Cobalt Strike TLV (XOR 0x2e), Metasploit
+# reverse_https stager shapes, Remcos RC4 "SETTINGS" resource, AsyncRAT / Quasar
+# AES-256 + HMAC settings. C2 values are the campaign's (*.example, RFC 5737).
+
+C2_STUB = b"MZ" + b"This is an inert DocuTraceX sample, not a program.\r\n".ljust(510, b"\x00")
+
+
+def cs_beacon_blob() -> bytes:
+    import struct
+
+    def short(i, v):
+        return struct.pack(">HHHH", i, 1, 2, v)
+
+    def num(i, v):
+        return struct.pack(">HHHI", i, 2, 4, v)
+
+    def data(i, b, n):
+        return struct.pack(">HHH", i, 3, n) + b.ljust(n, b"\x00")
+    cfg = (short(1, 8) + short(2, 443) + num(3, 45000) + num(4, 1048576) + short(5, 25)
+           + data(7, b"\x30\x81\x9f" + b"\x00" * 159, 256)
+           + data(8, b"cdn-update.example.net,/jquery-3.3.1.min.js", 256)
+           + data(9, b"Mozilla/5.0 (Windows NT 10.0; Win64; x64) InvoiceSync/2.4", 256)
+           + data(10, b"/jquery-3.3.2.min.js", 64) + data(15, b"\\\\.\\pipe\\factura_sync_%x", 128)
+           + data(29, b"%windir%\\syswow64\\rundll32.exe", 64)
+           + data(30, b"%windir%\\sysnative\\rundll32.exe", 64)
+           + num(37, 20260187) + b"\x00\x00")
+    return C2_STUB + bytes(c ^ 0x2E for c in cfg.ljust(4096, b"\x00"))
+
+
+def msf_https_stager_blob() -> bytes:
+    """Metasploit reverse_https stager *shapes*, not a stager: the block_api
+    prologue, the wininet name, the port pushed before InternetConnectA's hash,
+    the URI and the host — separated by text so nothing here can run."""
+    frag = b"\n[inert fragments of a reverse_https stager follow]\n"
+    return (C2_STUB + frag
+            + b"\xfc\xe8\x82\x00\x00\x00\x60\x89\xe5\x31\xc0\x64\x8b\x50\x30" + b" -- block_api -- "
+            + b"\x68\x6e\x65\x74\x00\x68\x77\x69\x6e\x69" + b" -- wininet -- "
+            + b"\x68\xbb\x01\x00\x00\x68\x57\x89\x9f\xc6" + b" -- port 443, InternetConnectA -- "
+            + b"\x00/inv/Fct2026_0187\x00" + b" -- uri, host -- "
+            + b"\x00cdn-update.example.net\x00" + frag)
+
+
+def remcos_exe() -> bytes:
+    import binkit as bk
+
+    def rc4(key: bytes, data: bytes) -> bytes:
+        st, j, out = list(range(256)), 0, bytearray()
+        for i in range(256):
+            j = (j + st[i] + key[i % len(key)]) & 0xFF
+            st[i], st[j] = st[j], st[i]
+        i = j = 0
+        for c in data:
+            i = (i + 1) & 0xFF
+            j = (j + st[i]) & 0xFF
+            st[i], st[j] = st[j], st[i]
+            out.append(c ^ st[(st[i] + st[j]) & 0xFF])
+        return bytes(out)
+
+    sep = b"|\x1e\x1e\x1f|"
+    cfg = sep.join([b"cdn-update.example.net:2404:1\x1e" + C2_IP.encode() + b":2404:0", b"Factura-2026",
+                    b"1", b"remcos.exe", b"%AppData%", b"Rmc-F4C7A1", b"0", b"5", b"logs.dat"])
+    key = b"InvoiceKey2026"
+    return bk.pe(bits=32, gui=True, imports={"kernel32.dll": ["FindResourceA", "LoadResource", "Sleep"]},
+                 strings=["Remcos v4.9.4 Pro", "Breaking-Security.Net"],
+                 rcdata=[("SETTINGS", bytes([len(key)]) + key + rc4(key, cfg))])
+
+
+def _rat_encrypt(master: bytes, salt: bytes, value: str) -> str:
+    import hashlib
+    import hmac
+
+    from cryptography.hazmat.primitives import padding
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    k = hashlib.pbkdf2_hmac("sha1", master, salt, 50000, 96)
+    iv = hashlib.sha256(master + value.encode()).digest()[:16]       # deterministic samples
+    p = padding.PKCS7(128).padder()
+    data = p.update(value.encode()) + p.finalize()
+    e = Cipher(algorithms.AES(k[:32]), modes.CBC(iv)).encryptor()
+    body = iv + e.update(data) + e.finalize()
+    return base64.b64encode(hmac.new(k[32:], body, hashlib.sha256).digest() + body).decode()
+
+
+QUASAR_SALT = bytes.fromhex("bfeb1e56fbcd973bb219022430a57843003d5644d21e62b9d4f180e7e6c33941")
+
+
+def asyncrat_exe() -> bytes:
+    import binkit as bk
+
+    master = b"qD8vH2kLmP4sT7wXzA1cE5gJ9nR3uY6b"
+    enc = lambda v: _rat_encrypt(master, QUASAR_SALT, v)  # noqa: E731
+    settings = [enc("6606,7707,8808"), enc("cdn-update.example.net," + C2_IP), enc("0.5.8"),
+                enc("false"), enc("%AppData%"), enc("AsyncMutex_6SI8OkPnk"), enc("Factura-2026"),
+                base64.b64encode(master).decode()]
+    return bk.pe(bits=32, gui=True, dotnet={
+        "assembly": "AsyncClient", "strings": ["Client.Settings", "Aes256", "Rfc2898DeriveBytes", "Pastebin"],
+        "user_strings": settings})
+
+
+def quasar_exe() -> bytes:
+    import binkit as bk
+
+    master = "1WvgEMPjdwfqIMeM9MclyQ"
+    enc = lambda v: _rat_encrypt(master.encode(), QUASAR_SALT, v)  # noqa: E731
+    settings = [enc("1.4.1"), enc(f"cdn-update.example.net:4782;{C2_IP}:4782;"), enc("Office04"),
+                enc("SubDir"), enc("Client.exe"), enc("QSR_MUTEX_k3Hd9xA1Lm"), enc("Quasar Client Startup"),
+                master]
+    return bk.pe(bits=32, gui=True, dotnet={
+        "assembly": "Quasar.Client", "strings": ["Quasar.Common", "Aes256", "Rfc2898DeriveBytes"],
+        "user_strings": settings})
+
+
+def c2_samples() -> dict[str, bytes]:
+    return {"c2/sample_cs_beacon.bin": cs_beacon_blob(),
+            "c2/sample_msf_https_stager.bin": msf_https_stager_blob(),
+            "c2/sample_remcos.exe": remcos_exe(),
+            "c2/sample_asyncrat.exe": asyncrat_exe(),
+            "c2/sample_quasar.exe": quasar_exe()}
+
+
 def build_all() -> dict[str, bytes]:
     out: dict[str, bytes] = {
         "sample.docx": word_docx(), "sample.docm": word_docm(),
@@ -1730,6 +1854,7 @@ def build_all() -> dict[str, bytes]:
     for ext in (".doc", ".dot", ".xls", ".xlt", ".xla", ".ppt", ".pot"):
         out[f"sample{ext}"] = legacy(ext)
     out.update(ml_samples())
+    out.update(c2_samples())
     out["encrypted/sample_encrypted.eml"] = encrypted_eml()
     out["encrypted/sample_velvet.xlsm"] = velvet_xlsm()
     return out

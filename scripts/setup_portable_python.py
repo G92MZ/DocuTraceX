@@ -51,6 +51,7 @@ DIDIER_BASE = "https://raw.githubusercontent.com/DidierStevens/DidierStevensSuit
 DIDIER_FILES = [
     "oledump.py", "zipdump.py", "pdfid.py", "pdf-parser.py", "emldump.py", "rtfdump.py",
     "decode-vbe.py",  # decodes Script Encoder (.jse/.vbe) payloads
+    "1768.py",        # Cobalt Strike beacon / stager configuration (C2 / Beacons tab)
     # oledump plugins (loaded with -p): BIFF/XLM records, VBA summary/DCO/routines,
     # HTTP-looking strings and generic stream object heuristics.
     "plugin_biff.py", "plugin_vba_summary.py", "plugin_vba_dco.py",

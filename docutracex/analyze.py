@@ -962,6 +962,18 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                 ran.append("ml")
     except Exception as exc:  # noqa: BLE001  (an optional layer never fails the case)
         log.warning("ML classification skipped for %s: %s", paths.root.name, exc)
+    # C2 / implant configurations (Cobalt Strike, Metasploit, Remcos, AsyncRAT /
+    # DcRAT / Quasar) over every object of the case, statically. Findings + IOCs.
+    try:
+        from . import c2 as c2_mod
+        cres = run("c2: implant configurations (Cobalt Strike, Metasploit, Remcos, AsyncRAT/Quasar)",
+                   lambda: c2_mod.analyze(original, paths.extracted_dir))
+        write_subresult(paths, "c2", cres)
+        if "c2" not in ran:
+            ran.append("c2")
+        findings_total += len(cres.get("findings") or [])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("C2 configuration extraction skipped for %s: %s", paths.root.name, exc)
     # Network checks (on demand, Checks tab) are evidence too: kept as well.
     prev_net = read_json(paths.subresult("netcheck"))
     if prev_net and prev_net.get("checks"):
@@ -1029,7 +1041,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto",
                "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole",
                "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules", "javascript", "rtf",
-               "powershell", "vbscript", "batch", "shortcut", "msi", "python", "java", "onenote", "ml")
+               "powershell", "vbscript", "batch", "shortcut", "msi", "python", "java", "onenote", "ml", "c2")
 # Modules whose findings feed the consolidated view (includes derived ones).
 _COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file", "pyinstaller")
 
@@ -1181,6 +1193,9 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
         from .ml import ember_ml
         res = ember_ml.analyze_case(paths.root, original,
                                     (read_json(paths.subresult("nested")) or {}).get("tree") or [])
+    elif module == "c2":
+        from . import c2 as c2_mod
+        res = c2_mod.analyze(original, ed)
     elif module == "ole":
         from .parsers import ole_legacy
         res = ole_legacy.analyze(original, ed)
