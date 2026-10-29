@@ -20,8 +20,8 @@ INFO_FILE = Path(__file__).with_name("family_info.json")
 MALPEDIA = "https://malpedia.caad.fkie.fraunhofer.de"
 # Why a family carries no description (shown instead of one).
 UNNAMED_ABOUT = ("The model points to one specific family it was trained on, but which one is not known: "
-                 "the authors never published the output names, and DocuTraceX could only name an output when "
-                 "a single family clearly dominated it on labelled EMBER2024 files.")
+                 "the authors never published the output names, and on 175,059 labelled EMBER2024 files no "
+                 "family raised this output clearly and specifically enough to name it (76 of 2,538 outputs).")
 UNKNOWN_ABOUT = ("A family name taken from antivirus labels; DocuTraceX does not describe it because what it "
                  "is (stealer, RAT, adware…) could not be confirmed. Search Malpedia or your own sources.")
 TIE_GAP = 0.10          # top two closer than this → the model can't tell them apart

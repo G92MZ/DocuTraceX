@@ -14,7 +14,9 @@ def test_every_model_output_has_a_kind() -> None:
     table = family_info._table()
     assert names <= set(table), sorted(names - set(table))[:10]
     assert all(e.get("type") for e in table.values())
-    assert sum(1 for e in table.values() if e.get("about")) >= 500
+    assert sum(1 for e in table.values() if e.get("about")) >= 800
+    fam = labels["models"]["family"]["labels"]
+    assert len(fam) >= 2400 and len({v["name"] for v in fam.values()}) == len(fam)     # one output per family
 
 
 def test_info_links_and_generic_names() -> None:
