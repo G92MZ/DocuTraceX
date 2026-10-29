@@ -86,8 +86,18 @@ def enrich_item(item: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _with_reading(item: dict[str, Any]) -> dict[str, Any]:
+    """Plain-language reading of the score vs. threshold and EMBER2024 test files."""
+    ref = item.get("score_ref")
+    if not isinstance(ref, dict) or ref.get("reading") or item.get("status") != "ok":
+        return item
+    from .dist import reading
+    return {**item, "score_ref": {**ref, "reading": reading(float(item.get("score") or 0), item.get("threshold"), ref)}}
+
+
 def enrich(ml: dict[str, Any] | None) -> dict[str, Any] | None:
-    """ml.json with family context on every item (no-op without family hints)."""
+    """ml.json as served: family context on every item and the reading of each
+    score (no-op for what an item lacks)."""
     if not isinstance(ml, dict) or not ml.get("items"):
         return ml
-    return {**ml, "items": [enrich_item(it) if isinstance(it, dict) else it for it in ml["items"]]}
+    return {**ml, "items": [_with_reading(enrich_item(it)) if isinstance(it, dict) else it for it in ml["items"]]}

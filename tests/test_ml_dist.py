@@ -49,3 +49,24 @@ def test_feature_reference_presence_and_percentiles(ref) -> None:
     assert ent["text"].startswith("≈ p") and "of goodware" in ent["text"]
     assert dist.feature_ref("EMBER2024_Win32", 2, 2.0, "subsystem") is None       # a code, not a quantity
     assert dist.feature_ref("EMBER2024_Win32", 99, 1.0) is None
+
+
+def test_reading_in_plain_words() -> None:
+    grey = dist.reading(0.1933, 0.5595, {"malicious_ge": 0.994, "benign_ge": 0.027})
+    assert grey.startswith("Below the threshold (0.5595): not flagged.") and "grey zone" in grey and "97.3%" in grey
+    strong = dist.reading(0.9993, 0.5322, {"malicious_ge": 0.592, "benign_ge": 0.0, "n": {"benign": 20000}})
+    assert strong.startswith("Above the threshold") and "none of the 20,000 test goodware files" in strong
+    fp = dist.reading(0.70, 0.5322, {"malicious_ge": 0.96, "benign_ge": 0.006})
+    assert "false positive is possible" in fp
+    typical = dist.reading(0.01, 0.5322, {"malicious_ge": 0.999, "benign_ge": 0.42})
+    assert "typical of legitimate software" in typical
+    assert dist.reading(0.5, 0.5, None) == ""
+
+
+def test_enrich_adds_the_reading() -> None:
+    from docutracex.ml import family_info
+    ml = {"items": [{"status": "ok", "score": 0.1933, "threshold": 0.5595,
+                     "score_ref": {"malicious_ge": 0.994, "benign_ge": 0.027}},
+                    {"status": "error", "detail": "x"}]}
+    out = family_info.enrich(ml)
+    assert "grey zone" in out["items"][0]["score_ref"]["reading"] and "reading" not in ml["items"][0]["score_ref"]
