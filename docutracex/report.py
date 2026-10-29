@@ -138,7 +138,8 @@ def _ml_section(ml: dict[str, Any] | None, marks: dict[str, dict[str, Any]]) -> 
         verdict = f"<span class='chip' style='border-color:{color};color:{color}'>{_e(it.get('verdict'))}</span>"
         thr = f" / {it['threshold']:.4f}" if it.get("threshold") is not None else ""
         hints = tag_hints(it) + [f"family: {h}" for h in family_hints(it, only_high=True)]
-        why = ", ".join(f"{t['feature']} ({t['contribution']:+.2f})" for t in (it.get("top_features") or [])[:3])
+        why = ", ".join(f"{t.get('plain') or t['feature']} ({t['contribution']:+.2f})"
+                        for t in (it.get("top_features") or [])[:3])
         rows.append(_row([
             _e(it.get("label")) + (f"<div class='muted'><code>{_e(it.get('sha256'))}</code></div>" if it.get("sha256") else ""),
             _e(it.get("model", "").replace("EMBER2024_", "")),
