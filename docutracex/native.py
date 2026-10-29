@@ -70,4 +70,12 @@ def subprocess_env() -> dict[str, str]:
     d = libmagic_dir()
     if d and sys.platform.startswith("win"):
         env["PATH"] = str(d) + os.pathsep + env.get("PATH", "")
+    try:
+        from .config import settings
+        if settings.portable_python():
+            # The portable sees only its own packages, never a per-user
+            # site-packages left by another Python of the same version.
+            env["PYTHONNOUSERSITE"] = "1"
+    except Exception:  # noqa: BLE001
+        pass
     return env

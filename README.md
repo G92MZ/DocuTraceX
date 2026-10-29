@@ -30,9 +30,9 @@ for the C++ Build Tools to compile dependencies). Only the web service is
 installed on it — `fastapi`, `uvicorn`, `jinja2` and `python-multipart` — so its version does not
 limit the analysis: every analysis library runs on a separate **portable Python 3.13** that
 `install.py` downloads into `tools/` (nothing to install by hand). x86-64 or ARM64.
-Optional, only for a few extras: a **Java runtime** (decompiling Java classes) and **CMake + a C/C++
-compiler** (building two optional components); without them those parts are skipped and Diagnostics
-says so.
+Optional: **CMake + a C/C++ compiler**, only to build one optional component (without them it is
+skipped and Diagnostics says so). A Java runtime is not needed: if there is none, a portable one is
+downloaded into `tools/`.
 
 ```bash
 python install.py             # once: sets everything up
@@ -97,7 +97,7 @@ RFC 5737 IPs, harmless stubs). See [`samples/README.md`](samples/README.md).
 | ✉️ **Email** | `.eml`/`.emlx`/`.msg`: the delivery path with its anomalies, SPF/DKIM/DMARC and whether the body was **edited after signing**, sender **spoofing**, **look-alike domains**, links rewritten by security gateways decoded, HTML phishing (credential forms, **HTML smuggling**, tracking pixels), QR codes and every attachment analysed |
 | 🔗 **Shortcuts** | `.lnk` and `.url`/`.website`: what they launch, hidden windows, remote targets and NTLM-theft tricks; the launched command goes through the scripting engine |
 | 📓 **OneNote** | the files hidden behind "double-click to view" lures, extracted and analysed |
-| ☕ **Java** | `.jar`/`.war`/`.ear`/`.class`/`.jsp`: entry points, dangerous behaviour (command execution, reflection, JNDI/Log4Shell, deserialization), **webshells** and signing; classes decompiled when a JVM is available |
+| ☕ **Java** | `.jar`/`.war`/`.ear`/`.class`/`.jsp`: entry points, dangerous behaviour (command execution, reflection, JNDI/Log4Shell, deserialization), **webshells** and signing; classes decompiled |
 | 📦 **MSI** | custom actions (scripts, binaries, commands) and when they fire, embedded binaries and cabinets |
 | 🧱 **Binaries** | Windows PE, ELF and Mach-O: **static triage** (anomalies, suspicious imports by behaviour, entropy, signatures, masquerading), **padding removed** so oversized binaries can be analysed, **packers detected and unpacked**, obfuscated strings recovered, capabilities mapped to **MITRE ATT&CK**, build artefacts such as PDB paths. Every unpacked or recovered binary is analysed as a child |
 | 🐍 **Python** | scripts, `.pyc` and **PyInstaller** executables unpacked and decompiled when possible |
