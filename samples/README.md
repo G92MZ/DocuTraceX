@@ -206,6 +206,11 @@ campaign's (`cdn-update.example.net`, `203.0.113.47`).
 | `c2/sample_njrat.exe` | njRAT | plain .NET settings strings | `cdn-update.example.net:5552`, campaign `Factura_2026`, version `0.7d`, `Server.exe` in `TEMP`, splitter `\|'\|'\|` |
 | `c2/sample_xworm.exe` | XWorm | .NET settings, AES-256-ECB with key from the mutex | `cdn-update.example.net` and `203.0.113.47` on port 7000, splitter `<Xwormmm>`, `USB.exe`, mutex `Kz3FvP9qLmX2bWsA` |
 | `c2/sample_agenttesla.exe` | AgentTesla-like stealer | exfiltration channel in clear + browser / mail credential paths | SMTP `mail.billing-portal.example:587`, accounts, Telegram-style bot token and chat id on `api.telegram-relay.example` |
+| `c2/sample_redline.exe` | RedLine Stealer | .NET strings: base64 → XOR key `Ombudsman` → base64 | `cdn-update.example.net:7712`, `203.0.113.47:7712`, build `Factura_2026` |
+| `c2/sample_snake_keylogger.exe` | Snake Keylogger | .NET strings DES-ECB, key MD5(string) | SMTP `mail.billing-portal.example:587`, sender / recipient accounts |
+| `c2/sample_raccoon_v2.exe` | Raccoon Stealer v2 | base64 + RC4 strings, key `edinayarossiya2026` | C2 `http://203.0.113.47/`, `machineId=` / `&configId=` |
+| `c2/sample_warzone.exe` | Warzone / AveMaria | `.bss`: RC4 key + config | `cdn-update.example.net:5200` |
+| `c2/sample_darkgate.bin` | DarkGate | base64 with a custom alphabet (MZ + text stub) | `http://cdn-update.example.net:2351`, `http://203.0.113.47:2351` (medium) |
 | `c2/sample_nanocore.exe` | NanoCore | type names (identification only) | family identified; settings encrypted in a resource, not decrypted (a medium finding) |
 
 Analyse any of them (or the whole `c2/` folder zipped) and open **C2 / Beacons**:
