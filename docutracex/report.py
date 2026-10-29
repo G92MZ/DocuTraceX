@@ -111,6 +111,11 @@ def _metadata_section(modules: dict[str, Any]) -> str:
     return "<h2>Document metadata</h2><table><tbody>" + rows + "</tbody></table>"
 
 
+def _ml_enriched(paths: CasePaths) -> dict[str, Any] | None:
+    from .ml.family_info import enrich
+    return enrich(read_json(paths.subresult("ml")))
+
+
 def _ml_section(ml: dict[str, Any] | None, marks: dict[str, dict[str, Any]]) -> str:
     """Every object scored by the EMBER2024 models: score against the calibrated
     threshold, hints and the analyst's mark. An indicator, not a verdict — the
@@ -139,7 +144,8 @@ def _ml_section(ml: dict[str, Any] | None, marks: dict[str, dict[str, Any]]) -> 
             _e(it.get("model", "").replace("EMBER2024_", "")),
             f"<code style='white-space:nowrap'>{it['score']:.4f}{thr}</code>",
             verdict + (f"<div class='muted'>why: {_e(why)}</div>" if why else ""),
-            _e(", ".join(hints)) or "<span class='muted'>—</span>",
+            (_e(", ".join(hints)) or "<span class='muted'>—</span>")
+            + (f"<div class='muted'>⚠ {_e(it['family_note'])}</div>" if it.get("family_note") else ""),
             _e(_MARK_LABEL.get(state, state)) + (f"<div class='muted'>{_e(mk.get('comment'))}</div>" if mk.get("comment") else ""),
         ]))
     above_n = sum(1 for it in items if it.get("verdict") == "above threshold")
@@ -227,7 +233,7 @@ def build_report_html(analysis_id: str, cases_dir=None) -> str:
 {_findings_section(tp_findings)}
 <h2>Indicators of compromise ({ioc_total})</h2>
 {_iocs_section(iocs)}
-{_ml_section(read_json(paths.subresult("ml")), marks_service.read_marks(paths))}
+{_ml_section(_ml_enriched(paths), marks_service.read_marks(paths))}
 {_nested_section(modules.get('nested'))}
 {_metadata_section(modules)}
 <div class="muted" style="margin-top:32px">DocuTraceX · static analysis only — nothing in the sample was executed.</div>

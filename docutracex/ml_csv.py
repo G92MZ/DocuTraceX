@@ -20,7 +20,7 @@ from .storage import CasePaths, read_json
 _BOM = "﻿"
 COLUMNS = ["object", "stored_path", "sha256", "recipe", "status", "file_type", "format", "model",
            "score", "threshold", "calibrated", "verdict", "test_detection_at_threshold",
-           "evasive_detection_at_threshold", "tags", "family", "top_features", "feature_blocks",
+           "evasive_detection_at_threshold", "tags", "family", "family_note", "top_features", "feature_blocks",
            "mark", "mark_comment", "detail"]
 
 
@@ -35,15 +35,26 @@ def tag_hints(item: dict[str, Any]) -> list[str]:
 
 
 def family_hints(item: dict[str, Any], only_high: bool = False) -> list[str]:
+    """``name (prob, confidence, kind)`` — kind from family_info (generic AV
+    names say so)."""
+    from .ml.family_info import info
+
     fam = (item.get("labels") or {}).get("family") or []
-    return [f"{h.get('name')} ({float(h.get('prob', 0)):.2f}, {h.get('confidence', 'none')})"
-            for h in fam if not only_high or h.get("confidence") == "high"]
+    out = []
+    for h in fam:
+        if only_high and h.get("confidence") != "high":
+            continue
+        meta = info(str(h.get("name")))
+        kind = "generic AV name" if meta.get("generic") else meta.get("type", "unknown")
+        out.append(f"{h.get('name')} ({float(h.get('prob', 0)):.2f}, {h.get('confidence', 'none')}, {kind})")
+    return out
 
 
 def load(analysis_id: str, cases_dir: Path | None = None) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     """(ml.json, marks map) for a case."""
     paths = CasePaths(analysis_id, cases_dir=cases_dir) if cases_dir else CasePaths(analysis_id)
-    return read_json(paths.subresult("ml")) or {}, marks_service.read_marks(paths)
+    from .ml.family_info import enrich
+    return enrich(read_json(paths.subresult("ml"))) or {}, marks_service.read_marks(paths)
 
 
 def _num(v: Any, fmt: str = "{:.6f}") -> str:
@@ -71,6 +82,7 @@ def _row(it: dict[str, Any], marks: dict[str, dict[str, Any]]) -> dict[str, Any]
         "evasive_detection_at_threshold": _num(met.get("challenge_detected_at_1pct_fpr"), "{:.4f}"),
         "tags": " | ".join(tag_hints(it)),
         "family": " | ".join(family_hints(it)),
+        "family_note": it.get("family_note", ""),
         "top_features": " | ".join(f"{t.get('block')}: {t.get('feature')} ({float(t.get('contribution', 0)):+.3f})"
                                    for t in (it.get("top_features") or [])[:10]),
         "feature_blocks": " | ".join(f"{k} ({v:+.3f})" for k, v in blocks),

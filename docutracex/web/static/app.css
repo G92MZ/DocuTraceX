@@ -657,3 +657,8 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 .hex-legend li b { white-space: nowrap; }
 .hex-sw { display: inline-block; width: 14px; height: 12px; border-radius: 3px; flex: none; border: 1px solid var(--panel-border); position: relative; top: 2px; }
 .hex-sw-txt { display: inline-block; min-width: 14px; font-family: "Cascadia Code", Consolas, monospace; text-align: center; }
+
+/* ML: family context */
+.ml-fam { margin: 2px 0 6px; }
+.ml-fam-about { margin: 2px 0 0 4px; }
+.ml-fam-note { margin: 6px 0; padding: 6px 10px; border-left: 3px solid #d29922; background: rgba(210, 153, 34, 0.08); border-radius: 4px; font-size: 12px; }

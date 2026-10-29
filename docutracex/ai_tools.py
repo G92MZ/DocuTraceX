@@ -136,6 +136,9 @@ def get_module(case_id: str, module: str, max_chars: int = MAX_CHARS) -> dict[st
     if data is None:
         available = sorted(p.stem for p in paths.results_dir.glob("*.json"))
         return {"error": f"module {module!r} has no result in this case", "available": available}
+    if module == "ml":
+        from .ml import family_info
+        data = family_info.enrich(data)          # what each family is, and how sure the model is
     text = json.dumps(data, ensure_ascii=False, default=str)
     n = max(1000, min(int(max_chars or MAX_CHARS), 60000))
     return {"module": module, "size_chars": len(text), "truncated": len(text) > n, "json": text[:n]}
