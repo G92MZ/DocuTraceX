@@ -108,6 +108,16 @@ TOOL_DEPS: list[Dependency] = [
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
     ),
     Dependency(
+        "dissect.cobaltstrike", "dissect.cobaltstrike", "C2 / Beacons: Cobalt Strike beacons (2nd parser)",
+        required=False,
+        install_hint="run scripts/setup_portable_python.py (installed into the portable)",
+    ),
+    Dependency(
+        "cryptography", "cryptography", "C2 / Beacons: AES / DES of .NET RATs and stealers",
+        required=False,
+        install_hint="run scripts/setup_portable_python.py (installed into the portable)",
+    ),
+    Dependency(
         "lightgbm", "lightgbm", "Machine Learning tab: EMBER2024 LightGBM models",
         required=False,
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
