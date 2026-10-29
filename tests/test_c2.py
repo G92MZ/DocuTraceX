@@ -31,6 +31,10 @@ def _scan(tmp_path: Path, name: str, data: bytes) -> list[dict]:
     ("c2/sample_quasar.exe", "QuasarRAT", "203.0.113.47"),
     ("c2/sample_njrat.exe", "njRAT", "cdn-update.example.net"),
     ("c2/sample_xworm.exe", "XWorm", "203.0.113.47"),
+    ("c2/sample_redline.exe", "RedLine Stealer", "cdn-update.example.net"),
+    ("c2/sample_snake_keylogger.exe", "Snake Keylogger", "mail.billing-portal.example"),
+    ("c2/sample_raccoon_v2.exe", "Raccoon Stealer v2", "203.0.113.47"),
+    ("c2/sample_warzone.exe", "Warzone / AveMaria", "cdn-update.example.net"),
 ])
 def test_samples_yield_their_configuration(tmp_path: Path, name: str, family: str, c2_host: str) -> None:
     data = ms.c2_samples()[name]
@@ -176,3 +180,36 @@ def test_case_end_to_end_report_and_csv(tmp_path: Path, monkeypatch: pytest.Monk
     assert "C2 / implant configurations — marked (1 of 1)" in body and "AsyncMutex_6SI8OkPnk" in body
     csv = client.get(f"/api/cases/{cid}/c2.csv").content.decode("utf-8-sig")
     assert "AsyncRAT" in csv and "true_positive" in csv
+
+
+def test_stealer_details(tmp_path: Path) -> None:
+    rl = _scan(tmp_path, "rl.exe", ms.redline_exe())[0]["summary"]
+    assert rl["C2"] == ["cdn-update.example.net:7712", "203.0.113.47:7712"] and rl["Build ID"] == "Factura_2026"
+    sk = _scan(tmp_path, "sk.exe", ms.snake_exe())[0]["summary"]
+    assert sk["Servers"] == ["mail.billing-portal.example"] and sk["Port"] == "587"
+    assert "facturas.envio@billing-portal.example" in sk["Accounts"]
+    rc = _scan(tmp_path, "rc.exe", ms.raccoon_exe())[0]["summary"]
+    assert rc["C2"] == ["http://203.0.113.47/"] and rc["RC4 key"] == "edinayarossiya2026"
+    wz = _scan(tmp_path, "wz.exe", ms.warzone_exe())[0]["summary"]
+    assert wz["C2"] == ["cdn-update.example.net:5200"]
+
+
+def test_darkgate_custom_alphabet(tmp_path: Path) -> None:
+    r = _scan(tmp_path, "dg.bin", ms.darkgate_blob())
+    assert [x["family"] for x in r] == ["DarkGate"]
+    assert r[0]["summary"]["C2"] == ["http://cdn-update.example.net:2351", "http://203.0.113.47:2351"]
+    assert r[0]["confidence"] == "medium"
+
+
+def test_no_configuration_in_the_rest_of_the_samples(tmp_path: Path) -> None:
+    import zipcrypto
+
+    files = zipcrypto.extract(ROOT / "samples" / "samples.zip", tmp_path)
+    hits = {}
+    for f in files:
+        rel = f.relative_to(tmp_path).as_posix()
+        if not rel.startswith("c2/"):
+            r = c2.scan_object(f, f.read_bytes())
+            if r:
+                hits[rel] = [x["family"] for x in r]
+    assert hits == {}

@@ -4738,7 +4738,8 @@ function c2Value(v) {
 
 function c2Help(c2) {
   const fams = (c2 && c2.families) || ["Cobalt Strike", "Metasploit / Meterpreter", "Remcos", "AsyncRAT", "DcRAT", "QuasarRAT",
-    "njRAT", "XWorm", "AgentTesla", "NanoCore"];
+    "njRAT", "XWorm", "AgentTesla", "NanoCore", "RedLine / META", "Snake Keylogger", "Raccoon Stealer v2",
+    "Warzone / AveMaria", "DarkGate"];
   return `<div class="ml-pane">
     <p class="hint-line">Every object of the case — the original, everything extracted, nested children and decoded or decrypted
       stages — is searched for implant configurations, <b>statically</b>: nothing is executed. Families: ${escapeHtml(fams.join(", "))}.</p>
@@ -4751,6 +4752,11 @@ function c2Help(c2) {
       <tr><td>XWorm</td><td>.NET settings encrypted with AES-256-ECB, key derived from the mutex (MD5): hosts, port, splitter, USB name, Telegram token when present.</td></tr>
       <tr><td>AgentTesla (and look-alikes)</td><td>The exfiltration channel — SMTP server and accounts, FTP, Telegram-style bot token / chat — next to the credential paths it reads. Builds that encrypt their strings only show this in a memory dump.</td></tr>
       <tr><td>NanoCore</td><td>Identified by its type names; its settings are encrypted in a resource and are not decrypted (use a memory dump for the C2).</td></tr>
+      <tr><td>RedLine · META</td><td>.NET <span class="mono">IP</span> / <span class="mono">ID</span> strings: base64 → XOR with a key string → base64. C2 (host:port) and build id.</td></tr>
+      <tr><td>Snake Keylogger · 404</td><td>.NET strings DES-encrypted with MD5 of a key string: SMTP / FTP / Telegram exfiltration (servers, accounts, port).</td></tr>
+      <tr><td>Raccoon Stealer v2</td><td>Strings base64 + RC4 with a key string from the binary: C2 URL, <span class="mono">machineId=</span> / <span class="mono">configId=</span>.</td></tr>
+      <tr><td>Warzone · AveMaria</td><td><span class="mono">.bss</span> section: RC4 key + encrypted config with the C2 host and port.</td></tr>
+      <tr><td>DarkGate</td><td>Settings in base64 with a custom alphabet stored next to them: C2 URLs (medium confidence: the format changes between versions).</td></tr>
     </tbody></table>
     <p class="hint-line"><b>Limits:</b> a loader that only decrypts its payload in memory leaves no configuration in the file. If DocuTraceX
       unpacks / decodes that layer, the stage is searched too; otherwise upload a <b>memory dump</b> of the process (EDR, procdump): it is

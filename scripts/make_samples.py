@@ -1868,8 +1868,105 @@ def nanocore_exe() -> bytes:
         "user_strings": ["ClientPlugin"], "resource": bk.noise(0x800, 211)})
 
 
+def _rc4(key: bytes, data: bytes) -> bytes:
+    st, j, out = list(range(256)), 0, bytearray()
+    for i in range(256):
+        j = (j + st[i] + key[i % len(key)]) & 0xFF
+        st[i], st[j] = st[j], st[i]
+    i = j = 0
+    for c in data:
+        i = (i + 1) & 0xFF
+        j = (j + st[i]) & 0xFF
+        st[i], st[j] = st[j], st[i]
+        out.append(c ^ st[(st[i] + st[j]) & 0xFF])
+    return bytes(out)
+
+
+def redline_exe() -> bytes:
+    import binkit as bk
+
+    key = "Ombudsman"
+
+    def enc(v: str) -> str:
+        inner = base64.b64encode(v.encode()).decode()
+        x = "".join(chr(ord(c) ^ ord(key[i % len(key)])) for i, c in enumerate(inner))
+        return base64.b64encode(x.encode()).decode()
+    return bk.pe(bits=32, gui=True, dotnet={
+        "assembly": "EntryPoint", "strings": ["RedLine.Logic", "StringDecrypt", "Arguments"],
+        "user_strings": [enc(f"cdn-update.example.net:7712|{C2_IP}:7712"), enc("Factura_2026"), "", key]})
+
+
+def snake_exe() -> bytes:
+    import hashlib
+
+    import binkit as bk
+    from cryptography.hazmat.primitives import padding
+    from cryptography.hazmat.primitives.ciphers import Cipher, modes
+    try:
+        from cryptography.hazmat.decrepit.ciphers.algorithms import TripleDES
+    except ImportError:
+        from cryptography.hazmat.primitives.ciphers.algorithms import TripleDES
+
+    key = "BsrOkyiChvpfhAkipZAxnnChkMGkLnAiZhGMyrnJfULiDGkfTkrTELinhfk"
+    k8 = hashlib.md5(key.encode()).digest()[:8]
+
+    def enc(v: str) -> str:
+        p = padding.PKCS7(64).padder()
+        e = Cipher(TripleDES(k8 * 3), modes.ECB()).encryptor()
+        return base64.b64encode(e.update(p.update(v.encode()) + p.finalize()) + e.finalize()).decode()
+    return bk.pe(bits=32, gui=True, dotnet={
+        "assembly": "FacturaVisor", "strings": ["SmtpClient", "DESCryptoServiceProvider", "MD5CryptoServiceProvider"],
+        "user_strings": [enc("facturas.envio@billing-portal.example"), enc("Fct#2026pass"),
+                         enc("mail.billing-portal.example"), enc("recepcion.logs@mail-box.example.org"),
+                         enc("587"), enc("-------- Snake Keylogger --------"), key]})
+
+
+def raccoon_exe() -> bytes:
+    import binkit as bk
+
+    key = "edinayarossiya2026"
+
+    def enc(v: str) -> str:
+        return base64.b64encode(_rc4(key.encode(), v.encode())).decode()
+    return bk.pe(bits=32, gui=True, imports={"kernel32.dll": ["LoadLibraryW", "GetProcAddress", "Sleep"],
+                                             "wininet.dll": ["InternetOpenW", "HttpSendRequestW"]},
+                 strings=[key, enc(f"http://{C2_IP}/"), enc("machineId="), enc("|"), enc("&configId="),
+                          enc("record"), enc("Content-Type: application/x-www-form-urlencoded")])
+
+
+def warzone_exe() -> bytes:
+    import struct as _st
+
+    import binkit as bk
+
+    key = bytes.fromhex("6e5a1f3c9b27d4e8a0c3f1b2d5e7a9c4f0e1d2c3b4a59687")
+    host = "cdn-update.example.net".encode("utf-16-le")
+    cfg = _st.pack("<I", len(host)) + host + _st.pack("<H", 5200) + b"\x00" * 40
+    bss = _st.pack("<I", len(key)) + key + _rc4(key, cfg)
+    return bk.pe(bits=32, gui=True, imports={"kernel32.dll": ["VirtualAlloc", "Sleep"], "ws2_32.dll": ["connect"]},
+                 strings=["Ave_Maria Stealer OpenSource github Link", "warzone160"],
+                 sections=[(".bss", bss.ljust(0x200, b"\x00"), 0xC0000040)])
+
+
+def darkgate_blob() -> bytes:
+    import random as _r
+
+    std = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    alpha = "".join(_r.Random(2026).sample(std, 64))
+    table = str.maketrans(std, alpha)
+
+    def enc(v: str) -> str:
+        return base64.b64encode(v.encode()).decode().rstrip("=").translate(table)
+    cfg = "0=http://cdn-update.example.net:2351\r\n1=Yes\r\n8=No\r\n15=Factura2026\r\n"
+    return (C2_STUB + b"\n[inert DarkGate-style settings, AutoIt payload stand-in]\n"
+            + alpha.encode() + b"\x00" + enc(cfg).encode() + b"\x00" + enc(f"http://{C2_IP}:2351").encode() + b"\x00")
+
+
 def c2_samples() -> dict[str, bytes]:
-    return {"c2/sample_njrat.exe": njrat_exe(), "c2/sample_xworm.exe": xworm_exe(),
+    return {"c2/sample_redline.exe": redline_exe(), "c2/sample_snake_keylogger.exe": snake_exe(),
+            "c2/sample_raccoon_v2.exe": raccoon_exe(), "c2/sample_warzone.exe": warzone_exe(),
+            "c2/sample_darkgate.bin": darkgate_blob(),
+            "c2/sample_njrat.exe": njrat_exe(), "c2/sample_xworm.exe": xworm_exe(),
             "c2/sample_agenttesla.exe": agenttesla_exe(), "c2/sample_nanocore.exe": nanocore_exe(),
             "c2/sample_cs_beacon.bin": cs_beacon_blob(),
             "c2/sample_msf_https_stager.bin": msf_https_stager_blob(),
