@@ -38,7 +38,7 @@ TAG_KINDS = ("behavior", "packer", "file_property", "exploit", "group")
 TAG_MIN_PROB = 0.5
 FAMILY_TOP = 3
 MAX_BYTES = 256 * 1024 * 1024
-TOP_N = 10
+TOP_N = 50                 # top features kept (explained); the UI shows 10, then 'Show more'
 
 _FORMAT_LABEL = {"Win32": "PE (Win32)", "Win64": "PE (Win64)", "Dot_Net": ".NET", "PDF": "PDF", "ELF": "ELF",
                  "APK": "APK (Android)"}
