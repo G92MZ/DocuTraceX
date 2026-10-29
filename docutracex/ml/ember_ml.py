@@ -326,6 +326,11 @@ def _classify(paths: list[str], mdir: str) -> list[dict[str, Any]]:
                 blk, nm = names[i]
                 top.append({"block": blk, "feature": nm, "value": float(vec[i]),
                             "contribution": float(contrib[i]), "matches": hashed.get(nm, [])})
+            try:                                           # plain words + where it is in the file
+                from .explain import explain_top
+                explain_top(top, data, raw)
+            except Exception:  # noqa: BLE001
+                pass
             out.append({**rec, "status": "ok", "file_type": ftype, "format": _FORMAT_LABEL.get(ftype, ftype),
                         "model": f"EMBER2024_{model}", "score": round(score, 6),
                         "threshold": th, "calibrated": th is not None,
@@ -430,7 +435,7 @@ def finding_for(item: dict[str, Any]) -> dict[str, Any] | None:
     return {"tool": "ml", "rule": f"ml:{item['model']}", "severity": sev,
             "detail": f"{item['model']} ({item.get('format', '')}): score {sc:.4f} — {verdict}",
             "location": item.get("label") or "", "evidence": ", ".join(
-                f"{t['feature']} ({t['contribution']:+.2f})" for t in (item.get("top_features") or [])[:5])}
+                f"{t.get('plain') or t['feature']} ({t['contribution']:+.2f})" for t in (item.get("top_features") or [])[:5])}
 
 
 def help_data() -> dict[str, Any]:
