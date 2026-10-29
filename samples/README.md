@@ -183,6 +183,7 @@ Indicators that must **not** appear in the IOCs tab:
   - olevba's description "May run PowerShell commands" is not a command;
   - the smuggling page's `a.download = …` is not the domain `a.download`;
   - the MD5s that rtfobj prints for the objects it carves (`MD5 = '…'`) are not hashes of the sample.
+- **`sample_marker_drop.js`**: the dropper writes a 1-byte lock file and a real `upd.ps1`. Only the `.ps1` becomes a nested child. Tiny non-code drops and stages (markers, counters, "ok") are not stages; short code (a `.bat` with `start x.exe`) still is.
 - **Any PE / ELF analysed with capa** — capability and ATT&CK names ("query or enumerate registry key", "Query Registry") are not commands.
 
 ## Machine Learning tab (EMBER2024)

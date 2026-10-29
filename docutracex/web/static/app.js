@@ -199,6 +199,12 @@ document.getElementById("upload-form").addEventListener("submit", async (e) => {
 const concInput = document.getElementById("conc-input");
 const concStatus = document.getElementById("conc-status");
 
+// The Tasks tab says how many analyses run at once (the live setting).
+function showConcurrency(n) {
+  const el = document.getElementById("tasks-conc");
+  if (el && n) el.textContent = n;
+}
+
 async function loadConcurrency() {
   if (!concInput) return;
   try {
@@ -206,6 +212,7 @@ async function loadConcurrency() {
     concInput.value = d.concurrency;
     concInput.min = d.min;
     concInput.max = d.max;
+    showConcurrency(d.concurrency);
   } catch (err) { /* leave the input as-is */ }
 }
 
@@ -220,6 +227,7 @@ if (concInput) {
         body: JSON.stringify({ concurrency: n }),
       }).then((r) => r.json());
       concInput.value = d.concurrency;
+      showConcurrency(d.concurrency);
       concStatus.textContent = `Saved — ${d.concurrency} at a time.`;
       setTimeout(() => { concStatus.textContent = ""; }, 2500);
     } catch (err) {
