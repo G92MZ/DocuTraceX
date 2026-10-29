@@ -29,6 +29,8 @@ def _scan(tmp_path: Path, name: str, data: bytes) -> list[dict]:
     ("c2/sample_remcos.exe", "Remcos", "203.0.113.47"),
     ("c2/sample_asyncrat.exe", "AsyncRAT", "203.0.113.47"),
     ("c2/sample_quasar.exe", "QuasarRAT", "203.0.113.47"),
+    ("c2/sample_njrat.exe", "njRAT", "cdn-update.example.net"),
+    ("c2/sample_xworm.exe", "XWorm", "203.0.113.47"),
 ])
 def test_samples_yield_their_configuration(tmp_path: Path, name: str, family: str, c2_host: str) -> None:
     data = ms.c2_samples()[name]
@@ -36,6 +38,32 @@ def test_samples_yield_their_configuration(tmp_path: Path, name: str, family: st
     assert [r["family"] for r in res] == [family]
     assert c2_host in res[0]["c2"]
     assert res[0]["confidence"] == "high"
+
+
+def test_agenttesla_exfil_channel(tmp_path: Path) -> None:
+    r = _scan(tmp_path, "at.exe", ms.agenttesla_exe())
+    assert [x["family"] for x in r] == ["AgentTesla-like stealer"]
+    s = r[0]["summary"]
+    assert s["SMTP server"] == ["mail.billing-portal.example:587"]
+    assert "facturas.envio@billing-portal.example" in s["Accounts"]
+    assert s["Telegram-style bot token"].startswith("7012345678:")
+    assert s["Chat id"] == "-1002026018700"
+    assert {"mail.billing-portal.example", "api.telegram-relay.example"} <= set(r[0]["c2"])
+
+
+def test_nanocore_is_identified_without_config(tmp_path: Path) -> None:
+    from docutracex import c2 as c2_mod
+
+    r = _scan(tmp_path, "nc.exe", ms.nanocore_exe())
+    assert [x["family"] for x in r] == ["NanoCore"] and r[0]["c2"] == []
+    r[0]["object"] = "nc.exe"
+    assert c2_mod._finding(r[0])["severity"] == "medium"
+
+
+def test_xworm_details(tmp_path: Path) -> None:
+    s = _scan(tmp_path, "xw.exe", ms.xworm_exe())[0]["summary"]
+    assert s["Splitter"] == "<Xwormmm>" and s["USB name"] == "USB.exe" and s["Mutex"] == "Kz3FvP9qLmX2bWsA"
+    assert "cdn-update.example.net:7000" in s["C2"]
 
 
 def test_cobalt_strike_fields(tmp_path: Path) -> None:
@@ -98,6 +126,7 @@ def test_user_strings_reader() -> None:
 
 
 @pytest.mark.parametrize("name", ["ml/sample_dotnet_invoice_tool.dll", "ml/sample_dotnet_loader.exe",
+                                  "ml/sample_dotnet_stealer.exe",
                                   "ml/sample_win32_invoice_calc.dll", "ml/sample_win64_packed_loader.exe"])
 def test_no_configuration_in_other_binaries(tmp_path: Path, name: str) -> None:
     assert _scan(tmp_path, Path(name).name, ms.ml_samples()[name]) == []

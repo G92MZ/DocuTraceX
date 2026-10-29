@@ -1793,7 +1793,7 @@ def asyncrat_exe() -> bytes:
     import binkit as bk
 
     master = b"qD8vH2kLmP4sT7wXzA1cE5gJ9nR3uY6b"
-    enc = lambda v: _rat_encrypt(master, QUASAR_SALT, v)  # noqa: E731
+    enc = lambda v: _rat_encrypt(master, QUASAR_SALT, v)
     settings = [enc("6606,7707,8808"), enc("cdn-update.example.net," + C2_IP), enc("0.5.8"),
                 enc("false"), enc("%AppData%"), enc("AsyncMutex_6SI8OkPnk"), enc("Factura-2026"),
                 base64.b64encode(master).decode()]
@@ -1806,7 +1806,7 @@ def quasar_exe() -> bytes:
     import binkit as bk
 
     master = "1WvgEMPjdwfqIMeM9MclyQ"
-    enc = lambda v: _rat_encrypt(master.encode(), QUASAR_SALT, v)  # noqa: E731
+    enc = lambda v: _rat_encrypt(master.encode(), QUASAR_SALT, v)
     settings = [enc("1.4.1"), enc(f"cdn-update.example.net:4782;{C2_IP}:4782;"), enc("Office04"),
                 enc("SubDir"), enc("Client.exe"), enc("QSR_MUTEX_k3Hd9xA1Lm"), enc("Quasar Client Startup"),
                 master]
@@ -1815,8 +1815,63 @@ def quasar_exe() -> bytes:
         "user_strings": settings})
 
 
+def njrat_exe() -> bytes:
+    import binkit as bk
+
+    return bk.pe(bits=32, gui=True, dotnet={
+        "assembly": "Stub", "strings": ["OK", "kl", "Program"],
+        "user_strings": ["Server.exe", "TEMP", "cdn-update.example.net", "5552",
+                         base64.b64encode(b"Factura_2026").decode(), "0.7d", "|'|'|",
+                         "5cd8f17f4086744065eb0992a09e05a2", "SEE_MASK_NOZONECHECKS",
+                         "netsh firewall add allowedprogram \"", "cmd.exe /c ping 0 -n 2 & del \""]})
+
+
+def xworm_exe() -> bytes:
+    import hashlib
+
+    import binkit as bk
+    from cryptography.hazmat.primitives import padding
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    mutex = "Kz3FvP9qLmX2bWsA"
+    h = hashlib.md5(mutex.encode()).digest()
+    key = h[:15] + h + b"\x00"
+
+    def enc(v: str) -> str:
+        p = padding.PKCS7(128).padder()
+        e = Cipher(algorithms.AES(key), modes.ECB()).encryptor()
+        return base64.b64encode(e.update(p.update(v.encode()) + p.finalize()) + e.finalize()).decode()
+    return bk.pe(bits=32, gui=True, dotnet={
+        "assembly": "XClient", "strings": ["XWorm", "Settings", "AlgorithmAES"],
+        "user_strings": [enc("cdn-update.example.net," + C2_IP), enc("7000"), enc("<123456789>"),
+                         enc("<Xwormmm>"), enc("XWorm V5.6"), enc("USB.exe"), mutex]})
+
+
+def agenttesla_exe() -> bytes:
+    import binkit as bk
+
+    return bk.pe(bits=32, gui=True, dotnet={
+        "assembly": "FacturaPDF", "strings": ["SmtpClient", "NetworkCredential", "MailMessage", "Send"],
+        "user_strings": ["\\Google\\Chrome\\User Data\\Default\\Login Data", "\\Mozilla\\Firefox\\Profiles",
+                         "logins.json", "\\Thunderbird\\Profiles", "\\FileZilla\\recentservers.xml",
+                         "mail.billing-portal.example", "587", "facturas.envio@billing-portal.example",
+                         "recepcion.logs@mail-box.example.org",
+                         "https://api.telegram-relay.example/bot7012345678:AAH9xQe3T_kz8v0Lm2PqR5sY1uW4bC6dE7f/sendDocument",
+                         "-1002026018700"]})
+
+
+def nanocore_exe() -> bytes:
+    import binkit as bk
+
+    return bk.pe(bits=32, gui=True, dotnet={
+        "assembly": "NanoCore Client", "strings": ["NanoCore.ClientPluginHost", "IClientNetworkHost", "ClientLoaderForm"],
+        "user_strings": ["ClientPlugin"], "resource": bk.noise(0x800, 211)})
+
+
 def c2_samples() -> dict[str, bytes]:
-    return {"c2/sample_cs_beacon.bin": cs_beacon_blob(),
+    return {"c2/sample_njrat.exe": njrat_exe(), "c2/sample_xworm.exe": xworm_exe(),
+            "c2/sample_agenttesla.exe": agenttesla_exe(), "c2/sample_nanocore.exe": nanocore_exe(),
+            "c2/sample_cs_beacon.bin": cs_beacon_blob(),
             "c2/sample_msf_https_stager.bin": msf_https_stager_blob(),
             "c2/sample_remcos.exe": remcos_exe(),
             "c2/sample_asyncrat.exe": asyncrat_exe(),

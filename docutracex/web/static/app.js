@@ -4737,7 +4737,8 @@ function c2Value(v) {
 }
 
 function c2Help(c2) {
-  const fams = (c2 && c2.families) || ["Cobalt Strike", "Metasploit / Meterpreter", "Remcos", "AsyncRAT", "DcRAT", "QuasarRAT"];
+  const fams = (c2 && c2.families) || ["Cobalt Strike", "Metasploit / Meterpreter", "Remcos", "AsyncRAT", "DcRAT", "QuasarRAT",
+    "njRAT", "XWorm", "AgentTesla", "NanoCore"];
   return `<div class="ml-pane">
     <p class="hint-line">Every object of the case — the original, everything extracted, nested children and decoded or decrypted
       stages — is searched for implant configurations, <b>statically</b>: nothing is executed. Families: ${escapeHtml(fams.join(", "))}.</p>
@@ -4746,6 +4747,10 @@ function c2Help(c2) {
       <tr><td>Metasploit / Meterpreter</td><td>Stager shellcode recognised by its <span class="mono">block_api</span> prologue; IP / port / host / URI read from the connect-back code. Cobalt Strike stagers share the prologue.</td></tr>
       <tr><td>Remcos</td><td>RC4-encrypted <span class="mono">SETTINGS</span> resource: C2 list (host:port:TLS), campaign, mutex.</td></tr>
       <tr><td>AsyncRAT · DcRAT · QuasarRAT</td><td>.NET settings strings encrypted with AES-256 + HMAC (PBKDF2 key from another settings string); older Quasar with AES-128.</td></tr>
+      <tr><td>njRAT</td><td>.NET settings in clear: host, port, campaign (base64), version, install name / folder, registry key, the <span class="mono">|'|'|</span> splitter.</td></tr>
+      <tr><td>XWorm</td><td>.NET settings encrypted with AES-256-ECB, key derived from the mutex (MD5): hosts, port, splitter, USB name, Telegram token when present.</td></tr>
+      <tr><td>AgentTesla (and look-alikes)</td><td>The exfiltration channel — SMTP server and accounts, FTP, Telegram-style bot token / chat — next to the credential paths it reads. Builds that encrypt their strings only show this in a memory dump.</td></tr>
+      <tr><td>NanoCore</td><td>Identified by its type names; its settings are encrypted in a resource and are not decrypted (use a memory dump for the C2).</td></tr>
     </tbody></table>
     <p class="hint-line"><b>Limits:</b> a loader that only decrypts its payload in memory leaves no configuration in the file. If DocuTraceX
       unpacks / decodes that layer, the stage is searched too; otherwise upload a <b>memory dump</b> of the process (EDR, procdump): it is
