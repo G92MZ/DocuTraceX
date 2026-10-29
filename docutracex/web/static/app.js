@@ -3363,6 +3363,17 @@ function paneMl(ml, findings, caseId) {
 
 // "Download family model": background download in the web service, polled here;
 // when it is done the Machine Learning module is re-run for this case.
+// "Show N more" on the explained top features
+document.addEventListener("click", (e) => {
+  const b = e.target.closest && e.target.closest(".ml-more-btn");
+  if (!b) return;
+  const tbl = b.previousElementSibling;
+  const rows = tbl ? tbl.querySelectorAll("tr.ml-more") : [];
+  const show = [...rows].some((r) => r.hidden);
+  rows.forEach((r) => { r.hidden = !show; });
+  b.textContent = show ? "Show fewer" : `Show ${b.dataset.more} more`;
+});
+
 function wireMlFamily(root, caseId) {
   const btn = root.querySelector("[data-ml-family]");
   if (!btn) return;
@@ -3524,14 +3535,15 @@ function mlDetail(it, f, pct) {
   // explained (results from v1.67.1 on): plain words, the data in this file, a jump to it
   const top = tf.some((t) => t.plain)
     ? `<table class="cases ml-top"><thead><tr><th>What it is in this file</th><th>Contribution</th><th>Evidence</th><th></th></tr></thead><tbody>${
-        tf.map((t) => `<tr>
+        tf.map((t, i) => `<tr${i >= 10 ? ' class="ml-more" hidden' : ""}>
           <td>${escapeHtml(t.plain || t.feature)}<div class="hint-line mono" title="EMBER feature (block)">${escapeHtml(t.feature)} · ${escapeHtml(t.block)}</div></td>
           <td>${contribCell(t)}</td>
           <td class="mono">${(t.evidence || []).map((e) => `<div class="ml-ev">${escapeHtml(e)}</div>`).join("")}</td>
           <td>${t.at && it.stored_path ? `<button class="btn btn-ghost btn-sm" data-hex="${escapeHtml(it.stored_path)}"
             data-hex-offset="${Number(t.at.offset) || 0}" data-hex-len="${Number(t.at.length) || 0}"
             title="${escapeHtml(t.at.label || "")} — open in the Hex tab at 0x${(Number(t.at.offset) || 0).toString(16)}">Hex ⤷</button>` : ""}</td>
-        </tr>`).join("")}</tbody></table>`
+        </tr>`).join("")}</tbody></table>${tf.length > 10
+          ? `<button class="btn btn-ghost btn-sm ml-more-btn" type="button" data-more="${tf.length - 10}">Show ${tf.length - 10} more</button>` : ""}`
     : itable(["Feature", "Block", "Value", "Contribution", "In this file"],
         tf.map((t) => [t.feature, t.block, Number.isInteger(t.value) ? t.value : t.value.toFixed(4),
           `${t.contribution > 0 ? "+" : ""}${t.contribution.toFixed(3)} ${t.contribution > 0 ? "→ malicious" : "→ benign"}`,
@@ -3540,7 +3552,7 @@ function mlDetail(it, f, pct) {
     <h4>Why — contribution by feature block</h4>
     <p class="hint-line">LightGBM TreeSHAP: positive pushes towards malicious, negative towards benign (log-odds; base ${escapeHtml((it.bias || 0).toFixed(2))}).</p>
     <div class="ml-bars">${bars}</div>
-    <h4>Top features</h4>${top}`;
+    <h4>Top features <span class="hint-line">— the ${Math.min(tf.length, 10)} that weighed most${tf.length > 10 ? ` (of ${tf.length} kept)` : ""}; the bars above sum all of them</span></h4>${top}`;
 }
 
 // --- Hex tab ---------------------------------------------------------------------
