@@ -23,7 +23,9 @@ def test_info_links_and_generic_names() -> None:
     a = family_info.info("asyncrat")
     assert a["type"] == "RAT / backdoor" and a["link"].endswith("/details/win.asyncrat") and a["about"]
     u = family_info.info("unnamed class #166")
-    assert u["unnamed"] and u["type"] == "unknown"
+    assert u["unnamed"] and u["type"] == "unknown" and "never published" in u["about"]
+    unk = family_info.info("abarw")                             # in the table, kind not confirmed
+    assert unk["type"] == "unknown" and "could not be confirmed" in unk["about"]
     assert family_info.info("not-in-the-table")["type"] == "unknown"
 
 
