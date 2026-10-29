@@ -105,7 +105,7 @@ RFC 5737 IPs, harmless stubs). See [`samples/README.md`](samples/README.md).
 | 🧵 **Tasks** | the analysis queue with configurable concurrency, a **live log** of each step, history kept across restarts, and re-run of a single module |
 | 📊 **Report** | one self-contained HTML report: confirmed findings with evidence, IOCs, the nested tree and the Machine Learning results |
 | ⚙️ **Settings** | the proxy for network checks (or a free public proxy picked and rotated automatically) and the reference data the app keeps up to date |
-| 🩺 **Diagnostics** | every dependency, tool, database and the proxy checked in one place |
+| 🩺 **Diagnostics** | every dependency, tool, database and the proxy checked in one place — with a **Retry** button to reinstall whatever is missing |
 
 ## 📦 Supported formats
 

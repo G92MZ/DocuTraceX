@@ -90,3 +90,55 @@ def test_run_checks_structure(monkeypatch: pytest.MonkeyPatch) -> None:
     # App interpreter is always reported.
     assert any(c["name"] == "App interpreter" for c in report["checks"])
     assert all(c["status"] in ("ok", "warn", "fail") for c in report["checks"])
+
+
+# --- Diagnostics → Retry -------------------------------------------------------
+
+def test_retry_components_match_setup_script() -> None:
+    import importlib.util
+
+    from docutracex import diag_retry
+    spec = importlib.util.spec_from_file_location("setup_pp", diag_retry.SETUP)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    assert set(mod.COMPONENTS) == set(diag_retry.COMPONENTS)
+
+
+def test_non_ok_checks_carry_a_known_retry_component() -> None:
+    from docutracex import diag_retry
+    for c in run_checks()["checks"]:
+        if c["status"] == "ok":
+            assert c["retry"] == ""
+        elif c["retry"]:
+            assert (c["retry"] in diag_retry.COMPONENTS
+                    or c["retry"].startswith(diag_retry.APP_DEP_PREFIX)), c
+
+
+def test_retry_rejects_unknown_component() -> None:
+    from docutracex import diag_retry
+    with pytest.raises(ValueError):
+        diag_retry.start("rm -rf /")
+    with pytest.raises(ValueError):
+        diag_retry.start("app-dep:not-an-app-dependency")
+
+
+def test_retry_runs_in_background_and_reports(monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from docutracex import diag_retry
+    from docutracex.app import create_app
+    monkeypatch.setattr(diag_retry, "_command",
+                        lambda c: [sys.executable, "-c", "print('[>] step'); print('[+] done')"])
+    client = TestClient(create_app())
+    assert client.post("/api/diagnostics/retry", json={"component": "ember"}).status_code == 200
+    for _ in range(100):
+        st = client.get("/api/diagnostics/retry").json()
+        if st["state"] != "running":
+            break
+        time.sleep(0.05)
+    assert st["state"] == "done" and st["returncode"] == 0 and st["component"] == "ember"
+    assert "[+] done" in st["log"]
+    monkeypatch.undo()
+    assert client.post("/api/diagnostics/retry", json={"component": "nope"}).status_code == 400

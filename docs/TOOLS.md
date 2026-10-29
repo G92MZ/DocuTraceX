@@ -4,7 +4,7 @@ DocuTraceX stands on the shoulders of many open-source projects. They are
 installed into the portable toolchain under `tools/` by
 `scripts/setup_portable_python.py` (or picked up from `tools/<tool>/`), never
 into your own Python, and each one's raw output is kept next to its findings.
-The **Diagnostics** tab shows which ones are available.
+The **Diagnostics** tab shows which ones are available; a **Retry** button on a warning/failed check reinstalls just that component (`python scripts/setup_portable_python.py --component NAME` does the same from a terminal).
 
 ## Credits
 

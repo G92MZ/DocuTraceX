@@ -1246,13 +1246,89 @@ def ensure(version: str = DEFAULT_VERSION) -> bool:
     return False
 
 
+def _install_portable() -> bool:
+    install_python(DEFAULT_VERSION, force=False)
+    install_deps()
+    if sys.platform.startswith("win"):
+        install_libmagic_windows()
+    return _portable_present() and _tool_deps_ok(_portable_python())
+
+
+def _install_tool_deps() -> bool:
+    if not _portable_present():
+        return _install_portable()
+    install_deps()
+    if sys.platform.startswith("win"):
+        install_libmagic_windows()
+    return _tool_deps_ok(_portable_python())
+
+
+def _install_didier() -> bool:
+    install_didier()
+    return _didier_present()
+
+
+def _install_oms() -> bool:
+    install_officemalscanner()
+    return _officemalscanner_present()
+
+
+def _install_ipdb() -> bool:
+    return bool(install_ipdb(force=True)) and _ipdb_ok()
+
+
+# One provisioning step per component, so the Diagnostics tab can retry a
+# single failed install (``--component NAME``). Each returns True when the
+# component is present afterwards.
+COMPONENTS: dict = {
+    "portable": _install_portable,
+    "tool-deps": _install_tool_deps,
+    "didier": _install_didier,
+    "officemalscanner": _install_oms,
+    "ipdb": _install_ipdb,
+    "chromium": lambda: bool(install_chromium()) and _chromium_ok(),
+    "vipermonkey": lambda: bool(install_vipermonkey()) and _vipermonkey_ok(),
+    "webcrack": lambda: bool(install_webcrack()) and _webcrack_ok(),
+    "boxps": lambda: bool(install_boxps()) and _boxps_ok(),
+    "pycdc": lambda: bool(install_pycdc()) and _pycdc_ok(),
+    "cfr": lambda: bool(install_cfr()) and _cfr_ok(),
+    "floss": lambda: bool(install_floss()) and _floss_ok(),
+    "capa": lambda: bool(install_capa()) and _capa_ok(),
+    "ember": lambda: bool(install_ember()) and _ember_ok(),
+}
+
+
+def install_component(name: str) -> bool:
+    """Run one component's provisioning step (clearing its 'failed' marker
+    first, like a full setup does). True when it is present afterwards."""
+    step = COMPONENTS.get(name)
+    if step is None:
+        raise SystemExit(f"Unknown component {name!r}; one of: {', '.join(COMPONENTS)}")
+    _clear_mark(name)
+    print(f"[>] Retrying component '{name}'")
+    try:
+        ok = bool(step())
+    except SystemExit as exc:
+        print(f"[!] Provisioning stopped: {exc}")
+        ok = False
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] Provisioning failed: {exc}")
+        ok = False
+    print(f"[+] '{name}' provisioned." if ok else f"[!] '{name}' is still not available.")
+    return ok
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Provision the portable Python runtime")
     ap.add_argument("--version", default=DEFAULT_VERSION, help="CPython X.Y (default 3.13)")
     ap.add_argument("--force", action="store_true", help="Reinstall even if present")
     ap.add_argument("--ensure", action="store_true", help="Provision only if missing (used by run.py)")
     ap.add_argument("--libmagic-only", action="store_true", help="Only provision Windows libmagic")
+    ap.add_argument("--component", help="Provision only this component (used by Diagnostics → Retry)")
     args = ap.parse_args()
+
+    if args.component:
+        sys.exit(0 if install_component(args.component) else 1)
 
     if args.libmagic_only:
         install_libmagic_windows()

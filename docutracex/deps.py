@@ -383,9 +383,11 @@ class Check:
     detail: str = ""     # what was found / why it failed
     remedy: str = ""     # how to fix it
     purpose: str = ""
+    retry: str = ""      # component the Diagnostics "Retry" button reinstalls
 
     def as_dict(self) -> dict[str, Any]:
         return {
+            "retry": self.retry if self.status != "ok" else "",
             "category": self.category,
             "name": self.name,
             "status": self.status,
@@ -395,7 +397,7 @@ class Check:
         }
 
 
-def _dep_checks(results: list[DepStatus], category: str) -> list[Check]:
+def _dep_checks(results: list[DepStatus], category: str, retry: str = "") -> list[Check]:
     checks: list[Check] = []
     for r in results:
         if r.installed:
@@ -406,7 +408,8 @@ def _dep_checks(results: list[DepStatus], category: str) -> list[Check]:
             remedy = r.install_hint or "pip install -e ."
         checks.append(
             Check(category=category, name=r.pip_name, status=status,
-                  detail=detail, remedy=remedy, purpose=r.purpose)
+                  detail=detail, remedy=remedy, purpose=r.purpose,
+                  retry=retry or f"app-dep:{r.pip_name}")
         )
     return checks
 
@@ -446,6 +449,7 @@ def run_checks() -> dict[str, Any]:
             else "Not provisioned yet; tools will not run until it exists.",
             remedy="" if portable else "Run: python scripts/setup_portable_python.py",
             purpose="Interpreter that runs the bundled analysis tools",
+            retry="portable",
         )
     )
     checks.append(
@@ -467,7 +471,7 @@ def run_checks() -> dict[str, Any]:
 
     # rev: bhd1Sl5iFX
     checks.extend(_dep_checks(app_results, "App dependency"))
-    checks.extend(_dep_checks(tool_results, "Tool dependency"))
+    checks.extend(_dep_checks(tool_results, "Tool dependency", retry="tool-deps"))
 
     # External scripts: Didier Stevens Suite (not importable; checked by presence).
     try:
@@ -483,6 +487,7 @@ def run_checks() -> dict[str, Any]:
                    + ("" if present == total else " (missing ones are skipped)"),
             remedy="" if present == total else "run scripts/setup_portable_python.py to download them",
             purpose="oledump/zipdump (Office/OLE), pdfid/pdf-parser (PDF), emldump (email)",
+            retry="didier",
         ))
     except Exception:  # noqa: BLE001
         pass
@@ -502,6 +507,7 @@ def run_checks() -> dict[str, Any]:
             purpose="Shellcode/embedded-object scan + VBA/OLE info (legacy OLE and OOXML); "
                     "RTFScan.exe for RTF"
                     + ("" if (oms_dir() / "RTFScan.exe").is_file() or not present else " (RTFScan.exe missing)"),
+            retry="officemalscanner",
         ))
     except Exception:  # noqa: BLE001
         pass
@@ -520,6 +526,7 @@ def run_checks() -> dict[str, Any]:
                     if ok_db else "not downloaded yet (IP checks show online data only)"),
             remedy="" if ok_db else "run scripts/setup_portable_python.py (downloads tools/ipdb/)",
             purpose=f"ASN / AS organisation / country of IPs, offline. {ipinfo.ATTRIBUTION}",
+            retry="ipdb",
         ))
         chromium = shot.browsers_path().is_dir()
         # id: gmzpt
@@ -530,6 +537,7 @@ def run_checks() -> dict[str, Any]:
             detail="tools/playwright/" if chromium else "not provisioned (screenshots use any Chromium Playwright finds)",
             remedy="" if chromium else "run scripts/setup_portable_python.py",
             purpose="Screenshots of checked URLs with JavaScript disabled",
+            retry="chromium",
         ))
         net = appsettings.public_network()
         checks.append(Check(
@@ -558,6 +566,7 @@ def run_checks() -> dict[str, Any]:
             remedy="" if vm["available"] else
                    "restart the app (it is provisioned on start) or run scripts/setup_portable_python.py",
             purpose="VBA emulation: commands, downloads and files the macros would produce",
+            retry="vipermonkey",
         ))
     except Exception:  # noqa: BLE001
         pass
@@ -574,6 +583,7 @@ def run_checks() -> dict[str, Any]:
             remedy="" if wc["available"] else
                    "run scripts/setup_portable_python.py (portable Node + webcrack; isolated-vm needs build tools)",
             purpose="JS deobfuscation: flattens obfuscator.io string-array/rotator and bundles",
+            retry="webcrack",
         ))
     except Exception:  # noqa: BLE001
         pass
@@ -590,6 +600,7 @@ def run_checks() -> dict[str, Any]:
             remedy="" if bp["available"] else
                    "run scripts/setup_portable_python.py (PowerShell Core + box-ps)",
             purpose="PowerShell emulation: commands, downloads and files the script would produce",
+            retry="boxps",
         ))
     except Exception:  # noqa: BLE001
         pass
@@ -608,6 +619,7 @@ def run_checks() -> dict[str, Any]:
                    "run scripts/setup_portable_python.py (built from source with CMake); "
                    "without it .pyc is disassembled + string-mined, not decompiled",
             purpose="Decompiles .pyc back to Python source (loose .pyc and unpacked PyInstaller)",
+            retry="pycdc",
         ))
     except Exception:  # noqa: BLE001
         pass
@@ -630,17 +642,18 @@ def run_checks() -> dict[str, Any]:
                    "run scripts/setup_portable_python.py (downloads cfr.jar); needs a JVM on PATH/JAVA_HOME; "
                    "without it .class is analysed from the constant pool, not decompiled",
             purpose="Decompiles .class back to Java source (jar/war and loose classes)",
+            retry="cfr" if not cfr else "",
         ))
     except Exception:  # noqa: BLE001
         pass
 
     # Mandiant FLOSS / capa (standalone binaries) — optional; PE triage reports
     # them as not provisioned in the Binary tab when absent.
-    for _name, _getter, _purpose in (
+    for _name, _getter, _purpose, _retry in (
         ("FLOSS (PE obfuscated strings)", "floss_executable",
-         "Decodes obfuscated / stack / tight strings of PE files (mined for IOCs)"),
+         "Decodes obfuscated / stack / tight strings of PE files (mined for IOCs)", "floss"),
         ("capa (PE capabilities)", "capa_executable",
-         "Identifies PE capabilities with ATT&CK / MBC mapping (embedded rules)"),
+         "Identifies PE capabilities with ATT&CK / MBC mapping (embedded rules)", "capa"),
     ):
         try:
             from .config import settings as _sm
@@ -655,6 +668,7 @@ def run_checks() -> dict[str, Any]:
                        "SHA-256-verified release), or point DOCUTRACEX_FLOSS / DOCUTRACEX_CAPA "
                        "at an existing floss.exe / capa.exe (e.g. FLARE-VM's)",
                 purpose=_purpose,
+                retry=_retry,
             ))
         except Exception:  # noqa: BLE001
             pass
@@ -668,8 +682,29 @@ def run_checks() -> dict[str, Any]:
             category="External scripts", name="oledump plugins",
             status="ok" if present == len(PLUGINS) else "warn",
             detail=f"{present}/{len(PLUGINS)} plugins in tools/didier/",
-            remedy="" if present == len(PLUGINS) else "restart the app to download them",
+            remedy="" if present == len(PLUGINS) else "press Retry, or restart the app to download them",
             purpose="BIFF/XLM records, VBA summary/DCO/routines, HTTP heuristics",
+            retry="didier",
+        ))
+    except Exception:  # noqa: BLE001
+        pass
+
+    # EMBER2024 models (Machine Learning tab) — optional.
+    try:
+        from .ml.ember_ml import MODEL_TYPES, models_dir
+        md = models_dir()
+        have = [t for t in MODEL_TYPES if (md / f"EMBER2024_{t}.model").is_file()]
+        fam = (md / "EMBER2024_family.model").is_file()
+        full = len(have) == len(MODEL_TYPES) and fam
+        checks.append(Check(
+            category="Machine learning",
+            name="EMBER2024 models",
+            status="ok" if full else "warn",
+            detail=f"{len(have)}/{len(MODEL_TYPES)} detection models in tools/ember/"
+                   + ("" if fam else " · family model missing (no family hints)"),
+            remedy="" if full else "run scripts/setup_portable_python.py",
+            purpose="Malware score of PE / .NET / PDF / ELF / APK objects (Machine Learning tab)",
+            retry="ember",
         ))
     except Exception:  # noqa: BLE001
         pass

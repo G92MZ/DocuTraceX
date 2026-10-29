@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import Body, FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -69,6 +69,21 @@ def create_app() -> FastAPI:
     @app.get("/api/diagnostics", response_class=JSONResponse)
     async def diagnostics() -> dict:
         return {"version": __version__, **run_checks()}
+
+    @app.get("/api/diagnostics/retry", response_class=JSONResponse)
+    async def diagnostics_retry_status() -> dict:
+        from . import diag_retry
+        return diag_retry.status()
+
+    @app.post("/api/diagnostics/retry", response_class=JSONResponse)
+    async def diagnostics_retry(payload: dict = Body(...)):
+        from . import diag_retry
+        try:
+            return diag_retry.start(str(payload.get("component") or ""))
+        except ValueError as exc:
+            return JSONResponse(status_code=400, content={"error": str(exc)})
+        except RuntimeError as exc:
+            return JSONResponse(status_code=409, content={"error": str(exc)})
 
     @app.get("/api/tasks", response_class=JSONResponse)
     async def tasks() -> dict:
