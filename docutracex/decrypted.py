@@ -317,6 +317,24 @@ def _scripty(text: str) -> bool:
     return len(text) >= MIN_TEXT and sniff_ext(text) != ".txt"
 
 
+# Script extensions: a short file written with one of them is still code
+# ("start x.exe" in a .bat) and is kept whatever its size.
+_CODE_EXTS = {".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".hta", ".bat", ".cmd", ".py", ".sct", ".wsc"}
+
+
+def worth_text_child(text: str, ext: str | None = None) -> bool:
+    """A decoded / dropped TEXT stage deserves a nested child unless it is a
+    few bytes of non-code (a marker file, "ok", a counter): those only clutter
+    the tree. Code — by its extension or by its content — is always kept, and
+    binary drops are judged by ``classify`` (magic / size) instead."""
+    t = (text or "").strip()
+    if not t:
+        return False
+    if len(t) >= MIN_TEXT or (ext or "").lower() in _CODE_EXTS:
+        return True
+    return sniff_ext(t) != ".txt"
+
+
 def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[str, Any]]:
     """Resolved stages found in a set of module results.
 
@@ -357,6 +375,8 @@ def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[s
             if isinstance(e, dict) and e.get("kind") == "drop" and (e.get("args") or [""])[0].strip():
                 name = str(e.get("name") or "")
                 ext = ("." + name.rsplit(".", 1)[-1].lower()) if "." in name.rsplit("\\", 1)[-1] else ""
+                if not worth_text_child(e["args"][0], ext):
+                    continue                      # a marker / counter file, not a stage
                 out.append({"how": "js-drop", "origin": f"JavaScript {loc}: wrote {name}",
                             "text": e["args"][0], "ext": ext if 1 < len(ext) <= 6 else None,
                             "recipe": ["js sandbox", f"wrote {name.rsplit(chr(92), 1)[-1]}"]})
@@ -375,7 +395,7 @@ def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[s
             loc = sc.get("location") or key
             for st in (sc.get("decoded_stages") or [])[:PER_SCRIPT]:
                 text, recipe = st.get("text") or "", list(st.get("recipe") or [])
-                if text.strip():
+                if worth_text_child(text, ext if len(text.strip()) >= 8 else None):
                     out.append({"how": f"{key}-stage", "origin": f"{key} {loc}: {' → '.join(recipe)}",
                                 "text": text, "ext": ext, "recipe": recipe})
 
