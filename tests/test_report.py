@@ -59,6 +59,8 @@ def test_report_contains_findings_iocs_and_evidence(client: TestClient, tmp_path
     assert "Confirmed findings" in body and "True positive" in body
     assert "Indicators of compromise" in body
     assert "WEBSERVICE" in body  # now confirmed, so it appears with its evidence
+    sha = client.get(f"/api/cases/{cid}").json()["original"]["hashes"]
+    assert f"<code>{sha['sha256']}</code>" in body and f"<code>{sha['md5']}</code>" in body
     assert (CasePaths(cid, cases_dir=tmp_path).reports_dir / "report.html").is_file()
 
 
