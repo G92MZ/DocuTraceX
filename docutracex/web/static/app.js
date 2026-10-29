@@ -3439,7 +3439,9 @@ function mlHelp(ml) {
       <li><b>Threshold</b> — the score that flags 1% of benign files of that type (EMBER2024 test set). <i>Above threshold</i> = the model
         would flag it; <i>below</i> = it would not. Thresholds were computed by DocuTraceX, not published by the authors.</li>
       <li><b>Why</b> — TreeSHAP contributions: how much each feature block (and the top 10 features) pushed the score towards
-        malicious (red) or benign (green). Hashed features show this file's own imports, exports, sections or Rich entries.</li>
+        malicious (red) or benign (green). Each top feature is said in plain words for this file ("not a DLL", "no debug
+        directory", "compiled 2019-07-22", "2 strings contain IPv4 addresses"), with the evidence (the strings that matched,
+        the import, the section) and a <b>Hex ⤷</b> button that opens the Hex tab right on it.</li>
       <li><b>What it looks like</b> — family, behaviour, packer, exploit, threat-group and file-property hints, only for objects above
         the threshold (those models were trained on malware only). Each family says <b>what kind of thing it is</b> (stealer, RAT,
         crypter, adware…; DocuTraceX's own one-line descriptions) with a Malpedia link. <b>Generic AV names</b> (e.g. <i>wacatac</i>)
@@ -3516,10 +3518,24 @@ function mlDetail(it, f, pct) {
   const bars = blocks.map(([k, v]) => `<div class="ml-bar"><span class="ml-bar-label">${escapeHtml(k)}</span>
       <span class="ml-bar-track"><span class="ml-bar-fill ${v > 0 ? "ml-pos" : "ml-neg"}" style="width:${(100 * Math.abs(v) / max).toFixed(1)}%"></span></span>
       <span class="mono">${v > 0 ? "+" : ""}${v.toFixed(2)}</span></div>`).join("");
-  const top = itable(["Feature", "Block", "Value", "Contribution", "In this file"],
-    (it.top_features || []).map((t) => [t.feature, t.block, Number.isInteger(t.value) ? t.value : t.value.toFixed(4),
-      `${t.contribution > 0 ? "+" : ""}${t.contribution.toFixed(3)} ${t.contribution > 0 ? "→ malicious" : "→ benign"}`,
-      (t.matches || []).join(", ")]));
+  const tf = it.top_features || [];
+  const contribCell = (t) => `<span class="mono ${t.contribution > 0 ? "bad-text" : "ok-text"}">${t.contribution > 0 ? "+" : ""}${t.contribution.toFixed(3)}</span>
+      <span class="hint-line">${t.contribution > 0 ? "→ malicious" : "→ benign"}</span>`;
+  // explained (results from v1.67.1 on): plain words, the data in this file, a jump to it
+  const top = tf.some((t) => t.plain)
+    ? `<table class="cases ml-top"><thead><tr><th>What it is in this file</th><th>Contribution</th><th>Evidence</th><th></th></tr></thead><tbody>${
+        tf.map((t) => `<tr>
+          <td>${escapeHtml(t.plain || t.feature)}<div class="hint-line mono" title="EMBER feature (block)">${escapeHtml(t.feature)} · ${escapeHtml(t.block)}</div></td>
+          <td>${contribCell(t)}</td>
+          <td class="mono">${(t.evidence || []).map((e) => `<div class="ml-ev">${escapeHtml(e)}</div>`).join("")}</td>
+          <td>${t.at && it.stored_path ? `<button class="btn btn-ghost btn-sm" data-hex="${escapeHtml(it.stored_path)}"
+            data-hex-offset="${Number(t.at.offset) || 0}" data-hex-len="${Number(t.at.length) || 0}"
+            title="${escapeHtml(t.at.label || "")} — open in the Hex tab at 0x${(Number(t.at.offset) || 0).toString(16)}">Hex ⤷</button>` : ""}</td>
+        </tr>`).join("")}</tbody></table>`
+    : itable(["Feature", "Block", "Value", "Contribution", "In this file"],
+        tf.map((t) => [t.feature, t.block, Number.isInteger(t.value) ? t.value : t.value.toFixed(4),
+          `${t.contribution > 0 ? "+" : ""}${t.contribution.toFixed(3)} ${t.contribution > 0 ? "→ malicious" : "→ benign"}`,
+          (t.matches || []).join(", ")])) + '<p class="hint-line">Re-run Machine Learning on this case to get each feature explained in plain words, with a jump to it in the Hex tab.</p>';
   return `${mark}${info}${mlLabels(it)}
     <h4>Why — contribution by feature block</h4>
     <p class="hint-line">LightGBM TreeSHAP: positive pushes towards malicious, negative towards benign (log-odds; base ${escapeHtml((it.bias || 0).toFixed(2))}).</p>
@@ -4580,6 +4596,7 @@ async function loadMlView(caseId) {
     wireInnerTabs(body);
     wireMarks(body, id, (fid, mark) => { findings.forEach((f) => { if (f.id === fid) f.mark = mark; }); });
     wireMlFamily(body, id);
+    wireFileActions(body, id);                       // "Hex ⤷" on the explained features
   } catch (err) {
     body.innerHTML = `<p class="bad-text">Could not load the case: ${escapeHtml(String(err.message || err))}</p>`;
   }
