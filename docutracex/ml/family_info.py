@@ -18,6 +18,12 @@ from urllib.parse import quote
 
 INFO_FILE = Path(__file__).with_name("family_info.json")
 MALPEDIA = "https://malpedia.caad.fkie.fraunhofer.de"
+# Why a family carries no description (shown instead of one).
+UNNAMED_ABOUT = ("The model points to one specific family it was trained on, but which one is not known: "
+                 "the authors never published the output names, and DocuTraceX could only name an output when "
+                 "a single family clearly dominated it on labelled EMBER2024 files.")
+UNKNOWN_ABOUT = ("A family name taken from antivirus labels; DocuTraceX does not describe it because what it "
+                 "is (stealer, RAT, adware…) could not be confirmed. Search Malpedia or your own sources.")
 TIE_GAP = 0.10          # top two closer than this → the model can't tell them apart
 LOW_PROB = 0.40         # top guess below this → low confidence
 
@@ -34,9 +40,10 @@ def info(name: str) -> dict[str, Any]:
     """``{type, generic?, about?, link, link_label}`` for one family name."""
     name = (name or "").strip()
     if not name or name.startswith("unnamed class"):
-        return {"type": "unknown", "unnamed": True,
-                "about": "Model output with no name: the reconstruction could not match it to a family."}
+        return {"type": "unknown", "unnamed": True, "about": UNNAMED_ABOUT}
     e = dict(_table().get(name.lower()) or {"type": "unknown"})
+    if e.get("type") == "unknown" and not e.get("about"):
+        e["about"] = UNKNOWN_ABOUT
     mid = e.pop("malpedia", None)
     if mid:
         e["link"], e["link_label"] = f"{MALPEDIA}/details/{mid}", "Malpedia"
