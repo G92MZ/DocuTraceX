@@ -142,3 +142,49 @@ def test_retry_runs_in_background_and_reports(monkeypatch: pytest.MonkeyPatch) -
     assert "[+] done" in st["log"]
     monkeypatch.undo()
     assert client.post("/api/diagnostics/retry", json={"component": "nope"}).status_code == 400
+
+
+# --- Provisioning fixes (Windows feedback) ---------------------------------------
+
+def _setup_module():
+    import importlib.util
+
+    from docutracex import diag_retry
+    spec = importlib.util.spec_from_file_location("setup_pp2", diag_retry.SETUP)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    return mod
+
+
+def test_setup_never_uses_a_user_site() -> None:
+    import os
+    _setup_module()
+    assert os.environ.get("PYTHONNOUSERSITE") == "1"
+
+
+def test_webcrack_build_puts_portable_node_first_on_path(tmp_path: Path) -> None:
+    import os
+    mod = _setup_module()
+    node = tmp_path / "node" / "node.exe"
+    node.parent.mkdir()
+    node.write_text("")
+    env = mod._webcrack_build_env(node)
+    assert env["PATH"].split(os.pathsep)[0] == str(node.parent.resolve())
+
+
+def test_failed_marker_is_retried_after_an_update(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    mod = _setup_module()
+    monkeypatch.setattr(mod, "TOOLS", tmp_path)
+    monkeypatch.setattr(mod, "_app_version", lambda: "1.0.0")
+    mod._mark_failed("webcrack")
+    assert mod._marked("webcrack")
+    monkeypatch.setattr(mod, "_app_version", lambda: "1.0.1")
+    assert not mod._marked("webcrack")                    # new version → try again
+    (tmp_path / ".pycdc_provision_failed").write_text("Provisioning failed.\n")
+    assert not mod._marked("pycdc")                       # legacy marker → try again
+
+
+def test_portable_children_ignore_the_user_site(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from docutracex import native
+    monkeypatch.setattr(settings, "portable_python", lambda: tmp_path / "python.exe")
+    assert native.subprocess_env()["PYTHONNOUSERSITE"] == "1"
