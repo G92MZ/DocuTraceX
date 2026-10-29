@@ -647,3 +647,13 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 /* Findings grouped by source (same look as the IOC groups) */
 .fgroup-sev { display: inline-flex; gap: 4px; flex-wrap: wrap; margin-left: 8px; vertical-align: middle; }
 .fgroup-marks { float: right; margin-top: 2px; }
+
+/* Hex: colour legend */
+.hex-legend { margin: 4px 0 2px; font-size: 12px; }
+.hex-legend > summary { cursor: pointer; color: var(--text-dim); }
+.hex-legend-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 6px 18px; margin: 6px 0 4px; }
+.hex-legend ul { list-style: none; margin: 4px 0 0; padding: 0; }
+.hex-legend li { display: flex; align-items: baseline; gap: 6px; margin: 2px 0; }
+.hex-legend li b { white-space: nowrap; }
+.hex-sw { display: inline-block; width: 14px; height: 12px; border-radius: 3px; flex: none; border: 1px solid var(--panel-border); position: relative; top: 2px; }
+.hex-sw-txt { display: inline-block; min-width: 14px; font-family: "Cascadia Code", Consolas, monospace; text-align: center; }
