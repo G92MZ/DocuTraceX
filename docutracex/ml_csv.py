@@ -83,8 +83,11 @@ def _row(it: dict[str, Any], marks: dict[str, dict[str, Any]]) -> dict[str, Any]
         "tags": " | ".join(tag_hints(it)),
         "family": " | ".join(family_hints(it)),
         "family_note": it.get("family_note", ""),
-        "top_features": " | ".join(f"{t.get('block')}: {t.get('feature')} ({float(t.get('contribution', 0)):+.3f})"
-                                   for t in (it.get("top_features") or [])[:10]),
+        "top_features": " | ".join(
+            (f"{t['plain']} [{t.get('feature')}]" if t.get("plain") else f"{t.get('block')}: {t.get('feature')}")
+            + f" ({float(t.get('contribution', 0)):+.3f})"
+            + (f" e.g. {t['evidence'][0][:60]}" if t.get("evidence") else "")
+            for t in (it.get("top_features") or [])[:10]),
         "feature_blocks": " | ".join(f"{k} ({v:+.3f})" for k, v in blocks),
         "mark": m.get("state", "unreviewed") if it.get("finding_id") else "",
         "mark_comment": m.get("comment", ""),

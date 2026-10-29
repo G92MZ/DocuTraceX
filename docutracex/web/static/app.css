@@ -662,3 +662,7 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 .ml-fam { margin: 2px 0 6px; }
 .ml-fam-about { margin: 2px 0 0 4px; }
 .ml-fam-note { margin: 6px 0; padding: 6px 10px; border-left: 3px solid #d29922; background: rgba(210, 153, 34, 0.08); border-radius: 4px; font-size: 12px; }
+
+/* ML: explained top features */
+.ml-top td { vertical-align: top; }
+.ml-ev { max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
