@@ -4725,6 +4725,98 @@ async function loadMlView(caseId) {
   }
 }
 
+// --- C2 / Beacons view ---------------------------------------------------------
+// Implant configurations found statically in every object of the case (Cobalt
+// Strike, Metasploit, Remcos, AsyncRAT / DcRAT / Quasar). Each one is already a
+// finding (high); its C2 values are in the IOCs tab, ready for Check.
+let _c2Case = null;
+
+function c2Value(v) {
+  if (Array.isArray(v)) return v.map((x) => `<div class="mono">${escapeHtml(String(x))}</div>`).join("");
+  return `<span class="mono">${escapeHtml(String(v))}</span>`;
+}
+
+function c2Help(c2) {
+  const fams = (c2 && c2.families) || ["Cobalt Strike", "Metasploit / Meterpreter", "Remcos", "AsyncRAT", "DcRAT", "QuasarRAT"];
+  return `<div class="ml-pane">
+    <p class="hint-line">Every object of the case — the original, everything extracted, nested children and decoded or decrypted
+      stages — is searched for implant configurations, <b>statically</b>: nothing is executed. Families: ${escapeHtml(fams.join(", "))}.</p>
+    <table class="cases"><thead><tr><th>Family</th><th>How the configuration is read</th></tr></thead><tbody>
+      <tr><td>Cobalt Strike</td><td>Didier Stevens' <span class="mono">1768.py</span>: the TLV config block (XOR 0x69 / 0x2e, or the 4-byte XOR of a PE beacon) in PE files, shellcode, stagers and memory dumps. Watermark = licence id.</td></tr>
+      <tr><td>Metasploit / Meterpreter</td><td>Stager shellcode recognised by its <span class="mono">block_api</span> prologue; IP / port / host / URI read from the connect-back code. Cobalt Strike stagers share the prologue.</td></tr>
+      <tr><td>Remcos</td><td>RC4-encrypted <span class="mono">SETTINGS</span> resource: C2 list (host:port:TLS), campaign, mutex.</td></tr>
+      <tr><td>AsyncRAT · DcRAT · QuasarRAT</td><td>.NET settings strings encrypted with AES-256 + HMAC (PBKDF2 key from another settings string); older Quasar with AES-128.</td></tr>
+    </tbody></table>
+    <p class="hint-line"><b>Limits:</b> a loader that only decrypts its payload in memory leaves no configuration in the file. If DocuTraceX
+      unpacks / decodes that layer, the stage is searched too; otherwise upload a <b>memory dump</b> of the process (EDR, procdump): it is
+      analysed statically as well.</p>
+  </div>`;
+}
+
+function paneC2(c2, findings, caseId) {
+  const byId = {};
+  (findings || []).forEach((f) => { byId[f.id] = f; });
+  const cfgs = c2.configs || [];
+  const head = `<p class="hint-line">${c2.objects_scanned || 0} object(s) searched · <b>${cfgs.length}</b> configuration(s) found.
+    Each configuration is a <b>finding</b> (Findings tab) and its C2 values are in the <b>IOCs</b> tab, ready to Check.
+    Mark it here; the report lists the configurations you mark.
+    ${caseId && (c2.configs || []).length ? ` <a class="btn btn-ghost btn-sm" href="/api/cases/${encodeURIComponent(caseId)}/c2.csv">Export CSV</a>` : ""}</p>`;
+  const cards = cfgs.map((c, i) => {
+    const f = byId[c.finding_id];
+    const s = c.summary || {};
+    const rows = Object.entries(s).map(([k, v]) => `<tr><th>${escapeHtml(k)}</th><td>${c2Value(v)}</td></tr>`).join("");
+    const all = Object.entries(c.fields || {}).map(([k, v]) => `<tr><th>${escapeHtml(k)}</th><td class="mono">${escapeHtml(String(v))}</td></tr>`).join("");
+    const conf = c.confidence === "high" ? "badge-bad" : "badge-warn";
+    return `<details class="disclose ml-item c2-card"${i < 3 ? " open" : ""}>
+      <summary>
+        <b>${escapeHtml(c.family)}</b> <span class="badge ${conf}">${escapeHtml(c.kind || "")}</span>
+        <span class="mono">${escapeHtml(c.object || "")}</span>
+        ${(s.C2 || s.Hosts || []).length ? `<span class="hint-line mono">${escapeHtml((s.C2 || s.Hosts).slice(0, 3).join(", "))}</span>` : ""}
+      </summary>
+      <div style="padding:8px 10px">
+        <div class="hint-line">Read with: ${escapeHtml(c.method || "")} · confidence ${escapeHtml(c.confidence || "")}
+          ${c.also_in ? ` · also in ${escapeHtml(c.also_in.join(", "))}` : ""}
+          ${c.stored_path ? fileActions(c.stored_path) : ""}</div>
+        ${c.note ? `<div class="hint-line">${escapeHtml(c.note)}</div>` : ""}
+        <table class="cases c2-kv"><tbody>${rows}</tbody></table>
+        ${all ? `<details class="disclose"><summary>Full configuration (${Object.keys(c.fields).length} fields)</summary>
+          <table class="cases c2-kv"><tbody>${all}</tbody></table></details>` : ""}
+        <div style="margin-top:6px">${f ? markControlsHtml(f) : '<span class="hint-line">re-analyse the case to mark it</span>'}</div>
+      </div>
+    </details>`;
+  }).join("");
+  const empty = `<p class="hint-line">No implant configuration found in this case.</p>`;
+  return innerTabs("c2", [
+    { id: "results", label: `Results (${cfgs.length})`, html: `<div class="ml-pane">${head}${cfgs.length ? cards : empty}</div>` },
+    { id: "help", label: "Help", html: c2Help(c2) },
+  ]);
+}
+
+async function loadC2View(caseId) {
+  const sel = document.getElementById("c2-case");
+  const body = document.getElementById("c2-body");
+  if (!sel || !body) return;
+  const id = await fillCaseSelect(sel, caseId || _c2Case || _openCaseId);
+  _c2Case = id;
+  if (!id) { body.innerHTML = '<p class="hint-line">Analyse a file first; implant configurations found in it show up here.</p>'; return; }
+  body.innerHTML = '<p class="hint-line">Loading…</p>';
+  try {
+    const d = await fetch(`/api/cases/${encodeURIComponent(id)}/components`).then((r) => r.json());
+    if (_c2Case !== id) return;
+    const c2 = (d.modules || {}).c2;
+    const findings = (d.findings || []).filter((f) => f.source === "c2");
+    body.innerHTML = c2 ? paneC2(c2, findings, id)
+      : innerTabs("c2", [
+          { id: "results", label: "Results", html: '<p class="hint-line">The C2 search did not run on this case (it predates it) — re-analyse it.</p>' },
+          { id: "help", label: "Help", html: c2Help(null) }]);
+    wireInnerTabs(body);
+    wireMarks(body, id, (fid, mark) => { findings.forEach((f) => { if (f.id === fid) f.mark = mark; }); });
+    wireFileActions(body, id);
+  } catch (err) {
+    body.innerHTML = `<p class="bad-text">Could not load the case: ${escapeHtml(String(err.message || err))}</p>`;
+  }
+}
+
 async function loadHexView() {
   const sel = document.getElementById("hex-case");
   if (!sel) return;
@@ -4751,6 +4843,8 @@ function renderHexView() {
 function setupMlHex() {
   const ms = document.getElementById("ml-case");
   if (ms) ms.addEventListener("change", () => { _mlCase = ms.value; loadMlView(ms.value); });
+  const cs = document.getElementById("c2-case");
+  if (cs) cs.addEventListener("change", () => { _c2Case = cs.value; loadC2View(cs.value); });
   const hs = document.getElementById("hex-case");
   if (hs) hs.addEventListener("change", () => { hexResetCase(hs.value); renderHexView(); });
 }
@@ -4770,6 +4864,7 @@ function setupTabs() {
       if (target === "reports") loadReports(_openCaseId);
       if (target === "yara") loadYara();
       if (target === "ml") loadMlView();
+      if (target === "c2") loadC2View();
       if (target === "hex") loadHexView();
       if (target === "settings") loadSettings();
       if (target === "ai") loadAiCases();

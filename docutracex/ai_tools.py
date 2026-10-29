@@ -241,7 +241,7 @@ SCHEMAS = [
                                           **_CASE, "type": {"type": "string", "enum": ["url", "domain", "ipv4", "ipv6", "hash_like"]},
                                           "contains": {"type": "string"}, "limit": {"type": "integer"}}, "required": ["case_id"]}}},
     {"type": "function", "function": {"name": "get_module",
-                                      "description": "Raw JSON result of one module (ooxml, word, excel, oletools, vbatools, vipermonkey, officerules, pdf, pdftools, email, mailrules, javascript, rtf, nested, netcheck, yara…), trimmed.",
+                                      "description": "Raw JSON result of one module (ooxml, word, excel, oletools, vbatools, vipermonkey, officerules, pdf, pdftools, email, mailrules, javascript, rtf, nested, netcheck, yara, ml, c2…), trimmed.",
                                       "parameters": {"type": "object", "properties": {
                                           **_CASE, "module": {"type": "string"}, "max_chars": {"type": "integer"}},
                                           "required": ["case_id", "module"]}}},

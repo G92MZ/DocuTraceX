@@ -186,6 +186,29 @@ Indicators that must **not** appear in the IOCs tab:
 - **`sample_marker_drop.js`**: the dropper writes a 1-byte lock file and a real `upd.ps1`. Only the `.ps1` becomes a nested child. Tiny non-code drops and stages (markers, counters, "ok") are not stages; short code (a `.bat` with `start x.exe`) still is.
 - **Any PE / ELF analysed with capa** — capability and ATT&CK names ("query or enumerate registry key", "Query Registry") are not commands.
 
+## C2 / Beacons tab
+
+The **`c2/`** folder of `samples.zip` has one sample per implant family the tab
+reads. They are inert: the beacon and the stager are a configuration block and
+code *fragments* inside an `MZ` + text stub (nothing that can run), and the RATs
+are binkit stubs whose only code is `ret`. Their configurations use the real
+formats, so the extractors read them exactly as they would a real sample. Built
+by `c2_samples()` in `scripts/make_samples.py`; the C2 values are the
+campaign's (`cdn-update.example.net`, `203.0.113.47`).
+
+| Sample | Family | How it is stored | What comes out |
+| --- | --- | --- | --- |
+| `c2/sample_cs_beacon.bin` | Cobalt Strike | TLV config XOR 0x2e (4.x), as in a memory dump | HTTPS beacon to `cdn-update.example.net:443`, GET/POST URIs, user agent, 45 s / 25 % sleep, pipe `\\.\pipe\factura_sync_%x`, spawn-to, watermark `20260187` |
+| `c2/sample_msf_https_stager.bin` | Metasploit / Meterpreter | `block_api` prologue + reverse_https shapes | stager to `cdn-update.example.net:443`, URI `/inv/Fct2026_0187` |
+| `c2/sample_remcos.exe` | Remcos | RC4-encrypted `SETTINGS` RCDATA resource | C2 `cdn-update.example.net:2404` (TLS) and `203.0.113.47:2404`, campaign `Factura-2026`, mutex `Rmc-F4C7A1` |
+| `c2/sample_asyncrat.exe` | AsyncRAT | .NET settings, AES-256 + HMAC, PBKDF2 key | hosts `cdn-update.example.net`, `203.0.113.47`, ports 6606/7707/8808, version 0.5.8, mutex `AsyncMutex_6SI8OkPnk` |
+| `c2/sample_quasar.exe` | QuasarRAT | .NET settings (Quasar 1.4 scheme) | `cdn-update.example.net:4782`, `203.0.113.47:4782`, version 1.4.1, mutex `QSR_MUTEX_k3Hd9xA1Lm` |
+
+Analyse any of them (or the whole `c2/` folder zipped) and open **C2 / Beacons**:
+each configuration is already a finding, its C2 values are in **IOCs** (ready to
+Check), and once you mark it, it appears in the report's *C2 / implant
+configurations* section and in **Export CSV**.
+
 ## Machine Learning tab (EMBER2024)
 
 The **`ml/`** folder of `samples.zip` has at least **three samples per EMBER2024
