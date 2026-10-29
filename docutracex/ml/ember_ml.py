@@ -263,6 +263,14 @@ def _labels(extra: dict[str, Any], X: Any, labels: dict[str, Any]) -> dict[str, 
 
 # --- classification (child process) -----------------------------------------------
 
+def _score_ref(model: str, score: float) -> dict[str, Any] | None:
+    try:
+        from .dist import score_ref
+        return score_ref(model, score)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _classify(paths: list[str], mdir: str) -> list[dict[str, Any]]:
     try:
         import lightgbm as lgb
@@ -326,6 +334,13 @@ def _classify(paths: list[str], mdir: str) -> list[dict[str, Any]]:
                 blk, nm = names[i]
                 top.append({"block": blk, "feature": nm, "value": float(vec[i]),
                             "contribution": float(contrib[i]), "matches": hashed.get(nm, [])})
+                try:                                       # how typical among EMBER2024 test files
+                    from .dist import feature_ref
+                    ref = feature_ref(f"EMBER2024_{model}", int(i), float(vec[i]), nm)
+                    if ref:
+                        top[-1]["ref"] = ref
+                except Exception:  # noqa: BLE001
+                    pass
             try:                                           # plain words + where it is in the file
                 from .explain import explain_top
                 explain_top(top, data, raw)
@@ -340,6 +355,7 @@ def _classify(paths: list[str], mdir: str) -> list[dict[str, Any]]:
                         "bias": float(contrib[-1]),
                         "blocks": dict(sorted(blocks.items(), key=lambda kv: -abs(kv[1]))),
                         "top_features": top, "feature_version": ef.FEATURE_VERSION,
+                        "score_ref": _score_ref(f"EMBER2024_{model}", score),
                         # tag/family models were trained on malware only: shown only when
                         # the detector puts the object above its threshold
                         "labels": (_labels(extra, X, label_maps)
