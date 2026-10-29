@@ -3349,7 +3349,8 @@ function paneMl(ml, findings, caseId) {
         <span class="hint-line">${escapeHtml(it.format || it.file_type || "")}</span>
         ${it.status === "ok" ? `<span class="mono"><b>${escapeHtml(it.score.toFixed(4))}</b></span>` : ""}
         ${verdict} ${mk}
-        ${(((it.labels || {}).family || [])[0] || {}).confidence === "high" ? `<span class="hint-line">family? ${escapeHtml(it.labels.family[0].name)}</span>` : ""}
+        ${(((it.labels || {}).family || [])[0] || {}).confidence === "high" ? (() => { const f0 = it.labels.family[0];
+          return `<span class="hint-line">family? ${escapeHtml(f0.name)}${f0.generic ? " (generic AV name)" : (f0.type && f0.type !== "unknown" ? ` (${escapeHtml(f0.type)})` : "")}${it.family_note ? " ⚠" : ""}</span>`; })() : ""}
       </summary>
       <div style="padding:8px 10px">${mlDetail(it, f, pct)}</div>
     </details>`;
@@ -3440,7 +3441,11 @@ function mlHelp(ml) {
       <li><b>Why</b> — TreeSHAP contributions: how much each feature block (and the top 10 features) pushed the score towards
         malicious (red) or benign (green). Hashed features show this file's own imports, exports, sections or Rich entries.</li>
       <li><b>What it looks like</b> — family, behaviour, packer, exploit, threat-group and file-property hints, only for objects above
-        the threshold (those models were trained on malware only).</li>
+        the threshold (those models were trained on malware only). Each family says <b>what kind of thing it is</b> (stealer, RAT,
+        crypter, adware…; DocuTraceX's own one-line descriptions) with a Malpedia link. <b>Generic AV names</b> (e.g. <i>wacatac</i>)
+        are flagged — they name a detection, not a family — and a ⚠ note appears when the top two guesses are within 10 points
+        or the top one is below 40%: then the family is a hint at most. The model only knows the families it was trained on;
+        a new family shows up as its closest known one, usually with low confidence.</li>
     </ul>
     <h4>Measured results (EMBER2024 test set, newer than the training data)</h4>
     ${models}
@@ -3476,12 +3481,22 @@ function mlLabels(it) {
   const kinds = Object.keys(_ML_KIND).filter((k) => (lab[k] || []).length);
   if (!kinds.length) return "";
   const chip = (x) => `<span class="badge ${x.confidence === "high" ? "badge-ok" : "badge-muted"}" title="model output ${(100 * x.prob).toFixed(1)}%${x.precision != null ? ` · precision on EMBER2024 malware ${(100 * x.precision).toFixed(0)}%` : ""} · ${escapeHtml(x.confidence)} confidence">${escapeHtml(x.name)} ${(100 * x.prob).toFixed(0)}%</span>`;
-  const rows = kinds.map((k) => `<div><span class="hint-line">${_ML_KIND[k]}</span></div><div>${lab[k].map(chip).join(" ")}</div>`).join("");
+  // families: each guess with what it is (own descriptions), generic AV names flagged, a Malpedia link
+  const famRow = (x) => {
+    const kind = x.generic ? "generic AV name" : (x.type || "unknown");
+    const cls = x.generic || x.unnamed || kind === "unknown" ? "badge-muted" : "badge-warn";
+    const link = x.link ? ` <a class="hint-line" href="${escapeHtml(x.link)}" target="_blank" rel="noopener noreferrer">${escapeHtml(x.link_label || "Malpedia")} ↗</a>` : "";
+    return `<div class="ml-fam">${chip(x)} <span class="badge ${cls}">${escapeHtml(kind)}</span>${link}
+      ${x.about ? `<div class="hint-line ml-fam-about">${escapeHtml(x.about)}</div>` : ""}</div>`;
+  };
+  const rows = kinds.map((k) => `<div><span class="hint-line">${_ML_KIND[k]}</span></div><div>${
+    k === "family" ? lab[k].map(famRow).join("") : lab[k].map(chip).join(" ")}</div>`).join("");
   return `<h4>What it looks like</h4>
     <p class="hint-line">EMBER2024 family and tag models. Their output names were <b>reconstructed by DocuTraceX</b> (the authors did not publish them)
       by matching each output with labelled EMBER2024 files. A tag is shown only above its own threshold — green: calibrated for ≥80% precision on
       EMBER2024 malware with ≤0.2% firing on benign files; grey: ≥50% precision (tags less reliable than that were dropped). Only for objects above the detection threshold
       (these models were trained on malware). Hints for triage, not attribution.</p>
+    ${it.family_note ? `<p class="ml-fam-note">⚠ ${escapeHtml(it.family_note)} — treat the family as a hint, not an attribution.</p>` : ""}
     <div class="kv">${rows}</div>`;
 }
 
