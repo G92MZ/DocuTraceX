@@ -201,6 +201,7 @@ def build_report_html(analysis_id: str, cases_dir=None, all_iocs: bool = False) 
                if read_json(paths.subresult(m)) is not None}
 
     orig = manifest.get("original", {})
+    hashes = orig.get("hashes") or {}   # the manifest keeps them under original.hashes
     fmt = manifest.get("format", {})
     disc = fmt.get("discrepancy", {})
     det = fmt.get("detected", {})
@@ -220,7 +221,9 @@ def build_report_html(analysis_id: str, cases_dir=None, all_iocs: bool = False) 
         ("Detected type", f"{_e(det.get('mime'))} <span class='muted'>{_e(det.get('name'))}</span>"),
         ("Type match", _e(disc.get("status"))),
         ("Size", _e(orig.get("size_bytes")) + " bytes"),
-        ("SHA-256", f"<code>{_e(orig.get('sha256'))}</code>"),
+        ("MD5", f"<code>{_e(hashes.get('md5'))}</code>"),
+        ("SHA-1", f"<code>{_e(hashes.get('sha1'))}</code>"),
+        ("SHA-256", f"<code>{_e(hashes.get('sha256') or orig.get('sha256'))}</code>"),
         ("State", _e(manifest.get("state"))),
         ("Modules run", _e(", ".join(summary.get("modules_run", [])))),
     ])
