@@ -3469,8 +3469,11 @@ function mlHelp(ml) {
     <p>The authors published these models without the list of names for their outputs. DocuTraceX <b>reconstructed</b> it on 67,806
       labelled EMBER2024 files: each output was matched with the tag or family it responds to, and each tag got its own threshold.
       <b>High</b> (green): ≥80% precision on malware with ≤0.2% firing on benign files. <b>Medium</b> (grey): ≥50% precision.
-      Less reliable outputs are not shown. Families: an output is named when most files of that family land on it
-      (agreement) and most files landing on it are that family (purity). Rare names are less reliable than measured.</p>
+      Less reliable outputs are not shown. Families: on 175,059 labelled EMBER2024 files (test and train), an output is
+      named after the family whose files raise it most <i>specifically</i> — compared with how much all other files raise it —
+      when that family and that output are each other's best match; confidence comes from how often files with that output
+      among the model's top 3 really are that family. 2,462 of the 2,538 outputs have a name; the rest show as
+      <i>unnamed class #N</i>. Rare names are less reliable than measured.</p>
     ${labels}
     <p class="hint-line">Family model: ${ml.family_model ? "installed" : "not installed — use <b>Download family model</b> in Results (459 MB)"}.</p>
     <h4>Limits</h4>
