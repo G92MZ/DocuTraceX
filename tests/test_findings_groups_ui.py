@@ -89,6 +89,14 @@ def test_findings_grouped_by_source(tmp_path: Path, monkeypatch: pytest.MonkeyPa
             page.wait_for_selector("[data-fg-group]")
             assert page.eval_on_selector('[data-fg-group="pdf"]', "e => e.open") is False
             assert page.eval_on_selector('[data-fg-group="pe"]', "e => e.open") is True
+            # 'By file' lasts until reload; a reload (even with an old saved choice) opens By source again
+            page.click('[data-fview="tree"]')
+            page.wait_for_selector(".nested-tree")
+            page.evaluate("() => { try { localStorage.setItem('dtx.findingsView', 'tree'); } catch (e) {} }")
+            page.reload()
+            page.evaluate("(id) => openComponents(id, 'findings')", cid)
+            page.wait_for_selector("[data-fg-group]")
+            assert page.eval_on_selector('[data-fview="source"]', "e => e.classList.contains('is-on')")
             assert not errors, errors
             browser.close()
     finally:
