@@ -20,7 +20,8 @@ from .storage import CasePaths, read_json
 _BOM = "﻿"
 COLUMNS = ["object", "stored_path", "sha256", "recipe", "status", "file_type", "format", "model",
            "score", "threshold", "calibrated", "verdict", "test_detection_at_threshold",
-           "evasive_detection_at_threshold", "tags", "family", "family_note", "top_features", "feature_blocks",
+           "evasive_detection_at_threshold", "test_malware_at_or_above", "test_goodware_at_or_above",
+           "tags", "family", "family_note", "top_features", "feature_blocks",
            "mark", "mark_comment", "detail"]
 
 
@@ -80,6 +81,8 @@ def _row(it: dict[str, Any], marks: dict[str, dict[str, Any]]) -> dict[str, Any]
         "verdict": it.get("verdict", ""),
         "test_detection_at_threshold": _num(met.get("tpr_at_fpr_0.01"), "{:.4f}"),
         "evasive_detection_at_threshold": _num(met.get("challenge_detected_at_1pct_fpr"), "{:.4f}"),
+        "test_malware_at_or_above": _num((it.get("score_ref") or {}).get("malicious_ge"), "{:.4f}"),
+        "test_goodware_at_or_above": _num((it.get("score_ref") or {}).get("benign_ge"), "{:.4f}"),
         "tags": " | ".join(tag_hints(it)),
         "family": " | ".join(family_hints(it)),
         "family_note": it.get("family_note", ""),

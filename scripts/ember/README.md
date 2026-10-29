@@ -61,3 +61,17 @@ whose name another output already carries (with stronger evidence) is left
 unnamed. Result: **2,462 of 2,538 outputs named** (2,208 high, 254 medium);
 v4 reproduced 827 of the 849 v3 names it could compare (97%).
 `docutracex/ml/family_info.json` describes what each named family is.
+
+### Reference distributions (`ember_dist.json`)
+
+9. `dist.py TYPE` — up to 20,000 malicious + 20,000 benign files sampled evenly
+   over each type's test set, scored by that type's model: 101 score quantiles
+   per class, and per feature column the share of files where it is non-zero
+   plus quantiles of |value| (p1 … p99) per class.
+
+The Machine Learning tab uses it to say how a file's score compares ("a score
+of 0.9993 or more: 59% of test malware, 0.0% of test goodware", with the curve
+of both classes) and, for each top feature, how many files of each class have
+it or which percentile its value reaches. Check: at each model's 1%-FPR
+threshold the distributions give 0.9–1.1% of goodware and the published
+detection rate within 0.1 point.
