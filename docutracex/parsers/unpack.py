@@ -107,30 +107,73 @@ def _first_file(env: str, *cands: Path) -> Path | None:
     return None
 
 
+# Where an analyst box (FLARE-VM via Chocolatey, REMnux, a package manager) already has these tools.
+# Order of lookup for every tool: its DOCUTRACEX_* variable → tools/<tool>/ → the PATH → these folders.
+def _install_dirs() -> list[Path]:
+    out: list[Path] = []
+    for v in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
+        if os.environ.get(v):
+            out.append(Path(os.environ[v]))
+    if os.environ.get("ChocolateyInstall"):
+        out.append(Path(os.environ["ChocolateyInstall"]) / "bin")
+    out += [Path("C:/ProgramData/chocolatey/bin"), Path("C:/Tools"), Path("/usr/bin"), Path("/usr/local/bin"),
+            Path("/opt/homebrew/bin")]
+    return out
+
+
+def _system_tool(names: tuple[str, ...], subdirs: tuple[str, ...] = ()) -> Path | None:
+    """An installed copy of a tool: on the PATH, else ``<install dir>/<subdir>/<name>``."""
+    for n in names:
+        hit = shutil.which(n)
+        if hit:
+            return Path(hit)
+    for base in _install_dirs():
+        for sub in ("", *subdirs):
+            for n in names:
+                p = base / sub / n if sub else base / n
+                if p.is_file():
+                    return p
+    return None
+
+
+def _tool(env: str, bundled: tuple[Path, ...], names: tuple[str, ...], subdirs: tuple[str, ...] = ()) -> Path | None:
+    v = os.environ.get(env)
+    if v and Path(v).is_file():
+        return Path(v)
+    for c in bundled:
+        if c.is_file():
+            return c
+    return _system_tool(names, subdirs)
+
+
 def die_exe() -> Path | None:
     t = _tools_dir() / "die"
-    return _first_file("DOCUTRACEX_DIEC", t / "diec.exe", t / "die" / "diec.exe", t / "diec")
+    return _tool("DOCUTRACEX_DIEC", (t / "diec.exe", t / "die" / "diec.exe", t / "diec"),
+                 ("diec.exe", "diec"), ("die", "Detect It Easy", "DIE"))
 
 
 def upx_exe() -> Path | None:
     t = _tools_dir() / "upx"
-    return _first_file("DOCUTRACEX_UPX", t / "upx.exe", t / "upx")
+    return _tool("DOCUTRACEX_UPX", (t / "upx.exe", t / "upx"), ("upx.exe", "upx"), ("upx", "UPX"))
 
 
 def innoextract_exe() -> Path | None:
     t = _tools_dir() / "innoextract"
-    return _first_file("DOCUTRACEX_INNOEXTRACT", t / "innoextract.exe", t / "innoextract")
+    return _tool("DOCUTRACEX_INNOEXTRACT", (t / "innoextract.exe", t / "innoextract"),
+                 ("innoextract.exe", "innoextract"), ("innoextract",))
 
 
 def sevenzip_exe() -> Path | None:
+    """7-Zip's CLI. Needed for SFX archives and RAR (FLARE-VM: C:\\Program Files\\7-Zip\\7z.exe)."""
     t = _tools_dir() / "7zip"
-    return _first_file("DOCUTRACEX_7Z", t / "7z.exe", t / "7z", t / "7zz")
+    return _tool("DOCUTRACEX_7Z", (t / "7z.exe", t / "7z", t / "7zz"),
+                 ("7z.exe", "7z", "7zz", "7za"), ("7-Zip",))
 
 
 def nuitka_exe() -> Path | None:
     t = _tools_dir() / "nuitka-extractor"
-    return _first_file("DOCUTRACEX_NUITKA_EXTRACTOR", t / "nuitka-extractor.exe",
-                       t / "nuitka-extractor")
+    return _tool("DOCUTRACEX_NUITKA_EXTRACTOR", (t / "nuitka-extractor.exe", t / "nuitka-extractor"),
+                 ("nuitka-extractor.exe", "nuitka-extractor"), ("nuitka-extractor",))
 
 
 def _portable() -> Path | None:
@@ -252,7 +295,7 @@ def run_die(path: Path) -> dict[str, Any]:
     """Detect It Easy (diec --json). Returns {status, detects:[{type,name,version,string}]}."""
     exe = die_exe()
     if exe is None:
-        return {"status": "not_provisioned", "detail": "Detect It Easy not provisioned (tools/die/)"}
+        return {"status": "not_provisioned", "detail": "Detect It Easy not found (tools/die/, DOCUTRACEX_DIEC, PATH)"}
     # Run from DIE's folder so it finds its db/ and Qt DLLs.
     r = _run([str(exe), "--json", str(path)], DIE_TIMEOUT, cwd=exe.parent)
     if r.get("timed_out"):
@@ -369,7 +412,7 @@ def _upx_repair(src: Path, dst: Path) -> bool:
 def _unpack_upx(path: Path, out: Path) -> dict[str, Any]:
     exe = upx_exe()
     if exe is None:
-        return {"status": "not_provisioned", "tool": "upx", "detail": "UPX not provisioned (tools/upx/)"}
+        return {"status": "not_provisioned", "tool": "upx", "detail": "UPX not found (tools/upx/, DOCUTRACEX_UPX, PATH) — e.g. choco install upx"}
     out.mkdir(parents=True, exist_ok=True)
     target = out / (path.stem + ".unpacked" + (path.suffix or ".exe"))
     r = _run([str(exe), "-d", "-q", "-o", str(target), str(path)], UNPACK_TIMEOUT)
@@ -410,7 +453,7 @@ def _unpack_inno(path: Path, out: Path) -> dict[str, Any]:
     exe = innoextract_exe()
     if exe is None:
         return {"status": "not_provisioned", "tool": "innoextract",
-                "detail": "innoextract not provisioned (tools/innoextract/)"}
+                "detail": "innoextract not found (tools/innoextract/, DOCUTRACEX_INNOEXTRACT, PATH)"}
     out.mkdir(parents=True, exist_ok=True)
     r = _run([str(exe), "--extract", "--quiet", "--output-dir", str(out), str(path)], UNPACK_TIMEOUT)
     rec = {"tool": "innoextract", "duration_s": r["duration_s"]}
@@ -425,7 +468,7 @@ def _unpack_inno(path: Path, out: Path) -> dict[str, Any]:
 def _unpack_7z(path: Path, out: Path, label: str) -> dict[str, Any]:
     exe = sevenzip_exe()
     if exe is None:
-        return {"status": "not_provisioned", "tool": "7-Zip", "detail": "7-Zip not provisioned (tools/7zip/)"}
+        return {"status": "not_provisioned", "tool": "7-Zip", "detail": "7-Zip not found (tools/7zip/, DOCUTRACEX_7Z, PATH, Program Files)"}
     out.mkdir(parents=True, exist_ok=True)
     # -p- : never prompt for a password (non-interactive); -y: assume yes.
     r = _run([str(exe), "x", "-y", "-p-", f"-o{out}", str(path)], UNPACK_TIMEOUT)
@@ -442,7 +485,7 @@ def _unpack_nuitka(path: Path, out: Path) -> dict[str, Any]:
     exe = nuitka_exe()
     if exe is None:
         return {"status": "not_provisioned", "tool": "nuitka-extractor",
-                "detail": "nuitka-extractor not provisioned (tools/nuitka-extractor/)"}
+                "detail": "nuitka-extractor not found (tools/nuitka-extractor/, DOCUTRACEX_NUITKA_EXTRACTOR, PATH)"}
     # It writes next to its input ("<file>_extracted"): work on a copy (and
     # without the Authenticode blob, which it does not support).
     out.mkdir(parents=True, exist_ok=True)

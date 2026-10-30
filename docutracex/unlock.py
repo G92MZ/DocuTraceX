@@ -14,6 +14,9 @@ analysis. The original stays untouched; it keeps only the encryption findings.
   the empty password but its strings/streams are still encrypted on disk.
 * ZIP (ZipCrypto and WinZip AES: pyzipper, stdlib fallback) and 7z (py7zr):
   entries extracted with bounds against archive bombs.
+* RAR (RAR4 and RAR5, also with encrypted headers): the 7-Zip command line (``7z``),
+  the same bounds; 7-Zip is looked up in tools/7zip/, ``DOCUTRACEX_7Z``, the PATH
+  and its usual install folders (see ``parsers.unpack.sevenzip_exe``).
 
 Nothing is brute-forced: only the candidates above are tried.
 """
@@ -21,6 +24,7 @@ Nothing is brute-forced: only the candidates above are tried.
 from __future__ import annotations
 
 import hashlib
+import re
 import shutil
 import tempfile
 import zipfile
@@ -42,6 +46,13 @@ MAX_FILE = 100 * 1024 * 1024
 MAX_TOTAL = 250 * 1024 * 1024
 
 _7Z_MAGIC = b"7z\xbc\xaf\x27\x1c"
+# RAR 1.5-4.x and RAR 5.0 signatures.
+RAR_MAGICS = (b"Rar!\x1a\x07\x00", b"Rar!\x1a\x07\x01\x00")
+RAR_TIMEOUT = 300
+
+
+def is_rar(head: bytes) -> bool:
+    return head.startswith(RAR_MAGICS)
 
 
 # --- candidates -------------------------------------------------------------
@@ -64,7 +75,7 @@ def candidates(user: str | None = None, harvested: list[dict[str, Any]] | None =
         add(user, "user")
     for h in harvested or []:
         add(h.get("password"), "email", h.get("context", ""))
-    archive = kind in ("zip", "7z", "archive")
+    archive = kind in ("zip", "7z", "rar", "archive")
     if not archive:
         add("", "empty")  # PDFs only: an "owner-only" PDF opens with it
     if archive:
@@ -90,7 +101,7 @@ def _sha256(p: Path) -> str:
 # --- detection --------------------------------------------------------------
 
 def detect(path: Path) -> dict[str, Any]:
-    """``{encrypted, kind, detail}`` — kind: office | pdf | zip | 7z | None."""
+    """``{encrypted, kind, detail}`` — kind: office | pdf | zip | 7z | rar | cab | tar | iso | None."""
     try:
         with path.open("rb") as fh:
             head = fh.read(1024)
@@ -109,6 +120,8 @@ def detect(path: Path) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001
             return {"encrypted": False, "kind": "pdf", "detail": f"pypdf: {exc}"}
         return {"encrypted": False, "kind": "pdf", "detail": ""}
+    if is_rar(head):
+        return _rar_detect(path, head)
     if head.startswith(_7Z_MAGIC):
         try:
             import py7zr
@@ -215,6 +228,10 @@ def _try_pdf(path: Path, pw: str, out: Path) -> bool:
     return out.is_file() and out.stat().st_size > 0
 
 
+ARCHIVE_LABEL = {"office": "Office document", "pdf": "PDF", "zip": "ZIP archive", "7z": "7z archive",
+                 "rar": "RAR archive"}
+
+
 def _finding(rule: str, severity: str, detail: str, location: str = "document") -> dict[str, Any]:
     return {"tool": "unlock", "rule": rule, "severity": severity, "detail": detail, "location": location}
 
@@ -222,7 +239,7 @@ def _finding(rule: str, severity: str, detail: str, location: str = "document") 
 def _decrypted_findings(kind: str, used: dict[str, str], name: str, location: str) -> list[dict[str, Any]]:
     """What the way it was unlocked says about the file."""
     src, pw = used["source"], used["password"]
-    what = {"office": "Office document", "pdf": "PDF", "zip": "ZIP archive", "7z": "7z archive"}[kind]
+    what = ARCHIVE_LABEL.get(kind, kind)
     if src == "default" and kind == "office":
         return [_finding("encrypted_default_password", "high",
                          f"{what} decrypts with the default password '{pw}' — opens without a prompt "
@@ -551,13 +568,120 @@ def _iso_extract(path: Path, out_dir: Path, pw: str | None) -> list[dict[str, An
     return entries
 
 
-_ARCHIVE_EXTRACTORS.update(zip=_zip_extract, **{"7z": _7z_extract},
+# --- RAR (7-Zip command line) ----------------------------------------------------
+
+class SevenZipMissing(ImportError):
+    """7-Zip is needed for RAR and was not found (shown as '<name> not installed')."""
+
+    def __init__(self) -> None:
+        super().__init__("7-Zip (needed for RAR)", name="7-Zip (needed for RAR)")
+
+
+def _sevenzip() -> Path:
+    from .parsers.unpack import sevenzip_exe
+    exe = sevenzip_exe()
+    if exe is None:
+        raise SevenZipMissing()
+    return exe
+
+
+def _7z_run(args: list[str], timeout: int = RAR_TIMEOUT) -> dict[str, Any]:
+    """Run 7z (bounded, killed with its process tree on timeout, never interactive)."""
+    from .proctools import run_bounded
+    return run_bounded([str(_sevenzip()), *args], timeout)
+
+
+def _pw_switch(pw: str | None) -> str:
+    # "-p-" never prompts; with a candidate, 7z fails fast on a wrong one. A list, not a
+    # shell string: the password is never parsed by a shell.
+    return "-p-" if pw is None else f"-p{pw}"
+
+
+def _slt_entries(text: str) -> list[dict[str, Any]]:
+    """Parse ``7z l -slt`` (technical listing): one block per entry after the '----------' line."""
+    body = text.split("\n----------", 1)[1] if "\n----------" in text else ""
+    entries: list[dict[str, Any]] = []
+    for block in re.split(r"\r?\n\r?\n", body):
+        kv = {}
+        for line in block.splitlines():
+            k, sep, v = line.partition(" = ")
+            if sep:
+                kv[k.strip()] = v.strip()
+        if "Path" not in kv:
+            continue
+        is_dir = kv.get("Folder") == "+" or "D" in kv.get("Attributes", "")[:1]
+        entries.append({"name": kv["Path"], "size": int(kv.get("Size") or 0), "dir": is_dir,
+                        "encrypted": kv.get("Encrypted") == "+"})
+    return entries
+
+
+def _rar_list(path: Path, pw: str | None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    r = _7z_run(["l", "-slt", "-y", _pw_switch(pw), "--", str(path)], timeout=120)
+    return r, _slt_entries(r.get("out") or "")
+
+
+def _rar_detect(path: Path, head: bytes) -> dict[str, Any]:
+    ver = "RAR5" if head.startswith(RAR_MAGICS[1]) else "RAR4"
+    try:
+        r, entries = _rar_list(path, None)
+    except SevenZipMissing:
+        return {"encrypted": False, "kind": "rar", "detail": f"{ver} archive (7-Zip not found: cannot list it)"}
+    err = ((r.get("err") or "") + (r.get("out") or "")).lower()
+    headers_enc = not entries and ("password" in err or "encrypted" in err or "wrong" in err)
+    enc = headers_enc or any(e["encrypted"] for e in entries)
+    detail = f"{ver} archive" + (" (encrypted headers)" if headers_enc else " (encrypted)" if enc else "")
+    return {"encrypted": enc, "kind": "rar", "detail": detail}
+
+
+def _rar_extract(path: Path, out_dir: Path, pw: str | None) -> list[dict[str, Any]]:
+    """Extract a RAR with 7-Zip, bounded like ZIP/7z; raises on a wrong password."""
+    r, listed = _rar_list(path, pw)
+    files = [e for e in listed if not e["dir"]]
+    if not files:
+        err = ((r.get("err") or "") + " " + (r.get("out") or "")).strip()[-300:]
+        raise ValueError(f"7-Zip could not list the RAR: {err or 'no entries'}")
+    if len(files) > MAX_ENTRIES:
+        raise ValueError(f"too many entries ({len(files)})")
+    if sum(e["size"] for e in files) > MAX_TOTAL:
+        raise ValueError("archive expands beyond the size limit")
+    entries: list[dict[str, Any]] = []
+    used: set[str] = set()
+    with tempfile.TemporaryDirectory(prefix="dtxrar-") as tmp:
+        # Into a private temp folder; -aou renames clashes; nothing outside it is kept (checked below).
+        rx = _7z_run(["x", "-y", "-aou", _pw_switch(pw), f"-o{tmp}", "--", str(path)])
+        if rx.get("timed_out"):
+            raise ValueError(f"7-Zip timed out after {RAR_TIMEOUT}s")
+        root = Path(tmp).resolve()
+        got = sorted(p for p in root.rglob("*") if p.is_file() and not p.is_symlink())
+        if rx.get("rc") not in (0, 1) and not got:      # 1 = warnings (some entries still extracted)
+            err = ((rx.get("err") or "") + " " + (rx.get("out") or "")).strip()[-300:]
+            raise ValueError(f"7-Zip could not extract the RAR: {err}")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        total = 0
+        for f in got:
+            if root not in f.resolve().parents:            # path traversal (defence in depth)
+                continue
+            size = f.stat().st_size
+            rel = f.relative_to(root).as_posix()
+            if size > MAX_FILE or total + size > MAX_TOTAL:
+                entries.append({"name": rel, "size": size, "skipped": "too large"})
+                continue
+            target = out_dir / _safe_name(rel, used)
+            shutil.move(str(f), target)
+            total += size
+            entries.append({"name": rel, "size": size, "file": str(target), "encrypted": pw is not None})
+    if pw is not None and entries and all(e.get("size", 0) == 0 for e in entries):
+        raise ValueError("empty output (wrong password?)")
+    return entries
+
+
+_ARCHIVE_EXTRACTORS.update(zip=_zip_extract, **{"7z": _7z_extract}, rar=_rar_extract,
                            tar=_tar_extract, cab=_cab_extract, iso=_iso_extract)
 
 
 def extract_archive(path: Path, out_dir: Path, tries: list[dict[str, str]],
                     location: str = "document", name: str | None = None) -> dict[str, Any]:
-    """Extract a ZIP/7z/tar/CAB/ISO (bounded), trying candidates when encrypted."""
+    """Extract a ZIP/7z/RAR/tar/CAB/ISO (bounded), trying candidates when encrypted."""
     path = Path(path)
     det = detect(path)
     rec: dict[str, Any] = {"encrypted": bool(det["encrypted"]), "kind": det["kind"],
@@ -578,6 +702,12 @@ def extract_archive(path: Path, out_dir: Path, tries: list[dict[str, str]],
             rec["entries"] = fn(path, out_dir, t["password"])
         except ImportError as exc:
             rec["error"] = f"{exc.name or exc} not installed"
+            if isinstance(exc, SevenZipMissing):
+                rec["findings"].append(_finding(
+                    "archive_not_extracted", "medium",
+                    f"RAR archive '{name or path.name}' was not extracted: 7-Zip was not found "
+                    "(tools/7zip/, DOCUTRACEX_7Z or a 7-Zip install) — its content was not analysed.",
+                    location))
             return rec
         except Exception as exc:  # noqa: BLE001  (wrong password, corrupt, bomb)
             last_err = str(exc)
@@ -597,7 +727,7 @@ def extract_archive(path: Path, out_dir: Path, tries: list[dict[str, str]],
     rec["error"] = last_err
     rec["findings"].append(_finding(
         "encrypted_archive", "medium",
-        f"{'ZIP' if det['kind'] == 'zip' else '7z'} archive '{name or path.name}' is password protected and "
+        f"{ARCHIVE_LABEL.get(det['kind'], 'Archive')} '{name or path.name}' is password protected and "
         f"none of the known passwords opened it ({rec['tried']} tried) — its content was not "
         "analysed. Provide the password to extract it.", location))
     return rec
