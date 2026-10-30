@@ -108,16 +108,6 @@ TOOL_DEPS: list[Dependency] = [
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
     ),
     Dependency(
-        "dissect.cobaltstrike", "dissect.cobaltstrike", "C2 / Beacons: Cobalt Strike beacons (2nd parser)",
-        required=False,
-        install_hint="run scripts/setup_portable_python.py (installed into the portable)",
-    ),
-    Dependency(
-        "cryptography", "cryptography", "C2 / Beacons: AES / DES of .NET RATs and stealers",
-        required=False,
-        install_hint="run scripts/setup_portable_python.py (installed into the portable)",
-    ),
-    Dependency(
         "lightgbm", "lightgbm", "Machine Learning tab: EMBER2024 LightGBM models",
         required=False,
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
@@ -424,6 +414,57 @@ def _dep_checks(results: list[DepStatus], category: str, retry: str = "") -> lis
     return checks
 
 
+# (key in unpack.tool_status(), name, what it does, what is lost without it, how to get it)
+_UNPACKERS = (
+    ("upx", "UPX", "Unpacks UPX-packed PEs (upx -d), also with renamed sections",
+     "UPX-packed PEs are analysed as the stub: FLOSS, capa, YARA and C2 miss the real code",
+     "put upx.exe in tools/upx/ (or set DOCUTRACEX_UPX)"),
+    ("7zip", "7-Zip", "Extracts RAR archives and 7-Zip / RAR / ZIP self-extracting PEs",
+     "RAR attachments and SFX archives are not extracted",
+     "put 7z.exe + 7z.dll in tools/7zip/ (or set DOCUTRACEX_7Z)"),
+    ("die", "Detect It Easy", "Identifies packers, protectors and installers (diec)",
+     "packers are detected only by section names and markers",
+     "put diec.exe (with its db/ folder) in tools/die/ (or set DOCUTRACEX_DIEC)"),
+    ("innoextract", "innoextract", "Extracts Inno Setup installers",
+     "Inno Setup installers are not extracted",
+     "put innoextract.exe in tools/innoextract/ (or set DOCUTRACEX_INNOEXTRACT)"),
+    ("nuitka-extractor", "nuitka-extractor", "Extracts Nuitka onefile executables",
+     "Nuitka onefile payloads are not extracted",
+     "put nuitka-extractor.exe in tools/nuitka-extractor/ (or set DOCUTRACEX_NUITKA_EXTRACTOR)"),
+    ("autoit-ripper", "AutoIt-Ripper", "Recovers the script of compiled AutoIt executables",
+     "compiled AutoIt scripts are not recovered",
+     "pip install autoit-ripper in the portable Python"),
+    ("evbunpack", "evbunpack", "Unpacks Enigma Virtual Box executables",
+     "Enigma Virtual Box payloads are not extracted",
+     "pip install evbunpack in the portable Python"),
+)
+
+
+def _unpacker_checks() -> list[Check]:
+    """One check per PE unpacker (parsers/unpack.py), with where it was found."""
+    try:
+        from .parsers import unpack
+        status = unpack.tool_status()
+        tools_dir = settings.tools_dir.resolve()
+    except Exception as exc:  # noqa: BLE001
+        return [Check(category="Unpackers", name="PE unpackers", status="warn",
+                      detail=f"could not check: {exc}")]
+    checks: list[Check] = []
+    for key, name, purpose, lost, remedy in _UNPACKERS:
+        where = status.get(key, "")
+        if where == "portable":
+            detail = "installed in the portable Python"
+        elif where:
+            p = Path(where).resolve()
+            origin = "tools/" if (tools_dir == p or tools_dir in p.parents) else "DOCUTRACEX_* variable"
+            detail = f"{origin} · {where}"
+        else:
+            detail = f"not found — {lost}"
+        checks.append(Check(category="Unpackers", name=name, status="ok" if where else "warn",
+                            detail=detail, remedy="" if where else remedy, purpose=purpose))
+    return checks
+
+
 # pzFQkCWMlr
 def run_checks() -> dict[str, Any]:
     """Run all diagnostics for the UI/endpoint.
@@ -682,6 +723,9 @@ def run_checks() -> dict[str, Any]:
             ))
         except Exception:  # noqa: BLE001
             pass
+
+    # PE unpackers (parsers/unpack.py) — optional; a packed PE is otherwise analysed as its stub.
+    checks.extend(_unpacker_checks())
 
     # Didier Stevens oledump plugins (presence).
     try:
