@@ -156,6 +156,12 @@ async def get_nested_components(analysis_id: str, view_id: str) -> dict:
     if node.get("children"):
         modules["nested"] = {"module": "nested", "tree": node["children"],
                              "counts": {"nodes": len(node["children"])}}
+    # YARA runs once for the whole case (every file under extracted/), so a child has no YARA
+    # result of its own: show the case's hits on THIS child's file, with the case's marks.
+    stored = view.get("stored_path") or node.get("stored_path") or ""
+    yara_view, yara_findings = _yara_for_file(analysis_id, paths, stored)
+    if yara_view:
+        modules["yara"] = yara_view
     return {
         "analysis_id": analysis_id, "view_id": view_id, "nested_view": True,
         "filename": view.get("filename"), "chain": view.get("chain"), "kind": view.get("kind"),
@@ -163,7 +169,41 @@ async def get_nested_components(analysis_id: str, view_id: str) -> dict:
         # nested findings carry "tool"; the findings table reads "source"
         "findings": [{**f, "source": f.get("source") or f.get("tool") or "nested"}
                      for f in view.get("findings") or []],
+        "yara_findings": yara_findings,
     }
+
+
+def _norm_rel(p: str) -> str:
+    return (p or "").replace("\\", "/").lstrip("./").lower()
+
+
+def _yara_for_file(analysis_id: str, paths, stored_path: str) -> tuple[dict | None, list[dict]]:  # noqa: ANN001
+    """The case's YARA result narrowed to one stored file (a nested child), plus the YARA findings
+    (with their marks) for those hits. ``(None, [])`` when YARA did not run or the file has no hits
+    — and also when it ran but this file has no match, a view with 0 matches so the tab says so."""
+    from ..storage import read_json
+
+    yara = read_json(paths.subresult("yara"))
+    if not yara or not yara.get("rule_count") or not stored_path:
+        return None, []
+    want = _norm_rel(stored_path)
+    # stored_path in yara.json is relative to the case root (extracted_dir.parent), like nested's.
+    hits = [s for s in yara.get("scanned") or []
+            if _norm_rel(s.get("stored_path") or s.get("file") or "") == want]
+    ids = {m.get("finding_id") for s in hits for m in s.get("matches") or [] if m.get("finding_id")}
+    sub = {k: v for k, v in yara.items() if k not in ("scanned", "findings", "counts", "match_count")}
+    keys = {f"{m.get('namespace', '')}:{m.get('rule')}" for s in hits for m in s.get("matches") or []}
+    sub["rules_info"] = {k: v for k, v in (yara.get("rules_info") or {}).items() if k in keys}
+    sub.update(scanned=hits, match_count=sum(len(s.get("matches") or []) for s in hits),
+               files_scanned=1, scope="file", scope_path=stored_path)
+    sub["counts"] = {"findings": len(ids)}
+    if not ids:
+        return sub, []
+    triage = marks_service.apply(
+        [f for f in marks_service.case_findings(paths, include_unreviewed_yara=True)
+         if marks_service.is_triage_only(f) and f.get("source") != "ml" and f.get("id") in ids],
+        marks_service.read_marks(paths))
+    return sub, triage["findings"]
 
 
 @router.get("/{analysis_id}/report")
