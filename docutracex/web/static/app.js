@@ -12,8 +12,8 @@ const FORMATS = [
   { name: "Email", color: "#7f93ad", glyph: "mail", exts: [".eml", ".emlx", ".msg"] },
   { name: "RTF", color: "#6c5ce7", glyph: "RTF", exts: [".rtf"] },
   { name: "Archive", color: "#9a7b4f", glyph: "ZIP",
-    exts: [".zip", ".7z", ".tar", ".gz", ".cab", ".iso", ".img"],
-    title: "Archives and containers — ZIP/7z, tar(.gz), Microsoft Cabinet and ISO/disk images (a Mark-of-the-Web bypass): extracted and scanned recursively" },
+    exts: [".zip", ".7z", ".rar", ".tar", ".gz", ".cab", ".iso", ".img"],
+    title: "Archives and containers — ZIP/7z/RAR, tar(.gz), Microsoft Cabinet and ISO/disk images (a Mark-of-the-Web bypass): extracted and scanned recursively" },
   { name: "OneNote", color: "#7719aa", glyph: "ONE",
     exts: [".one", ".onepkg"],
     title: "OneNote notebooks: embedded-file lures (fake 'click to view' hiding an .hta/.vbs/.exe) carved out and scanned recursively" },
@@ -1852,7 +1852,7 @@ function lockBanner(mods) {
     ? `<div>🔑 The email gives ${pwc.length > 1 ? "passwords" : "a password"}: ${pwc.map((c) => `<span class="mono" title="${escapeHtml(c.context || "")}">'${escapeHtml(c.password)}'</span>`).join(", ")} — tried on its encrypted attachments.</div>`
     : "";
   if (!(u && u.encrypted) && !locked.length) return found ? `<div class="unlock-banner">${found}</div>` : "";
-  const what = u && u.kind ? ({ office: "Office document", pdf: "PDF", zip: "ZIP archive", "7z": "7z archive" }[u.kind] || u.kind) : "";
+  const what = u && u.kind ? ({ office: "Office document", pdf: "PDF", zip: "ZIP archive", "7z": "7z archive", rar: "RAR archive" }[u.kind] || u.kind) : "";
   let msg;
   let needPw = false;
   if (u && u.encrypted && u.decrypted) {
@@ -4744,10 +4744,7 @@ function c2Help(c2) {
     <p class="hint-line">Every object of the case — the original, everything extracted, nested children and decoded or decrypted
       stages — is searched for implant configurations, <b>statically</b>: nothing is executed. Families: ${escapeHtml(fams.join(", "))}.</p>
     <table class="cases"><thead><tr><th>Family</th><th>How the configuration is read</th></tr></thead><tbody>
-      <tr><td>Cobalt Strike</td><td>Two parsers, both always run, one sub-tab each:
-        Didier Stevens' <span class="mono">1768.py</span> — the TLV config block (XOR 0x69 / 0x2e, or the 4-byte XOR of a PE beacon) in PE files, shellcode, stagers and memory dumps; stagers are read down to the URI and HTTP headers; retries with <span class="mono">-x</span> / <span class="mono">-r</span> / <span class="mono">-e</span> when nothing is found.
-        Fox-IT's <span class="mono">dissect.cobaltstrike</span> — beacons (config found by its RSA public key; 1-byte, multi-byte and guardrail XOR, ArtifactKit stages), version, kill date, public key hash and the rebuilt <b>malleable C2 profile</b>; it does not parse stagers.
-        The card says whether both agree on the C2. Watermark = licence id.</td></tr>
+      <tr><td>Cobalt Strike</td><td>Didier Stevens' <span class="mono">1768.py</span>: the TLV config block (XOR 0x69 / 0x2e, or the 4-byte XOR of a PE beacon) in PE files, shellcode, stagers and memory dumps. Watermark = licence id.</td></tr>
       <tr><td>Metasploit / Meterpreter</td><td>Stager shellcode recognised by its <span class="mono">block_api</span> prologue; IP / port / host / URI read from the connect-back code. Cobalt Strike stagers share the prologue.</td></tr>
       <tr><td>Remcos</td><td>RC4-encrypted <span class="mono">SETTINGS</span> resource: C2 list (host:port:TLS), campaign, mutex.</td></tr>
       <tr><td>AsyncRAT · DcRAT · QuasarRAT</td><td>.NET settings strings encrypted with AES-256 + HMAC (PBKDF2 key from another settings string); older Quasar with AES-128.</td></tr>
@@ -4778,40 +4775,9 @@ function paneC2(c2, findings, caseId) {
   const cards = cfgs.map((c, i) => {
     const f = byId[c.finding_id];
     const s = c.summary || {};
+    const rows = Object.entries(s).map(([k, v]) => `<tr><th>${escapeHtml(k)}</th><td>${c2Value(v)}</td></tr>`).join("");
+    const all = Object.entries(c.fields || {}).map(([k, v]) => `<tr><th>${escapeHtml(k)}</th><td class="mono">${escapeHtml(String(v))}</td></tr>`).join("");
     const conf = c.confidence === "high" ? "badge-bad" : "badge-warn";
-    const kvTable = (obj) => `<table class="cases c2-kv"><tbody>${Object.entries(obj || {}).map(([k, v]) =>
-      `<tr><th>${escapeHtml(k)}</th><td>${c2Value(v)}</td></tr>`).join("")}</tbody></table>`;
-    const fullCfg = (obj) => {
-      const n = Object.keys(obj || {}).length;
-      return n ? `<details class="disclose"><summary>Full configuration (${n} fields)</summary>
-        <table class="cases c2-kv"><tbody>${Object.entries(obj).map(([k, v]) =>
-          `<tr><th>${escapeHtml(k)}</th><td class="mono">${escapeHtml(String(v))}</td></tr>`).join("")}</tbody></table></details>` : "";
-    };
-    let body;
-    if (c.tools) {
-      // Cobalt Strike: one sub-tab per parser (1768.py · dissect.cobaltstrike), both always run.
-      const agree = { agree: ["ok", "both agree"], partial: ["skip", "partly agree"], differ: ["bad", "C2 differ"] }[c.agreement];
-      const toolPane = (v) => {
-        if (!v) return '<p class="hint-line">Not run.</p>';
-        if (v.status !== "found") return `<p class="hint-line">${escapeHtml(v.note || v.status)}</p>`;
-        const prof = v.profile ? `<details class="disclose"><summary>Malleable C2 profile (rebuilt from the config)</summary>
-          <pre class="mono" style="white-space:pre-wrap">${escapeHtml(v.profile)}</pre></details>` : "";
-        return `<div class="hint-line">Read with: ${escapeHtml(v.method || v.tool || "")}</div>
-          ${kvTable(v.summary)}${fullCfg(v.fields)}${prof}`;
-      };
-      const tab = (key, label) => {
-        const v = c.tools[key] || {};
-        const st = v.status === "found" ? ["ok", "found"] : v.status === "nothing" ? ["skip", "nothing"]
-          : v.status === "disabled" ? ["off", "disabled"] : v.status === "not_installed" ? ["off", "not installed"]
-          : ["bad", v.status || "error"];
-        return { id: `${key}-${i}`, label, status: st[0], statusLabel: st[1], html: `<div style="padding:6px 0">${toolPane(v)}</div>` };
-      };
-      body = `${agree ? `<div class="hint-line">1768.py vs dissect.cobaltstrike: <span class="itab-status itab-${agree[0]}">${agree[1]}</span></div>` : ""}
-        ${kvTable(s)}
-        ${innerTabs(`c2tool-${i}`, [tab("1768", "1768.py"), tab("dissect", "dissect.cobaltstrike")])}`;
-    } else {
-      body = `${kvTable(s)}${fullCfg(c.fields)}`;
-    }
     return `<details class="disclose ml-item c2-card"${i < 3 ? " open" : ""}>
       <summary>
         <b>${escapeHtml(c.family)}</b> <span class="badge ${conf}">${escapeHtml(c.kind || "")}</span>
@@ -4823,7 +4789,9 @@ function paneC2(c2, findings, caseId) {
           ${c.also_in ? ` · also in ${escapeHtml(c.also_in.join(", "))}` : ""}
           ${c.stored_path ? fileActions(c.stored_path) : ""}</div>
         ${c.note ? `<div class="hint-line">${escapeHtml(c.note)}</div>` : ""}
-        ${body}
+        <table class="cases c2-kv"><tbody>${rows}</tbody></table>
+        ${all ? `<details class="disclose"><summary>Full configuration (${Object.keys(c.fields).length} fields)</summary>
+          <table class="cases c2-kv"><tbody>${all}</tbody></table></details>` : ""}
         <div style="margin-top:6px">${f ? markControlsHtml(f) : '<span class="hint-line">re-analyse the case to mark it</span>'}</div>
       </div>
     </details>`;

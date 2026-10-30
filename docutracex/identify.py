@@ -45,6 +45,7 @@ _EXT_FAMILY: dict[str, str] = {
     # Archives (attachments, malware drops): extracted and scanned recursively
     ".zip": "zip",
     ".7z": "7z",
+    ".rar": "rar",
     # Containers: tarballs, Microsoft Cabinets and optical/disk images (ISO/UDF).
     # Images especially are a Mark-of-the-Web bypass carrying a LNK + payload.
     **{e: "container" for e in (
@@ -102,6 +103,9 @@ _MIME_FAMILY: dict[str, str] = {
     "text/rtf": "rtf",
     "application/rtf": "rtf",
     "application/x-7z-compressed": "7z",
+    "application/x-rar": "rar",
+    "application/x-rar-compressed": "rar",
+    "application/vnd.rar": "rar",
     # Windows shortcuts
     "application/x-ms-shortcut": "shortcut",
     "application/x-mswinurl": "shortcut",
@@ -218,6 +222,8 @@ def detected_family(mime: str, description: str) -> str | None:
         return "zip"
     if "7-zip archive" in desc:
         return "7z"
+    if "rar archive" in desc:
+        return "rar"
     if "mail" in desc or "rfc 822" in desc or "smtp" in desc:
         return "email"
     if "ms windows shortcut" in desc or "windows url" in desc or "internet shortcut" in desc:
@@ -305,7 +311,7 @@ def classify_discrepancy(
     elif exp == "container" and det == "container":
         status = _MATCH
         detail = "Detected as a container consistent with the extension."
-    elif exp == "container" and (det in ("zip", "7z") or mime in _GENERIC):
+    elif exp == "container" and (det in ("zip", "7z", "rar") or mime in _GENERIC):
         status = _INCONCLUSIVE
         detail = "Detected as a generic archive/container consistent with the extension."
     elif exp == "onenote" and (det == "onenote" or mime in _GENERIC):

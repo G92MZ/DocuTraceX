@@ -135,7 +135,7 @@ def _effective_family(manifest: dict[str, Any], subject: Path, unlock_rec: dict[
     if family is None:
         from . import unlock
         kind = unlock.detect(subject).get("kind")
-        if kind in ("zip", "7z"):
+        if kind in ("zip", "7z", "rar"):
             return kind
     return family
 
@@ -630,8 +630,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                 write_subresult(paths, "nested", nested_res)
                 ran.append("nested")
                 findings_total += nested_res.get("counts", {}).get("findings", 0)
-    elif family in ("zip", "7z", "container"):
-        # Archive or container (.zip/.7z/.tar(.gz)/.cab/.iso/.img/.udf): extract
+    elif family in ("zip", "7z", "rar", "container"):
+        # Archive or container (.zip/.7z/.rar/.tar(.gz)/.cab/.iso/.img/.udf): extract
         # with bounds (and the analyst's / usual passwords for encrypted ZIP/7z)
         # and scan every entry recursively. Disk images are a common
         # Mark-of-the-Web bypass carrying a LNK + payload.

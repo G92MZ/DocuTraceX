@@ -4,7 +4,7 @@ A maldoc's payload usually lives one level down: a macro .docm attached to an
 email, an OLE object embedded in a Word file, a PDF carrying an embedded office
 document. This walks those children and runs the family-appropriate tools on
 each — olevba/oleid/msodde/mraptor/oleobj for Office/OLE, the PDF scanner for
-PDFs, the email parser for messages, extraction for ZIP/7z archives; encrypted
+PDFs, the email parser for messages, extraction for ZIP/7z/RAR archives; encrypted
 children are unlocked first (passwords from the analyst or the carrying email,
 see ``unlock``) — then recurses into whatever THEY extract,
 up to a bounded depth. Findings are flattened with a path chain so the origin
@@ -37,7 +37,7 @@ _OOXML_EXT = {".docx", ".docm", ".dotx", ".dotm", ".xlsx", ".xlsm", ".xltx", ".x
               ".ppam", ".sldx", ".sldm"}
 _OLE_EXT = {".doc", ".dot", ".xls", ".xlt", ".xla", ".ppt", ".pot"}
 _EMAIL_EXT = {".eml", ".emlx", ".msg"}
-_ARCHIVE_EXT = {".zip", ".7z"}
+_ARCHIVE_EXT = {".zip", ".7z", ".rar"}
 
 
 def _ext(name: str) -> str:
@@ -80,7 +80,7 @@ def _kind(path: Path, name: str) -> str:
         return "python"
     if ext in (".class", ".jsp", ".jspx", ".jspf"):
         return "java"
-    if ext in (".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz", ".cab", ".iso", ".img", ".udf"):
+    if ext in (".tar", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz", ".cab", ".iso", ".img", ".udf", ".rar"):
         return "archive"
     if ext in (".one", ".onepkg"):
         return "onenote"
@@ -106,6 +106,8 @@ def _kind(path: Path, name: str) -> str:
         return "ole"
     if head[:6] == b"7z\xbc\xaf\x27\x1c":
         return "archive"
+    if head[:7] == b"Rar!\x1a\x07\x00" or head[:8] == b"Rar!\x1a\x07\x01\x00":
+        return "archive"  # RAR4 / RAR5 (extracted with 7-Zip)
     if head[:4] == b"MSCF" or head[:2] in (b"\x1f\x8b", b"BZh") or head[:5] == b"\xfd7zXZ":
         return "archive"  # Cabinet / gzip / bzip2 / xz (tar or single stream)
     if head[:4] == b"PK\x03\x04":
