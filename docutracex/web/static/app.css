@@ -347,6 +347,28 @@ table.cases td.mono { word-break: break-all; }
   padding-bottom: 14px;
   border-bottom: 1px solid var(--panel-border);
 }
+
+/* Persistent Nested tree, displayed above the analysis sub-tabs. */
+.nested-panel {
+  margin: 14px 0 0;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.nested-panel-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.nested-content { min-width: 0; }
+.nested-content > .nested-tree { max-height: 360px; overflow: auto; }
+.nested-panel + .subtabs { margin-top: 14px; }
+
 .subtab {
   display: inline-flex;
   align-items: center;
