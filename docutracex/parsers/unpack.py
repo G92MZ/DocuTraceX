@@ -21,7 +21,7 @@ Nuitka onefile      nuitka-extractor                            MIT
 Enigma Virtual Box  evbunpack (portable Python)                 Apache-2.0
 ==================  ==========================================  ==============
 
-Every tool is downloaded at provisioning time into ``tools/`` (never committed).
+External unpacker binaries are resolved exclusively from ``tools/`` (never committed).
 Protectors with no static unpacker (Themida, VMProtect, ...) are only reported.
 """
 
@@ -137,13 +137,19 @@ def _system_tool(names: tuple[str, ...], subdirs: tuple[str, ...] = ()) -> Path 
 
 
 def _tool(env: str, bundled: tuple[Path, ...], names: tuple[str, ...], subdirs: tuple[str, ...] = ()) -> Path | None:
-    v = os.environ.get(env)
-    if v and Path(v).is_file():
-        return Path(v)
-    for c in bundled:
-        if c.is_file():
-            return c
-    return _system_tool(names, subdirs)
+    """Resolve unpacker binaries exclusively from the application's tools/ directory.
+
+    Environment overrides, PATH and system-wide installation folders are deliberately
+    ignored so Diagnostics and analysis use the same portable toolset.
+    """
+    for candidate in bundled:
+        try:
+            candidate.resolve().relative_to(_tools_dir().resolve())
+        except (ValueError, OSError):
+            continue
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def die_exe() -> Path | None:
