@@ -2313,8 +2313,8 @@ function paneNested(nested) {
   if (!tree.length) return `<p class="hint-line">No extracted children.</p>`;
   const c = (nested.counts || {});
   return `<p class="hint-line">${c.nodes || tree.length} extracted item(s) scanned recursively · ${c.findings || 0} finding(s)
-      <button class="btn btn-ghost btn-sm" type="button" onclick="this.closest('.subpane').querySelectorAll('details.nested-findings').forEach(e=>e.open=true)">Expand findings</button>
-      <button class="btn btn-ghost btn-sm" type="button" onclick="this.closest('.subpane').querySelectorAll('details.nested-findings').forEach(e=>e.open=false)">Collapse findings</button></p>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="this.closest('.nested-content').querySelectorAll('details.nested-findings').forEach(e=>e.open=true)">Expand findings</button>
+      <button class="btn btn-ghost btn-sm" type="button" onclick="this.closest('.nested-content').querySelectorAll('details.nested-findings').forEach(e=>e.open=false)">Collapse findings</button></p>
     <div class="nested-tree">${tree.map(nestedNode).join("")}</div>`;
 }
 
@@ -2359,10 +2359,20 @@ function childTabKind(n) {
 }
 
 function renderSubtabs() {
-  const bar = _compState.sections.map((s) =>
+  // Keep the recursive Nested tree permanently visible above the analysis tabs.
+  const nestedSection = _compState.sections.find((s) => s.id === "nested");
+  const nestedPanel = nestedSection
+    ? `<section class="nested-panel">
+         <div class="nested-panel-heading">${subtabLabel(nestedSection.label)}</div>
+         <div class="nested-content">${nestedSection.render ? nestedSection.render() : (nestedSection.html || "")}</div>
+       </section>`
+    : "";
+  const bar = _compState.sections.filter((s) => s.id !== "nested").map((s) =>
     `<button class="subtab${s.id === _compState.active ? " is-active" : ""}" data-sub="${s.id}">${subtabLabel(s.label)}</button>`
   ).join("");
-  const sec = _compState.sections.find((s) => s.id === _compState.active) || {};
+  const sec = _compState.sections.find((s) => s.id === _compState.active && s.id !== "nested")
+    || _compState.sections.find((s) => s.id !== "nested") || {};
+  if (_compState.active === "nested") _compState.active = sec.id || null;
   const pane = (sec.render ? sec.render() : sec.html) || "";
   const bodyEl = document.getElementById("comp-body");
   const header = _compState.header ? `<div class="comp-header">${_compState.header}</div>` : "";
@@ -2373,7 +2383,7 @@ function renderSubtabs() {
       <button class="btn btn-ghost btn-sm" id="code-find-prev" type="button" title="Previous match">↑</button>
       <button class="btn btn-ghost btn-sm" id="code-find-next" type="button" title="Next match">↓</button>
     </div>`;
-  bodyEl.innerHTML = `${header}${findBar}<div class="subtabs">${bar}</div><div class="subpane">${pane}</div>`;
+  bodyEl.innerHTML = `${header}${findBar}${nestedPanel}<div class="subtabs">${bar}</div><div class="subpane">${pane}</div>`;
   bodyEl.querySelectorAll(".subtab").forEach((btn) => {
     btn.addEventListener("click", () => {
       const sec2 = _compState.sections.find((s) => s.id === btn.getAttribute("data-sub")) || {};
@@ -2660,22 +2670,27 @@ async function openComponents(analysisId, keepTab, viewId) {
       merged.counts.nodes = (merged.counts.nodes || (base.tree || []).length) + netTrees.length;
       nested = merged;
     }
-    if (nested && (nested.tree || []).length) {
-      sections.push({ id: "nested", label: `Nested (${(nested.counts || {}).nodes || 0})`, html: paneNested(nested) });
-      if (!viewId) {
-        // a direct tab per FIRST-level child that has its own analysis
-        // (deeper ones: "Open analysis" in the Nested tree)
-        // same file name twice (lib/arm64-v8a/libapp.so, lib/armeabi-v7a/libapp.so):
-        // say which one by its folder
-        const kids = (nested.tree || []).filter((n) => n.view_id && childTabKind(n));
-        const seen = {};
-        kids.forEach((n) => { seen[n.filename] = (seen[n.filename] || 0) + 1; });
-        kids.forEach((n) => {
-          const dir = seen[n.filename] > 1 ? ((n.member || n.stored_path || "").replace(/\\/g, "/").split("/").slice(-2, -1)[0] || "") : "";
-          sections.push({ id: `child-${n.view_id}`, label: `${childTabKind(n)} · ${n.filename}${dir ? ` · ${dir}` : ""}`,
-                          openView: n.view_id });
-        });
-      }
+    // Nested is a permanent navigation entry, even when this case has no
+    // recursively extracted children. Keep it separate from the analysis sub-tabs.
+    const nestedTree = (nested && nested.tree) || [];
+    const nestedCount = (nested && nested.counts && nested.counts.nodes) || nestedTree.length;
+    sections.push({
+      id: "nested",
+      label: `Nested (${nestedCount})`,
+      html: nestedTree.length ? paneNested(nested) : `<p class="hint-line">No nested files were extracted for this analysis.</p>`
+    });
+    if (nestedTree.length && !viewId) {
+      // a direct tab per FIRST-level child that has its own analysis
+      // (deeper ones: "Open analysis" in the Nested tree)
+      // same file name twice: say which one by its folder
+      const kids = nestedTree.filter((n) => n.view_id && childTabKind(n));
+      const seen = {};
+      kids.forEach((n) => { seen[n.filename] = (seen[n.filename] || 0) + 1; });
+      kids.forEach((n) => {
+        const dir = seen[n.filename] > 1 ? ((n.member || n.stored_path || "").replace(/\\/g, "/").split("/").slice(-2, -1)[0] || "") : "";
+        sections.push({ id: `child-${n.view_id}`, label: `${childTabKind(n)} · ${n.filename}${dir ? ` · ${dir}` : ""}`,
+                        openView: n.view_id });
+      });
     }
     const yara = mods.yara;
     if (yara && yara.rule_count) {
