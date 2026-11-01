@@ -419,8 +419,8 @@ _UNPACKERS = (
     ("upx", "UPX", "Unpacks UPX-packed PEs (upx -d), also with renamed sections",
      "UPX-packed PEs are analysed as the stub: FLOSS, capa, YARA and C2 miss the real code",
      "put upx.exe in tools/upx/"),
-    ("7zip", "7-Zip", "Extracts RAR archives and 7-Zip / RAR / ZIP self-extracting PEs",
-     "RAR attachments and SFX archives are not extracted",
+    ("7zip", "7-Zip", "Extracts MSI payloads, RAR archives and 7-Zip / RAR / ZIP self-extracting PEs",
+     "MSI payloads, RAR attachments and SFX archives are not extracted",
      "put 7z.exe + 7z.dll in tools/7zip/"),
     ("die", "Detect It Easy", "Identifies packers, protectors and installers (diec)",
      "packers are detected only by section names and markers",
@@ -461,8 +461,7 @@ def _unpacker_checks() -> list[Check]:
         else:
             detail = f"not found — {lost}"
         checks.append(Check(category="Unpackers", name=name, status="ok" if where else "warn",
-                            detail=detail, remedy="" if where else remedy, purpose=purpose,
-                            retry="" if where else key))
+                            detail=detail, remedy="" if where else remedy, purpose=purpose))
     return checks
 
 
