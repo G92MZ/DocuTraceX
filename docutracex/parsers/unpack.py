@@ -199,10 +199,18 @@ def _has_module(name: str) -> bool:
 
 
 def tool_status() -> dict[str, str]:
-    """Which unpacking tools are available (for the Dependencies panel / UI)."""
+    """Which unpacking tools are available (for the Dependencies panel / UI).
+
+    DIE is only considered provisioned when both diec.exe and its signature
+    database are present; the executable alone cannot identify packers usefully.
+    """
     def p(x: Path | None) -> str:
         return str(x) if x else ""
-    return {"die": p(die_exe()), "upx": p(upx_exe()), "innoextract": p(innoextract_exe()),
+    die = die_exe()
+    die_db = _tools_dir() / "die" / "db"
+    if not (die and die_db.is_dir() and any(die_db.rglob("*"))):
+        die = None
+    return {"die": p(die), "upx": p(upx_exe()), "innoextract": p(innoextract_exe()),
             "7zip": p(sevenzip_exe()), "nuitka-extractor": p(nuitka_exe()),
             "autoit-ripper": "portable" if _has_module("autoit_ripper") else "",
             "evbunpack": "portable" if _has_module("evbunpack") else ""}
