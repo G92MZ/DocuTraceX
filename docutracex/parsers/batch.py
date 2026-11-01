@@ -33,7 +33,8 @@ def static_hits(code: str) -> list[dict[str, Any]]:
     return script_rules.scan(code, script_rules.BAT)
 
 
-def collect(original: Path, extracted_dir: Path) -> list[dict[str, Any]]:
+def collect(original: Path, extracted_dir: Path, fallback: bool = False,
+            fallback_text: str | None = None) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
 
     def add(origin: str, location: str, code: str) -> None:
@@ -47,12 +48,16 @@ def collect(original: Path, extracted_dir: Path) -> list[dict[str, Any]]:
     if original.is_file():
         paths.append(original)
     for p in paths:
-        if p.suffix.lower() not in _BAT_EXT:
+        is_original_fallback = fallback and p == original
+        if p.suffix.lower() not in _BAT_EXT and not is_original_fallback:
             continue
-        try:
-            text = p.read_bytes()[:_MAX_FILE_BYTES].decode("utf-8", "replace")
-        except OSError:
-            continue
+        if is_original_fallback and fallback_text is not None:
+            text = fallback_text[:_MAX_FILE_BYTES]
+        else:
+            try:
+                text = p.read_bytes()[:_MAX_FILE_BYTES].decode("utf-8", "replace")
+            except OSError:
+                continue
         try:
             rel = p.relative_to(extracted_dir.parent).as_posix()
         except ValueError:
@@ -69,9 +74,10 @@ def collect(original: Path, extracted_dir: Path) -> list[dict[str, Any]]:
     return uniq[:_MAX_ITEMS]
 
 
-def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any] | None = None) -> dict[str, Any]:
+def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any] | None = None,
+            fallback: bool = False, fallback_text: str | None = None) -> dict[str, Any]:
     res: dict[str, Any] = {"module": "batch", "status": "ok", "scripts": [], "findings": []}
-    for i, it in enumerate(collect(original, extracted_dir), 1):
+    for i, it in enumerate(collect(original, extracted_dir, fallback=fallback, fallback_text=fallback_text), 1):
         full = it["code"] or ""
         orig_code = full[:_MAX_CODE]
         loc = it["location"]
