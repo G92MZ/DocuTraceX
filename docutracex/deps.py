@@ -461,7 +461,8 @@ def _unpacker_checks() -> list[Check]:
         else:
             detail = f"not found — {lost}"
         checks.append(Check(category="Unpackers", name=name, status="ok" if where else "warn",
-                            detail=detail, remedy="" if where else remedy, purpose=purpose))
+                            detail=detail, remedy="" if where else remedy, purpose=purpose,
+                            retry="" if where else key))
     return checks
 
 
