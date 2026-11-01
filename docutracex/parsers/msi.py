@@ -24,6 +24,7 @@ about what static triage can and cannot say about a compiled binary.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 from typing import Any
@@ -274,11 +275,50 @@ def analyze_native(path: Path, rel: str) -> dict[str, Any]:
     return item
 
 
+def is_msi_file(path: Path) -> bool:
+    """Recognise an MSI by its compound-file streams, even without an extension."""
+    try:
+        import olefile
+        if not olefile.isOleFile(str(path)):
+            return False
+        ole = olefile.OleFileIO(str(path))
+        try:
+            names: set[str] = set()
+            tables: set[str] = set()
+            for entry in ole.listdir(streams=True, storages=False):
+                raw = entry[-1] if isinstance(entry, list) else entry
+                decoded, is_table = decode_streamname(raw)
+                if is_table:
+                    tables.add(decoded.lower())
+                else:
+                    names.add(decoded.lower())
+            return ({"_stringdata", "_stringpool"}.issubset(names)
+                    and {"_tables", "_columns"}.issubset(tables))
+        finally:
+            ole.close()
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def analyze_binary(path: Path, rel: str, unpack_dir: Path | None = None) -> dict[str, Any]:
-    """MSI, PE or ELF/Mach-O — by extension, then by magic."""
+    """MSI, PE or ELF/Mach-O — by extension, then by validated content."""
     ext = path.suffix.lower()
-    if ext in _MSI_EXT:
-        return analyze_msi(path, rel)
+    if ext in _MSI_EXT or is_msi_file(path):
+        item = analyze_msi(path, rel)
+        if unpack_dir is not None:
+            from .. import unlock
+            extracted = unlock.extract_msi(path, unpack_dir, location=f"file:{rel}", name=rel)
+            item["extraction"] = {k: v for k, v in extracted.items() if k != "entries"}
+            item["extraction"]["entries"] = [
+                {k: v for k, v in e.items() if k != "file"} for e in extracted.get("entries", [])
+            ]
+            item["findings"].extend(extracted.get("findings", []))
+            item["_children"] = [
+                {"path": e["file"], "filename": Path(e["name"]).name,
+                 "member": e["name"], "origin": "MSI (7-Zip extraction)"}
+                for e in extracted.get("entries", []) if e.get("file")
+            ]
+        return item
     kind = native_kind(path)
     if kind == "native":
         return analyze_native(path, rel)
@@ -289,9 +329,11 @@ def analyze(original: Path, extracted_dir: Path | None = None,
             modules: dict[str, Any] | None = None) -> dict[str, Any]:
     res: dict[str, Any] = {"module": "msi", "status": "ok", "items": [], "findings": []}
     ext = original.suffix.lower()
-    if ext in _MSI_EXT or ext in _PE_EXT or native_kind(original):
+    if ext in _MSI_EXT or ext in _PE_EXT or native_kind(original) or is_msi_file(original):
+        digest = hashlib.sha256(original.read_bytes()).hexdigest()[:12] if extracted_dir is not None else ""
         item = analyze_binary(original, original.name,
-                              (extracted_dir / UNPACK_DIRNAME) if extracted_dir is not None else None)
+                              (extracted_dir / UNPACK_DIRNAME / digest)
+                              if extracted_dir is not None else None)
     else:
         return res
     res["items"].append(item)
