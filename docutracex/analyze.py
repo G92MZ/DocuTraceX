@@ -33,6 +33,48 @@ _SCRIPTING_EXT = {
 }
 
 
+_SCRIPT_FALLBACK_MAX_BYTES = 2 * 1024 * 1024
+
+
+def _read_reasonable_text(path: Path) -> str | None:
+    """Read a bounded text original for the unknown-format scripting fallback.
+
+    Reject binary-looking data (including most bytecode) before dispatching it
+    to all scripting engines. UTF-8 and BOM-marked / recognisable UTF-16 are
+    accepted; no extension or language is inferred.
+    """
+    try:
+        raw = path.read_bytes()[:_SCRIPT_FALLBACK_MAX_BYTES]
+    except OSError:
+        return None
+    if not raw:
+        return None
+
+    try:
+        if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+            text = raw.decode("utf-16", "replace")
+        elif raw.startswith(b"\xef\xbb\xbf"):
+            text = raw.decode("utf-8-sig", "replace")
+        elif b"\x00" in raw:
+            even_nuls = raw[0::2].count(0) / max(1, len(raw[0::2]))
+            odd_nuls = raw[1::2].count(0) / max(1, len(raw[1::2]))
+            if max(even_nuls, odd_nuls) >= 0.25 and min(even_nuls, odd_nuls) <= 0.05:
+                text = raw.decode("utf-16-le" if odd_nuls > even_nuls else "utf-16-be", "replace")
+            else:
+                return None
+        else:
+            text = raw.decode("utf-8", "replace")
+    except (UnicodeError, LookupError):
+        return None
+
+    if not text.strip() or "\x00" in text:
+        return None
+    useful = sum(ch.isprintable() or ch in "\r\n\t" for ch in text)
+    if useful / max(1, len(text)) < 0.85:
+        return None
+    return text
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -826,12 +868,19 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     # no script); an MSI's string-mined command does.
     other_ran = [m for m in ran if m != "file" and not (pe_binary and m == "msi")]
 
+    # Unknown file types: retain generic/YARA analysis and try all scripting parsers.
+    fallback_text = (_read_reasonable_text(original)
+                     if family is None and not pe_binary and not scripting_file else None)
+    scripting_fallback = fallback_text is not None
+    run_scripting = bool(other_ran or scripting_file or scripting_fallback)
+
     # JavaScript / JScript (PDF /JS, HTML body, attachments, OLE, nested, VBA).
-    if other_ran or scripting_file:
+    if run_scripting:
         js_mods = {m: read_json(paths.subresult(m)) for m in ("pdf", "email", "oletools")}
         js_res = run("javascript: extraction · static analysis · STPyV8 sandbox",
                      lambda: javascript.analyze(original, paths.extracted_dir,
-                                                {k: v for k, v in js_mods.items() if v}))
+                                                {k: v for k, v in js_mods.items() if v},
+                                                fallback=scripting_fallback, fallback_text=fallback_text))
         if js_res.get("scripts"):
             write_subresult(paths, "javascript", js_res)
             ran.append("javascript")
@@ -840,20 +889,22 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     # PowerShell / VBScript / batch: dropped files and commands mined from the
     # other modules (VBA, DDE, the JS sandbox log...), deobfuscated and given
     # their own code tabs. Run last so they can consume the results above.
-    if other_ran or scripting_file:
+    if run_scripting:
         from .parsers import batch, powershell, vbscript
         code_mods = {m: read_json(paths.subresult(m))
                      for m in ("oletools", "vipermonkey", "javascript", "word", "excel",
                                "powerpoint", "rtf", "email", "shortcut", "msi")}
         code_mods = {k: v for k, v in code_mods.items() if v}
         vbs_res = run("vbscript: extraction · .vbe decode · deobfuscation (XOR loops, Execute) · ViperMonkey emulation",
-                      lambda: vbscript.analyze(original, paths.extracted_dir, code_mods))
+                      lambda: vbscript.analyze(original, paths.extracted_dir, code_mods,
+                                                   fallback=scripting_fallback, fallback_text=fallback_text))
         if vbs_res.get("scripts"):
             write_subresult(paths, "vbscript", vbs_res)
             ran.append("vbscript")
             findings_total += vbs_res.get("counts", {}).get("findings", 0)
         bat_res = run("batch: extraction · caret/set deobfuscation",
-                      lambda: batch.analyze(original, paths.extracted_dir, code_mods))
+                      lambda: batch.analyze(original, paths.extracted_dir, code_mods,
+                                                 fallback=scripting_fallback, fallback_text=fallback_text))
         if bat_res.get("scripts"):
             write_subresult(paths, "batch", bat_res)
             ran.append("batch")
@@ -861,14 +912,16 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         # PowerShell last: it also mines the commands VBScript / batch launch.
         code_mods.update({k: v for k, v in (("vbscript", vbs_res), ("batch", bat_res)) if v.get("scripts")})
         ps_res = run("powershell: extraction · layered deobfuscation",
-                     lambda: powershell.analyze(original, paths.extracted_dir, code_mods))
+                     lambda: powershell.analyze(original, paths.extracted_dir, code_mods,
+                                                      fallback=scripting_fallback, fallback_text=fallback_text))
         if ps_res.get("scripts"):
             write_subresult(paths, "powershell", ps_res)
             ran.append("powershell")
             findings_total += ps_res.get("counts", {}).get("findings", 0)
         from .parsers import python as python_parser
         py_res = run("python: .py/.pyc · decompile (pycdc) / disassemble · behaviour rules",
-                     lambda: python_parser.analyze(original, paths.extracted_dir, code_mods))
+                     lambda: python_parser.analyze(original, paths.extracted_dir, code_mods,
+                                                          fallback=scripting_fallback, fallback_text=fallback_text))
         if py_res.get("scripts"):
             write_subresult(paths, "python", py_res)
             ran.append("python")
@@ -877,7 +930,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     # Decrypted stages: what the analyzers above resolved (JS XOR results,
     # dropped payloads, base64 blobs that are files) becomes nested children,
     # re-analysed by whatever fits them — and recursively by the nested scanner.
-    if other_ran or scripting_file:
+    if run_scripting:
         from . import decrypted, nested
         dmods = {m: read_json(paths.subresult(m)) for m in ("javascript", "powershell", "vbscript", "batch", "python")}
         # files already in the nested tree (e.g. an attachment whose script is
@@ -992,8 +1045,15 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             data = read_json(paths.subresult(m))
             if data is not None:
                 modules[m] = data
+        ioc_sources = ioc.sources_from_modules(modules)
+        if scripting_fallback and fallback_text:
+            ioc_sources.append({
+                "module": "original",
+                "location": f"original/{original.name}",
+                "text": fallback_text,
+            })
         ioc_result = run("ioc: common extractor (URLs, domains, IPs, hashes)",
-                         lambda: ioc.extract(ioc.sources_from_modules(modules)))
+                         lambda: ioc.extract(ioc_sources))
         write_subresult(paths, "iocs", ioc_result)
         overall_counts["iocs"] = ioc_result.get("counts", {}).get("total", 0)
         steps[-1]["iocs"] = overall_counts["iocs"]
