@@ -675,6 +675,101 @@ def _rar_extract(path: Path, out_dir: Path, pw: str | None) -> list[dict[str, An
     return entries
 
 
+def extract_msi(path: Path, out_dir: Path, location: str = "document",
+                name: str | None = None) -> dict[str, Any]:
+    """Extract an MSI with 7-Zip only (never invoke Windows Installer).
+
+    The listing is checked before extraction and the resulting files are copied
+    into a flat, collision-safe directory, retaining the original member path.
+    Partial extraction (7-Zip exit code 1) is retained but explicitly reported.
+    """
+    path = Path(path)
+    rec: dict[str, Any] = {"kind": "msi", "entries": [], "findings": [],
+                           "extracted": False, "error": None}
+    try:
+        listing = _7z_run(["l", "-slt", "-y", "-p-", "--", str(path)], timeout=120)
+    except SevenZipMissing as exc:
+        rec["error"] = str(exc)
+        rec["findings"].append(_finding(
+            "msi_not_extracted", "medium",
+            f"MSI '{name or path.name}' was not extracted: 7-Zip is unavailable "
+            "(tools/7zip/, DOCUTRACEX_7Z or PATH). MSI static metadata analysis was retained.",
+            location))
+        return rec
+    if listing.get("timed_out"):
+        rec["error"] = "7-Zip listing timed out after 120s"
+    elif listing.get("rc") != 0:
+        detail = ((listing.get("err") or "") + " " + (listing.get("out") or "")).strip()[-400:]
+        rec["error"] = f"7-Zip could not list MSI contents: {detail or 'exit code ' + str(listing.get('rc'))}"
+    else:
+        listed = [e for e in _slt_entries(listing.get("out") or "") if not e.get("dir")]
+        rec["listed_files"] = len(listed)
+        if not listed:
+            rec["error"] = "7-Zip listing returned no files"
+        elif len(listed) > MAX_ENTRIES:
+            rec["error"] = f"too many MSI entries ({len(listed)}; limit {MAX_ENTRIES})"
+        elif sum(max(0, int(e.get("size") or 0)) for e in listed) > MAX_TOTAL:
+            rec["error"] = f"MSI expands beyond the total size limit ({MAX_TOTAL} bytes)"
+        elif any(int(e.get("size") or 0) > MAX_FILE for e in listed):
+            rec["error"] = f"an MSI entry exceeds the per-file size limit ({MAX_FILE} bytes)"
+        else:
+            shutil.rmtree(out_dir, ignore_errors=True)
+            try:
+                with tempfile.TemporaryDirectory(prefix="dtxmsi-") as tmp:
+                    rx = _7z_run(["x", "-y", "-aou", "-p-", f"-o{tmp}", "--", str(path)],
+                                 timeout=RAR_TIMEOUT)
+                    if rx.get("timed_out"):
+                        raise ValueError(f"7-Zip extraction timed out after {RAR_TIMEOUT}s")
+                    root = Path(tmp).resolve()
+                    got = sorted(x for x in root.rglob("*") if x.is_file() and not x.is_symlink())
+                    if rx.get("rc") not in (0, 1) and not got:
+                        detail = ((rx.get("err") or "") + " " + (rx.get("out") or "")).strip()[-400:]
+                        raise ValueError(f"7-Zip extraction failed: {detail or 'exit code ' + str(rx.get('rc'))}")
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    used: set[str] = set()
+                    total = 0
+                    for fp in got:
+                        if root not in fp.resolve().parents:
+                            continue
+                        size = fp.stat().st_size
+                        rel = fp.relative_to(root).as_posix()
+                        if size > MAX_FILE or total + size > MAX_TOTAL:
+                            rec["entries"].append({"name": rel, "size": size, "skipped": "size limit"})
+                            continue
+                        target = out_dir / _safe_name(rel, used)
+                        shutil.move(str(fp), target)
+                        total += size
+                        rec["entries"].append({"name": rel, "size": size, "file": str(target)})
+                    skipped = any(e.get("skipped") for e in rec["entries"])
+                    incomplete = rx.get("rc") == 1 or skipped or len(got) < len(listed)
+                    if incomplete:
+                        reasons = []
+                        if rx.get("rc") == 1:
+                            reasons.append("7-Zip reported warnings")
+                        if skipped:
+                            reasons.append("one or more files exceeded extraction limits")
+                        if len(got) < len(listed):
+                            reasons.append(f"only {len(got)} of {len(listed)} listed files were written")
+                        rec["warning"] = "; ".join(reasons)
+                        rec["findings"].append(_finding(
+                            "msi_partial_extraction", "medium",
+                            f"MSI '{name or path.name}' was only partially extracted ({rec['warning']}); "
+                            "the extracted files were still sent to Nested.", location))
+                    if not rec["entries"] or not any(e.get("file") for e in rec["entries"]):
+                        raise ValueError("7-Zip completed but produced no usable files")
+                    rec["extracted"] = True
+            except Exception as exc:  # noqa: BLE001
+                shutil.rmtree(out_dir, ignore_errors=True)
+                rec["error"] = str(exc)
+    if rec.get("error"):
+        rec["findings"].append(_finding(
+            "msi_not_extracted", "medium",
+            f"MSI '{name or path.name}' was not fully extracted: {rec['error']}. "
+            "The MSI's static metadata analysis was retained; embedded files were not fully analysed.",
+            location))
+    return rec
+
+
 _ARCHIVE_EXTRACTORS.update(zip=_zip_extract, **{"7z": _7z_extract}, rar=_rar_extract,
                            tar=_tar_extract, cab=_cab_extract, iso=_iso_extract)
 
