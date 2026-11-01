@@ -399,7 +399,8 @@ def _vbscript_from_html(html: str) -> list[str]:
     return out
 
 
-def collect(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> list[dict[str, Any]]:
+def collect(original: Path, extracted_dir: Path, modules: dict[str, Any],
+            fallback: bool = False, fallback_text: str | None = None) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
 
     def add(origin: str, location: str, code: str, note: str = "") -> None:
@@ -445,6 +446,17 @@ def collect(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> lis
                     add(f"file:{rel}", f"file:{rel}", dec, "decoded from Script Encoder")
             for code in _vbscript_from_html(text):
                 add(f"file:{rel}", f"file:{rel}", code)
+            continue
+        if fallback and p == original and fallback_text is not None:
+            # An extensionless/unknown-format HTML wrapper can still carry
+            # explicit VBScript blocks; extract those rather than treating the
+            # markup itself as VBScript.
+            if "<script" in fallback_text[:65536].lower() or "<html" in fallback_text[:65536].lower():
+                for code in _vbscript_from_html(fallback_text):
+                    add(f"file:{rel}", f"file:{rel}", code)
+            else:
+                add(f"file:{rel}", f"file:{rel}", fallback_text,
+                    "unknown-format text analysed as VBScript")
 
     # Email HTML body VBScript blocks.
     email = modules.get("email") or {}
@@ -497,9 +509,10 @@ def _emulate(res: dict[str, Any], extracted_dir: Path) -> None:
         res["emulation"] = emul
 
 
-def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> dict[str, Any]:
+def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
+            fallback: bool = False, fallback_text: str | None = None) -> dict[str, Any]:
     res: dict[str, Any] = {"module": "vbscript", "status": "ok", "scripts": [], "findings": []}
-    for i, it in enumerate(collect(original, extracted_dir, modules), 1):
+    for i, it in enumerate(collect(original, extracted_dir, modules, fallback=fallback, fallback_text=fallback_text), 1):
         full = it["code"] or ""
         orig_code = full[:_MAX_CODE]
         loc = it["location"]
