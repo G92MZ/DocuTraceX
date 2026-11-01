@@ -254,7 +254,8 @@ def _import_scan(text: str, loc: str, origin: str) -> list[dict[str, Any]]:
 
 
 # --- collection + analysis ---------------------------------------------------
-def collect(original: Path, extracted_dir: Path) -> list[dict[str, Any]]:
+def collect(original: Path, extracted_dir: Path, fallback: bool = False,
+            fallback_text: str | None = None) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     paths: list[Path] = []
     if extracted_dir.is_dir():
@@ -264,12 +265,16 @@ def collect(original: Path, extracted_dir: Path) -> list[dict[str, Any]]:
         paths.append(original)
     for p in paths:
         ext = p.suffix.lower()
-        if ext not in _PY_EXT:
+        is_original_fallback = fallback and p == original
+        if ext not in _PY_EXT and not is_original_fallback:
             continue
-        try:
-            raw = p.read_bytes()[:_MAX_FILE_BYTES]
-        except OSError:
-            continue
+        if is_original_fallback and fallback_text is not None:
+            raw = fallback_text.encode("utf-8", "replace")[:_MAX_FILE_BYTES]
+        else:
+            try:
+                raw = p.read_bytes()[:_MAX_FILE_BYTES]
+            except OSError:
+                continue
         try:
             rel = p.relative_to(extracted_dir.parent).as_posix()
         except ValueError:
@@ -286,9 +291,10 @@ def collect(original: Path, extracted_dir: Path) -> list[dict[str, Any]]:
     return uniq[:_MAX_ITEMS]
 
 
-def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any] | None = None) -> dict[str, Any]:
+def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any] | None = None,
+            fallback: bool = False, fallback_text: str | None = None) -> dict[str, Any]:
     res: dict[str, Any] = {"module": "python", "status": "ok", "scripts": [], "findings": []}
-    for i, it in enumerate(collect(original, extracted_dir), 1):
+    for i, it in enumerate(collect(original, extracted_dir, fallback=fallback, fallback_text=fallback_text), 1):
         loc, origin = it["location"], it["origin"]
         is_pyc = it["ext"] in (".pyc", ".pyo")
         source_kind = "source"

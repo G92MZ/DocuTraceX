@@ -146,7 +146,8 @@ def _sources_from_modules(modules: dict[str, Any]) -> list[tuple[str, str, str]]
     return blobs
 
 
-def collect(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> list[dict[str, Any]]:
+def collect(original: Path, extracted_dir: Path, modules: dict[str, Any],
+            fallback: bool = False, fallback_text: str | None = None) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
 
     def add(origin: str, location: str, command: str) -> None:
@@ -162,17 +163,21 @@ def collect(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> lis
         paths.append(original)
     for p in paths:
         ext = p.suffix.lower()
-        if ext not in _PS_FILE_EXT and ext not in _SHELL_FILE_EXT:
+        is_original_fallback = fallback and p == original
+        if ext not in _PS_FILE_EXT and ext not in _SHELL_FILE_EXT and not is_original_fallback:
             continue
-        try:
-            text = p.read_bytes()[:_MAX_FILE_BYTES].decode("utf-8", "replace")
-        except OSError:
-            continue
+        if is_original_fallback and fallback_text is not None:
+            text = fallback_text[:_MAX_FILE_BYTES]
+        else:
+            try:
+                text = p.read_bytes()[:_MAX_FILE_BYTES].decode("utf-8", "replace")
+            except OSError:
+                continue
         try:
             rel = p.relative_to(extracted_dir.parent).as_posix()
         except ValueError:
             rel = p.name
-        for cmd in _candidates(text, whole=(ext in _PS_FILE_EXT)):
+        for cmd in _candidates(text, whole=(ext in _PS_FILE_EXT or is_original_fallback)):
             add(f"file:{rel}", f"file:{rel}", cmd)
 
     # Mined from other modules' results.
@@ -195,12 +200,13 @@ def collect(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> lis
     return uniq[:_MAX_ITEMS]
 
 
-def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> dict[str, Any]:
+def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
+            fallback: bool = False, fallback_text: str | None = None) -> dict[str, Any]:
     res: dict[str, Any] = {"module": "powershell", "status": "ok", "scripts": [], "findings": []}
     sandbox_on = boxps.boxps_status().get("available", False)
     res["sandbox_available"] = sandbox_on
     sandbox_runs = 0
-    for i, it in enumerate(collect(original, extracted_dir, modules), 1):
+    for i, it in enumerate(collect(original, extracted_dir, modules, fallback=fallback, fallback_text=fallback_text), 1):
         full = it["code"] or ""
         orig_code = full[:_MAX_CODE]
         loc = it["location"]
