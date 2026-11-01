@@ -103,6 +103,14 @@ def _kind(path: Path, name: str) -> str:
                     b"\xcf\xfa\xed\xfe"):   # ELF / Mach-O (LIEF)
         return "binary"
     if head[:4] == b"\xd0\xcf\x11\xe0":
+        # MSI is also an OLE/CFB file. Distinguish it by its MSI string-pool
+        # streams and table stream names before handing generic CFB to Office.
+        try:
+            from .parsers import msi
+            if msi.is_msi_file(path):
+                return "binary"
+        except Exception:  # noqa: BLE001
+            pass
         return "ole"
     if head[:6] == b"7z\xbc\xaf\x27\x1c":
         return "archive"
@@ -110,6 +118,20 @@ def _kind(path: Path, name: str) -> str:
         return "archive"  # RAR4 / RAR5 (extracted with 7-Zip)
     if head[:4] == b"MSCF" or head[:2] in (b"\x1f\x8b", b"BZh") or head[:5] == b"\xfd7zXZ":
         return "archive"  # Cabinet / gzip / bzip2 / xz (tar or single stream)
+    # Python bytecode has a 4-byte version magic ending in CRLF, followed by
+    # a 4-byte flags word (0..3) and an 8-byte timestamp/hash header. This
+    # deliberately avoids unmarshalling untrusted bytecode just to identify it.
+    if len(head) >= 4 and head[2:4] == b"\r\n":
+        try:
+            with path.open("rb") as fh:
+                header = fh.read(16)
+            flags = int.from_bytes(header[4:8], "little") if len(header) >= 16 else 0xFFFFFFFF
+            if len(header) >= 16 and flags in (0, 1, 2, 3):
+                return "python"
+        except OSError:
+            pass
+    if head[:4] == b"\xca\xfe\xba\xbe":
+        return "java"  # JVM class magic (not a Mach-O fat binary in this case)
     if head[:4] == b"PK\x03\x04":
         try:
             with zipfile.ZipFile(path) as zf:
@@ -310,11 +332,14 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
         elif kind == "binary":
             from .parsers import msi
             it = msi.analyze_binary(abs_path, name,
-                                    (work / msi.UNPACK_DIRNAME) if depth < MAX_DEPTH else None)
+                                    (work / msi.UNPACK_DIRNAME / node["sha256"][:12])
+                                    if depth < MAX_DEPTH else None)
             for ch in it.pop("_children", []) or []:   # debloated / unpacked files
                 kids.append((Path(ch["path"]), ch["filename"]))
                 origins[str(Path(ch["path"]))] = ch["origin"]
                 recipes[str(Path(ch["path"]))] = ch.get("recipe") or []
+                if ch.get("member"):
+                    members[str(Path(ch["path"]))] = ch["member"]
             mods["msi"] = {"module": "msi", "items": [it], "findings": it.get("findings", [])}
             add_findings(it.get("findings"), "msi")
         elif kind == "java":
