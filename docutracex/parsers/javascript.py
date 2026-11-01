@@ -121,7 +121,8 @@ def decode_mht(raw: bytes) -> str:
         return raw.decode("utf-8", "replace")
 
 
-def _from_file(path: Path, rel: str) -> list[dict[str, Any]]:
+def _from_file(path: Path, rel: str, force_script: bool = False,
+               text_override: str | None = None) -> list[dict[str, Any]]:
     ext = path.suffix.lower()
     try:
         raw = path.read_bytes()[:_MAX_FILE_BYTES]
@@ -132,11 +133,14 @@ def _from_file(path: Path, rel: str) -> list[dict[str, Any]]:
         items = [{"kind": "mht", "code": code, "origin": rel, "location": f"file:{rel}"}
                  for code in scripts_from_html(html)]
         return items
-    text = raw.decode("utf-8", "replace")
+    text = text_override if text_override is not None else raw.decode("utf-8", "replace")
     if ext not in _SCRIPT_EXT:
         head = text[:65536].lower()
         if "<script" not in head and "<html" not in head:
-            return []
+            if not force_script:
+                return []
+            return [{"kind": "jscript/js", "code": text, "origin": rel,
+                     "location": f"file:{rel}"}] if text.strip() else []
         ext = ".html"
     items: list[dict[str, Any]] = []
     if ext == ".jse" or "#@~^" in text[:4096]:
@@ -196,7 +200,8 @@ def _vba_jscript(modules: list[dict[str, Any]]) -> list[str]:
     return out
 
 
-def collect(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> list[dict[str, Any]]:
+def collect(original: Path, extracted_dir: Path, modules: dict[str, Any],
+            fallback: bool = False, fallback_text: str | None = None) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     pdf = modules.get("pdf") or {}
     for i, j in enumerate(pdf.get("javascript") or []):
@@ -222,8 +227,9 @@ def collect(original: Path, extracted_dir: Path, modules: dict[str, Any]) -> lis
             rel = p.relative_to(extracted_dir.parent).as_posix()
             items += _from_file(p, rel)
     # Standalone script/HTML files analysed directly (e.g. a .hta uploaded as a case).
-    if original.suffix.lower() in _SCRIPT_EXT:
-        items += _from_file(original, original.name)
+    if original.suffix.lower() in _SCRIPT_EXT or fallback:
+        items += _from_file(original, original.name, force_script=fallback,
+                            text_override=fallback_text if fallback else None)
     seen: set[str] = set()
     uniq = []
     for it in items:
@@ -374,11 +380,12 @@ def _sandbox_findings(sb: dict[str, Any], loc: str, out: list[dict[str, Any]]) -
 
 
 def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
-            run_sandbox: bool = True) -> dict[str, Any]:
+            run_sandbox: bool = True, fallback: bool = False,
+            fallback_text: str | None = None) -> dict[str, Any]:
     from . import js_deobf, js_techniques, js_webcrack
 
     res: dict[str, Any] = {"module": "javascript", "status": "ok", "scripts": [], "findings": []}
-    items = list(enumerate(collect(original, extracted_dir, modules), 1))
+    items = list(enumerate(collect(original, extracted_dir, modules, fallback=fallback, fallback_text=fallback_text), 1))
 
     def one(i: int, it: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         out_scripts: list[dict[str, Any]] = []
