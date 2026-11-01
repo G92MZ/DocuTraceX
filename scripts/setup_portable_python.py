@@ -1076,6 +1076,430 @@ def install_capa() -> bool:
     return _install_mandiant_exe("capa", CAPA_URL, CAPA_SHA256, CAPA_DIR, "capa.exe")
 
 
+
+
+# --- PE unpackers / packer identification --------------------------------------
+# These are optional analysis tools. Each is installed independently so a
+# failed download never prevents the remaining toolchain from being provisioned.
+UPX_DIR = TOOLS / "upx"
+SEVENZIP_DIR = TOOLS / "7zip"
+DIE_DIR = TOOLS / "die"
+INNOEXTRACT_DIR = TOOLS / "innoextract"
+NUITKA_DIR = TOOLS / "nuitka-extractor"
+
+
+UPX_REPO = "upx/upx"
+DIE_BINARY_REPO = "horsicq/DIE-engine"
+DIE_DB_REPO = "horsicq/Detect-It-Easy"
+NUITKA_REPO = "extremecoders-re/nuitka-extractor"
+INNOEXTRACT_URL = "https://constexpr.org/innoextract/files/innoextract-1.9/innoextract-1.9-windows.zip"
+INNOEXTRACT_SHA256 = "6989342c9b026a00a72a38f23b62a8e6a22cc5de69805cf47d68ac2fec993065"
+SEVENZIP_VERSION = "26.02"
+# Use the official x64 MSI rather than 7z2602-extra.7z. The Extra archive is
+# BCJ2-compressed, which py7zr cannot extract; the MSI supports administrative
+# extraction with msiexec and does not require a pre-existing 7-Zip binary.
+SEVENZIP_URL = "https://github.com/ip7z/7zip/releases/download/26.02/7z2602-x64.msi"
+SEVENZIP_SHA256 = "db407a4f6d4999e5c7bc00ce8a882be94717b56e7fa68140fe3f12605d91643e"
+
+
+def _github_json(url: str):
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "DocuTraceX-setup", "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    })
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        return json.loads(resp.read().decode("utf-8", "replace"))
+
+
+def _github_asset(repo: str, predicate, *, tag: str | None = None,
+                  allow_prerelease: bool = False):
+    """Return (asset metadata, bytes) for a matching official GitHub release asset.
+
+    Prefer the release API's SHA-256 digest when GitHub provides one. The caller
+    still validates the archive contents before marking the component available.
+    """
+    if tag:
+        releases = [_github_json(f"https://api.github.com/repos/{repo}/releases/tags/{tag}")]
+    else:
+        releases = _github_json(f"https://api.github.com/repos/{repo}/releases?per_page=30")
+    for release in releases:
+        if release.get("draft") or (release.get("prerelease") and not allow_prerelease):
+            continue
+        assets = sorted(release.get("assets", []), key=lambda a: a.get("name", "").lower())
+        matches = [a for a in assets if predicate(a.get("name", "").lower())]
+        if not matches:
+            continue
+        asset = matches[0]
+        data = _get(asset["browser_download_url"])
+        digest = (asset.get("digest") or "").lower()
+        if digest.startswith("sha256:"):
+            import hashlib
+            got = hashlib.sha256(data).hexdigest()
+            expected = digest.split(":", 1)[1]
+            if got != expected:
+                raise ValueError(f"SHA-256 mismatch for {asset['name']}: {got} != {expected}")
+        return asset, data
+    raise RuntimeError(f"No matching release asset found for {repo}")
+
+
+def _safe_extract_zip(data: bytes, dest: Path, *, flatten_root: bool = False) -> list[Path]:
+    """Extract a trusted tool ZIP, rejecting path traversal and optionally
+    stripping a single common top-level directory (portable release layout)."""
+    import io
+    written: list[Path] = []
+    dest.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(io.BytesIO(data)) as z:
+        files = [i for i in z.infolist() if not i.is_dir()]
+        strip = ""
+        if flatten_root and files:
+            first = {Path(i.filename.replace("\\\\", "/")).parts[0]
+                     for i in files if Path(i.filename.replace("\\\\", "/")).parts}
+            if len(first) == 1:
+                candidate = next(iter(first))
+                if all(len(Path(i.filename.replace("\\\\", "/")).parts) > 1
+                       for i in files):
+                    strip = candidate
+        root = dest.resolve()
+        for info in files:
+            name = info.filename.replace("\\\\", "/")
+            parts = Path(name).parts
+            if not parts or any(x in ("..", "") for x in parts):
+                continue
+            if strip and parts[0] == strip:
+                parts = parts[1:]
+            if not parts:
+                continue
+            target = (dest / Path(*parts)).resolve()
+            try:
+                target.relative_to(root)
+            except ValueError:
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with z.open(info) as src, target.open("wb") as dst:
+                shutil.copyfileobj(src, dst)
+            written.append(target)
+    return written
+
+
+def _safe_extract_7z(data: bytes, dest: Path) -> list[Path]:
+    """Extract a 7-Zip archive with the portable py7zr dependency."""
+    if not _portable_present():
+        raise RuntimeError("portable Python is not available")
+    written: list[Path] = []
+    dest.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as td:
+        archive = Path(td) / "payload.7z"
+        extract_dir = Path(td) / "extract"
+        extract_dir.mkdir()
+        archive.write_bytes(data)
+        code = ("import py7zr,sys; "
+                "z=py7zr.SevenZipFile(sys.argv[1], mode='r'); "
+                "z.extractall(path=sys.argv[2]); z.close()")
+        r = subprocess.run([str(_portable_python()), "-I", "-c", code,
+                            str(archive), str(extract_dir)],
+                           capture_output=True, text=True, timeout=180)
+        if r.returncode:
+            raise RuntimeError((r.stderr or r.stdout or "py7zr extraction failed")[-1200:])
+        root = dest.resolve()
+        for src in extract_dir.rglob("*"):
+            if not src.is_file():
+                continue
+            rel = src.relative_to(extract_dir)
+            target = (dest / rel).resolve()
+            try:
+                target.relative_to(root)
+            except ValueError:
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, target)
+            written.append(target)
+    return written
+
+
+def _find_tool_file(directory: Path, names: tuple[str, ...]) -> Path | None:
+    wanted = {n.lower() for n in names}
+    for p in directory.rglob("*"):
+        if p.is_file() and p.name.lower() in wanted:
+            return p
+    return None
+
+
+def _install_github_zip_tool(repo: str, predicate, dest: Path,
+                             exe_names: tuple[str, ...], label: str,
+                             *, flatten_root: bool = True) -> bool:
+    try:
+        asset, data = _github_asset(repo, predicate)
+        if not zipfile.is_zipfile(__import__("io").BytesIO(data)):
+            raise ValueError(f"{asset['name']} is not a ZIP archive")
+        _safe_extract_zip(data, dest, flatten_root=flatten_root)
+        exe = _find_tool_file(dest, exe_names)
+        if exe is None:
+            raise RuntimeError(f"{', '.join(exe_names)} not found in {asset['name']}")
+        # Normalise the executable to the path expected by DocuTraceX.
+        expected = dest / exe_names[0]
+        if exe.resolve() != expected.resolve():
+            shutil.copy2(exe, expected)
+        print(f"[+] {label}: {expected}")
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] {label} could not be provisioned ({exc}); it remains optional.")
+        return False
+
+
+def _upx_ok() -> bool:
+    return (UPX_DIR / "upx.exe").is_file() if sys.platform.startswith("win") else (UPX_DIR / "upx").is_file()
+
+
+def install_upx() -> bool:
+    if _upx_ok():
+        return True
+    if not sys.platform.startswith("win"):
+        print("[=] UPX automatic provisioning currently targets Windows; skipped.")
+        return False
+    arch = "win64" if _arch() == "x86_64" else "win32"
+    print("[>] Provisioning UPX from the official GitHub release...")
+    return _install_github_zip_tool(
+        UPX_REPO, lambda n: n.endswith(f"-{arch}.zip") and n.startswith("upx-"),
+        UPX_DIR, ("upx.exe",), "UPX")
+
+
+def _sevenzip_ok() -> bool:
+    return (SEVENZIP_DIR / "7z.exe").is_file() and (SEVENZIP_DIR / "7z.dll").is_file()
+
+
+def install_7zip() -> bool:
+    """Provision the official 7-Zip CLI/DLL using MSI administrative extraction.
+
+    Do not use py7zr for 7-Zip Extra: that archive uses the BCJ2 filter, which
+    py7zr does not support. MSI administrative extraction is self-contained and
+    places the files under tools/ without installing 7-Zip system-wide.
+    """
+    if _sevenzip_ok():
+        return True
+    if not sys.platform.startswith("win"):
+        print("[=] 7-Zip automatic provisioning currently targets Windows; skipped.")
+        return False
+    if _arch() != "x86_64":
+        print("[!] 7-Zip automatic provisioning currently has an official x64 MSI only; skipped.")
+        return False
+
+    msiexec = shutil.which("msiexec.exe") or shutil.which("msiexec")
+    if not msiexec:
+        candidate = Path(os.environ.get("WINDIR", r"C:\Windows")) / "System32" / "msiexec.exe"
+        if candidate.is_file():
+            msiexec = str(candidate)
+    if not msiexec:
+        print("[!] 7-Zip: msiexec.exe was not found; cannot extract the official MSI.")
+        return False
+
+    print(f"[>] Downloading official 7-Zip {SEVENZIP_VERSION} x64 MSI...")
+    try:
+        import hashlib
+        data = _get(SEVENZIP_URL)
+        got = hashlib.sha256(data).hexdigest()
+        if got.lower() != SEVENZIP_SHA256.lower():
+            raise ValueError(f"SHA-256 mismatch ({got})")
+
+        with tempfile.TemporaryDirectory(prefix="docutracex-7zip-") as td:
+            work = Path(td)
+            msi = work / f"7z{SEVENZIP_VERSION.replace('.', '')}-x64.msi"
+            stage = work / "admin-image"
+            stage.mkdir()
+            msi.write_bytes(data)
+
+            # /a performs an administrative image extraction; TARGETDIR is the
+            # temporary staging directory, not Program Files or the registry.
+            cmd = [msiexec, "/a", str(msi), "/qn", "/norestart",
+                   f"TARGETDIR={stage}"]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
+            if result.returncode not in (0, 3010):
+                detail = (result.stderr or result.stdout or
+                          f"msiexec exit code {result.returncode}")
+                raise RuntimeError(detail[-1600:])
+
+            src_exe = _find_tool_file(stage, ("7z.exe",))
+            src_dll = _find_tool_file(stage, ("7z.dll",))
+            if not src_exe or not src_dll:
+                raise RuntimeError("7-Zip MSI administrative image did not contain both 7z.exe and 7z.dll")
+
+            # Copy the complete 7-Zip program directory (including any support
+            # files) and normalise the two paths required by DocuTraceX.
+            SEVENZIP_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(src_exe.parent, SEVENZIP_DIR, dirs_exist_ok=True)
+            if not (SEVENZIP_DIR / "7z.exe").is_file():
+                shutil.copy2(src_exe, SEVENZIP_DIR / "7z.exe")
+            if not (SEVENZIP_DIR / "7z.dll").is_file():
+                shutil.copy2(src_dll, SEVENZIP_DIR / "7z.dll")
+
+        if not _sevenzip_ok():
+            raise RuntimeError("7z.exe or 7z.dll is missing after MSI extraction")
+        print(f"[+] 7-Zip {SEVENZIP_VERSION} CLI + DLL installed at {SEVENZIP_DIR}")
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] 7-Zip could not be provisioned ({exc}); it remains optional.")
+        return False
+
+
+def _die_ok() -> bool:
+    exe = _find_tool_file(DIE_DIR, ("diec.exe",))
+    db = DIE_DIR / "db"
+    return bool(exe and db.is_dir() and any(db.rglob("*")))
+
+
+def install_die() -> bool:
+    if not sys.platform.startswith("win"):
+        print("[=] Detect It Easy automatic provisioning currently targets Windows; skipped.")
+        return False
+    DIE_DIR.mkdir(parents=True, exist_ok=True)
+    exe_ok = _find_tool_file(DIE_DIR, ("diec.exe",)) is not None
+    if not exe_ok:
+        print("[>] Downloading Detect It Easy portable Windows build...")
+        # Official releases may change their archive naming; select a Windows
+        # x64 portable ZIP by its asset metadata instead of hard-coding a tag.
+        try:
+            asset, data = _github_asset(
+                DIE_BINARY_REPO,
+                lambda n: ("win64" in n or "windows" in n) and
+                          ("portable" in n or "die" in n) and
+                          (n.endswith(".zip") or n.endswith(".7z")))
+            if asset["name"].lower().endswith(".7z"):
+                _safe_extract_7z(data, DIE_DIR)
+            else:
+                _safe_extract_zip(data, DIE_DIR, flatten_root=True)
+            if _find_tool_file(DIE_DIR, ("diec.exe",)) is None:
+                raise RuntimeError(f"diec.exe not found in {asset['name']}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[!] Detect It Easy binary download failed ({exc}).")
+            return False
+    # The upstream project publishes its signature database as a separate
+    # release asset (tag 'db'); the CLI without this database is not useful.
+    db_dir = DIE_DIR / "db"
+    if not db_dir.is_dir() or not any(db_dir.rglob("*")):
+        print("[>] Downloading Detect It Easy signature database...")
+        try:
+            asset, data = _github_asset(DIE_DB_REPO, lambda n: n == "db.zip", tag="db",
+                                        allow_prerelease=True)
+            _safe_extract_zip(data, DIE_DIR, flatten_root=False)
+            if not db_dir.is_dir():
+                # Some DB archives contain a wrapper directory; locate and move it.
+                found = next((p for p in DIE_DIR.rglob("db") if p.is_dir()), None)
+                if found and found != db_dir:
+                    shutil.copytree(found, db_dir, dirs_exist_ok=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[!] Detect It Easy database download failed ({exc}).")
+    if _die_ok():
+        print(f"[+] Detect It Easy (diec + db) installed at {DIE_DIR}")
+        return True
+    print("[!] Detect It Easy is incomplete; diec.exe and its db/ folder are both required.")
+    return False
+
+
+def _innoextract_ok() -> bool:
+    return (INNOEXTRACT_DIR / "innoextract.exe").is_file()
+
+
+def install_innoextract() -> bool:
+    if _innoextract_ok():
+        return True
+    if not sys.platform.startswith("win"):
+        print("[=] innoextract automatic provisioning currently targets Windows; skipped.")
+        return False
+    print("[>] Downloading innoextract 1.9 Windows binaries...")
+    try:
+        import hashlib
+        data = _get(INNOEXTRACT_URL)
+        got = hashlib.sha256(data).hexdigest()
+        if got != INNOEXTRACT_SHA256:
+            raise ValueError(f"SHA-256 mismatch ({got})")
+        files = _safe_extract_zip(data, INNOEXTRACT_DIR, flatten_root=True)
+        if not any(p.name.lower() == "innoextract.exe" for p in files):
+            raise RuntimeError("innoextract.exe not found in the official archive")
+        print(f"[+] innoextract installed at {INNOEXTRACT_DIR}")
+        return _innoextract_ok()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] innoextract could not be provisioned ({exc}); it remains optional.")
+        return False
+
+
+def _nuitka_extractor_ok() -> bool:
+    return (NUITKA_DIR / "nuitka-extractor.exe").is_file()
+
+
+def install_nuitka_extractor() -> bool:
+    if _nuitka_extractor_ok():
+        return True
+    if not sys.platform.startswith("win"):
+        print("[=] nuitka-extractor automatic provisioning currently targets Windows; skipped.")
+        return False
+    print("[>] Downloading Nuitka Extractor Windows binary...")
+    try:
+        try:
+            asset, data = _github_asset(
+                NUITKA_REPO,
+                lambda n: ("windows" in n or "win" in n) and
+                          ("amd64" in n or "x64" in n or "win64" in n) and
+                          (n.endswith(".exe") or n.endswith(".zip")))
+        except Exception:
+            # Some tagged builds publish a single generically named Windows
+            # executable rather than including the architecture in its name.
+            asset, data = _github_asset(
+                NUITKA_REPO,
+                lambda n: "nuitka" in n and (n.endswith(".exe") or n.endswith(".zip"))
+                          and not any(x in n for x in ("linux", "darwin", "macos")))
+        NUITKA_DIR.mkdir(parents=True, exist_ok=True)
+        if asset["name"].lower().endswith(".zip"):
+            files = _safe_extract_zip(data, NUITKA_DIR, flatten_root=True)
+            exe = next((p for p in files if p.suffix.lower() == ".exe" and
+                        "nuitka" in p.name.lower()), None)
+            if not exe:
+                raise RuntimeError(f"No Nuitka extractor executable in {asset['name']}")
+            shutil.copy2(exe, NUITKA_DIR / "nuitka-extractor.exe")
+        else:
+            (NUITKA_DIR / "nuitka-extractor.exe").write_bytes(data)
+        print(f"[+] nuitka-extractor installed at {NUITKA_DIR}")
+        return _nuitka_extractor_ok()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] nuitka-extractor could not be provisioned ({exc}); it remains optional.")
+        return False
+
+
+def _portable_import_ok(module: str) -> bool:
+    if not _portable_present():
+        return False
+    try:
+        r = subprocess.run([str(_portable_python()), "-I", "-c", f"import {module}"],
+                           capture_output=True, text=True, timeout=45)
+        return r.returncode == 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _install_portable_pip_package(package: str, module: str) -> bool:
+    if _portable_import_ok(module):
+        return True
+    if not _portable_present():
+        print(f"[!] Cannot install {package}: portable Python is missing.")
+        return False
+    py = _portable_python()
+    print(f"[>] Installing {package} into the portable Python...")
+    r = subprocess.run([str(py), "-s", "-m", "pip", "install", "--disable-pip-version-check",
+                        "--no-warn-script-location", package], capture_output=True, text=True)
+    if r.returncode and (r.stderr or r.stdout):
+        print((r.stderr or r.stdout)[-1200:])
+    ok = _portable_import_ok(module)
+    print(f"[+] {package} installed in portable Python." if ok else
+          f"[!] {package} is still unavailable in portable Python.")
+    return ok
+
+
+def install_autoit_ripper() -> bool:
+    return _install_portable_pip_package("autoit-ripper", "autoit_ripper")
+
+
+def install_evbunpack() -> bool:
+    return _install_portable_pip_package("evbunpack", "evbunpack")
+
+
 EMBER_DIR = ROOT / "tools" / "ember"
 EMBER_URL = "https://huggingface.co/joyce8/EMBER2024-benchmark-models/resolve/main/EMBER2024_{}.model"
 # patched oscrypto: PyPI's 1.3.0 cannot parse OpenSSL 3.0.1x version strings
@@ -1266,6 +1690,17 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
     install_cfr()        # CFR (.class decompiler jar; run with the host JVM)
     install_floss()      # Mandiant FLOSS standalone (PE obfuscated strings; Windows)
     install_capa()       # Mandiant capa standalone (PE capabilities/ATT&CK; Windows)
+    # PE packer / installer unpackers. Each is optional and independently guarded.
+    for _name in ("upx", "7zip", "die", "innoextract", "nuitka-extractor",
+                  "autoit-ripper", "evbunpack"):
+        _clear_mark(_name)
+    install_upx()
+    install_7zip()
+    install_die()
+    install_innoextract()
+    install_nuitka_extractor()
+    install_autoit_ripper()
+    install_evbunpack()
     _clear_mark("ember")
     install_ember()      # EMBER2024 LightGBM models (Machine Learning tab)
     verify()
@@ -1346,18 +1781,26 @@ def _clear_mark(name: str) -> None:
 
 
 def _ensure_optional() -> None:
-    """Heal the optional runtimes on start: install webcrack and box-ps when
-    missing, once (marker-guarded), so updates pick them up without hammering a
-    failing build on every start."""
+    """Heal optional runtimes and PE unpackers on start, once per app version
+    after a failed attempt (marker-guarded), so updates pick them up without
+    hammering a failing download or build on every start."""
     for name, ok, install in (("webcrack", _webcrack_ok, install_webcrack),
                               ("boxps", _boxps_ok, install_boxps),
                               ("pycdc", _pycdc_ok, install_pycdc),
                               ("cfr", _cfr_ok, install_cfr),
                               ("floss", _floss_ok, install_floss),
                               ("capa", _capa_ok, install_capa),
+                              ("upx", _upx_ok, install_upx),
+                              ("7zip", _sevenzip_ok, install_7zip),
+                              ("die", _die_ok, install_die),
+                              ("innoextract", _innoextract_ok, install_innoextract),
+                              ("nuitka-extractor", _nuitka_extractor_ok, install_nuitka_extractor),
+                              ("autoit-ripper", lambda: _portable_import_ok("autoit_ripper"), install_autoit_ripper),
+                              ("evbunpack", lambda: _portable_import_ok("evbunpack"), install_evbunpack),
                               ("ember", _ember_ok, install_ember)):
-        if name in ("floss", "capa") and not sys.platform.startswith("win"):
-            continue  # Windows-only standalone builds
+        if name in ("floss", "capa", "upx", "7zip", "die", "innoextract",
+                    "nuitka-extractor") and not sys.platform.startswith("win"):
+            continue  # Windows-only standalone builds provisioned by this installer
         try:
             if ok():
                 _clear_mark(name)
@@ -1471,6 +1914,13 @@ COMPONENTS: dict = {
     "cfr": lambda: bool(install_cfr()) and _cfr_ok(),
     "floss": lambda: bool(install_floss()) and _floss_ok(),
     "capa": lambda: bool(install_capa()) and _capa_ok(),
+    "upx": lambda: bool(install_upx()) and _upx_ok(),
+    "7zip": lambda: bool(install_7zip()) and _sevenzip_ok(),
+    "die": lambda: bool(install_die()) and _die_ok(),
+    "innoextract": lambda: bool(install_innoextract()) and _innoextract_ok(),
+    "nuitka-extractor": lambda: bool(install_nuitka_extractor()) and _nuitka_extractor_ok(),
+    "autoit-ripper": lambda: bool(install_autoit_ripper()) and _portable_import_ok("autoit_ripper"),
+    "evbunpack": lambda: bool(install_evbunpack()) and _portable_import_ok("evbunpack"),
     "ember": lambda: bool(install_ember()) and _ember_ok(),
 }
 
