@@ -501,6 +501,14 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
         res["status"] = "not_applicable"
         res["detail"] = "no PE, PDF, ELF or APK object in this case"
         return res
+    # One child process scores every object at once (models loaded once), so there
+    # is no per-object timing here: just say what is being scored.
+    try:
+        from ..analyze import step_progress_reporter
+        names = ", ".join(t.get("label", "") for t in tg[:3]) + ("…" if len(tg) > 3 else "")
+        step_progress_reporter()(f"scoring {len(tg)} object(s) · {names}")
+    except Exception:  # noqa: BLE001
+        pass
     results = classify([Path(t["path"]) for t in tg])
     for t, r in zip(tg, results):
         item = {**{k: v for k, v in t.items() if k != "path"}, **{k: v for k, v in r.items() if k != "path"}}
