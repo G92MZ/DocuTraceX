@@ -255,6 +255,7 @@ def _downloads_nested(paths: CasePaths, downloads: list[dict[str, Any]], loc: st
 
     items = [{"path": str(paths.root / d["path"]), "filename": d["filename"]} for d in downloads]
     res = nested.scan_children(items, paths)
+    res.pop("timings", None)        # per-child timings are for the Tasks tab, not the check record
     out = []
     for d in downloads:
         out.append({"tool": "netcheck", "rule": "web_file_download", "severity": "high",
