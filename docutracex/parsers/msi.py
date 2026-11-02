@@ -182,12 +182,17 @@ def analyze_msi(path: Path, rel: str) -> dict[str, Any]:
         for entry in ole.listdir(streams=True, storages=False):
             raw = entry[-1] if isinstance(entry, list) else entry
             decoded, is_table = decode_streamname(raw)
+            # The string pool is where every table's text lives (CustomAction
+            # targets, commands, URLs). In a real MSI it carries the table prefix
+            # (0x4840, "!_StringData" in 7-Zip): mine it whatever the prefix.
+            pool = decoded in ("_StringData", "_StringPool")
             if is_table:
                 tables.add(decoded)
-                continue
+                if not pool:
+                    continue
             if decoded.startswith("\x05"):          # SummaryInformation etc.
                 continue
-            # Named data streams (Binary.*, _StringData, CABs) have no table sentinel.
+            # Named data streams (Binary.*, Icon.*, CABs) have no table prefix.
             try:
                 blob = ole.openstream(entry).read()
             except Exception:  # noqa: BLE001
@@ -300,17 +305,16 @@ def is_msi_file(path: Path) -> bool:
             return False
         ole = olefile.OleFileIO(str(path))
         try:
+            # Windows Installer stores ALL its system streams (_StringData,
+            # _StringPool, _Tables, _Columns, _Validation...) with the 0x4840 table
+            # prefix — 7-Zip lists them as "!_StringData". Whether a name carries
+            # the prefix is irrelevant here: match on the decoded names.
             names: set[str] = set()
-            tables: set[str] = set()
             for entry in ole.listdir(streams=True, storages=False):
                 raw = entry[-1] if isinstance(entry, list) else entry
-                decoded, is_table = decode_streamname(raw)
-                if is_table:
-                    tables.add(decoded.lower())
-                else:
-                    names.add(decoded.lower())
-            return ({"_stringdata", "_stringpool"}.issubset(names)
-                    and {"_tables", "_columns"}.issubset(tables))
+                decoded, _is_table = decode_streamname(raw)
+                names.add(decoded.lower())
+            return {"_stringdata", "_stringpool", "_tables", "_columns"}.issubset(names)
         finally:
             ole.close()
     except Exception:  # noqa: BLE001

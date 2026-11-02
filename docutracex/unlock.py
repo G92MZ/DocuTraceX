@@ -232,6 +232,14 @@ ARCHIVE_LABEL = {"office": "Office document", "pdf": "PDF", "zip": "ZIP archive"
                  "rar": "RAR archive"}
 
 
+def archive_label(kind: str | None, fallback: str | None) -> str | None:
+    """``ARCHIVE_LABEL.get(kind, fallback)``, plus ``7zip:<type>`` (an archive only
+    7-Zip recognised, see ``probe_7z``), which reads as e.g. "ARJ archive (7-Zip)"."""
+    if isinstance(kind, str) and kind.startswith("7zip:"):
+        return f"{kind[5:].upper() or 'Unknown'} archive (7-Zip)"
+    return ARCHIVE_LABEL.get(kind, fallback)  # type: ignore[arg-type]
+
+
 def _finding(rule: str, severity: str, detail: str, location: str = "document") -> dict[str, Any]:
     return {"tool": "unlock", "rule": rule, "severity": severity, "detail": detail, "location": location}
 
@@ -239,7 +247,7 @@ def _finding(rule: str, severity: str, detail: str, location: str = "document") 
 def _decrypted_findings(kind: str, used: dict[str, str], name: str, location: str) -> list[dict[str, Any]]:
     """What the way it was unlocked says about the file."""
     src, pw = used["source"], used["password"]
-    what = ARCHIVE_LABEL.get(kind, kind)
+    what = archive_label(kind, kind)
     if src == "default" and kind == "office":
         return [_finding("encrypted_default_password", "high",
                          f"{what} decrypts with the default password '{pw}' — opens without a prompt "
@@ -675,6 +683,89 @@ def _rar_extract(path: Path, out_dir: Path, pw: str | None) -> list[dict[str, An
     return entries
 
 
+# --- 7-Zip probe for files nothing else recognised ---------------------------
+# A file with no known extension and no signature the app reads (an ARJ, LZH, WIM,
+# a self-extractor's payload...) may still be an archive 7-Zip opens. Only real
+# archive/container formats are accepted: 7-Zip also "opens" documents and
+# executables (OLE compound files, PE, ELF, PDF, CHM...), and dumping their raw
+# streams would hide them from the parsers that actually understand them.
+SEVENZIP_ARCHIVE_TYPES = frozenset({
+    "zip", "7z", "rar", "rar5", "gzip", "bzip2", "xz", "lzma", "lzma86", "z", "zstd", "lz4", "lzip",
+    "tar", "cpio", "ar", "arj", "lzh", "cab", "iso", "udf", "wim", "xar", "rpm", "deb", "squashfs",
+    "cramfs", "vhd", "vhdx", "vmdk", "vdi", "qcow", "dmg", "hfs", "apfs", "fat", "ntfs", "ext",
+})
+# Deliberately NOT accepted (7-Zip opens them, but they are not archives to unpack
+# here): Compound (OLE: MSI, .doc, .msg — see msi.is_msi_file / the OLE parsers),
+# PE / ELF / MachO / NSIS (the binary branch unpacks those), PDF, CHM, MBR / GPT
+# (a stray 0x55AA at offset 510 is enough for 7-Zip to "see" a partition table).
+
+
+def _slt_archive_type(text: str) -> str:
+    """The container's ``Type = …`` from a ``7z l -slt`` listing (the header block
+    before the first '----------' line), lower-cased; '' when absent."""
+    head = text.split("\n----------", 1)[0]
+    found = ""
+    for line in head.splitlines():
+        k, sep, v = line.partition(" = ")
+        if sep and k.strip() == "Type":
+            found = v.strip().lower()           # several levels: the last Type line wins
+    return found
+
+
+def probe_7z(path: Path) -> dict[str, Any]:
+    """Ask 7-Zip what an otherwise unrecognised file is (listing only, never extracts).
+
+    ``{"archive": bool, "type": str, "detail": str, "encrypted": bool}``. ``archive``
+    is True only for a type in SEVENZIP_ARCHIVE_TYPES with at least one file listed.
+    Never raises: a missing 7-Zip, a timeout or a non-archive just give ``archive=False``.
+    """
+    out: dict[str, Any] = {"archive": False, "type": "", "detail": "", "encrypted": False}
+    try:
+        r = _7z_run(["l", "-slt", "-y", "-p-", "--", str(path)], timeout=120)
+    except SevenZipMissing:
+        out["detail"] = "7-Zip not found"
+        return out
+    except Exception as exc:  # noqa: BLE001  (a probe must never fail the analysis)
+        out["detail"] = f"7-Zip probe failed: {exc}"[:200]
+        return out
+    if r.get("timed_out"):
+        out["detail"] = "7-Zip listing timed out"
+        return out
+    text = r.get("out") or ""
+    typ = _slt_archive_type(text)
+    out["type"] = typ
+    files = [e for e in _slt_entries(text) if not e["dir"]]
+    errtxt = ((r.get("err") or "") + " " + text).lower()
+    headers_enc = not files and ("password" in errtxt or "encrypted" in errtxt or "wrong" in errtxt)
+    out["encrypted"] = headers_enc or any(e["encrypted"] for e in files)
+    if not typ:
+        out["detail"] = "7-Zip does not recognise it as an archive"
+    elif typ not in SEVENZIP_ARCHIVE_TYPES:
+        out["detail"] = f"7-Zip reads it as '{typ}', not an archive format (left to the file parsers)"
+    elif not files and not headers_enc:
+        out["detail"] = f"7-Zip reads it as '{typ}' but lists no files"
+    else:
+        out["archive"] = True
+        out["detail"] = f"{typ} archive (recognised by 7-Zip)" + (" (encrypted)" if out["encrypted"] else "")
+    return out
+
+
+def _sevenzip_generic_extract(path: Path, out_dir: Path, pw: str | None) -> list[dict[str, Any]]:
+    """Any archive type 7-Zip accepted in ``probe_7z``: the same bounded extraction as RAR."""
+    return _rar_extract(path, out_dir, pw)
+
+
+def extract_with_7z(path: Path, out_dir: Path, tries: list[dict[str, str]],
+                    probe: dict[str, Any], location: str = "document",
+                    name: str | None = None) -> dict[str, Any]:
+    """Extract a file ``probe_7z`` accepted as an archive, with the bounds and
+    password handling of ``extract_archive`` (same record shape)."""
+    kind = "7zip:" + (probe.get("type") or "archive")
+    det = {"encrypted": bool(probe.get("encrypted")), "kind": kind,
+           "detail": probe.get("detail") or "archive (recognised by 7-Zip)"}
+    return _extract_with(path, out_dir, tries, det, _sevenzip_generic_extract, location, name)
+
+
 def extract_msi(path: Path, out_dir: Path, location: str = "document",
                 name: str | None = None) -> dict[str, Any]:
     """Extract an MSI with 7-Zip only (never invoke Windows Installer).
@@ -779,10 +870,17 @@ def extract_archive(path: Path, out_dir: Path, tries: list[dict[str, str]],
     """Extract a ZIP/7z/RAR/tar/CAB/ISO (bounded), trying candidates when encrypted."""
     path = Path(path)
     det = detect(path)
+    return _extract_with(path, out_dir, tries, det, _ARCHIVE_EXTRACTORS.get(det["kind"]), location, name)
+
+
+def _extract_with(path: Path, out_dir: Path, tries: list[dict[str, str]], det: dict[str, Any],
+                  fn, location: str = "document", name: str | None = None) -> dict[str, Any]:  # noqa: ANN001
+    """Shared extraction loop (bounds, passwords, findings) for ``extract_archive``
+    and ``extract_with_7z``; ``det`` is ``{encrypted, kind, detail}``."""
+    path = Path(path)
     rec: dict[str, Any] = {"encrypted": bool(det["encrypted"]), "kind": det["kind"],
                            "detail": det["detail"], "decrypted": False, "entries": [],
                            "findings": [], "tried": 0}
-    fn = _ARCHIVE_EXTRACTORS.get(det["kind"])
     if fn is None:
         rec["error"] = "not a supported archive/container"
         return rec
@@ -800,7 +898,7 @@ def extract_archive(path: Path, out_dir: Path, tries: list[dict[str, str]],
             if isinstance(exc, SevenZipMissing):
                 rec["findings"].append(_finding(
                     "archive_not_extracted", "medium",
-                    f"RAR archive '{name or path.name}' was not extracted: 7-Zip was not found "
+                    f"{archive_label(det['kind'], 'Archive')} '{name or path.name}' was not extracted: 7-Zip was not found "
                     "(tools/7zip/, DOCUTRACEX_7Z or a 7-Zip install) — its content was not analysed.",
                     location))
             return rec
@@ -822,7 +920,7 @@ def extract_archive(path: Path, out_dir: Path, tries: list[dict[str, str]],
     rec["error"] = last_err
     rec["findings"].append(_finding(
         "encrypted_archive", "medium",
-        f"{ARCHIVE_LABEL.get(det['kind'], 'Archive')} '{name or path.name}' is password protected and "
+        f"{archive_label(det['kind'], 'Archive')} '{name or path.name}' is password protected and "
         f"none of the known passwords opened it ({rec['tried']} tried) — its content was not "
         "analysed. Provide the password to extract it.", location))
     return rec

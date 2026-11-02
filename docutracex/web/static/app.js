@@ -1994,7 +1994,9 @@ function lockBanner(mods) {
     ? `<div>🔑 The email gives ${pwc.length > 1 ? "passwords" : "a password"}: ${pwc.map((c) => `<span class="mono" title="${escapeHtml(c.context || "")}">'${escapeHtml(c.password)}'</span>`).join(", ")} — tried on its encrypted attachments.</div>`
     : "";
   if (!(u && u.encrypted) && !locked.length) return found ? `<div class="unlock-banner">${found}</div>` : "";
-  const what = u && u.kind ? ({ office: "Office document", pdf: "PDF", zip: "ZIP archive", "7z": "7z archive", rar: "RAR archive" }[u.kind] || u.kind) : "";
+  const what = u && u.kind ? (u.kind.startsWith("7zip:")
+    ? `${u.kind.slice(5).toUpperCase() || "Unknown"} archive (7-Zip)`   // recognised only by 7-Zip (no extension)
+    : ({ office: "Office document", pdf: "PDF", zip: "ZIP archive", "7z": "7z archive", rar: "RAR archive" }[u.kind] || u.kind)) : "";
   let msg;
   let needPw = false;
   if (u && u.encrypted && u.decrypted) {
