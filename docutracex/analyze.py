@@ -93,10 +93,12 @@ def _family(manifest: dict[str, Any], original: Path | None = None) -> str | Non
     disc = manifest.get("format", {}).get("discrepancy") or {}
     fam = disc.get("declared_family")
     if fam is None and original is not None:
-        # no extension we know (an ELF "update", a Mach-O, a PE named .bin):
-        # native executables are still analysed as binaries
+        # no extension we know (an ELF "update", a Mach-O, a PE named .bin, an
+        # MSI saved without its extension): native executables and Windows
+        # Installers are still analysed as binaries. The MSI check validates the
+        # MSI string pool / table streams, so a generic OLE (.doc, .msg) does not match.
         from .parsers import msi
-        if msi.native_kind(original):
+        if msi.native_kind(original) or msi.is_msi_file(original):
             return "binary"
     return fam
 
@@ -179,6 +181,10 @@ def _effective_family(manifest: dict[str, Any], subject: Path, unlock_rec: dict[
         kind = unlock.detect(subject).get("kind")
         if kind in ("zip", "7z", "rar"):
             return kind
+        # Cabinet, tar / gzip / bzip2 / xz and ISO images are recognised by their
+        # signature too (extract_archive has their extractors): same archive path.
+        if kind in ("cab", "tar", "iso"):
+            return "container"
     return family
 
 
@@ -197,6 +203,72 @@ def _file_record(manifest: dict[str, Any], original: Path) -> dict[str, Any]:
         "note": "No specific parser for this type: run YARA rules on it (YARA tab), add marks and "
                 "notes, and build the report.",
     }
+
+
+def _try_7z_archive(run, original: Path, paths: CasePaths, user_pw: str | None,  # noqa: ANN001
+                    ran: list[str]) -> bool:
+    """Last resort for a file no family recognised: if 7-Zip lists it as an archive
+    format (``unlock.probe_7z``), extract it with the usual bounds and passwords and
+    scan its entries as nested children — the ``archive`` + ``nested`` results of
+    any uploaded archive. Returns True when at least one entry was extracted;
+    False (nothing written) when 7-Zip is missing, says it is not an archive, or
+    extraction fails — the caller then keeps the generic record and the scripting
+    fallback. The ``7zip probe`` step (with 7-Zip's verdict as its note) is recorded,
+    so the Tasks tab shows why a file was or wasn't unpacked."""
+    from . import nested
+    from . import unlock as unlock_mod
+
+    if unlock_mod.detect(original).get("detail") == "OOXML package":
+        # an extensionless .docx/.xlsx is a ZIP 7-Zip would happily dump as raw
+        # XML parts: not an archive to unpack (left as an unknown file, as before)
+        return False
+    probe = run("7zip probe: unrecognised file → is it an archive 7-Zip opens?",
+                lambda: _probe_record(unlock_mod.probe_7z(original))) or {}
+    if not probe.get("archive"):
+        return False
+
+    def _archive() -> dict[str, Any]:
+        rec = unlock_mod.extract_with_7z(original, paths.extracted_dir / "archive",
+                                         unlock_mod.candidates(user_pw, kind="archive"), probe)
+        out = unlock_mod.public(rec, paths.root)
+        out.update(module="archive", password_set=bool(user_pw), via="7zip-probe",
+                   counts={"findings": len(rec["findings"]),
+                           "entries": len([e for e in rec["entries"] if e.get("file")])},
+                   status="ok_with_findings" if rec["findings"] else "ok")
+        out["_files"] = [(e["file"], e["name"]) for e in rec["entries"] if e.get("file")]
+        return out
+
+    arc = run(f"archive: {probe.get('type') or 'unknown'} via 7-Zip · extract (bounded) · password (analyst / defaults)",
+              _archive) or {}
+    files = arc.pop("_files", [])
+    if not arc:
+        return False
+    if not files and not arc.get("encrypted"):
+        # 7-Zip listed it but nothing usable came out (corrupt, bomb guard...): the
+        # failed attempt is in the Tasks tab; analyse it as an unknown file.
+        return False
+    write_subresult(paths, "archive", arc)
+    ran.append("archive")
+    items = [{"path": f, "filename": Path(n).name, "member": n} for f, n in files]
+    if items:
+        nested_res = run("nested: recursive scan of archive entries",
+                         lambda: nested.scan_children(items, paths, unlock_ctx={"user": user_pw}))
+        if nested_res.get("tree"):
+            write_subresult(paths, "nested", nested_res)
+            ran.append("nested")
+    return True
+
+
+def _probe_record(p: dict[str, Any]) -> dict[str, Any]:
+    """The probe as a Tasks-tab step: 'ok' with 7-Zip's verdict as the step note;
+    'unavailable' when 7-Zip is not installed (greyed out, like other unprovisioned
+    tools)."""
+    rec = dict(p)
+    if p.get("detail") == "7-Zip not found":
+        rec["available"] = False
+    rec["status"] = "ok"
+    rec["step_note"] = p.get("detail") or ""
+    return rec
 
 
 def _office_extras(run, original: Path, paths: CasePaths, family: str, declared_ext: str,
@@ -355,6 +427,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                 rec["note"] = note or "not provisioned"
         else:
             rec["status"] = "ok" if res is not None else "skipped"
+        if isinstance(res, dict) and res.get("step_note") and "note" not in rec:
+            rec["note"] = res["step_note"]          # a verdict only known after the step ran
         if note and "note" not in rec:
             rec["note"] = note
         steps.append(rec)
@@ -812,7 +886,11 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                     ran.append("nested")
                 findings_total += merged.get("counts", {}).get("findings", 0) - (
                     prev.get("counts", {}).get("findings", 0) if had else 0)
-        if original.suffix.lower() not in (".msi", ".msp", ".msm"):
+        # MSI vs PE by what the parser recognised, not by the suffix: an MSI
+        # saved without its extension must keep feeding the scripting engine.
+        is_msi = (any(it.get("kind") == "msi" for it in msi_res.get("items") or [])
+                  or original.suffix.lower() in (".msi", ".msp", ".msm"))
+        if not is_msi:
             # A PE is still a first-class case: keep the generic file record
             # (hashes, YARA on demand, marks, report) exactly as any other binary.
             pe_binary = True
@@ -858,6 +936,19 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         write_subresult(paths, "file", file_res)
         ran.append("file")
         state = "completed"
+
+        # Nothing recognised it — but 7-Zip may: an archive with no extension and
+        # a signature the app doesn't read (ARJ, LZH, WIM, an embedded/offset
+        # archive...). Ask 7-Zip (listing only); if it is an archive format, extract
+        # it bounded and scan the entries as any archive. Otherwise carry on with
+        # the generic record and the scripting fallback below, exactly as before.
+        if _try_7z_archive(run, original, paths, user_pw, ran):
+            arc = read_json(paths.subresult("archive")) or {}
+            overall_counts["components"] = arc.get("counts", {}).get("entries", 0)
+            findings_total += arc.get("counts", {}).get("findings", 0)
+            nst = read_json(paths.subresult("nested")) or {}
+            findings_total += nst.get("counts", {}).get("findings", 0)
+            family = "archive"   # not "unknown" any more: no text fallback over the raw archive
 
     # Scripting engine (deobfuscation + behaviour rules). It runs whenever a
     # family parser ran (scripts hide inside those) or the case file itself is a
