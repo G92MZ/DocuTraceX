@@ -51,6 +51,15 @@ FLOSS_TIMEOUT = int(_os.environ.get("DOCUTRACEX_FLOSS_TIMEOUT", str(tmo(1200))))
 # FLOSS arguments (besides --json / --quiet, which the parser needs):
 # --large-file lifts FLOSS's 16 MB limit; -n 7 = minimum string length.
 FLOSS_EXTRA_ARGS = ["--large-file", "-n", "7"]
+# FLOSS's language-specific (Go / Rust) string extraction crashes on some PEs
+# (FLOSS 3.2.0: "ValueError: bytes length not a multiple of item size" in
+# get_struct_string_candidates_with_pointer_size, e.g. a .rdata whose size is
+# not a multiple of the pointer size) and takes the whole run down with it.
+# Then FLOSS is run once more without that phase (``--language none``, FLOSS
+# 3.x) so the static / decoded / stack / tight strings are not lost.
+FLOSS_NO_LANGUAGE_ARGS = ["--language", "none"]
+_FLOSS_LANGUAGE_CRASH = ("get_struct_string_candidates", "bytes length not a multiple of item size",
+                         "language_strings", "floss/language/")
 CAPA_TIMEOUT = int(_os.environ.get("DOCUTRACEX_CAPA_TIMEOUT", str(tmo(1800))))   # 30 min x factor
 _FLOSS_MAX_STRINGS = 7000
 _CAPA_MAX_RULES = 300
@@ -488,9 +497,23 @@ def _run_floss(path: Path) -> dict[str, Any]:
 
     from ..config import settings
 
-    rec, out = _run_tool("floss", settings.floss_executable(),
-                         ["--json", "--quiet", *FLOSS_EXTRA_ARGS],
-                         path, FLOSS_TIMEOUT)
+    exe = settings.floss_executable()
+    args = ["--json", "--quiet", *FLOSS_EXTRA_ARGS]
+    rec, out = _run_tool("floss", exe, args, path, FLOSS_TIMEOUT)
+    retry_note = ""
+    if rec["status"] == "error" and _floss_language_crash(rec.get("detail") or ""):
+        # Only this known crash is retried (never a timeout, a missing tool or
+        # any other error), and only once.
+        first = rec.get("detail") or ""
+        log.info("floss: language-specific string extraction crashed on %s; "
+                 "retrying with --language none", path.name)
+        rec, out = _run_tool("floss", exe, [*args, *FLOSS_NO_LANGUAGE_ARGS], path, FLOSS_TIMEOUT)
+        if rec["status"] != "ok":
+            rec["detail"] = (f"{rec.get('detail') or 'floss failed'} (retried with --language none "
+                             f"after a Go/Rust string extraction crash; first run: {first[-160:]})")
+            return rec
+        retry_note = ("Go/Rust (language-specific) string extraction crashed in FLOSS, "
+                      "so it ran again without it (--language none)")
     if rec["status"] != "ok":
         return rec
     try:
@@ -516,8 +539,18 @@ def _run_floss(path: Path) -> dict[str, Any]:
                      f"{counts.get('decoded', 0)} decoded, "
                      f"{counts.get('stack', 0)} stack, "
                      f"{counts.get('tight', 0)} tight")
+    if retry_note:
+        rec["detail"] += f" · {retry_note}"
+        rec["language_strings"] = "disabled (crashed)"
     rec["strings"] = strings
     return rec
+
+
+def _floss_language_crash(detail: str) -> bool:
+    """True when FLOSS died in its language-specific (Go / Rust) string
+    extraction — the one failure worth a retry with ``--language none``."""
+    d = detail.lower()
+    return any(m.lower() in d for m in _FLOSS_LANGUAGE_CRASH)
 
 
 def _run_capa(path: Path) -> dict[str, Any]:
