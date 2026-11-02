@@ -2061,6 +2061,54 @@ function itable(head, rows) {
     <tbody>${rows.map((r) => `<tr>${r.map((c) => `<td class="mono">${escapeHtml(c == null ? "" : String(c))}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
 }
 
+function paneAuthenticode(sig) {
+  if (!sig || !Object.keys(sig).length) return "";
+  const labels = { valid: "Valid", not_signed: "Not signed", hash_mismatch: "Hash mismatch",
+    not_trusted: "Not trusted", unavailable: "Unavailable", timeout: "Timeout", error: "Error",
+    unsupported_format: "Unsupported format", unknown_error: "Unknown error", unknown: "Unknown" };
+  const certRows = (cert, label) => {
+    if (!cert || !Object.keys(cert).length) return "";
+    const chain = cert.certificate_chain || [];
+    const eku = (cert.eku || []).map((x) => `${x.name || ""}${x.oid ? ` (${x.oid})` : ""}`).join("; ");
+    const policies = (cert.certificate_policies || []).join("; ");
+    const rows = kv([
+      ["Subject", cert.subject], ["Issuer", cert.issuer], ["Thumbprint", cert.thumbprint],
+      ["SHA-256 fingerprint", cert.sha256_fingerprint], ["Serial number", cert.serial_number],
+      ["Valid from", cert.valid_from], ["Valid to", cert.valid_to],
+      ["Certificate signature algorithm", cert.certificate_signature_algorithm],
+      ["Certificate signature OID", cert.certificate_signature_algorithm_oid],
+      ["Enhanced Key Usage", eku], ["Certificate policies", policies],
+      ["Chain build", cert.chain_build_succeeded == null ? "" : (cert.chain_build_succeeded ? "Succeeded" : "Failed")],
+      ["Chain evaluated at", cert.chain_evaluation_time],
+      ["Chain status", (cert.chain_status || []).map((x) => `${x.status}${x.information ? `: ${x.information}` : ""}`).join("; ")],
+      ["Revocation", cert.revocation_status],
+    ]);
+    const chainTable = chain.length ? `<details class="disclose"><summary>${label} certificate chain (${chain.length})</summary>${itable(
+      ["Subject", "Issuer", "Thumbprint", "Serial", "Valid from", "Valid to"],
+      chain.map((c) => [c.subject, c.issuer, c.thumbprint, c.serial_number, c.valid_from, c.valid_to]))}</details>` : "";
+    return `<h4>${label}</h4>${rows}${chainTable}`;
+  };
+  const status = labels[sig.status] || sig.status || "Not checked";
+  const signatureTypeLabels = { embedded: "Embedded", catalog: "Catalog", none: "None", unknown: "Unknown" };
+  const signatureType = signatureTypeLabels[sig.signature_type] ||
+    (sig.signature_type ? String(sig.signature_type) : "Not reported");
+  const signatureSourceLabels = { embedded: "Embedded file signature", catalog: "Windows catalog database",
+    none: "No signature found", unknown: "Unknown" };
+  const signatureSource = signatureSourceLabels[sig.signature_source] || sig.signature_source || "unknown";
+  const summary = kv([
+    ["Verification", sig.verification], ["Authenticode status", status],
+    ["Signature type", signatureType], ["Signature source", signatureSource],
+    ["Status detail", sig.status_message || sig.detail],
+    ["File content digest algorithm", sig.content_digest_algorithm || (sig.content_digest_algorithm_status === "not_exposed_by_powershell_api" ? "Not exposed by Get-AuthenticodeSignature" : "")],
+    ["Timestamp signing time", sig.timestamp_time || (sig.timestamp_signer && sig.timestamp_signer.subject
+      ? "Not exposed by Get-AuthenticodeSignature" : "")],
+  ]);
+  const note = `<p class="hint-line">Embedded signatures are stored in the PE/MSI file. Catalog signatures are external and are matched by Windows against its catalog database. Certificate-chain and revocation results are evaluated by Windows at analysis time; an offline or indeterminate revocation result is not treated as good. The exact timestamp signing time is not exposed by Get-AuthenticodeSignature.</p>`;
+  return `<h4>Authenticode signature</h4>${summary}`
+    + certRows(sig.signer, "Signer certificate")
+    + certRows(sig.timestamp_signer, "Timestamp authority certificate") + note;
+}
+
 function paneLief(lf) {
   if (!lf || lf.status !== "ok") return "";
   const mit = lf.mitigations || {};
@@ -2072,7 +2120,8 @@ function paneLief(lf) {
     ["ASLR / DEP / CFG", lf.format === "PE" ? `${yn(mit.aslr)} / ${yn(mit.dep)} / ${yn(mit.cfg)}` : ""],
     ["High-entropy VA", lf.format === "PE" ? yn(mit.high_entropy_va) : ""],
     ["Checksum", chk.declared ? `${chk.declared} (computed ${chk.computed}) ${chk.valid ? "✓" : "✗ mismatch"}` : ""],
-    ["Authenticode", lf.format === "PE" ? ((lf.signatures || []).length ? `signed — ${lf.signature_check}` : "not signed") : ""],
+    ["Authenticode integrity (LIEF)", lf.format === "PE" ? ((lf.signatures || []).length ? `signed — ${lf.signature_check}` : "not signed") : ""],
+    ["Windows trust status", lf.format === "PE" ? ((lf.authenticode || {}).status || "not checked") : ""],
     ["Authentihash", lf.authentihash_sha256],
     ["TLS callbacks", (lf.tls_callbacks || []).join(", ")],
     ["CFG flags", (lf.load_config || {}).guard_flags],
@@ -2089,6 +2138,7 @@ function paneLief(lf) {
     ${itable(["Product id", "Build", "Count"], (lf.rich_header.entries || []).map((e) => [e.id, e.build_id, e.count]))}</details>` : "";
   const sigs = (lf.signatures || []).map((sg, n) => `<details class="disclose"${n ? "" : " open"}><summary>Signature ${n + 1} — ${escapeHtml(sg.digest || "")}</summary>
     ${itable(["Subject", "Issuer", "Serial", "Valid from", "Valid to"], (sg.certificates || []).map((c) => [c.subject, c.issuer, c.serial, c.valid_from, c.valid_to]))}</details>`).join("");
+  const auth = paneAuthenticode(lf.authenticode);
   const ver = itable(["Version info", "Value"], (lf.version_info || []).map((v) => [v.key, v.value]));
   const res = (lf.resource_types || []).length ? kv([["Resource types", lf.resource_types.join(", ")], ["Icons", lf.icons]]) : "";
   const man = lf.manifest ? `<details class="disclose"><summary>Manifest</summary><pre class="text-sample">${escapeHtml(lf.manifest)}</pre></details>` : "";
@@ -2100,7 +2150,7 @@ function paneLief(lf) {
     <pre class="text-sample">${escapeHtml(lf.exported.join("\n"))}</pre></details>` : "";
   const secs = lf.format !== "PE" ? itable(["Section", "Size", "Offset", "Entropy", "Flags"],
     (lf.sections || []).map((x) => [x.name, x.size, x.offset, x.entropy, (x.flags || []).join(" ")])) : "";
-  return head + pdb + sigs + ver + res + man + ov + rich + libs + syms + exps + secs;
+  return head + pdb + auth + sigs + ver + res + man + ov + rich + libs + syms + exps + secs;
 }
 
 function paneImportsExports(it) {
@@ -2189,6 +2239,7 @@ function paneMsi(msim, fileRec) {
       return `<div class="sub-item">${paneNativeItem(it, n, n === 0 ? fileRec : null)}</div>`;
     }
     const meta = it.metadata || {};
+    const signatureRows = paneAuthenticode(it.signature || {});
     const rows = kv([
       ["File", it.file],
       ["Tables", (it.tables || []).join(", ")],
@@ -2197,7 +2248,7 @@ function paneMsi(msim, fileRec) {
       ...Object.keys(meta).map((k) => [`meta:${k}`, meta[k]]),
     ]);
     const err = it.error ? `<p class="bad-text">${escapeHtml(it.error)}</p>` : "";
-    return `<div class="sub-item"><div class="hint-line">Windows Installer (.msi) — OLE tables decoded, strings mined into the scripting engine.</div>${rows}${err}${netFindingsList(it.findings || [])}</div>`;
+    return `<div class="sub-item"><div class="hint-line">Windows Installer (.msi) — OLE tables decoded, strings mined into the scripting engine.</div>${signatureRows}${rows}${err}${netFindingsList(it.findings || [])}</div>`;
   }).join("");
   return parts;
 }
