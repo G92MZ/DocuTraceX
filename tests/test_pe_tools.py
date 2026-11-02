@@ -179,3 +179,73 @@ def test_analyze_capa_findings(tmp_path, monkeypatch) -> None:
     assert rules.count("pe_capa_capability") == 1          # the "info" one is UI-only
     assert "pe_floss_strings" in rules
     assert r["floss_strings"] == ["abc"] and "strings" not in r["floss"]
+
+
+# --- FLOSS: Go/Rust (language-specific) extraction crash → one retry --------------
+# stderr tail as FLOSS 3.2.0 prints it (PyInstaller onefile build)
+_FLOSS_LANG_CRASH = ("| | | | in get_struct_string_candidates_with_pointer_size:353 |\n"
+                     "+------------------------------------------------------------+\n"
+                     "ValueError: bytes length not a multiple of item size\n"
+                     "[PYI-10408:ERROR] Failed to execute script 'main' due to unhandled exception!")
+
+
+def _patch_floss_seq(monkeypatch, results: list[dict]) -> list[list[str]]:
+    """run_bounded returns ``results`` in order (one per call)."""
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, timeout, cwd=None, env=None):
+        calls.append(cmd)
+        return {"timed_out": False, "duration_s": 0.1, "out": "", "err": "", **results[len(calls) - 1]}
+
+    from docutracex import proctools
+    monkeypatch.setattr(proctools, "run_bounded", fake_run)
+    return calls
+
+
+def test_floss_language_crash_is_retried_without_language_strings(tmp_path, monkeypatch) -> None:
+    exe = _fake_exe(tmp_path, "floss.exe")
+    monkeypatch.setattr(settings, "floss_executable", lambda: exe)
+    calls = _patch_floss_seq(monkeypatch, [
+        {"rc": 1, "err": _FLOSS_LANG_CRASH},
+        {"rc": 0, "out": json.dumps(FLOSS_JSON)},
+    ])
+    sample = tmp_path / "go.exe"
+    sample.write_bytes(b"MZ")
+    r = pe._run_floss(sample)
+    assert len(calls) == 2
+    assert "--language" not in calls[0]
+    assert calls[1][-3:-1] == ["--language", "none"] and calls[1][-1] == str(sample)
+    assert r["status"] == "ok"
+    assert r["strings"] == ["hxxp://evil.example/a", "cmd.exe /c whoami"]
+    assert "--language none" in r["detail"] and r["language_strings"] == "disabled (crashed)"
+
+
+def test_floss_retry_that_also_fails_stays_an_error(tmp_path, monkeypatch) -> None:
+    exe = _fake_exe(tmp_path, "floss.exe")
+    monkeypatch.setattr(settings, "floss_executable", lambda: exe)
+    calls = _patch_floss_seq(monkeypatch, [
+        {"rc": 1, "err": _FLOSS_LANG_CRASH},
+        {"rc": 1, "err": "MemoryError"},
+    ])
+    sample = tmp_path / "go.exe"
+    sample.write_bytes(b"MZ")
+    r = pe._run_floss(sample)
+    assert len(calls) == 2                                  # retried once, never more
+    assert r["status"] == "error"
+    assert "retried with --language none" in r["detail"] and "MemoryError" in r["detail"]
+
+
+@pytest.mark.parametrize("first", [
+    {"rc": 1, "err": "vivisect: invalid PE header"},        # any other FLOSS error
+    {"rc": None, "timed_out": True},                        # a timeout is never retried
+])
+def test_floss_other_failures_are_not_retried(tmp_path, monkeypatch, first) -> None:
+    exe = _fake_exe(tmp_path, "floss.exe")
+    monkeypatch.setattr(settings, "floss_executable", lambda: exe)
+    calls = _patch_floss_seq(monkeypatch, [first, {"rc": 0, "out": json.dumps(FLOSS_JSON)}])
+    sample = tmp_path / "x.exe"
+    sample.write_bytes(b"MZ")
+    r = pe._run_floss(sample)
+    assert len(calls) == 1
+    assert r["status"] in ("error", "timeout")
+    assert "--language none" not in (r.get("detail") or "")
