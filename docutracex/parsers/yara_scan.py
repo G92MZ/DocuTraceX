@@ -75,9 +75,14 @@ def analyze(original_path: Path, extracted_dir: Path) -> dict[str, Any]:
                if src.get("status", "ok") == "ok"}
     rules_info: dict[str, dict[str, str]] = {}
     total_matches = 0
-    for rel, path in _iter_targets(original_path, extracted_dir):
+    from ..progress import ObjectProgress
+    targets = list(_iter_targets(original_path, extracted_dir))
+    prog = ObjectProgress(len(targets))
+    for rel, path in targets:
+        prog.start(rel)
         matches = yara_engine.scan_path(compiled, path, set())
         result["files_scanned"] += 1
+        prog.done(len(matches), ", ".join(sorted({m["rule"] for m in matches}))[:200] if matches else "")
         if not matches:
             continue
         total_matches += len(matches)
@@ -111,6 +116,7 @@ def analyze(original_path: Path, extracted_dir: Path) -> dict[str, Any]:
     result["rules_info"] = rules_info
 
     result["match_count"] = total_matches
+    result["timings"] = prog.timings()
     result["counts"] = {"findings": len(result["findings"])}
     if result["findings"]:
         result["status"] = "ok_with_findings"
