@@ -90,6 +90,22 @@ body {
 .diag-dot.dot-bad { background: #e8795a; }
 .diag-dot.dot-warn { background: #e0b65a; }
 
+/* Cases tab: "something is queued/running" indicator + toolbar */
+.cases-active-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block;
+                    background: #e0b65a; animation: cases-pulse 1.6s ease-in-out infinite; }
+.cases-active-dot[hidden] { display: none; }
+@keyframes cases-pulse { 50% { opacity: 0.35; } }
+.cases-head { display: flex; align-items: baseline; gap: 12px; }
+.cases-toolbar { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+.cases-search {
+  background: #0b0e12; color: var(--text); border: 1px solid var(--panel-border);
+  border-radius: 6px; padding: 7px 10px; font-size: 13px; min-width: 320px; flex: 0 1 460px;
+}
+.cases-search:focus { outline: none; border-color: var(--accent); }
+.cases-more { display: flex; gap: 8px; justify-content: center; margin-top: 14px; }
+.cases-more[hidden] { display: none; }
+table.cases td.case-actions { text-align: right; white-space: nowrap; }
+
 /* ref: gmzpt */
 .content { padding: 24px 28px; max-width: 1680px; margin: 0 auto; }
 .view[hidden] { display: none; }
