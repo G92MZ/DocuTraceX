@@ -15,6 +15,7 @@ Bounds (depth, child count, per-file work) guard against zip bombs and cycles.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import zipfile
 from pathlib import Path
@@ -31,6 +32,113 @@ MAX_CHILDREN = 25
 # archive-in-archive, so the whole tree is capped (children past it are counted
 # as truncated, not analysed).
 MAX_NODES = 300
+# Per-child timings kept in the result (Tasks tab, after the step ends): every
+# first-level child, plus the slowest deeper nodes, up to this many in total.
+MAX_TIMINGS = 40
+
+
+class _Tracer:
+    """Progress of one ``scan_children`` run, for the Tasks tab.
+
+    Live: ``enter()`` / ``tool()`` send e.g. "3/11 · setup.msi › a.vbs · vbscript"
+    as the running step's detail (``analyze.step_progress_reporter``; a no-op
+    without a listener). Kept: each node's wall time, its slowest tool and its
+    finding count — ``timings()``, stored in the nested result.
+    Reporting must never break the scan: every method swallows its own errors.
+    """
+
+    def __init__(self, total: int) -> None:
+        import time
+
+        self._clock = time.perf_counter
+        try:
+            from .analyze import step_progress_reporter
+            self._report = step_progress_reporter()
+        except Exception:  # noqa: BLE001
+            self._report = lambda _detail: None
+        self.total = total
+        self.index = 0                  # 1-based index of the current first-level child
+        self.records: list[dict[str, Any]] = []
+
+    def _send(self, chain: str, what: str) -> None:
+        pos = f"{self.index}/{self.total}" if self.total else ""
+        where = chain if len(chain) <= 70 else "…" + chain[-69:]
+        try:
+            self._report(" · ".join(x for x in (pos, where, what) if x))
+        except Exception:  # noqa: BLE001
+            pass
+
+    def enter(self, chain: str, kind: str, depth: int) -> dict[str, Any]:
+        self._send(chain, kind if depth <= 1 else f"{kind} (depth {depth})")
+        return {"t0": self._clock(), "tools": {}, "chain": chain}
+
+    @contextlib.contextmanager
+    def tool(self, rec: dict[str, Any], name: str):  # noqa: ANN201
+        """Time one tool on the current node (and show it live)."""
+        self._send(rec["chain"], name)
+        t = self._clock()
+        try:
+            yield
+        finally:
+            rec["tools"][name] = rec["tools"].get(name, 0.0) + self._clock() - t
+
+    def leave(self, rec: dict[str, Any], node: dict[str, Any]) -> None:
+        try:
+            total = self._clock() - rec["t0"]
+            slow = max(rec["tools"].items(), key=lambda kv: kv[1], default=("", 0.0))
+            self.records.append({
+                "name": node.get("filename", ""), "chain": rec["chain"],
+                "depth": node.get("depth", 1), "kind": node.get("kind", ""),
+                "duration_s": round(total, 2),
+                # time in this node's own tools; the rest of duration_s is its children
+                "own_s": round(sum(rec["tools"].values()), 2),
+                "slowest_tool": slow[0] if slow[1] >= 0.05 else "",
+                "slowest_tool_s": round(slow[1], 2),
+                "findings": len(node.get("findings") or []),
+                "children": len(node.get("children") or []),
+                "status": ("error" if node.get("error")
+                           else "ok_with_findings" if node.get("findings") else "ok"),
+            })
+        except Exception:  # noqa: BLE001
+            pass
+
+    def timings(self) -> list[dict[str, Any]]:
+        """Every first-level child, plus the slowest deeper nodes (MAX_TIMINGS
+        in total), in tree order: each first-level child followed by its kept
+        descendants."""
+        top = [r for r in self.records if r["depth"] <= 1]
+        deep = sorted((r for r in self.records if r["depth"] > 1),
+                      key=lambda r: r["duration_s"], reverse=True)
+        keep = {id(r) for r in top + deep[:max(0, MAX_TIMINGS - len(top))]}
+        out: list[dict[str, Any]] = []
+        pending: list[dict[str, Any]] = []
+        for r in self.records:                  # a node is recorded after its children
+            if id(r) not in keep:
+                continue
+            if r["depth"] <= 1:
+                out.append(r)
+                out.extend(sorted(pending, key=lambda x: x["chain"]))
+                pending = []
+            else:
+                pending.append(r)
+        return out + pending
+
+
+class _NoTracer:
+    """Same interface, does nothing (``_scan_one`` called outside ``scan_children``)."""
+
+    total = 0
+    index = 0
+
+    def enter(self, chain: str, kind: str, depth: int) -> dict[str, Any]:  # noqa: ARG002
+        return {"tools": {}, "chain": chain}
+
+    def tool(self, rec: dict[str, Any], name: str):  # noqa: ANN201, ARG002
+        return contextlib.nullcontext()
+
+    def leave(self, rec: dict[str, Any], node: dict[str, Any]) -> None:  # noqa: ARG002
+        return None
+
 
 _OOXML_EXT = {".docx", ".docm", ".dotx", ".dotm", ".xlsx", ".xlsm", ".xltx", ".xltm",
               ".xlam", ".xlsb", ".pptx", ".pptm", ".potx", ".potm", ".ppsx", ".ppsm",
@@ -167,6 +275,20 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
         "stored_path": _rel(paths, abs_path),
         "findings": [], "children": [],
     }
+    tracer = ctx.get("_tracer") or _NoTracer()
+    trec = tracer.enter(f"{chain} › {name}" if chain else name, node["kind"], depth)
+    try:
+        return _scan_node(abs_path, name, paths, depth, chain, ctx, sources_out, node,
+                          lambda tool: tracer.tool(trec, tool))
+    finally:
+        tracer.leave(trec, node)
+
+
+def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: str,
+               ctx: dict[str, Any], sources_out: list[dict[str, Any]], node: dict[str, Any],
+               timed) -> dict[str, Any]:  # noqa: ANN001
+    """Body of ``_scan_one``; ``timed(tool)`` is a context manager that times one
+    tool on this node and shows it live in the Tasks tab."""
     mods: dict[str, Any] = {}
     try:
         data = abs_path.read_bytes()
@@ -218,9 +340,10 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
         # Encrypted Office/PDF child: decrypt it with the known passwords and
         # analyse the decrypted copy (the hash above stays the original's).
         if kind in ("ooxml", "ole", "pdf"):
-            rec = unlock.unlock_file(abs_path, work / "decrypted" / node["sha256"][:12],
-                                     unlock.candidates(ctx.get("user"), ctx.get("harvested"),
-                                                       words=ctx.get("words")), name=name)
+            with timed("unlock"):
+                rec = unlock.unlock_file(abs_path, work / "decrypted" / node["sha256"][:12],
+                                         unlock.candidates(ctx.get("user"), ctx.get("harvested"),
+                                                           words=ctx.get("words")), name=name)
             if rec["encrypted"]:
                 node["unlock"] = unlock.public(rec, paths.root)
                 add_findings(rec["findings"], "unlock")
@@ -229,10 +352,11 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
                 elif rec["kind"] == "office" and kind == "ooxml":
                     kind = node["kind"] = "ole"
         if kind == "archive":
-            rec = unlock.extract_archive(abs_path, work / "archives" / node["sha256"][:12],
-                                         unlock.candidates(ctx.get("user"), ctx.get("harvested"),
-                                                           kind="archive", words=ctx.get("words")),
-                                         name=name)
+            with timed("archive extract"):
+                rec = unlock.extract_archive(abs_path, work / "archives" / node["sha256"][:12],
+                                             unlock.candidates(ctx.get("user"), ctx.get("harvested"),
+                                                               kind="archive", words=ctx.get("words")),
+                                             name=name)
             node["archive"] = unlock.public(rec, paths.root)
             add_findings(rec["findings"], "archive")
             for e in rec["entries"]:
@@ -242,7 +366,8 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
                         members[str(Path(e["file"]))] = e["name"]
         elif kind in ("ooxml", "ole"):
             from .parsers import oletools_suite
-            res = oletools_suite.analyze(abs_path, work)
+            with timed("oletools"):
+                res = oletools_suite.analyze(abs_path, work)
             mods["oletools"] = res
             add_findings(res.get("findings"), "oletools")
             for obj in res.get("tools", {}).get("oleobj", {}).get("objects", []) or []:
@@ -251,33 +376,39 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
                     kids.append((paths.root / sp, Path(sp).name))
             if kind == "ooxml":
                 from .parsers import office, xlm
-                if _ext(name) == ".xlsb":
-                    from .parsers import xlsb
-                    sem = xlsb.analyze(abs_path)
-                else:
-                    sem = office.analyze(abs_path, _ext(name), work)
+                with timed("office"):
+                    if _ext(name) == ".xlsb":
+                        from .parsers import xlsb
+                        sem = xlsb.analyze(abs_path)
+                    else:
+                        sem = office.analyze(abs_path, _ext(name), work)
                 if sem:
                     mods["office"] = sem
                     add_findings(sem.get("findings"), kind)
-                xres = xlm.analyze(abs_path)
+                with timed("xlm"):
+                    xres = xlm.analyze(abs_path)
                 mods["xlmdeobf"] = xres
                 add_findings(xres.get("findings"), "xlmdeobf")
             # Own Office rules and, when there are macros, VBA emulation.
             from .parsers import office_rules, vipermonkey
-            rules = (office_rules.analyze_ooxml(abs_path) if kind == "ooxml"
-                     else office_rules.analyze_ole(abs_path))
+            with timed("office rules"):
+                rules = (office_rules.analyze_ooxml(abs_path) if kind == "ooxml"
+                         else office_rules.analyze_ole(abs_path))
             mods["officerules"] = rules
             add_findings(rules.get("findings"), "officerules")
             if ((res.get("tools") or {}).get("olevba") or {}).get("macros"):
-                vm = vipermonkey.analyze(abs_path, work)
+                with timed("vipermonkey"):
+                    vm = vipermonkey.analyze(abs_path, work)
                 mods["vipermonkey"] = vm
                 add_findings(vm.get("findings"), "vipermonkey")
         elif kind == "rtf":
             from .parsers import oletools_suite, rtf
-            r = rtf.analyze(abs_path, _ext(name), work)
+            with timed("rtf"):
+                r = rtf.analyze(abs_path, _ext(name), work)
             mods["rtf"] = r
             add_findings(r.get("findings"), "rtf")
-            res = oletools_suite.analyze(abs_path, work)
+            with timed("oletools"):
+                res = oletools_suite.analyze(abs_path, work)
             mods["oletools"] = res
             add_findings([f for f in res.get("findings") or [] if f.get("tool") == "msodde"], "oletools")
             for obj in r.get("objects") or []:
@@ -286,11 +417,13 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
                     kids.append((paths.root / sp, Path(sp).name))
         elif kind == "pdf":
             from .parsers import pdf
-            res = pdf.analyze(abs_path, work)
+            with timed("pdf"):
+                res = pdf.analyze(abs_path, work)
             mods["pdf"] = res
             add_findings(res.get("findings"), "pdf")
             from .parsers import pdf_tools
-            pt = pdf_tools.analyze(abs_path, res)
+            with timed("pdf tools"):
+                pt = pdf_tools.analyze(abs_path, res)
             mods["pdftools"] = pt
             add_findings(pt.get("findings"), "pdftools")
             for emb in res.get("embedded", []) or []:
@@ -299,11 +432,13 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
                     kids.append((paths.root / sp, emb.get("filename") or Path(sp).name))
         elif kind == "email":
             from .parsers import mail
-            res = mail.analyze(abs_path, _ext(name), work)
+            with timed("email"):
+                res = mail.analyze(abs_path, _ext(name), work)
             mods["email"] = res
             add_findings(res.get("findings"), "email")
             from .parsers import mail_rules
-            mr = mail_rules.analyze(abs_path, _ext(name), res, paths.root)
+            with timed("mail rules"):
+                mr = mail_rules.analyze(abs_path, _ext(name), res, paths.root)
             mods["mailrules"] = mr
             add_findings(mr.get("findings"), "mailrules")
             for att in res.get("attachments", []) or []:
@@ -324,16 +459,19 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
                 ctx = {**ctx, "words": words + list(ctx.get("words") or [])}
         elif kind == "shortcut":
             from .parsers import shortcut
-            it = (shortcut.analyze_lnk(abs_path, name) if _ext(name) == ".lnk"
-                  else shortcut.analyze_url(abs_path, name))
+            with timed("shortcut"):
+                it = (shortcut.analyze_lnk(abs_path, name) if _ext(name) == ".lnk"
+                      else shortcut.analyze_url(abs_path, name))
             mods["shortcut"] = {"module": "shortcut", "items": [it],
                                 "findings": it.get("findings", [])}
             add_findings(it.get("findings"), "shortcut")
         elif kind == "binary":
             from .parsers import msi
-            it = msi.analyze_binary(abs_path, name,
-                                    (work / msi.UNPACK_DIRNAME / node["sha256"][:12])
-                                    if depth < MAX_DEPTH else None)
+            fmt = (node.get("format") or "binary").lower()
+            with timed(f"{fmt} analysis (triage · unpack)"):
+                it = msi.analyze_binary(abs_path, name,
+                                        (work / msi.UNPACK_DIRNAME / node["sha256"][:12])
+                                        if depth < MAX_DEPTH else None)
             for ch in it.pop("_children", []) or []:   # debloated / unpacked files
                 kids.append((Path(ch["path"]), ch["filename"]))
                 origins[str(Path(ch["path"]))] = ch["origin"]
@@ -344,14 +482,16 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
             add_findings(it.get("findings"), "msi")
         elif kind == "java":
             from .parsers import java
-            it = java.analyze_one(abs_path, name)
+            with timed("java"):
+                it = java.analyze_one(abs_path, name)
             sc = it.get("script")
             mods["java"] = {"module": "java", "scripts": [sc] if sc else [],
                             "findings": it.get("findings", [])}
             add_findings(it.get("findings"), "java")
         elif kind == "onenote":
             from .parsers import onenote
-            on = onenote.extract(abs_path, work / "onenote" / node["sha256"][:12])
+            with timed("onenote"):
+                on = onenote.extract(abs_path, work / "onenote" / node["sha256"][:12])
             add_findings(on.get("findings"), "onenote")
             for fp, fn in on.get("_files", []):
                 kids.append((Path(fp), Path(fn).name))
@@ -364,7 +504,7 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
     # sandbox here). Results feed the child's findings, its IOC sources and a
     # per-child full-code dump — the same _full_code/code_file plumbing.
     try:
-        _scan_code_languages(abs_path, paths, node, this_chain, mods, add_findings)
+        _scan_code_languages(abs_path, paths, node, this_chain, mods, add_findings, timed)
     except Exception as exc:  # noqa: BLE001
         node.setdefault("code_error", str(exc))
 
@@ -373,8 +513,9 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
     if depth < MAX_DEPTH:
         try:
             from . import decrypted
-            got = decrypted.write(decrypted.payloads_from(mods, paths.root),
-                                  work / decrypted.DIRNAME / node["sha256"][:12], {node["sha256"]})
+            with timed("decrypted stages"):
+                got = decrypted.write(decrypted.payloads_from(mods, paths.root),
+                                      work / decrypted.DIRNAME / node["sha256"][:12], {node["sha256"]})
             for it in got:
                 kids.append((Path(it["path"]), it["filename"]))
                 origins[it["path"]] = it["origin"]
@@ -470,7 +611,8 @@ def _save_view(paths: CasePaths, node: dict[str, Any], chain: str, mods: dict[st
 
 
 def _scan_code_languages(abs_path: Path, paths: CasePaths, node: dict[str, Any],
-                         this_chain: str, mods: dict[str, Any], add_findings) -> None:  # noqa: ANN001
+                         this_chain: str, mods: dict[str, Any], add_findings,  # noqa: ANN001
+                         timed=None) -> None:  # noqa: ANN001
     """Run the JS / PowerShell / VBScript deobfuscation phase on one child.
 
     Collection is scoped to the child file itself and the child's own module
@@ -498,9 +640,11 @@ def _scan_code_languages(abs_path: Path, paths: CasePaths, node: dict[str, Any],
         ("powershell", lambda: powershell.analyze(abs_path, empty, mods), "powershell", "ps1"),
         ("python", lambda: python.analyze(abs_path, empty, mods), "python", "py"),
     )
+    timed = timed or (lambda _tool: contextlib.nullcontext())
     for key, fn, sub, ext in specs:
         try:
-            res = fn()
+            with timed(key):
+                res = fn()
         except Exception:  # noqa: BLE001
             continue
         scripts = res.get("scripts") or []
@@ -546,7 +690,11 @@ def scan_children(items: list[dict[str, Any]], paths: CasePaths,
     isrc: list[dict[str, Any]] = result["ioc_sources"]
     unlock_ctx = dict(unlock_ctx or {})
     unlock_ctx["_budget"] = [MAX_NODES]          # one node budget for the whole scan
-    for i, it in enumerate(items[:MAX_CHILDREN]):
+    todo = items[:MAX_CHILDREN]
+    tracer = _Tracer(len(todo))
+    unlock_ctx["_tracer"] = tracer
+    for i, it in enumerate(todo):
+        tracer.index = i + 1
         if unlock_ctx["_budget"][0] <= 0:
             result["truncated_children"] = len(items[:MAX_CHILDREN]) - i
             break
@@ -565,6 +713,7 @@ def scan_children(items: list[dict[str, Any]], paths: CasePaths,
     _flatten(result["tree"], flat)
     result["findings"] = flat
     result["counts"] = {"findings": len(flat), "nodes": _count_nodes(result["tree"])}
+    result["timings"] = tracer.timings()
     if flat:
         result["status"] = "ok_with_findings"
     return result
