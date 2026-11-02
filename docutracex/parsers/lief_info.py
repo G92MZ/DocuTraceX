@@ -349,6 +349,30 @@ def analyze(path: Path, rel: str) -> dict[str, Any]:
     fmt = info.get("format")
     info["findings"] = (_pe_findings(info, loc) if fmt == "PE" else
                         _elf_findings(info, loc) if fmt == "ELF" else _macho_findings(info, loc))
+    if fmt == "PE":
+        # LIEF remains the PE parser and supplies the embedded file-digest
+        # algorithm. The shared Windows layer enriches trust, certificate-chain,
+        # EKU, policy and revocation information without replacing LIEF parsing.
+        try:
+            from . import authenticode
+            sigs = info.get("signatures") or []
+            digest = str(sigs[0].get("digest") or "") if sigs else ""
+            # Always ask Windows, even when LIEF finds no embedded PE
+            # certificate table. System binaries can be Authenticode-signed via
+            # the Windows catalog database; skipping this call incorrectly
+            # labels those files as unsigned. LIEF still reports embedded PE
+            # integrity independently above.
+            auth = authenticode.verify(path, content_digest_algorithm=digest)
+            info["authenticode"] = auth
+            if auth.get("status") in ("valid", "hash_mismatch", "not_trusted"):
+                info["findings"] = [f for f in info["findings"]
+                                    if f.get("rule") not in ("lief_signature_valid", "lief_signature_invalid")]
+                info["findings"].extend(authenticode.findings(auth, loc, tool="lief"))
+            elif auth.get("status") in ("error", "timeout", "unknown_error", "unsupported_format"):
+                info["findings"].extend(authenticode.findings(auth, loc, tool="lief"))
+        except Exception as exc:  # noqa: BLE001 - signature enrichment is optional
+            info["authenticode"] = {"status": "error", "signed": None,
+                                    "status_message": f"Authenticode enrichment failed: {exc}"[:300]}
     return info
 
 
