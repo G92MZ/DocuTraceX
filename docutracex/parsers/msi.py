@@ -58,6 +58,17 @@ def _finding(rule: str, severity: str, detail: str, location: str = "",
             "location": location, "evidence": evidence[:2000]}
 
 
+def _verify_msi_authenticode(path: Path) -> dict[str, Any]:
+    """Verify the MSI package with the shared Windows Authenticode layer."""
+    from . import authenticode
+    return authenticode.verify(path)
+
+
+def _msi_signature_findings(signature: dict[str, Any], loc: str) -> list[dict[str, Any]]:
+    from . import authenticode
+    return authenticode.findings(signature, loc, tool="msi")
+
+
 def decode_streamname(name: str) -> tuple[str, bool]:
     """Decode an MSI mangled stream name. Returns (decoded, is_table)."""
     out: list[str] = []
@@ -146,6 +157,12 @@ def analyze_msi(path: Path, rel: str) -> dict[str, Any]:
     item: dict[str, Any] = {"kind": "msi", "file": rel, "tables": [], "binary_streams": [],
                             "metadata": {}, "findings": []}
     loc = f"file:{rel}"
+    # Verify the package's own Authenticode signature before inspecting its
+    # OLE streams. This does not invoke msiexec or execute installer actions.
+    signature = _verify_msi_authenticode(path)
+    item["signature"] = signature
+    item["signed"] = signature.get("signed")
+    item["findings"].extend(_msi_signature_findings(signature, loc))
     try:
         import olefile
     except Exception as exc:  # noqa: BLE001
