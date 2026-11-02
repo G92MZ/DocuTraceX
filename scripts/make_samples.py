@@ -700,11 +700,17 @@ def installer_msi() -> bytes:
         + b"\x00RunStage\x00Binary\x00"
         + f"{STAGE2_URL}\x00".encode()
     )
+    # As Windows Installer writes them: the system streams (_StringData,
+    # _StringPool, _Tables, _Columns) carry the 0x4840 table prefix like any
+    # table; only named data streams (Binary.*) don't.
     tree = {
+        enc("_StringData", True): strdata,
+        enc("_StringPool", True): b"\x00" * 8,
+        enc("_Tables", True): b"\x00" * 8,
+        enc("_Columns", True): b"\x00" * 8,
         enc("CustomAction", True): b"\x00" * 8,
         enc("InstallExecuteSequence", True): b"\x00" * 8,
         enc("Binary", True): b"\x00" * 8,
-        enc("_StringData", False): strdata,
         enc("Binary.stage", False): MZ_STUB,
     }
     return build_cfb(tree)
@@ -890,6 +896,22 @@ def tarball_tgz() -> bytes:
             info.size = len(data)
             tf.addfile(info, io.BytesIO(data))
     return buf.getvalue()
+
+
+def prefixed_zip_noext() -> bytes:
+    """An archive the app can't recognise by its signature, saved with no
+    extension: a ZIP preceded by 4 KB of junk (as a dropper's payload carved from
+    another file, or an SFX stub). ``unlock.detect`` looks for ``PK`` at offset 0
+    and misses it; 7-Zip finds the ZIP further in — the 7-Zip probe path."""
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("factura/instalar.bat", dropper_bat())
+        zf.writestr("factura/actualizador.ps1", stage2_ps1())
+    junk = (b"FACTURA-2026-0187\x00" + bytes(range(256))) * 15
+    return junk[:4096] + buf.getvalue()
 
 
 def onenote_one() -> bytes:
@@ -1989,6 +2011,8 @@ def build_all() -> dict[str, bytes]:
         "sample_dropper.bat": dropper_bat(), "sample_ioc_noise.bat": ioc_noise_bat(), "sample_loader.hta": loader_hta(),
         "sample_shortcut.pdf.lnk": shortcut_lnk(), "sample_shortcut.url": internet_shortcut_url(),
         "sample_installer.msi": installer_msi(),
+        # no extension on purpose: recognised by content / by 7-Zip, not by name
+        "noext/sample_installer": installer_msi(), "noext/sample_archive": prefixed_zip_noext(),
         "sample_dropper.py": dropper_py(), "sample_dropper.pyc": dropper_pyc(),
         "sample_pyinstaller.exe": pyinstaller_exe(),
         "sample_app.jar": malicious_jar(), "sample_webshell.war": webshell_war(),
