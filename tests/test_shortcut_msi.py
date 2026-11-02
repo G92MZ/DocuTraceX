@@ -55,11 +55,15 @@ def _make_lnk(tmp: Path, name: str, args: str, icon: str = "") -> Path:
 def _make_msi(tmp: Path, command: str) -> Path:
     from cfb import build_cfb
     strdata = b"CustomActionData\x00" + command.encode() + b"\x00http://198.51.100.9/a.ps1\x00"
+    # Real layout: system streams carry the table prefix (7-Zip: "!_StringData").
     tree = {
+        msi.encode_streamname("_StringData", True): strdata,
+        msi.encode_streamname("_StringPool", True): b"\x00" * 8,
+        msi.encode_streamname("_Tables", True): b"\x00" * 8,
+        msi.encode_streamname("_Columns", True): b"\x00" * 8,
         msi.encode_streamname("CustomAction", True): b"\x00" * 8,
         msi.encode_streamname("InstallExecuteSequence", True): b"\x00" * 8,
         msi.encode_streamname("Binary", True): b"\x00" * 8,
-        msi.encode_streamname("_StringData", False): strdata,
         msi.encode_streamname("Binary.s", False): b"MZ\x90\x00stub",
     }
     p = tmp / "x.msi"
