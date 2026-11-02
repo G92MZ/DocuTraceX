@@ -115,6 +115,17 @@ Dropped/attached scripts whose intent only shows **after deobfuscation** — one
 
 > `.exe`/`.dll` and other PE images get **static triage with pefile** (header, sections/entropy, imports grouped by behaviour, resources, signing, packer detection) and keep the generic file record (hashes, YARA, report). They are not disassembled; packed/installer PEs are **unpacked statically** (top level and inside archives/nested children) and the unpacked files analysed as children — deep RE stays with a dedicated tool. With **FLOSS** provisioned, decoded strings are mined for IOCs.
 
+## Files without an extension (`noext/`)
+
+The type is decided by the extension first; these have none, so they test the content-based fallbacks.
+
+| File | What you should see |
+| --- | --- |
+| `noext/sample_installer` | `sample_installer.msi` without its extension. It is recognised as an **MSI by its streams** (`_StringData`, `_StringPool`, `_Tables`, `_Columns`), not by its name. You get the same analysis as the `.msi`: the **MSI** tab, the 7-Zip extraction in **Nested**, and the PowerShell downloader through the scripting engine. There is no generic *file* record, and Tasks has no `7zip probe` step. |
+| `noext/sample_archive` | A ZIP with **4 KB of junk in front** (an archive carved out of another file, or one behind an SFX stub). The app finds no signature at offset 0, so the **7-Zip probe** runs: Tasks shows `7zip probe … zip archive (recognised by 7-Zip)`. The **Archive** tab lists the entries (kind `7zip:zip`), and `instalar.bat` and `actualizador.ps1` are analysed in **Nested** (Batch / PowerShell; `198.51.100.23` and `cdn-update.example.net` appear in **IOCs**). Needs 7-Zip; without it the probe step shows *unavailable* and the file gets the generic record. |
+
+> An unrecognised file is offered to 7-Zip only for **archive formats** (zip, 7z, rar, gzip, tar, cab, iso, arj, lzh, wim…). 7-Zip also opens OLE compound files, PE, ELF, PDF and CHM, but their raw streams are not archive entries, so those are left to their own parsers. An OOXML package without an extension is not sent to 7-Zip either.
+
 ## Java
 
 | File | What you should see |
