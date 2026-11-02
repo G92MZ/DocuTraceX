@@ -388,6 +388,28 @@ def step_progress_reporter():
     return report
 
 
+MAX_SUBSTEPS = 40
+
+
+def _substeps(res: Any) -> list[dict[str, Any]]:
+    """What a step did per child / per object, for the Tasks tab after it ends:
+    ``timings`` of a nested scan, or of a module that walks every object (YARA,
+    C2, ML). Bounded and shaped for the UI; [] when the step has none."""
+    if not isinstance(res, dict):
+        return []
+    raw = res.get("timings")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for t in raw[:MAX_SUBSTEPS]:
+        if not isinstance(t, dict):
+            continue
+        out.append({k: t[k] for k in ("name", "chain", "depth", "kind", "duration_s", "own_s",
+                                      "slowest_tool", "slowest_tool_s", "findings", "children",
+                                      "status", "detail") if k in t})
+    return out
+
+
 def analyze_case(case_root: Path) -> dict[str, Any]:
     """Run the applicable parsers on a case (in-process). Returns a summary."""
     case_root = Path(case_root)
@@ -431,6 +453,11 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             rec["note"] = res["step_note"]          # a verdict only known after the step ran
         if note and "note" not in rec:
             rec["note"] = note
+        subs = _substeps(res)
+        if subs:
+            rec["substeps"] = subs                  # per child / per object, kept after the step ends
+        if isinstance(res, dict):
+            res.pop("timings", None)                # lives in the step record, not in the module result
         steps.append(rec)
         _notify_step("end", rec)
         return res
