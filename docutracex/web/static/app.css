@@ -90,6 +90,11 @@ body {
 .diag-dot.dot-bad { background: #e8795a; }
 .diag-dot.dot-warn { background: #e0b65a; }
 
+/* Tasks tab: per-child / per-object rows under a step */
+tr.substep-toggle td { padding-top: 2px; padding-bottom: 6px; border-top: none; }
+tr.substep-toggle .btn-sm { margin-right: 8px; }
+tr.substep td { font-size: 12px; background: #0d1218; border-top: none; }
+
 /* Cases tab: "something is queued/running" indicator + toolbar */
 .cases-active-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block;
                     background: #e0b65a; animation: cases-pulse 1.6s ease-in-out infinite; }
