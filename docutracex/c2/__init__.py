@@ -94,7 +94,10 @@ def analyze(original: Path, extracted_dir: Path) -> dict[str, Any]:
     result: dict[str, Any] = {"module": "c2", "objects_scanned": 0, "configs": [], "findings": [],
                               "families": list(FAMILIES), "status": "ok"}
     seen: dict[tuple[str, str], dict[str, Any]] = {}
-    for label, path, stored in _targets(original, extracted_dir):
+    from ..progress import ObjectProgress
+    targets = list(_targets(original, extracted_dir))
+    prog = ObjectProgress(len(targets))
+    for label, path, stored in targets:
         try:
             if path.stat().st_size > MAX_SIZE:
                 continue
@@ -102,7 +105,10 @@ def analyze(original: Path, extracted_dir: Path) -> dict[str, Any]:
         except OSError:
             continue
         result["objects_scanned"] += 1
-        for cfg in scan_object(path, data):
+        prog.start(label)
+        found = scan_object(path, data)
+        prog.done(len(found), ", ".join(c["family"] for c in found)[:200])
+        for cfg in found:
             key = (cfg["family"], ",".join(sorted(cfg.get("c2") or [])))
             if key in seen and cfg.get("c2"):   # the same config carried by several objects
                 seen[key].setdefault("also_in", []).append(label)
@@ -114,6 +120,7 @@ def analyze(original: Path, extracted_dir: Path) -> dict[str, Any]:
             cfg["finding_id"] = finding_id(f["tool"], f["rule"], f["location"], f["detail"])
             result["configs"].append(cfg)
             result["findings"].append(f)
+    result["timings"] = prog.timings()
     result["counts"] = {"configs": len(result["configs"]), "findings": len(result["findings"])}
     if result["findings"]:
         result["status"] = "ok_with_findings"
