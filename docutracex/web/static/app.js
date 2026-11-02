@@ -3040,9 +3040,46 @@ const STEP_STATE_CLS = {
   ok: "ok", ok_with_findings: "warn", error: "bad", unavailable: "muted", skipped: "muted", running: "warn",
 };
 
-function stepsTable(steps) {
+// Steps whose per-child / per-object rows the user expanded ("taskId|step"):
+// the poller re-renders the list every few seconds and must not collapse them.
+const _openSubsteps = new Set();
+// Tasks the user opened or closed by hand (id -> open), kept across re-renders;
+// by default a task is open while active.
+const _openTasks = new Map();
+
+function substepRows(s, key) {
+  const subs = s.substeps || [];
+  if (!subs.length) return "";
+  const open = _openSubsteps.has(key);
+  const slow = subs.reduce((a, b) => ((b.duration_s || 0) > (a.duration_s || 0) ? b : a), subs[0]);
+  const toggle = `<tr class="substep-toggle"><td colspan="4">
+      <button class="btn btn-ghost btn-sm" type="button" data-substeps="${escapeHtml(key)}">${open ? "▾" : "▸"} ${subs.length} ${s.step.startsWith("nested") ? "child(ren)" : "object(s)"}</button>
+      <span class="hint-line">slowest: <span class="mono">${escapeHtml(slow.name || "")}</span> ${fmtDuration(slow.duration_s)}${slow.slowest_tool ? ` (${escapeHtml(slow.slowest_tool)} ${fmtDuration(slow.slowest_tool_s)})` : ""}</span>
+    </td></tr>`;
+  if (!open) return toggle;
+  return toggle + subs.map((c) => {
+    const cls = STEP_STATE_CLS[c.status] || "muted";
+    const extra = [];
+    if (c.kind) extra.push(escapeHtml(c.kind));
+    if (c.findings) extra.push(`${c.findings} finding(s)`);
+    if (c.children) extra.push(`${c.children} child(ren)`);
+    if (c.slowest_tool) extra.push(`slowest tool: ${escapeHtml(c.slowest_tool)} ${fmtDuration(c.slowest_tool_s)}`);
+    if (c.own_s != null && c.children) extra.push(`own ${fmtDuration(c.own_s)}`);
+    if (c.detail) extra.push(escapeHtml(c.detail));
+    const indent = 14 + 16 * Math.max(0, (c.depth || 1) - 1);
+    const label = (c.depth || 1) > 1 ? c.chain || c.name : c.name;
+    return `<tr class="substep">
+      <td style="padding-left:${indent}px" title="${escapeHtml(c.chain || "")}"><span class="mono">↳ ${escapeHtml(label || "")}</span></td>
+      <td><span class="badge badge-${cls}">${escapeHtml(c.status || "")}</span></td>
+      <td class="mono">${fmtDuration(c.duration_s)}</td>
+      <td class="hint-line">${extra.join(" · ")}</td>
+    </tr>`;
+  }).join("");
+}
+
+function stepsTable(steps, taskId) {
   if (!steps || !steps.length) return `<p class="hint-line">No sub-steps recorded.</p>`;
-  const rows = steps.map((s) => {
+  const rows = steps.map((s, i) => {
     const cls = STEP_STATE_CLS[s.status] || "muted";
     const extra = [];
     if (s.findings != null) extra.push(`${s.findings} finding(s)`);
@@ -3055,7 +3092,7 @@ function stepsTable(steps) {
       <td class="mono">${s.duration_s != null ? fmtDuration(s.duration_s)
         : (s.status === "running" && s.started_utc ? `<span data-elapsed-from="${escapeHtml(s.started_utc)}">${fmtDuration(elapsedSince(s.started_utc))}</span>` : "")}</td>
       <td class="hint-line">${extra.join(" · ")}</td>
-    </tr>`;
+    </tr>${substepRows(s, `${taskId || ""}|${i}|${s.step}`)}`;
   }).join("");
   return table(["Sub-step (tool executed)", "Status", "Time", "Result"], rows);
 }
@@ -3109,7 +3146,8 @@ function renderTasks(data) {
         : "");
     const when = t.finished_utc && !TASK_ACTIVE.has(t.state) ? ` · finished ${fmtWhen(t.finished_utc)}` : "";
     const nsteps = (t.steps || []).length;
-    return `<details class="disclose"${TASK_ACTIVE.has(t.state) ? " open" : ""}>
+    const isOpen = _openTasks.has(t.id) ? _openTasks.get(t.id) : TASK_ACTIVE.has(t.state);
+    return `<details class="disclose" data-task="${escapeHtml(t.id)}"${isOpen ? " open" : ""}>
       <summary>
         <span class="mono">${escapeHtml(t.id)}</span>
         <span class="file">${escapeHtml(t.filename || "")}</span>
@@ -3117,9 +3155,25 @@ function renderTasks(data) {
         <span class="hint-line">${escapeHtml(t.type)} · ${escapeHtml(target)}${dur}${when}${TASK_ACTIVE.has(t.state) ? ` · ${taskProgress(t)}` : ""}${nsteps ? ` · ${nsteps} sub-steps` : ""}</span>
         ${cancel}
       </summary>
-      <div style="padding:8px 10px">${err}${stepsTable(t.steps)}</div>
+      <div style="padding:8px 10px">${err}${stepsTable(t.steps, t.id)}</div>
     </details>`;
   }).join("");
+  body.querySelectorAll("details[data-task] > summary").forEach((sm) => {
+    // only a user click (not the initial "open" of an active task) is remembered
+    sm.addEventListener("click", (e) => {
+      if (e.target.closest("button")) return;           // Cancel: not a toggle
+      const d = sm.parentElement;
+      _openTasks.set(d.getAttribute("data-task"), !d.open);
+    });
+  });
+  body.querySelectorAll("[data-substeps]").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      const k = btn.getAttribute("data-substeps");
+      if (_openSubsteps.has(k)) _openSubsteps.delete(k); else _openSubsteps.add(k);
+      renderTasks(data);
+    });
+  });
   body.querySelectorAll("[data-cancel]").forEach((btn) => {
     btn.addEventListener("click", async (e) => {
       e.preventDefault();
