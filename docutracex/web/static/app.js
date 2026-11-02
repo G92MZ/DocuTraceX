@@ -100,32 +100,174 @@ function discrepancyBadge(status) {
   return `<span class="badge badge-${cls}">${escapeHtml(label)}</span>`;
 }
 
-async function loadCases() {
+// --- Cases tab ---------------------------------------------------------------
+// The list is filtered and paged client-side; the filter state lives here so the
+// task poller can refresh the data without resetting what the user is looking at.
+const CASES_PAGE = 10;
+const _casesView = { all: [], q: "", status: "all", limit: CASES_PAGE };
+
+// Display status = case state (cases.py) + the live state of its analysis task
+// (tasks.py). A case still "created"/"analyzing" with no task queued or running
+// was interrupted (server restart, cancelled, worker crash): "stuck".
+const CASE_STATUS = {
+  queued:    { label: "queued",    cls: "muted", tip: "Waiting in the analysis queue." },
+  running:   { label: "running",   cls: "warn",  tip: "Being analysed now." },
+  completed: { label: "completed", cls: "ok",    tip: "Analysis finished." },
+  partial:   { label: "partial",   cls: "warn",  tip: "Analysis finished with some modules failing or skipped." },
+  error:     { label: "error",     cls: "bad",   tip: "Analysis failed." },
+  stuck:     { label: "stuck",     cls: "bad",   tip: "Not analysed and nothing queued (interrupted, cancelled or the server restarted). Re-run it." },
+};
+const CASE_FILTERS = [
+  ["all", "All"], ["active", "Running"], ["completed", "Completed"],
+  ["partial", "Partial"], ["error", "Error"], ["stuck", "Stuck"],
+];
+const _ANALYSIS_TASKS = new Set(["analyze", "rerun", "rerun_module"]);
+
+function caseStatus(c, tasksByCase, tasksKnown) {
+  const tasks = tasksByCase.get(c.analysis_id) || [];
+  if (tasks.some((t) => t.state === "running" || t.state === "cancelling")) return "running";
+  if (tasks.some((t) => t.state === "queued")) return "queued";
+  const s = c.state || "";
+  if (s === "completed" || s === "partial" || s === "error") return s;
+  // created / analyzing with no live task. If the task list could not be read
+  // we can't tell queued from stuck: keep it neutral rather than alarming.
+  return tasksKnown ? "stuck" : "queued";
+}
+
+function caseMatches(c, q) {
+  if (!q) return true;
+  const name = (c.filename || "").toLowerCase();
+  const sha = (c.sha256 || "").toLowerCase();
+  return name.includes(q) || (/^[0-9a-f]{4,64}$/.test(q) && sha.startsWith(q));
+}
+
+async function loadCases(tasksData) {
   const body = document.getElementById("cases-body");
   try {
-    const resp = await fetch("/api/cases");
-    const cases = await resp.json();
-    if (!cases.length) {
-      body.innerHTML = '<tr><td colspan="8" class="empty">No cases yet.</td></tr>';
-      return;
+    const [cases, tdata] = await Promise.all([
+      fetch("/api/cases").then((r) => r.json()),
+      tasksData ? Promise.resolve(tasksData)
+        : fetch("/api/tasks").then((r) => r.json()).catch(() => null),
+    ]);
+    const byCase = new Map();
+    for (const t of (tdata && tdata.tasks) || []) {
+      if (!_ANALYSIS_TASKS.has(t.type)) continue;      // netcheck etc. don't change the case state
+      if (!byCase.has(t.analysis_id)) byCase.set(t.analysis_id, []);
+      byCase.get(t.analysis_id).push(t);
     }
-    body.innerHTML = cases.map((c) => `
+    const known = !!(tdata && Array.isArray(tdata.tasks) && !tdata.failed);
+    _casesView.all = cases.map((c) => ({ ...c, _status: caseStatus(c, byCase, known) }));
+    renderCases();
+    // e.g. after a page reload while analyses are still queued/running
+    if (known && tdata.active) startTaskPoller();
+  } catch (err) {
+    body.innerHTML = '<tr><td colspan="9" class="empty">Could not load cases.</td></tr>';
+  }
+}
+
+function renderCases() {
+  const body = document.getElementById("cases-body");
+  const all = _casesView.all;
+  const q = _casesView.q;
+  const bySearch = all.filter((c) => caseMatches(c, q));
+  const inFilter = (c, f) => f === "all" || (f === "active"
+    ? c._status === "running" || c._status === "queued" : c._status === f);
+
+  // Status chips with counts (counts follow the search box).
+  const chips = document.getElementById("cases-filters");
+  chips.innerHTML = CASE_FILTERS.map(([id, label]) => {
+    const n = bySearch.filter((c) => inFilter(c, id)).length;
+    return `<button class="subtab${id === _casesView.status ? " is-active" : ""}" type="button" data-filter="${id}">${subtabLabel(`${label} (${n})`)}</button>`;
+  }).join("");
+  chips.querySelectorAll("[data-filter]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      _casesView.status = btn.getAttribute("data-filter");
+      _casesView.limit = CASES_PAGE;
+      renderCases();
+    });
+  });
+
+  // Tab indicator: something queued or running.
+  const dot = document.getElementById("cases-active-dot");
+  if (dot) dot.hidden = !all.some((c) => c._status === "running" || c._status === "queued");
+
+  const shown = bySearch.filter((c) => inFilter(c, _casesView.status));
+  const page = shown.slice(0, _casesView.limit);
+  const count = document.getElementById("cases-count");
+  count.textContent = shown.length
+    ? `Showing ${page.length} of ${shown.length}${shown.length !== all.length ? ` (${all.length} total)` : ""}`
+    : "";
+  const more = document.getElementById("cases-more");
+  more.hidden = page.length >= shown.length;
+  const left = shown.length - page.length;
+  document.getElementById("cases-more-btn").textContent = `Show ${Math.min(CASES_PAGE, left)} more`;
+  document.getElementById("cases-all-btn").textContent = `Show all (${shown.length})`;
+
+  if (!page.length) {
+    const msg = all.length ? "No cases match this filter." : "No cases yet.";
+    body.innerHTML = `<tr><td colspan="9" class="empty">${msg}</td></tr>`;
+    return;
+  }
+  body.innerHTML = page.map((c) => {
+    const st = CASE_STATUS[c._status] || { label: c._status, cls: "muted", tip: "" };
+    const rerun = c._status === "stuck" || c._status === "error"
+      ? `<button class="btn btn-ghost btn-sm" type="button" data-rerun="${escapeHtml(c.analysis_id)}" title="Queue the full analysis again (marks are kept)">Re-run</button>` : "";
+    return `
       <tr class="case-row" data-id="${escapeHtml(c.analysis_id)}" title="Open components">
-        <td>${c.created_utc || ""}</td>
+        <td>${escapeHtml(c.created_utc || "")}</td>
         <td class="file">${escapeHtml(c.filename || "")}</td>
         <td>${escapeHtml(c.declared_extension || "")}</td>
         <td class="mono" title="${escapeHtml(c.detected_name || "")}">${escapeHtml(c.detected_mime || "")}</td>
         <td>${discrepancyBadge(c.discrepancy)}</td>
         <td>${fmtSize(c.size_bytes)}</td>
-        <td class="mono" title="${c.sha256 || ""}">${shortHash(c.sha256)}</td>
-        <td><span class="badge">${escapeHtml(c.state || "")}</span></td>
-      </tr>`).join("");
-    body.querySelectorAll(".case-row").forEach((row) => {
-      row.addEventListener("click", () => openComponents(row.getAttribute("data-id")));
+        <td class="mono" title="${escapeHtml(c.sha256 || "")}">${shortHash(c.sha256)}</td>
+        <td><span class="badge badge-${st.cls}" title="${escapeHtml(st.tip)}${c.state && c.state !== st.label ? ` (case state: ${escapeHtml(c.state)})` : ""}">${escapeHtml(st.label)}</span></td>
+        <td class="case-actions">${rerun}</td>
+      </tr>`;
+  }).join("");
+  body.querySelectorAll(".case-row").forEach((row) => {
+    row.addEventListener("click", () => openComponents(row.getAttribute("data-id")));
+  });
+  body.querySelectorAll("[data-rerun]").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();                       // don't open the case
+      btn.disabled = true;
+      btn.textContent = "Queuing…";
+      try {
+        const resp = await fetch(`/api/cases/${encodeURIComponent(btn.getAttribute("data-rerun"))}/rerun`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+        });
+        if (!resp.ok) throw new Error("rerun failed");
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = "Re-run failed";
+        return;
+      }
+      loadCases();
+      startTaskPoller();
     });
-  } catch (err) {
-    body.innerHTML = '<tr><td colspan="8" class="empty">Could not load cases.</td></tr>';
-  }
+  });
+}
+
+function setupCases() {
+  const search = document.getElementById("cases-search");
+  let t = null;
+  search.addEventListener("input", () => {
+    clearTimeout(t);
+    t = setTimeout(() => {
+      _casesView.q = search.value.trim().toLowerCase();
+      _casesView.limit = CASES_PAGE;
+      renderCases();
+    }, 150);
+  });
+  document.getElementById("cases-more-btn").addEventListener("click", () => {
+    _casesView.limit += CASES_PAGE;
+    renderCases();
+  });
+  document.getElementById("cases-all-btn").addEventListener("click", () => {
+    _casesView.limit = Infinity;
+    renderCases();
+  });
 }
 
 function escapeHtml(s) {
@@ -182,9 +324,9 @@ document.getElementById("upload-form").addEventListener("submit", async (e) => {
   if (failed.length) {
     status.textContent = `${ok} queued, ${failed.length} failed (${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "…" : ""}).`;
   } else if (ok === 1) {
-    status.textContent = "Case queued for analysis.";
+    status.textContent = "Case queued for analysis (see Cases).";
   } else {
-    status.textContent = `${ok} files queued — analysed a couple at a time (see Tasks).`;
+    status.textContent = `${ok} files queued — analysed a couple at a time (see Cases / Tasks).`;
   }
   fileInput.value = "";
   if (pwInput) pwInput.value = "";
@@ -2992,7 +3134,7 @@ async function loadTasks() {
     return data;
   } catch (err) {
     document.getElementById("tasks-body").innerHTML = `<p class="hint-line">Could not load tasks.</p>`;
-    return { active: 0, tasks: [] };
+    return { active: 0, tasks: [], failed: true };
   }
 }
 
@@ -3001,7 +3143,8 @@ function startTaskPoller() {
   if (_tasksPoll) return;
   _tasksPoll = setInterval(async () => {
     const data = await loadTasks();
-    loadCases();
+    // reuse the task list just fetched (no second request) unless it failed
+    loadCases(data.failed ? undefined : data);
     if (!data.active) { clearInterval(_tasksPoll); _tasksPoll = null; }
   }, 2500);
 }
@@ -4938,6 +5081,7 @@ function setupTabs() {
       if (target === "diagnostics") loadDiagnostics();
       if (target === "marks") loadMarks(_openCaseId);
       if (target === "tasks") loadTasks();
+      if (target === "cases") loadCases();
       if (target === "reports") loadReports(_openCaseId);
       if (target === "yara") loadYara();
       if (target === "ml") loadMlView();
@@ -4961,6 +5105,7 @@ setupYara();
 setupSettings();
 setupAi();
 setupMlHex();
+setupCases();
 renderFormats();
 loadDiagnostics(); // initial load to set the nav indicator
 loadCases();
