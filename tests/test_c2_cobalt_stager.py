@@ -229,3 +229,16 @@ def test_cascade_skips_text_media_and_big_files(tmp_path: Path, monkeypatch: pyt
     monkeypatch.setenv("DOCUTRACEX_1768_DEEP_MAX_MB", "0")
     res, calls = _cascade(tmp_path, monkeypatch, ("-x",), PE_LIKE)
     assert res is None and len(calls) == 1                 # PE still gets the default run
+
+
+def test_block_api_alone_is_not_called_cobalt_strike() -> None:
+    """Metasploit stagers share the block_api prologue: without the artifact-kit
+    header or a checksum8 URI, 1768.py's 'Probably found shellcode' is left to
+    the Metasploit extractor."""
+    msgs = ["File: x.bin", "Probably found shellcode:", f"Parameter: 782 b'{HOST}'",
+            "push      :   194       8080 b'h\\x90\\x1f\\x00\\x00'"]
+    assert cobalt._stager_from_messages(msgs) is None
+    # a checksum8 URI (sum of the path bytes % 256 == 92: Cobalt Strike x86 stage) makes it Cobalt Strike
+    uri = "/aaa9"
+    assert cobalt._checksum8(uri) == 92
+    assert cobalt._stager_from_messages(msgs + [f"String: 600 b'{uri}'"]) is not None
