@@ -314,6 +314,12 @@ def _shellcode_config(sc: bytes) -> dict[str, Any]:
     return cfg
 
 
+def _checksum8(uri: str) -> int | None:
+    """Cobalt Strike / Metasploit stage URI checksum: sum of the path bytes mod 256."""
+    path = (uri or "").split("?", 1)[0].lstrip("/")
+    return sum(path.encode("latin-1", "replace")) % 256 if path else None
+
+
 def _stager_from_messages(msgs: list[str]) -> dict[str, Any] | None:
     """Parse 1768.py's 'Probably found shellcode' report (stager in a PE).
 
@@ -356,6 +362,11 @@ def _stager_from_messages(msgs: list[str]) -> dict[str, Any] | None:
                                                             if ":" in s and not s.startswith("/")]))
     hdr = {h.split(":", 1)[0].strip().lower(): h.split(":", 1)[1].strip() for h in headers}
     transport = scfg.get("transport", "")
+    # block_api shellcode alone is shared with Metasploit's stagers: call it Cobalt
+    # Strike only with something specific to it — the artifact-kit header that
+    # 1768.py decodes (payloadSize / intxorkey) or a checksum8 URI (92 x86, 93 x64).
+    if not (xor or size or _checksum8(uri) in (92, 93)):
+        return None
 
     def f(value: Any) -> dict[str, Any]:
         return {"value": str(value), "raw": value if isinstance(value, int) else None}
