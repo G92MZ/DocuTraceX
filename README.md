@@ -5,11 +5,11 @@
 **Static forensic analysis of malicious documents, emails, scripts and droppers — without opening them.**
 
 Drop in a suspicious `.docm`, `.xlsm`, `.rtf`, `.pdf`, `.eml`/`.msg`, a `.js`/`.vbs`/`.ps1`/`.hta`,
-a `.lnk`, an `.iso`/`.zip`, a OneNote, a `.jar`, an `.msi` or an `.exe`, open the browser, and
+a `.lnk`, an `.iso`/`.zip`/`.rar`, a OneNote, a `.jar`, an `.msi` or an `.exe` — even with no extension at all — open the browser, and
 investigate: what the file really is, macros, DDE, remote templates and exploit objects, scripts
 **deobfuscated and followed to their final behaviour**, email spoofing and look-alike domains,
 packed binaries unpacked, payloads **pulled apart recursively**, IOCs you can **check on the
-Internet through your proxy**, your own **YARA** rules, a machine-learning second opinion, triage
+Internet through your proxy**, your own **YARA** rules, **C2 configurations** pulled out of implants, a machine-learning second opinion, triage
 marks, a one-click report — and an **AI assistant / MCP server** that can read the case for you.
 **Nothing in the sample is ever executed.**
 
@@ -76,14 +76,14 @@ RFC 5737 IPs, harmless stubs). See [`samples/README.md`](samples/README.md).
 
 ## 🧭 How you use it
 
-1. **📥 Upload** — drop one or more files (and a **password**, if they are encrypted and you know it). Each original is copied, hashed and never modified; analyses are **queued** and run in the background, and the **Tasks** tab shows each one live, step by step.
+1. **📥 Upload** — in **New analysis**, drop one or more files (and a **password**, if they are encrypted and you know it). Each original is copied, hashed and never modified; analyses are **queued** and run in the background. **Cases** lists them all — search by name or SHA-256, filter by state, re-run one that got stuck — and **Tasks** shows each analysis live, step by step, down to the child being analysed.
 2. **🔬 Identify** — the *real* file type is recognised from its content, and a mismatch with the extension is flagged (that `.doc` that is really RTF).
 3. **🧩 Inspect** — **Components** has a tab per analysis: findings with their evidence (grouped by source, by file or as a list), IOCs grouped by type, the code found and deobfuscated, email headers and authentication, the recursive tree of everything inside the file, and each analysis's raw output.
 4. **🌐 Check** — press **Check** on a URL, domain or IP: DocuTraceX visits it like a real victim would, through your proxy (see [Network checks](#-network-checks-and-opsec)).
-5. **🧷 Hunt** — load your **YARA** rules; they run on every object of the case, and you can export the matches to CSV.
+5. **🧷 Hunt** — load your **YARA** rules; they run on every object of the case, and you can export the matches to CSV. Implant configurations (C2, URIs, mutexes…) show up in **C2 / Beacons**.
 6. **🤖 Ask** — ask questions about the case to your AI provider or a local model, or connect an MCP client.
 7. **🏷️ Triage** — mark each finding **TP / FP / Suspicious / Informational** with a comment; marks survive re-analysis.
-8. **📝 Report** — a self-contained HTML report of the **confirmed** findings, ready to print to PDF or attach to a ticket.
+8. **📝 Report** — a self-contained HTML report of the **confirmed** findings and the IOCs and configurations **you marked**, ready to print to PDF or attach to a ticket.
 
 ## ✨ What's inside
 
@@ -97,14 +97,14 @@ RFC 5737 IPs, harmless stubs). See [`samples/README.md`](samples/README.md).
 | 🔗 **Shortcuts** | `.lnk` and `.url`/`.website`: what they launch, hidden windows, remote targets and NTLM-theft tricks; the launched command goes through the scripting engine |
 | 📓 **OneNote** | the files hidden behind "double-click to view" lures, extracted and analysed |
 | ☕ **Java** | `.jar`/`.war`/`.ear`/`.class`/`.jsp`: entry points, dangerous behaviour (command execution, reflection, JNDI/Log4Shell, deserialization), **webshells** and signing; classes decompiled |
-| 📦 **MSI** | custom actions (scripts, binaries, commands) and when they fire, embedded binaries and cabinets |
-| 🧱 **Binaries** | Windows PE, ELF and Mach-O: **static triage** (anomalies, suspicious imports by behaviour, entropy, signatures, masquerading), **padding removed** so oversized binaries can be analysed, **packers detected and unpacked**, obfuscated strings recovered, capabilities mapped to **MITRE ATT&CK**, build artefacts such as PDB paths. Every unpacked or recovered binary is analysed as a child |
+| 📦 **MSI** | custom actions (scripts, binaries, commands) and when they fire, embedded binaries and cabinets — all extracted and **analysed recursively**; recognised by content even without an extension |
+| 🧱 **Binaries** | Windows PE, ELF and Mach-O: **static triage** (anomalies, suspicious imports by behaviour, entropy, signatures, masquerading), **padding removed** so oversized binaries can be analysed, **packers and installers detected and unpacked** (the unpacking tools are provisioned automatically), obfuscated strings recovered, capabilities mapped to **MITRE ATT&CK**, build artefacts such as PDB paths. Every unpacked or recovered binary is analysed as a child |
 | 🐍 **Python** | scripts, `.pyc` and **PyInstaller** executables unpacked and decompiled when possible |
-| 💿 **Containers** | ZIP/7z (password-protected too), tar/gz/bz2/xz, CAB and **ISO/IMG** images, extracted safely with limits against archive bombs |
-| 🧪 **Scripting engine** | JavaScript, PowerShell, VBScript, batch and Python are **deobfuscated before analysis** — encodings, XOR and compression layers, string tricks and well-known obfuscators (obfuscator.io, JSFuck, Invoke-Obfuscation, DOSfuscation, PyArmor…) — then matched against a **behaviour catalogue** (execution, download, persistence, defence evasion, injection, credential access, C2…) with their **MITRE ATT&CK** techniques. JavaScript, VBScript and PowerShell also run in **isolated sandboxes** that record what they would do, the **obfuscation techniques** found are listed with their evidence, and the payloads they drop are recovered |
+| 💿 **Containers** | ZIP/7z/**RAR** (password-protected too), tar/gz/bz2/xz, CAB and **ISO/IMG** images — and any other archive format 7-Zip reads, found **by content** even without an extension — extracted safely with limits against archive bombs |
+| 🧪 **Scripting engine** | JavaScript, PowerShell, VBScript, batch and Python are **deobfuscated before analysis** — encodings, XOR and compression layers, string tricks and well-known obfuscators (obfuscator.io, JSFuck, Invoke-Obfuscation, DOSfuscation, PyArmor…) — then matched against a **behaviour catalogue** (execution, download, persistence, defence evasion, injection, credential access, C2…) with their **MITRE ATT&CK** techniques. JavaScript, VBScript and PowerShell also run in **isolated sandboxes** that record what they would do, the **obfuscation techniques** found are listed with their evidence, and the payloads they drop are recovered. A text file of unknown type goes through every script analyser too |
 | 🔐 **Encrypted files** | password-protected Office, PDF and ZIP/7z are **unlocked and analysed** — with your password, a password the **carrying email gives** (many languages), or the usual defaults; nothing is brute-forced |
-| 🪆 **Recursion** | everything inside a file — attachments, archive entries, embedded objects, unpacked binaries, **stages that scripts decrypt or decode** — is analysed **in turn** with its family's tools, many levels deep, each with the **recipe** that produced it. Any child can be **opened like a case** with its own tabs |
-| 📡 **C2 / Beacons** | implant configurations pulled out of every object of the case — Cobalt Strike, Metasploit stagers and common RATs and stealers (Remcos, AsyncRAT, DcRAT, Quasar, njRAT, XWorm, Warzone, AgentTesla, RedLine, Snake Keylogger, Raccoon, DarkGate, NanoCore) — **statically**: C2 endpoints, URIs, user agent, mutexes, watermark… Its own tab; each configuration is a finding, its values land in the IOCs, and the ones you mark go into the report. Exportable to CSV |
+| 🪆 **Recursion** | everything inside a file — attachments, archive entries, embedded objects, unpacked binaries, **stages that scripts decrypt or decode** — is analysed **in turn** with its family's tools, many levels deep, each with the **recipe** that produced it. Any child can be **opened like a case** with its own tabs, YARA included |
+| 📡 **C2 / Beacons** | implant configurations pulled out of every object of the case — Cobalt Strike beacons and stagers, Metasploit stagers and common RATs and stealers (Remcos, AsyncRAT, DcRAT, Quasar, njRAT, XWorm, Warzone, AgentTesla, RedLine, Snake Keylogger, Raccoon, DarkGate, NanoCore) — **statically**: C2 endpoints, URIs, user agent, mutexes, watermark… Its own tab; each configuration is a finding, its values land in the IOCs, and the ones you mark go into the report. Exportable to CSV |
 | 🤖 **Machine Learning** | the **EMBER2024** static classifiers (Apache-2.0) score every PE, .NET, PDF, ELF and APK object against a threshold calibrated at a **1% false-positive rate**, with family / behaviour hints — each family explained (what kind of malware it is, generic AV names flagged, a warning when the model can't decide) — and **why**: the features that pushed the score, each said in plain words with the evidence from the file and a jump to it in the Hex tab. Its own tab next to YARA; a complementary indicator, **not a verdict**: results become findings only once you mark them. In the report and exportable to CSV |
 | 🔢 **Hex** | a hex viewer for every file of the case, opened from any **Hex** button at the right offset: search (hex with wildcards, text, regex), entropy strip with a colour legend, file structures coloured, an inspector for the selected bytes, copy-as, **decode the selection** and **extract it as a new child** of the case |
 | 🧷 **IOCs** | URLs, domains, IPs, emails, file paths, registry keys, named pipes, commands and hashes from the content of every analysis, with provenance — **filtered for noise**, so what you see comes from the sample, not from the tools. Grouped by type, searchable, with *Check all* |
@@ -112,8 +112,9 @@ RFC 5737 IPs, harmless stubs). See [`samples/README.md`](samples/README.md).
 | 🛡️ **YARA** | your rules by upload or **server path**, run on **every object of the case**; a hit is not a finding until you mark it. Matches export to CSV |
 | 🤖 **AI & MCP** | ask about the case through any OpenAI-compatible endpoint (your company's LiteLLM, a provider), a local model (Ollama, LM Studio…) or an MCP client (Claude Desktop, Claude Code) — always **read-only** |
 | 🏷️ **Marks** | TP/FP/Suspicious/Informational + comment on any finding, manual marks on any IOC or item, free-text notes — **preserved across re-analysis** |
-| 🧵 **Tasks** | the analysis queue with configurable concurrency, a **live log** of each step, history kept across restarts, and re-run of a single module |
-| 📊 **Report** | one self-contained HTML report: confirmed findings with evidence, IOCs, the nested tree and the Machine Learning results |
+| 🗂️ **Cases** | every case at a glance with its live state, search by file name or SHA-256, filters (running, completed, partial, error, stuck) and **Re-run** |
+| 🧵 **Tasks** | the analysis queue with configurable concurrency, a **live log** of each step — what it is working on right now and, when it ends, the time of each child and the slowest tool — history kept across restarts, and re-run of a single module |
+| 📊 **Report** | one self-contained HTML report: file hashes, confirmed findings with evidence, the IOCs and C2 configurations you marked (or every IOC, if you prefer), the nested tree and the Machine Learning results |
 | ⚙️ **Settings** | the proxy for network checks (or a free public proxy picked and rotated automatically) and the reference data the app keeps up to date |
 | 🩺 **Diagnostics** | every dependency, tool, database and the proxy checked in one place — with a **Retry** button to reinstall whatever is missing |
 
@@ -127,13 +128,13 @@ RFC 5737 IPs, harmless stubs). See [`samples/README.md`](samples/README.md).
 | **RTF** | `.rtf` (and any extension whose content is RTF) |
 | **PDF** | `.pdf` |
 | **Email** | `.eml` `.emlx` `.msg` |
-| **Archives / containers** | `.zip` `.7z` (password-protected too) · `.tar` `.gz` `.tgz` `.bz2` `.tbz2` `.xz` `.txz` · `.cab` · `.iso` `.img` `.udf` |
+| **Archives / containers** | `.zip` `.7z` `.rar` (password-protected too) · `.tar` `.gz` `.tgz` `.bz2` `.tbz2` `.xz` `.txz` · `.cab` · `.iso` `.img` `.udf` |
 | **Scripting files** | `.js` `.jse` `.mjs` `.vbs` `.vbe` `.wsf` `.wsc` `.sct` `.hta` `.html` `.htm` `.svg` `.mht` `.mhtml` `.ps1` `.psm1` `.psd1` `.bat` `.cmd` `.py` `.pyw` `.pyc` `.pyo` |
 | **Shortcuts** | `.lnk` `.url` `.website` |
 | **OneNote** | `.one` `.onepkg` |
 | **Java** | `.jar` `.war` `.ear` `.class` `.jsp` `.jspx` `.jspf` |
 | **Binaries** | `.msi` · `.exe` `.dll` `.scr` `.sys` `.ocx` `.cpl` `.com` · ELF / Mach-O (by content) |
-| **Any other file** | no specific parser, but still a full case: basic record (type, size, hashes), **YARA**, marks, notes and the report |
+| **No extension / any other file** | the type is recognised by **content** (MSI, archives, Office, PE…); if nothing matches, text is still run through the script analysers, and it is a full case anyway: basic record (type, size, hashes), **YARA**, C2 search, marks, notes and the report |
 
 Scripts found **inside** other files (a `.js` in a PDF, VBScript in an `.hta`, PowerShell behind a macro, a `.bat` in a ZIP, the command of a `.lnk`…) go through the same scripting engine — and so do the stages those scripts **decrypt**.
 
