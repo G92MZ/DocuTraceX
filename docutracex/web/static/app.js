@@ -2915,6 +2915,11 @@ async function openComponents(analysisId, keepTab, viewId) {
       sections.push({ id: "python", label: `Python (${pym.scripts.length})`,
         html: paneCodeLanguage(pym, { label: "Python", noun: "module", src: "python", markKind: "py_hit" }) });
     }
+    const gom = mods.golang;
+    if (gom && (gom.objects || []).some((o) => (o.result || {}).state && (o.result || {}).state !== "Not detected")) {
+      const n = (gom.counts || {}).go || 0;
+      sections.push({ id: "golang", label: `Go (${n})`, html: paneGo(gom) });
+    }
     const pim = mods.pyinstaller;
     if (pim && pim.is_pyinstaller) {
       sections.push({ id: "pyinstaller", label: "PyInstaller", html: panePyinstaller(pim) });
@@ -4988,6 +4993,70 @@ async function loadMlView(caseId) {
   } catch (err) {
     body.innerHTML = `<p class="bad-text">Could not load the case: ${escapeHtml(String(err.message || err))}</p>`;
   }
+}
+
+// --- Go (Go Malware Intelligence) ---------------------------------------------
+const GO_STATE_CLS = { Confirmed: "bad", Likely: "warn", Suspected: "warn", Inconclusive: "muted", "Not detected": "ok" };
+
+function goKv(rows) {
+  return `<table class="cases c2-kv"><tbody>${rows.filter(([, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => `<tr><th>${escapeHtml(k)}</th><td class="mono">${v}</td></tr>`).join("")}</tbody></table>`;
+}
+
+function goObject(o, open) {
+  const r = o.result || {};
+  const b = r.binary || {};
+  const bi = r.buildinfo || {};
+  const pc = r.pclntab || {};
+  const tr = r.traits || {};
+  const e = (x) => escapeHtml(String(x));
+  const traits = [tr.stripped ? "stripped (no DWARF / symbols)" : "", tr.packed ? `packed (${tr.packed.join(", ")})` : "",
+    tr.high_entropy_section ? `high entropy ${tr.high_entropy_section.name} (${tr.high_entropy_section.entropy})` : "",
+    tr.garble ? `Garble-style names (${Math.round(tr.garble.random_package_share * 100)}%)` : "",
+    tr.metadata_altered ? `metadata: ${tr.metadata_altered}` : "", tr.pclntab_missing ? "runtime traces but no pclntab" : ""]
+    .filter(Boolean);
+  const ev = (r.evidence || []).map((x) => `<tr><td>${e(x.kind)}</td><td>${e(x.detail)}</td>
+      <td class="mono">${x.offset_hex ? e(x.offset_hex) : ""}</td><td>${x.points ? `+${x.points}` : ""}</td>
+      <td>${o.stored_path && x.offset != null ? hexJump(o.stored_path, x.offset, 16) : ""}</td></tr>`).join("");
+  const gr = r.goresym || {};
+  const ct = (r.contrast || {}).rows || [];
+  const grHtml = !gr.available ? `<p class="hint-line">GoReSym: ${e(gr.detail || "not run")}</p>`
+    : gr.error ? `<p class="bad-text">GoReSym failed: ${e(gr.error)}</p>`
+    : `<table class="cases"><thead><tr><th>Field</th><th>DocuTraceX</th><th>GoReSym</th><th></th></tr></thead><tbody>${
+        ct.map((c) => `<tr><td>${e(c.field)}</td><td class="mono">${e(c.docutracex ?? "")}</td><td class="mono">${e(c.goresym ?? "")}</td>
+          <td>${c.agree === true ? '<span class="badge badge-ok">agree</span>' : c.agree === false ? '<span class="badge badge-bad">differ</span>' : ""}</td></tr>`).join("")}
+        <tr><td>functions</td><td></td><td class="mono">${e(gr.user_functions)} user</td><td></td></tr></tbody></table>`;
+  const deps = bi.deps || [];
+  const settings = Object.entries(bi.settings || {});
+  return `<details class="disclose ml-item"${open ? " open" : ""}>
+    <summary><span class="badge badge-${GO_STATE_CLS[r.state] || "muted"}">${e(r.state || "?")}</span>
+      <span class="mono">${e(o.label)}</span> <span class="hint-line">${e(r.go_version || "")} · ${e((b.format || "").toUpperCase())} ${e(b.arch || "")}
+      · score ${e(r.score ?? 0)}${r.confirmed_by ? ` · confirmed by ${e(r.confirmed_by)}` : ""}${o.duplicate_of ? ` · same file as ${e(o.duplicate_of)}` : ""}</span></summary>
+    <div style="padding:8px 10px">
+      ${o.stored_path ? fileActions(o.stored_path) : ""}
+      ${r.reason ? `<p class="hint-line">${e(r.reason)}</p>` : ""}
+      ${goKv([["Go version", e(r.go_version || "")], ["Format", e(`${(b.format || "").toUpperCase()} ${b.arch || ""} ${b.bits ? b.bits + "-bit" : ""} ${b.os || ""}`)],
+        ["Main module", e(bi.path || "")], ["Module version", e((bi.main || {}).version || "")],
+        ["Go build ID", e(r.go_build_id || "")], ["GNU build ID", e(b.gnu_build_id || "")],
+        ["pclntab", pc.magic ? e(`${pc.magic} (Go ${pc.version_range}) · ${pc.nfunc} functions · ptr ${pc.ptr_size} · @0x${(pc.offset || 0).toString(16)}${pc.section ? " · " + pc.section : ""}`) : ""],
+        ["moduledata", r.moduledata ? e(`${r.moduledata.layout} @0x${r.moduledata.offset.toString(16)}`) : ""],
+        ["Traits", traits.length ? e(traits.join(" · ")) : ""],
+        ["User functions (sample)", (r.function_sample || []).length ? e(`${r.user_functions || 0} — ${(r.function_sample || []).slice(0, 12).join(", ")}`) : ""]])}
+      <h4 class="formats-title">Evidence</h4>
+      <table class="cases"><thead><tr><th>Kind</th><th>Detail</th><th>Offset</th><th>Points</th><th></th></tr></thead><tbody>${ev}</tbody></table>
+      ${deps.length ? `<details class="disclose"><summary>Dependencies (${deps.length})</summary>${goKv(deps.map((d) => [d.path, e(`${d.version || ""}${d.replace ? " ⇒ " + d.replace : ""}`)]))}</details>` : ""}
+      ${settings.length ? `<details class="disclose"><summary>Build settings (${settings.length})</summary>${goKv(settings.map(([k, v]) => [k, e(v)]))}</details>` : ""}
+      <h4 class="formats-title">GoReSym contrast</h4>${grHtml}
+    </div></details>`;
+}
+
+function paneGo(g) {
+  const objs = (g.objects || []).filter((o) => (o.result || {}).state !== "Not detected");
+  const warn = (g.warnings || []).map((w) => `<div class="hint-line">⚠ ${escapeHtml(w)}</div>`).join("");
+  return `<div class="ml-pane"><p class="hint-line">Go Malware Intelligence — identification (static: BuildInfo, pclntab,
+    moduledata, build IDs, runtime; contrasted with GoReSym). ${g.objects_scanned || 0} native object(s) of the case checked,
+    <b>${(g.counts || {}).go || 0}</b> Go binary(ies). Function recovery, disassembly and decompilation come in the next phases.</p>
+    ${warn}${objs.map((o, i) => goObject(o, i < 2)).join("")}</div>`;
 }
 
 // --- C2 / Beacons view ---------------------------------------------------------

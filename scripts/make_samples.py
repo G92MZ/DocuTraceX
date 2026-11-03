@@ -1984,6 +1984,111 @@ def darkgate_blob() -> bytes:
             + alpha.encode() + b"\x00" + enc(cfg).encode() + b"\x00" + enc(f"http://{C2_IP}:2351").encode() + b"\x00")
 
 
+# --- Go Malware Intelligence: Go-like binaries --------------------------------------
+# Inert binkit stubs (code = ``ret``) carrying the Go structures the identification
+# reads, in the real layouts: BuildInfo (inline strings, Go 1.18+), pclntab
+# (magic 0xfffffff1, Go 1.20+) with its function-name table, moduledata pointing
+# back at it and the Go build ID. Variants: stripped, damaged BuildInfo, Garble-style.
+
+GO_STD = ["runtime.main", "runtime.goexit", "runtime.gopanic", "runtime.morestack", "runtime.mallocgc",
+          "runtime.newproc", "runtime.schedule", "runtime.mstart", "sync.(*Mutex).Lock", "fmt.Println",
+          "os.Getenv", "net/http.(*Client).Do", "crypto/aes.NewCipher", "encoding/base64.(*Encoding).DecodeString"]
+GO_USER = ["main.main", "main.(*Config).load", "main.beacon", "main.decryptConfig", "main.persist",
+           "example.com/invoicesync/agent.(*Agent).Run", "example.com/invoicesync/agent.sendResults"]
+GO_MODINFO = ("path\texample.com/invoicesync\nmod\texample.com/invoicesync\t(devel)\t\n"
+              "dep\tgithub.com/kbinani/screenshot\tv0.0.0-20230812210009-b87d31814237\th1:oghJbYN7QQkTBsYbkrVgcJ7gUlbkfwdhV9GjaJ5awXo=\n"
+              "dep\tgolang.org/x/sys\tv0.21.0\th1:rF+pYz3DAGSQAxAu1CbC7catZg4ebC4UIeIhKxBZvws=\n"
+              "build\t-buildmode=exe\nbuild\t-compiler=gc\nbuild\t-ldflags=\"-s -w -H=windowsgui\"\n"
+              "build\tCGO_ENABLED=0\nbuild\tGOARCH=amd64\nbuild\tGOOS={goos}\n")
+
+
+def _go_pclntab(names: list[str]) -> bytes:
+    import struct as _st
+
+    blob = b"".join(n.encode() + b"\x00" for n in names)
+    hdr = 8 + 8 * 8
+    fname = hdr
+    cu = fname + len(blob)
+    ftab = cu + 16
+    pctab = ftab + 32
+    pcln = pctab + 32
+    head = _st.pack("<IBBBB", 0xFFFFFFF1, 0, 0, 1, 8) + _st.pack("<8Q", len(names), 3, 0x401000, fname, cu, ftab, pctab, pcln)
+    return head + blob + b"\x00" * (pcln - cu + 64)
+
+
+def _go_buildinfo(version: str, goos: str) -> bytes:
+    def uv(n: int) -> bytes:
+        out = bytearray()
+        while True:
+            b = n & 0x7F
+            n >>= 7
+            out.append(b | (0x80 if n else 0))
+            if not n:
+                return bytes(out)
+    mod = (bytes.fromhex("3077af0c9274080241e1c107e6d618e6") + GO_MODINFO.format(goos=goos).encode()
+           + bytes.fromhex("f932433186182072008242104116d8f2"))
+    head = b"\xff Go buildinf:" + bytes([8, 2]) + b"\x00" * 16
+    return head + uv(len(version)) + version.encode() + uv(len(mod)) + mod
+
+
+def _go_elf(names: list[str], version: str = "go1.22.5", stripped: bool = True) -> bytes:
+    import struct as _st
+
+    import binkit as bk
+    sys.path.insert(0, str(ROOT))
+    from docutracex.golang import binfmt
+
+    bid = "Ab3dE5fG7hI9jK1lM2nO/pQ4rS6tU8vW0xY2zA4bC/dE6fG8hI0jK2lM4nO6p/qR8sT0uV2wX4yZ6aB8cD"
+    note = _st.pack("<III", 4, len(bid) + 1, 4) + b"Go\x00\x00" + bid.encode() + b"\x00"
+    pcln = _go_pclntab(names)
+
+    def build(md: bytes) -> bytes:
+        extra = [(".note.go.buildid", note), (".gopclntab", pcln), (".go.buildinfo", _go_buildinfo(version, "linux")),
+                 (".noptrdata", md)]
+        if not stripped:
+            extra += [(".debug_info", b"\x00" * 32), (".symtab", b"\x00" * 48)]
+        return bk.elf(strings=["invoice sync agent"], extra=extra)
+    first = build(b"\x00" * 32)
+    sec = binfmt.parse(first).section(".gopclntab")
+    va = sec.va if sec and sec.va else 0
+    return build(_st.pack("<4Q", va, va + 72, len(names), len(names)))
+
+
+def _go_pe(names: list[str], version: str = "go1.22.5") -> bytes:
+    import struct as _st
+
+    import binkit as bk
+    sys.path.insert(0, str(ROOT))
+    from docutracex.golang import binfmt
+
+    bid = b'\xff Go build ID: "Zq9xWv8uTs7rQp6oNm5l/Kj4iHg3fEd2cBa1zYx0w/Vu9tSr8qPo7nMl6kJi5h/Gf4eDc3bAa2zZy1xW"\n \xff'
+    pcln = _go_pclntab(names)
+
+    def build(md: bytes) -> bytes:
+        return bk.pe(bits=64, gui=True, imports={"kernel32.dll": ["VirtualAlloc", "ExitProcess"]},
+                     sections=[(".rdata", pcln, 0x40000040), (".data", _go_buildinfo(version, "windows") + md, 0xC0000040)],
+                     strings=[bid.decode("latin-1")])
+    first = build(b"\x00" * 32)
+    data = first
+    off = data.find(_st.pack("<I", 0xFFFFFFF1) + b"\x00\x00")
+    va = binfmt.parse(data).off_to_va(off) or 0
+    return build(_st.pack("<4Q", va, va + 72, len(names), len(names)))
+
+
+def go_samples() -> dict[str, bytes]:
+    names = GO_STD + GO_USER
+    garbled = GO_STD + [f"{p}.{f}" for p, f in (("kQ7xMpR2", "Run"), ("Zt9LwA3b", "init"), ("Hn4cVy8E", "send"),
+                                                 ("pW2rTq6K", "load"), ("Ub5sFj1N", "Do"), ("Xa8eGm3D", "dec"),
+                                                 ("Rc6tLk9P", "net"), ("Yv1qBn7S", "cfg"), ("Mf3hWz5J", "x"),
+                                                 ("Ld0pQs4T", "y"), ("Ge7uKa2R", "z"))] + ["main.main"]
+    damaged = bytearray(_go_elf(names))
+    i = damaged.find(b"\xff Go buildinf:")
+    damaged[i + 33:i + 41] = b"\x00\x01\x02\x03\x04\x05\x06\x07"          # corrupt the version string
+    return {"go/sample_go_agent": _go_elf(names), "go/sample_go_agent.exe": _go_pe(names),
+            "go/sample_go_agent_debug": _go_elf(names, stripped=False),
+            "go/sample_go_damaged_buildinfo": bytes(damaged), "go/sample_go_garble": _go_elf(garbled)}
+
+
 def c2_samples() -> dict[str, bytes]:
     return {"c2/sample_redline.exe": redline_exe(), "c2/sample_snake_keylogger.exe": snake_exe(),
             "c2/sample_raccoon_v2.exe": raccoon_exe(), "c2/sample_warzone.exe": warzone_exe(),
@@ -2031,6 +2136,7 @@ def build_all() -> dict[str, bytes]:
         out[f"sample{ext}"] = legacy(ext)
     out.update(ml_samples())
     out.update(c2_samples())
+    out.update(go_samples())
     out["encrypted/sample_encrypted.eml"] = encrypted_eml()
     out["encrypted/sample_velvet.xlsm"] = velvet_xlsm()
     return out

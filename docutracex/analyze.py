@@ -1103,6 +1103,23 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001  (presentation only; never fail the case)
         log.warning("Could not surface nested code for %s: %s", paths.root.name, exc)
 
+    # Go Malware Intelligence — identification of every PE / ELF / Mach-O object
+    # of the case (original + nested, after unpacking), before YARA / ML / C2 so
+    # they can use it. Own parser + GoReSym contrast; never fails the case.
+    try:
+        from . import golang
+        nested_go = (read_json(paths.subresult("nested")) or {}).get("tree") or []
+        if golang.targets(paths.root, original, nested_go):
+            gres = run("go: identification of every PE / ELF / Mach-O object (BuildInfo, pclntab, GoReSym)",
+                       lambda: golang.analyze_case(paths.root, original, nested_go))
+            if gres.get("objects"):
+                write_subresult(paths, "golang", gres)
+                if "golang" not in ran:
+                    ran.append("golang")
+                findings_total += len(gres.get("findings") or [])
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Go identification skipped for %s: %s", paths.root.name, exc)
+
     # YARA runs on every analysed object (the original, everything extracted,
     # nested children, decrypted/decoded stages) whenever rules are loaded. Its
     # hits are NOT findings until the analyst marks them (YARA tab): they are
@@ -1219,7 +1236,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto",
                "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole",
                "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules", "javascript", "rtf",
-               "powershell", "vbscript", "batch", "shortcut", "msi", "python", "java", "onenote", "ml", "c2")
+               "powershell", "vbscript", "batch", "shortcut", "msi", "python", "java", "onenote", "ml", "c2", "golang")
 # Modules whose findings feed the consolidated view (includes derived ones).
 _COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file", "pyinstaller")
 
@@ -1371,6 +1388,10 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
         from .ml import ember_ml
         res = ember_ml.analyze_case(paths.root, original,
                                     (read_json(paths.subresult("nested")) or {}).get("tree") or [])
+    elif module == "golang":
+        from . import golang
+        res = golang.analyze_case(paths.root, original,
+                                  (read_json(paths.subresult("nested")) or {}).get("tree") or [])
     elif module == "c2":
         from . import c2 as c2_mod
         res = c2_mod.analyze(original, ed)

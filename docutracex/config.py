@@ -201,6 +201,19 @@ class Settings:
                 return c
         return None
 
+    def goresym_executable(self) -> Path | None:
+        """Mandiant GoReSym (MIT) under ``tools/goresym/`` — Go symbol / metadata
+        recovery, run headless (it only parses the file). ``DOCUTRACEX_GORESYM``
+        overrides. Absent → the Go identification uses its own parser only."""
+        env = os.environ.get("DOCUTRACEX_GORESYM")
+        if env and Path(env).is_file():
+            return Path(env)
+        base = self.tools_dir / "goresym"
+        for c in (base / "GoReSym.exe", base / "GoReSym"):
+            if c.is_file():
+                return c
+        return None
+
 
 settings = Settings()
 

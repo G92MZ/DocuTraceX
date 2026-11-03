@@ -724,6 +724,24 @@ def run_checks() -> dict[str, Any]:
         except Exception:  # noqa: BLE001
             pass
 
+    # GoReSym (Go Malware Intelligence) — optional contrast for the own Go parser.
+    try:
+        from .config import settings as _sg
+        gexe = _sg.goresym_executable()
+        checks.append(Check(
+            category="External tools",
+            name="GoReSym (Go metadata)",
+            status="ok" if gexe else "warn",
+            detail=f"at {gexe}" if gexe else "not provisioned (optional; the own Go parser still runs)",
+            remedy="" if gexe else "press Retry (downloads the pinned, SHA-256-verified release), "
+                                   "or point DOCUTRACEX_GORESYM at an existing GoReSym",
+            purpose="Recovers Go metadata (version, build ID, pclntab, moduledata, functions) to contrast "
+                    "the Go identification",
+            retry="goresym",
+        ))
+    except Exception:  # noqa: BLE001
+        pass
+
     # PE unpackers (parsers/unpack.py) — optional; a packed PE is otherwise analysed as its stub.
     checks.extend(_unpacker_checks())
 

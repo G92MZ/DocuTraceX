@@ -16,6 +16,7 @@ The **Diagnostics** tab shows which ones are available; a **Retry** button on a 
 | Email | extract-msg, dkimpy |
 | Didier Stevens Suite | oledump (+ plugins), zipdump, pdfid, pdf-parser, emldump, rtfdump, decode-vbe, 1768 (Cobalt Strike configurations) |
 | Shortcuts | LnkParse3 |
+| Go | GoReSym (Mandiant, MIT) — contrast for the own Go parser |
 | Binaries | pefile, LIEF, debloat, FLOSS, capa, UPX, AutoIt-Ripper, innoextract, 7-Zip, nuitka-extractor, evbunpack, Detect It Easy |
 | Python / Java | pycdc, CFR |
 | Scripts | STPyV8 (JavaScript sandbox), webcrack (on a portable Node), box-ps (on portable PowerShell Core) |
