@@ -162,22 +162,24 @@ def test_rar_without_7zip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert "7-Zip" in rec["error"] and rec["findings"][0]["rule"] == "archive_not_extracted"
 
 
-def test_sevenzip_lookup_prefers_tools_then_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("DOCUTRACEX_7Z", raising=False)
+def test_sevenzip_lookup_uses_only_the_tools_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The unpackers come only from tools/ (PR #123: Diagnostics and analysis use
+    the same portable toolset): PATH, Program Files and DOCUTRACEX_7Z are ignored."""
     monkeypatch.setattr(unpack, "_tools_dir", lambda: tmp_path / "tools")
-    exe = tmp_path / "bin" / "7z"
-    monkeypatch.setattr(unpack.shutil, "which", lambda n: str(exe) if n == "7z" else None)
-    assert unpack.sevenzip_exe() == exe                         # found on the PATH
-    monkeypatch.setattr(unpack.shutil, "which", lambda n: None)
+    elsewhere = tmp_path / "bin" / "7z"
+    elsewhere.parent.mkdir(parents=True)
+    elsewhere.write_text("")
+    monkeypatch.setattr(unpack.shutil, "which", lambda n: str(elsewhere) if n == "7z" else None)
+    monkeypatch.setenv("DOCUTRACEX_7Z", str(elsewhere))
     pf = tmp_path / "pf"
     (pf / "7-Zip").mkdir(parents=True)
     (pf / "7-Zip" / "7z.exe").write_text("")
     monkeypatch.setenv("ProgramFiles", str(pf))
-    assert unpack.sevenzip_exe() == pf / "7-Zip" / "7z.exe"     # FLARE-VM: C:\Program Files\7-Zip
+    assert unpack.sevenzip_exe() is None                        # nothing outside tools/
     (tmp_path / "tools" / "7zip").mkdir(parents=True)
     bundled = tmp_path / "tools" / "7zip" / "7z.exe"
     bundled.write_text("")
-    assert unpack.sevenzip_exe() == bundled                     # tools/7zip/ wins
+    assert unpack.sevenzip_exe() == bundled
 
 
 # --- recursive pipeline: an .exe inside a .rar reaches Nested ----------------------------------
