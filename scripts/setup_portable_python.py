@@ -1023,6 +1023,65 @@ def _floss_ok() -> bool:
     return (FLOSS_DIR / "floss.exe").is_file()
 
 
+# --- GoReSym (Go symbol / metadata recovery, Go Malware Intelligence) -------------
+# Official Mandiant release (MIT), x86-64 builds for Windows, Linux and macOS
+# (Windows on ARM and Apple Silicon run them emulated). Pinned + SHA-256.
+GORESYM_DIR = TOOLS / "goresym"
+GORESYM_VERSION = "v3.4.1"
+GORESYM_BASE = f"https://github.com/mandiant/GoReSym/releases/download/{GORESYM_VERSION}/"
+GORESYM_ASSETS = {
+    "windows": ("GoReSym-windows.zip", "c051f182412197d834bd3cbd91424831b7aadb85dfe6548603873672560a8dea", "GoReSym.exe"),
+    "linux": ("GoReSym-linux.zip", "a557124857f95a589f8ce3525119c2d18c7c7fc7c4225c92ff94e3effb38748d", "GoReSym"),
+    "darwin": ("GoReSym-mac.zip", "66e487a2c66c6ca7c15e431306a11d00ed6b005aa99c9d4bcf8117aa40657a30", "GoReSym"),
+}
+
+
+def _goresym_ok() -> bool:
+    return any((GORESYM_DIR / n).is_file() for n in ("GoReSym.exe", "GoReSym"))
+
+
+def install_goresym() -> bool:
+    """GoReSym into tools/goresym/ — optional; the Go identification falls back
+    to its own parser without it."""
+    import hashlib
+    import io
+    import os
+
+    if _goresym_ok():
+        return True
+    plat = "windows" if sys.platform.startswith("win") else ("darwin" if sys.platform == "darwin" else "linux")
+    if plat == "linux" and _arch() != "x86_64":
+        print("[=] GoReSym: only x86-64 Linux builds are published; skipped on this architecture.")
+        return False
+    asset, sha, exe = GORESYM_ASSETS[plat]
+    print(f"[>] Downloading GoReSym {GORESYM_VERSION} into tools/goresym/")
+    try:
+        data = _get(GORESYM_BASE + asset)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] Could not download GoReSym ({exc}); Go identification uses its own parser only.")
+        return False
+    got = hashlib.sha256(data).hexdigest()
+    if got != sha:
+        print(f"[!] GoReSym: SHA-256 mismatch (got {got}, expected {sha}) — NOT installed.")
+        return False
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            member = next((m for m in z.namelist() if Path(m).name == exe), None)
+            if member is None:
+                print(f"[!] GoReSym: {exe} not found in the release zip.")
+                return False
+            GORESYM_DIR.mkdir(parents=True, exist_ok=True)
+            with z.open(member) as src, (GORESYM_DIR / exe).open("wb") as dst:
+                shutil.copyfileobj(src, dst)
+        if plat != "windows":
+            os.chmod(GORESYM_DIR / exe, 0o755)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] GoReSym: could not extract ({exc}).")
+        return False
+    print(f"[+] GoReSym at {GORESYM_DIR}")
+    return True
+
+
 def _capa_ok() -> bool:
     return (CAPA_DIR / "capa.exe").is_file()
 
@@ -1684,12 +1743,14 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
     _clear_mark("cfr")
     _clear_mark("floss")
     _clear_mark("capa")
+    _clear_mark("goresym")
     install_webcrack()   # portable Node + webcrack (JS deobfuscation)
     install_boxps()      # PowerShell Core + box-ps (PowerShell sandbox)
     install_pycdc()      # pycdc (.pyc decompiler, built from source)
     install_cfr()        # CFR (.class decompiler jar; run with the host JVM)
     install_floss()      # Mandiant FLOSS standalone (PE obfuscated strings; Windows)
     install_capa()       # Mandiant capa standalone (PE capabilities/ATT&CK; Windows)
+    install_goresym()    # Mandiant GoReSym (Go metadata recovery; Go Malware Intelligence)
     # PE packer / installer unpackers. Each is optional and independently guarded.
     for _name in ("upx", "7zip", "die", "innoextract", "nuitka-extractor",
                   "autoit-ripper", "evbunpack"):
@@ -1790,6 +1851,7 @@ def _ensure_optional() -> None:
                               ("cfr", _cfr_ok, install_cfr),
                               ("floss", _floss_ok, install_floss),
                               ("capa", _capa_ok, install_capa),
+                              ("goresym", _goresym_ok, install_goresym),
                               ("upx", _upx_ok, install_upx),
                               ("7zip", _sevenzip_ok, install_7zip),
                               ("die", _die_ok, install_die),
@@ -1914,6 +1976,7 @@ COMPONENTS: dict = {
     "cfr": lambda: bool(install_cfr()) and _cfr_ok(),
     "floss": lambda: bool(install_floss()) and _floss_ok(),
     "capa": lambda: bool(install_capa()) and _capa_ok(),
+    "goresym": lambda: bool(install_goresym()) and _goresym_ok(),
     "upx": lambda: bool(install_upx()) and _upx_ok(),
     "7zip": lambda: bool(install_7zip()) and _sevenzip_ok(),
     "die": lambda: bool(install_die()) and _die_ok(),

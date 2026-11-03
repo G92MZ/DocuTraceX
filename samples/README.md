@@ -197,6 +197,27 @@ Indicators that must **not** appear in the IOCs tab:
 - **`sample_marker_drop.js`**: the dropper writes a 1-byte lock file and a real `upd.ps1`. Only the `.ps1` becomes a nested child. Tiny non-code drops and stages (markers, counters, "ok") are not stages; short code (a `.bat` with `start x.exe`) still is.
 - **Any PE / ELF analysed with capa** — capability and ATT&CK names ("query or enumerate registry key", "Query Registry") are not commands.
 
+## Go binaries (Components → Go)
+
+The **`go/`** folder of `samples.zip` holds inert Go-like binaries: binkit stubs
+whose only code is `ret`, carrying the Go structures in their real layouts —
+BuildInfo (inline strings, Go 1.18+), pclntab (magic `0xfffffff1`, Go 1.20+) with
+its function names, moduledata pointing back at it and the Go build ID. Built by
+`go_samples()` in `scripts/make_samples.py`.
+
+| Sample | What it shows |
+| --- | --- |
+| `go/sample_go_agent` | ELF, stripped (no symbols / DWARF): **Confirmed**, `go1.22.5`, module `example.com/invoicesync`, 2 dependencies, build settings (`-ldflags="-s -w -H=windowsgui"`, `CGO_ENABLED=0`) |
+| `go/sample_go_agent.exe` | the same as a PE (pclntab in `.rdata`, Go build ID string) |
+| `go/sample_go_agent_debug` | not stripped (symbol table + DWARF) |
+| `go/sample_go_damaged_buildinfo` | BuildInfo corrupted: still **Confirmed** from pclntab + moduledata + build ID, flagged *metadata altered* |
+| `go/sample_go_garble` | package names renamed like Garble does: *Garble-style names* finding |
+
+GoReSym (the contrast tool) only accepts real Go binaries, so on these stubs it
+reports *no valid pclntab found* — the Go tab shows that next to the own parser's
+result. Any real Go program (`go build`) is identified the same way, and GoReSym
+agrees on it.
+
 ## C2 / Beacons tab
 
 The **`c2/`** folder of `samples.zip` has one sample per implant family the tab
