@@ -20,7 +20,7 @@ SETUP = ROOT / "scripts" / "setup_portable_python.py"
 COMPONENTS = ("portable", "tool-deps", "didier", "officemalscanner", "ipdb", "chromium",
               "vipermonkey", "webcrack", "boxps", "pycdc", "cfr", "floss", "capa",
               "upx", "7zip", "die", "innoextract", "nuitka-extractor",
-              "autoit-ripper", "evbunpack", "ember")
+              "autoit-ripper", "evbunpack", "ember", "goresym")
 APP_DEP_PREFIX = "app-dep:"
 _LOG_LINES = 400
 _TIMEOUT = 3600
