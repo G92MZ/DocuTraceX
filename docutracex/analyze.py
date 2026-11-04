@@ -1129,6 +1129,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         nested_dn = (read_json(paths.subresult("nested")) or {}).get("tree") or []
         dres = run(".net: metadata of every .NET assembly (types, P/Invoke, APIs, resources, strings, obfuscators)",
                    lambda: dotnet.analyze_case(paths.root, original, nested_dn))
+        code_children += dres.pop("_children", None) or []          # managed resources → nested analysis
         if dres.get("objects"):
             write_subresult(paths, "dotnet", dres)
             if "dotnet" not in ran:

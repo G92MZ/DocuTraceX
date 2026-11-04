@@ -5844,13 +5844,13 @@ function dnObject(o, i) {
     ${apis ? `<h4 class="formats-title">Framework APIs referenced</h4><table class="cases"><thead><tr><th>Type</th><th>Behaviour</th><th>Members used</th></tr></thead><tbody>${apis}</tbody></table>` : ""}`;
   const res = (r.resources || []).map((x) => `<tr><td class="mono">${e(x.name)}</td><td>${x.size}</td>
       <td>${x.entropy >= 7.5 ? `<span class="badge badge-warn">${x.entropy}</span>` : x.entropy}</td><td class="mono">${e(x.head)}</td>
-      <td class="mono">${e((x.sha256 || "").slice(0, 16))}</td></tr>`).join("");
+      <td class="mono">${e((x.sha256 || "").slice(0, 16))}</td><td>${x.costura ? '<span class="badge badge-muted">Costura (deflated)</span> ' : ""}${x.stored_path ? fileActions(x.stored_path) : ""}</td></tr>`).join("");
   const strs = (r.strings || []).map((x) => `<div class="mono">${e(x)}</div>`).join("");
   return innerTabs(g, [
     { id: "summary", label: "Summary", html: summary },
     { id: "types", label: `Types & methods (${types.length})`, html: typesHtml || '<p class="hint-line">No types.</p>' },
     { id: "apis", label: `P/Invoke & APIs (${(r.pinvoke || []).length + (r.apis || []).length})`, html: apiHtml.trim() || '<p class="hint-line">No P/Invoke and no notable framework API.</p>' },
-    { id: "resources", label: `Resources (${(r.resources || []).length})`, html: res ? `<table class="cases"><thead><tr><th>Name</th><th>Size</th><th>Entropy</th><th>First bytes</th><th>SHA-256</th></tr></thead><tbody>${res}</tbody></table>` : '<p class="hint-line">No managed resources.</p>' },
+    { id: "resources", label: `Resources (${(r.resources || []).length})`, html: res ? `<table class="cases"><thead><tr><th>Name</th><th>Size</th><th>Entropy</th><th>First bytes</th><th>SHA-256</th><th></th></tr></thead><tbody>${res}</tbody></table><p class="hint-line">Every resource is also analysed as a nested child (Nested panel).</p>` : '<p class="hint-line">No managed resources.</p>' },
     { id: "strings", label: `Strings (${(r.strings || []).length})`, html: strs ? `<p class="hint-line">User strings (#US heap): the literals the code uses.</p><div class="cx-scroll cx-small">${strs}</div>` : '<p class="hint-line">No user strings (encrypted by an obfuscator?).</p>' },
   ]);
 }

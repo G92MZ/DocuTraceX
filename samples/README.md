@@ -241,7 +241,7 @@ is `ret`.
 
 | Sample | What it shows |
 | --- | --- |
-| `dotnet/sample_dotnet_loader.exe` | `InvoiceViewer` 2.1.0.0 (runtime v4.0.30319, entry `InvoiceViewer.Program::Main`): **P/Invoke** `kernel32!VirtualAlloc` + `CreateThread` (finding *shellcode loading / injection*), framework APIs `WebClient.DownloadData`, `Assembly.Load` (finding), `RegistryKey.SetValue`, `RijndaelManaged.CreateDecryptor`; the **ConfuserEx** marker attribute (finding *obfuscator*); an AES-encrypted resource `stage2.bin` (high entropy); user strings with the C2 URL and `203.0.113.47` (IOCs) |
+| `dotnet/sample_dotnet_loader.exe` | `InvoiceViewer` 2.1.0.0 (runtime v4.0.30319, entry `InvoiceViewer.Program::Main`): **P/Invoke** `kernel32!VirtualAlloc` + `CreateThread` (finding *shellcode loading / injection*), framework APIs `WebClient.DownloadData`, `Assembly.Load` (finding), `RegistryKey.SetValue`, `RijndaelManaged.CreateDecryptor`; the **ConfuserEx** marker attribute (finding *obfuscator*); an AES-encrypted resource `stage2.bin` (high entropy) and a Costura-embedded `costura.invoicehelper.dll.compressed` — both resources are extracted and analysed as **nested** children (Costura's is deflated first, giving an inert `MZ`+text `invoicehelper.dll`); user strings with the C2 URL and `203.0.113.47` (IOCs) |
 
 ## C2 / Beacons tab
 
