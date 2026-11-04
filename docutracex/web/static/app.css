@@ -863,3 +863,5 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 .obj-rows { max-height: 320px; overflow: auto; border: 1px solid var(--border, #2a3442); border-radius: 6px; padding: 4px 8px; }
 .obj-row { display: flex; gap: 8px; align-items: center; padding: 2px 0; }
 .obj-row .mono { word-break: break-all; }
+
+.ml-chain { margin: 8px 0 12px; padding: 8px 12px; border-left: 3px solid var(--accent); background: rgba(127,127,127,.06); border-radius: 4px; }

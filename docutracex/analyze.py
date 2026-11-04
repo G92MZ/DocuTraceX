@@ -1553,6 +1553,7 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
                             only, {"items": lambda e: e.get("stored_path") or "original"})
         if only:
             res["findings"] = [f for f in (ember_ml.finding_for(x) for x in res["items"]) if f]
+            res["chain"] = ember_ml.chain_summary(res["items"])
             res["items"].sort(key=lambda x: -(x.get("score") if x.get("score") is not None else -1))
             res["status"] = "ok" if res["items"] else res.get("status")
             res.setdefault("counts", {}).update(objects=len(res["items"]),

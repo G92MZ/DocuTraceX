@@ -23,6 +23,8 @@ def fake_tools(monkeypatch: pytest.MonkeyPatch):
 
     def tool(name):
         def run(path):
+            if not Path(path).name.startswith(("k", "a.exe")):     # a run left by another test: not ours
+                return {"status": "ok", "tool": name, **({"strings": []} if name == "floss" else {"capabilities": []})}
             with lock:
                 live["now"] += 1
                 live["max"] = max(live["max"], live["now"])
@@ -40,9 +42,7 @@ def fake_tools(monkeypatch: pytest.MonkeyPatch):
         return run
     monkeypatch.setattr(pe_mod, "_run_floss", tool("floss"))
     monkeypatch.setattr(pe_mod, "_run_capa", tool("capa"))
-    from docutracex.config import settings
-    monkeypatch.setattr(type(settings), "floss_executable", lambda self: Path("/bin/true"), raising=False)
-    monkeypatch.setattr(type(settings), "capa_executable", lambda self: Path("/bin/true"), raising=False)
+    monkeypatch.setattr(pe_mod, "_tools_available", lambda: True)
     monkeypatch.setenv("DOCUTRACEX_TOOLS_PARALLEL", "2")
     monkeypatch.setattr(pe_mod, "_pool", None)
     monkeypatch.setattr(pe_mod, "_pending", {})
@@ -59,6 +59,7 @@ def test_both_tools_run_at_the_same_time(tmp_path: Path, fake_tools) -> None:
 
 def test_prefetch_runs_ahead_and_is_used_once(tmp_path: Path, fake_tools, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(pe_mod, "_tools_workers", lambda: 2)
+    monkeypatch.setattr(pe_mod, "_worth_prefetch", lambda p: True)     # its own test is below
     fake_tools["want"] = 4
     files = []
     for i in range(4):
