@@ -206,6 +206,41 @@ def _yara_for_file(analysis_id: str, paths, stored_path: str) -> tuple[dict | No
     return sub, triage["findings"]
 
 
+@router.get("/{analysis_id}/mdreport")
+def md_report(analysis_id: str) -> dict:
+    """The case as Markdown, one section per part (summary, findings, IOCs, stages,
+    decrypted, code, .NET, ML, C2, network, raw modules) — to paste into an LLM."""
+    from .. import mdreport
+    try:
+        case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"sections": mdreport.build(analysis_id)}
+
+
+@router.get("/{analysis_id}/mdreport.md")
+def md_report_file(analysis_id: str, section: str | None = None):
+    """The whole Markdown export (or one ``section``) as a .md download."""
+    from fastapi.responses import Response
+
+    from .. import mdreport
+    try:
+        manifest = case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if section:
+        md = next((x["markdown"] for x in mdreport.build(analysis_id) if x["id"] == section), None)
+        if md is None:
+            raise HTTPException(status_code=404, detail="no such section")
+    else:
+        md = mdreport.full(analysis_id)
+    from pathlib import Path as _P
+    stem = _P(manifest["original"]["filename"]).stem or analysis_id
+    name = f"{analysis_id}_{stem}{'_' + section if section else ''}.md"
+    return Response(md, media_type="text/markdown; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
 @router.get("/{analysis_id}/report")
 async def case_report(analysis_id: str, iocs: str = "marked"):
     """Render a self-contained HTML report for the case (printable to PDF)."""
