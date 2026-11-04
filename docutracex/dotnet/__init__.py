@@ -217,6 +217,12 @@ def parse(data: bytes) -> dict[str, Any]:
             from .cil import disassemble
             c = disassemble(pe)
             out["_cil_strings"] = c.pop("_strings")
+            meths = c.pop("_methods")
+            try:
+                from .strdec import decrypt
+                c["decrypted"] = decrypt(meths)
+            except Exception as exc:  # noqa: BLE001
+                c["decrypted_error"] = f"string decryption: {exc}"[:200]
             out["cil"] = c
         except Exception as exc:  # noqa: BLE001  (CIL is best effort)
             out["cil"] = {"error": f"CIL disassembly: {exc}"[:200]}
@@ -253,6 +259,12 @@ def _findings(item: dict[str, Any]) -> list[dict[str, Any]]:
         if o["rule"] == "dotnet:assembly_load" and loaders:
             o["evidence"] = "; ".join(f"{m['method']} → {', '.join(c for c in m['calls'] if '::Load' in c)}"
                                       for m in loaders[:4])
+    dec = cil.get("decrypted") or []
+    if dec:
+        out.append({"rule": "dotnet:strings_decrypted", "severity": "medium", "tool": "dotnet", "location": loc,
+                    "detail": f"{len(dec)} encrypted string(s) decrypted statically "
+                              f"({', '.join(sorted({d['decryptor'] for d in dec})[:3])})",
+                    "evidence": "; ".join(f"{d['output'][:60]} ({d['how']})" for d in dec[:5]), "attack": "T1140"})
     for x in r.get("resources") or []:
         for e in x.get("entries") or []:
             if e.get("pe"):
@@ -362,6 +374,8 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
         located = {s for _, s in cil_strings}
         item["ioc_sources"] = (
             [{"location": f"{t['label']} › {m}", "text": s} for m, s in cil_strings[:3000]]
+            + [{"location": f"{t['label']} › decrypted › {d['caller']}", "text": d["output"]}
+               for d in ((r.get("cil") or {}).get("decrypted") or [])]
             + [{"location": f"{t['label']} › resources › {n}", "text": v} for n, v in res_strings[:2000]]
             + [{"location": f"{t['label']} › #US", "text": s} for s in (r.get("strings") or [])[:3000] if s not in located])
         res["objects"].append(item)

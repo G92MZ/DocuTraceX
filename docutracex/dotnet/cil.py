@@ -100,17 +100,27 @@ def disassemble(pe: Any) -> dict[str, Any]:
         done += 1
         calls: list[str] = []
         strings: list[str] = []
+        pending: list[str] = []                        # ldstr args right before a call
+        sites: list[tuple[int, list[str]]] = []        # (own method rid, string args)
+        ops: set[str] = set()
         for insn in body.instructions:
             op = insn.opcode.name
+            ops.add(op)
             if op == "ldstr" and us is not None:
                 try:
                     s = us.get(insn.operand.rid)
                     v = s.value if s is not None else None
                     if v:
                         strings.append(str(v)[:2000])
+                        pending.append(str(v)[:20000])
                 except Exception:  # noqa: BLE001
                     pass
-            elif op in CALL_OPS and hasattr(insn.operand, "table"):
+                continue
+            if op in CALL_OPS and getattr(insn.operand, "table", None) == 0x06 and pending:
+                sites.append((insn.operand.rid, pending[-3:]))
+            if not op.startswith(("ldc", "nop")):
+                pending = []
+            if op in CALL_OPS and hasattr(insn.operand, "table"):
                 tok = insn.operand
                 try:
                     tbl = {0x0A: getattr(t, "MemberRef", None), 0x06: getattr(t, "MethodDef", None),
@@ -133,7 +143,10 @@ def disassemble(pe: Any) -> dict[str, Any]:
                     break
         score += min(len(strings), 5) // 2
         methods.append({"method": owners.get(rid, f"#{rid}"), "rid": rid, "size": int(body.code_size or 0),
-                        "calls": calls[:MAX_CALLS], "strings": strings[:40], "categories": sorted(cats), "score": score})
+                        "calls": calls[:MAX_CALLS], "strings": strings[:40], "categories": sorted(cats), "score": score,
+                        "_ops": ops, "_sites": sites, "_all_strings": strings})
+    internal = [{k: m.pop(k) for k in ("_ops", "_sites", "_all_strings")} | {"method": m["method"], "rid": m["rid"],
+                 "calls": m["calls"]} for m in methods]
     interesting = sorted((m for m in methods if m["score"] > 0), key=lambda m: -m["score"])[:MAX_INTERESTING]
     return {"methods": done, "errors": errors, "interesting": interesting,
-            "_strings": [(m["method"], s) for m in methods for s in m["strings"]]}
+            "_strings": [(m["method"], s) for m in methods for s in m["strings"]], "_methods": internal}
