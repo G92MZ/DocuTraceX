@@ -226,3 +226,18 @@ def test_bloated_case_real_binary_is_nested(_client) -> None:
     # the real binary's own analysis (LIEF etc.) ran on the child
     assert "lief_forwarded_exports" in {f["rule"] for f in child.get("findings") or []} or not \
         __import__("importlib").util.find_spec("lief")
+
+
+def test_debloat_log_callback_takes_print_keywords() -> None:
+    from docutracex.parsers import debloat_pe
+    debloat_pe._quiet("Section: .text", end="\t", flush=True)       # debloat >= 1.7 logs like print()
+
+
+@pytest.mark.skipif(__import__("importlib").util.find_spec("debloat") is None, reason="debloat not installed")
+def test_debloat_bloated_section_without_overlay(tmp_path) -> None:
+    """No overlay → debloat checks each section's compression (the path that logs with end=/flush=)."""
+    from docutracex.parsers import debloat_pe
+    src = tmp_path / "bloated.exe"
+    src.write_bytes(ms.bloated_section_exe())
+    rec = debloat_pe.run(src, tmp_path / "out" / "bloated.exe")
+    assert rec["status"] != "error", rec
