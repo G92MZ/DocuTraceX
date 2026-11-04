@@ -550,11 +550,15 @@ def _worth_prefetch(path: Path) -> bool:
         return False
 
 
+def _tools_available() -> bool:
+    from ..config import settings
+    return settings.floss_executable() is not None or settings.capa_executable() is not None
+
+
 def prefetch(paths: list[Path]) -> int:
     """Start FLOSS + capa in the background for the PEs of a batch that is about
     to be scanned. Returns how many were queued."""
-    from ..config import settings
-    if settings.floss_executable() is None and settings.capa_executable() is None:
+    if not _tools_available():
         return 0
     global _pool
     n = 0
