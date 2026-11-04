@@ -33,7 +33,8 @@ def test_metadata_of_the_sample() -> None:
     assert res["name"] == "InvoiceViewer.Resources.stage2.bin" and res["entropy"] > 7.5
     assert ms.CODE_URL in r["strings"] and "203.0.113.47" in r["strings"]
     rules = [f["rule"] for f in dotnet._findings({"label": "x", "result": r})]
-    assert rules == ["dotnet:identified", "dotnet:obfuscator", "dotnet:pinvoke_injection", "dotnet:assembly_load"]
+    assert rules == ["dotnet:identified", "dotnet:obfuscator", "dotnet:pinvoke_injection", "dotnet:assembly_load",
+                     "dotnet:strings_decrypted"]
 
 
 def test_existing_dotnet_samples_parse() -> None:
@@ -73,6 +74,8 @@ def test_case_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     locs = {s["location"] for s in o["ioc_sources"]}
     assert any(x.endswith("InvoiceViewer.Program::LoadStage") for x in locs)
     assert any("resources › UpdateHost" in x for x in locs)
+    assert "dotnet:strings_decrypted" in {f["rule"] for f in d["findings"]}
+    assert any(x.endswith("decrypted › InvoiceViewer.Program::Configure") for x in locs)
     iocs = {i["value"] for i in read_json(paths.subresult("iocs"))["iocs"]}
     assert {ms.CODE_URL, "203.0.113.47"} <= iocs
     # a native binary gets no .NET result
@@ -94,3 +97,20 @@ def test_cil_and_resources_units() -> None:
     ents = R.parse(blob)["entries"]
     assert [(e["name"], e["type"]) for e in ents] == [("a", "string"), ("b", "byte[]"), ("c", "Stream")]
     assert R.parse(blob[:40]).get("error") and R.parse(b"junk" * 10).get("error")
+
+
+def test_static_string_decryption() -> None:
+    from docutracex.dotnet import strdec
+    r = dotnet.parse(ms.dotnet_loader_exe())
+    got = {d["output"]: d for d in r["cil"]["decrypted"]}
+    assert got["smtp.billing-portal.example"]["how"].startswith("AES-128") and "MD5" in got["smtp.billing-portal.example"]["how"]
+    assert got["203.0.113.47:587"]["decryptor"] == "InvoiceViewer.StringCipher::Unmask"
+    # single-byte XOR with no key, and garbage is never reported
+    import base64
+    enc = base64.b64encode(bytes(c ^ 0x5A for c in b"https://cdn-update.example.net/a")).decode()
+    meths = [{"method": "A::Main", "rid": 1, "calls": [], "_ops": {"call"}, "_sites": [(2, [enc]), (2, ["Zm9vYmFyYmF6cXV4"[::-1] + "=="])],
+              "_all_strings": []},
+             {"method": "A::D", "rid": 2, "calls": ["System.Convert::FromBase64String"], "_ops": {"xor"}, "_sites": [],
+              "_all_strings": []}]
+    outs = [d["output"] for d in strdec.decrypt(meths)]
+    assert outs == ["https://cdn-update.example.net/a"]
