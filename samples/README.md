@@ -241,12 +241,14 @@ buffer in place → a function that hands the invoice C2 URL
 ## .NET assemblies (Components → .NET)
 
 Built by `dotnet_samples()` in `scripts/make_samples.py` with `scripts/dnkit.py`
-(a small CLR metadata writer): well-formed tables and heaps, every method body
-is `ret`.
+(a small CLR metadata writer): well-formed tables and heaps; method bodies are
+tiny inert IL (`ldstr` / `call` / `ret`) that is only disassembled, never run.
 
 | Sample | What it shows |
 | --- | --- |
 | `dotnet/sample_dotnet_loader.exe` | `InvoiceViewer` 2.1.0.0 (runtime v4.0.30319, entry `InvoiceViewer.Program::Main`): **P/Invoke** `kernel32!VirtualAlloc` + `CreateThread` (finding *shellcode loading / injection*), framework APIs `WebClient.DownloadData`, `Assembly.Load` (finding), `RegistryKey.SetValue`, `RijndaelManaged.CreateDecryptor`; the **ConfuserEx** marker attribute (finding *obfuscator*); an AES-encrypted resource `stage2.bin` (high entropy) and a Costura-embedded `costura.invoicehelper.dll.compressed` — both resources are extracted and analysed as **nested** children (Costura's is deflated first, giving an inert `MZ`+text `invoicehelper.dll`); user strings with the C2 URL and `203.0.113.47` (IOCs) |
+| ↳ CIL (phase 2) | **Methods of interest**: `InvoiceViewer.Program::LoadStage` (loader + network: `WebClient::.ctor` → `DownloadData` → `Assembly::Load`, loads the C2 URL) first, then `Program::Main` (persistence: `RegistryKey::SetValue` with the `…\CurrentVersion\Run` key). The `Assembly.Load` finding names the method; the IOCs carry the method as provenance. |
+| ↳ `.resources` | `InvoiceViewer.Properties.Resources.resources` is opened (ResourceReader v2): entry `UpdateHost` = `cdn-update.example.net` (IOC, provenance `resources › UpdateHost`) and the `byte[]` entry `invoice_stage3` — an inert `MZ`+text stub, finding *PE embedded in managed resource*, extracted as the nested child `…invoice_stage3.exe`. |
 
 ## C2 / Beacons tab
 
