@@ -183,6 +183,7 @@ def _code_phase(root: Path, res: dict[str, Any], go: list[dict[str, Any]], raw_d
             try:
                 res.setdefault("_children", []).extend(code_case.enrich(
                     root, p, data, o["sha256"], "go", o, names=names, buildinfo=r.get("buildinfo")))
+                res["findings"].extend(o.pop("findings", None) or [])
             except Exception as exc:  # noqa: BLE001
                 log.warning("Go resources / strings step failed on %s: %s", o.get("label"), exc)
 
