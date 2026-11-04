@@ -241,6 +241,48 @@ def pclntab(data: bytes, binf: binfmt.Binary) -> dict[str, Any] | None:
     return None
 
 
+def function_table(data: bytes, h: dict[str, Any], binf: binfmt.Binary | None = None) -> list[dict[str, Any]]:
+    """[{name, start, end}] from pclntab's functab (Go 1.16+): the own fallback
+    when GoReSym is missing or refuses the file. Addresses are virtual."""
+    if "pcln_offset" not in h:
+        return []
+    off, ps, en = h["offset"], h["ptr_size"], h.get("_en", "<")
+    ftab = off + h["pcln_offset"]
+    names_at = off + h["funcname_offset"]
+    n = h["nfunc"]
+    out = []
+    try:
+        if "text_start" in h:                            # 1.18+: uint32 entryoff / funcoff, text-relative
+            text = h["text_start"]
+            if not text and binf is not None:            # newer linkers leave it 0: runtime.text = .text
+                sec = binf.section(".text", "__text")
+                text = sec.va if sec else 0
+            ents = [struct.unpack_from(en + "II", data, ftab + 8 * k) for k in range(n + 1)]
+            for k in range(n):
+                eoff, foff = ents[k]
+                fstart = ftab + foff
+                nameoff = struct.unpack_from(en + "i", data, fstart + 4)[0]
+                out.append((text + eoff, text + ents[k + 1][0], nameoff))
+        else:                                            # 1.16–1.17: uintptr entry / funcoff
+            word = en + ("Q" if ps == 8 else "I")
+            ents = [(struct.unpack_from(word, data, ftab + 2 * ps * k)[0],
+                     struct.unpack_from(word, data, ftab + 2 * ps * k + ps)[0]) for k in range(n + 1)]
+            for k in range(n):
+                entry, foff = ents[k]
+                nameoff = struct.unpack_from(en + "i", data, ftab + foff + ps)[0]
+                out.append((entry, ents[k + 1][0], nameoff))
+    except struct.error:
+        return []
+    res = []
+    for start, end, nameoff in out:
+        a = names_at + nameoff
+        e = data.find(b"\x00", a, a + 1024)
+        if nameoff < 0 or e < 0:
+            continue
+        res.append({"name": data[a:e].decode("utf-8", "replace"), "start": start, "end": max(end, start)})
+    return res
+
+
 # --- moduledata ------------------------------------------------------------------------
 def moduledata(data: bytes, binf: binfmt.Binary, h: dict[str, Any]) -> dict[str, Any] | None:
     va = h.get("va")
@@ -344,6 +386,7 @@ def identify(data: bytes) -> dict[str, Any]:
             res["moduledata"] = md
             ev.append(_ev("moduledata", f"moduledata ({md['layout']}) points back at pclntab", md["offset"],
                           WEIGHTS["moduledata"]))
+        res["_pcln"] = dict(h)                          # internal: functab fallback (not serialised)
         h.pop("_en", None)
         res["pclntab"] = {k: v for k, v in h.items()}
         user = [n for n in names if "." in n and not n.startswith(NOT_USER)]

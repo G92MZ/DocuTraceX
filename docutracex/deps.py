@@ -742,6 +742,30 @@ def run_checks() -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
 
+    # Rizin + rz-ghidra (code analysis: functions, priority, decompilation of Go and native binaries).
+    try:
+        from .codeanalysis import available as _rz_ok
+        from .codeanalysis import rz as _rz
+        rexe = _rz.executable()
+        ok = bool(rexe) and _rz_ok()
+        ver = _rz.version(rexe) if ok else ""
+        checks.append(Check(
+            category="External tools",
+            name="Rizin + rz-ghidra (code analysis)",
+            status="ok" if ok else "warn",
+            detail=(f"{ver or 'rizin'} at {rexe}" if ok else
+                    (f"rizin at {rexe} but the rz-ghidra decompiler plugin is missing" if rexe else
+                     "not provisioned (optional; no functions / decompilation tab)")),
+            remedy="" if ok else ("press Retry (downloads the pinned, SHA-256-verified Cutter bundle that ships "
+                                  "Rizin + rz-ghidra), or point DOCUTRACEX_RIZIN at an existing rizin; on Windows "
+                                  "it needs the Microsoft Visual C++ 2015-2022 x64 runtime"),
+            purpose="Functions, call graph, strings, priority and pseudocode of Go and native PE / ELF / Mach-O "
+                    "binaries (static: nothing is executed)",
+            retry="rizin",
+        ))
+    except Exception:  # noqa: BLE001
+        pass
+
     # PE unpackers (parsers/unpack.py) — optional; a packed PE is otherwise analysed as its stub.
     checks.extend(_unpacker_checks())
 
