@@ -488,8 +488,25 @@ def help_data() -> dict[str, Any]:
     return out
 
 
-def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) -> dict[str, Any]:
-    """The Machine Learning module result for a case."""
+def _classify_parallel(paths: list[Path]) -> list[dict[str, Any]]:
+    """classify() in a few child processes at once (each loads the models once)
+    when there are enough objects to pay for it; same order as ``paths``."""
+    from ..objects import workers
+    n = workers(len(paths), 3) if len(paths) >= 6 else 1
+    if n <= 1:
+        return classify(paths)
+    from concurrent.futures import ThreadPoolExecutor
+    size = -(-len(paths) // n)
+    chunks = [paths[i:i + size] for i in range(0, len(paths), size)]
+    with ThreadPoolExecutor(max_workers=len(chunks)) as ex:      # each thread waits on its own child process
+        parts = list(ex.map(classify, chunks))
+    return [r for part in parts for r in part]
+
+
+def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]],
+                 only: set[str] | None = None) -> dict[str, Any]:
+    """The Machine Learning module result for a case. ``only`` = object ids
+    (``original`` / path relative to the case folder) to score."""
     st = status()
     res: dict[str, Any] = {"module": "ml", "status": "ok", "engine": "EMBER2024 · LightGBM",
                            "models": st["models"], "calibrated": st["calibrated"], "items": [], "findings": [],
@@ -497,6 +514,8 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
                            "triage_only": True}
     res["help"] = help_data()
     tg = targets(root, original, nested_tree)
+    if only is not None:
+        tg = [t for t in tg if (t.get("stored_path") or "original") in only]
     if not tg:
         res["status"] = "not_applicable"
         res["detail"] = "no PE, PDF, ELF or APK object in this case"
@@ -509,7 +528,7 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
         step_progress_reporter()(f"scoring {len(tg)} object(s) · {names}")
     except Exception:  # noqa: BLE001
         pass
-    results = classify([Path(t["path"]) for t in tg])
+    results = _classify_parallel([Path(t["path"]) for t in tg])
     for t, r in zip(tg, results):
         item = {**{k: v for k, v in t.items() if k != "path"}, **{k: v for k, v in r.items() if k != "path"}}
         f = finding_for(item)

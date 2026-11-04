@@ -3468,14 +3468,79 @@ async function showYaraResults(analysisId) {
   wireFileActions(out, analysisId);
 }
 
+// Object picker of the YARA / ML / C2 tabs: every object of the chosen case
+// (original + everything extracted) with a checkbox; a run covers the checked
+// ones only (results of the others are kept). ML only scores PE / PDF / ELF / APK.
+const _objPick = {};
+const ML_KINDS = new Set(["PE", "ELF", "PDF", "ZIP / OOXML / APK", "Mach-O"]);
+
+async function loadObjPicker(module, cid) {
+  const box = document.getElementById(`${module}-objs`);
+  if (!box) return;
+  const list = box.querySelector(".obj-list"), sum = box.querySelector("summary");
+  if (!cid) { list.innerHTML = ""; sum.textContent = "Objects to scan: choose a case"; return; }
+  let objs = [];
+  try { objs = (await fetch(`/api/cases/${encodeURIComponent(cid)}/objects`).then((r) => r.json())).objects || []; } catch (_) { /* none */ }
+  if (module === "ml") objs = objs.filter((o) => ML_KINDS.has(o.kind));
+  const st = _objPick[module] = { cid, objs, checked: new Set(objs.map((o) => o.id)), q: "" };
+  const e = (x) => escapeHtml(String(x ?? ""));
+  const fmt = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n >= 1024 ? `${Math.round(n / 1024)} KB` : `${n} B`);
+  const kinds = [...new Set(objs.map((o) => o.kind))].sort();
+  const label = () => {
+    const n = st.checked.size;
+    sum.textContent = `Objects to scan: ${n === objs.length ? `all (${n})` : `${n} of ${objs.length}`}`;
+  };
+  const rows = () => {
+    const q = st.q.toLowerCase();
+    return objs.filter((o) => !q || o.label.toLowerCase().includes(q) || o.kind.toLowerCase().includes(q)).slice(0, 1500)
+      .map((o) => `<label class="obj-row"><input type="checkbox" data-oid="${e(o.id)}"${st.checked.has(o.id) ? " checked" : ""}>
+        <span class="mono">${e(o.label)}</span> <span class="badge badge-muted">${e(o.kind)}</span> <span class="hint-line">${fmt(o.size)}</span></label>`).join("");
+  };
+  list.innerHTML = `<div class="obj-tools">
+      <input type="search" class="obj-q" placeholder="Filter by name or type">
+      <button class="btn btn-ghost btn-sm" type="button" data-sel="all">All</button>
+      <button class="btn btn-ghost btn-sm" type="button" data-sel="none">None</button>
+      <button class="btn btn-ghost btn-sm" type="button" data-sel="shown">Only the shown ones</button>
+      ${kinds.map((k) => `<button class="btn btn-ghost btn-sm" type="button" data-kind="${e(k)}">${e(k)}</button>`).join("")}
+    </div><div class="obj-rows">${rows()}</div>`;
+  const redraw = () => { list.querySelector(".obj-rows").innerHTML = rows(); label(); };
+  list.querySelector(".obj-q").addEventListener("input", (ev) => { st.q = ev.target.value; redraw(); });
+  list.addEventListener("change", (ev) => {
+    const id = ev.target.getAttribute && ev.target.getAttribute("data-oid");
+    if (id == null) return;
+    if (ev.target.checked) st.checked.add(id); else st.checked.delete(id);
+    label();
+  });
+  list.querySelectorAll("[data-sel]").forEach((b) => b.addEventListener("click", () => {
+    const how = b.getAttribute("data-sel");
+    if (how === "all") st.checked = new Set(objs.map((o) => o.id));
+    else if (how === "none") st.checked = new Set();
+    else st.checked = new Set([...list.querySelectorAll(".obj-rows input")].map((i) => i.getAttribute("data-oid")));
+    redraw();
+  }));
+  list.querySelectorAll("[data-kind]").forEach((b) => b.addEventListener("click", () => {
+    st.checked = new Set(objs.filter((o) => o.kind === b.getAttribute("data-kind")).map((o) => o.id));
+    redraw();
+  }));
+  label();
+}
+
+function pickedObjects(module, cid) {
+  const st = _objPick[module];
+  if (!st || st.cid !== cid || st.checked.size === st.objs.length) return null;    // all = no selection
+  return [...st.checked];
+}
+
 // YARA / Machine Learning / C2 run on demand: re-run that module alone on the case.
 async function runModuleOnCase(module, cid, status, btn, label) {
   if (!cid) { status.textContent = "Choose a case first."; return false; }
+  const objects = pickedObjects(module, cid);
+  if (objects && !objects.length) { status.textContent = "Tick at least one object."; return false; }
   btn.disabled = true;
   status.textContent = `${label}…`;
   try {
     const rr = await fetch(`/api/cases/${encodeURIComponent(cid)}/rerun`,
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ module }) }).then((r) => r.json());
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ module, objects }) }).then((r) => r.json());
     const tid = rr.task && rr.task.id;
     startTaskPoller();
     for (let i = 0; i < 7200 && tid; i++) {
@@ -3501,11 +3566,13 @@ async function scanCaseWithYara() {
   const btn = document.getElementById("yara-scan");
   const cid = sel && sel.value;
   if (!cid) { status.textContent = "Choose a case first."; return; }
+  const objects = pickedObjects("yara", cid);
+  if (objects && !objects.length) { status.textContent = "Tick at least one object."; return; }
   btn.disabled = true;
   status.textContent = "Scanning…";
   try {
     const rr = await fetch(`/api/cases/${encodeURIComponent(cid)}/rerun`,
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ module: "yara" }) }).then((r) => r.json());
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ module: "yara", objects }) }).then((r) => r.json());
     const tid = rr.task && rr.task.id;
     startTaskPoller();
     for (let i = 0; i < 3600 && tid; i++) {
@@ -6057,7 +6124,7 @@ async function loadC2View(caseId) {
     const findings = (d.findings || []).filter((f) => f.source === "c2");
     body.innerHTML = c2 ? paneC2(c2, findings, id)
       : innerTabs("c2", [
-          { id: "results", label: "Results", html: '<p class="hint-line">The C2 search runs on demand: press <b>Search C2 configurations</b> to look for implant configurations in every object of this case.</p>' },
+          { id: "results", label: "Results", html: '<p class="hint-line">The C2 search runs on demand: press <b>Search C2 configurations</b> to look for implant configurations in every object of this case (or only in the ones you tick under <b>Objects to scan</b>).</p>' },
           { id: "help", label: "Help", html: c2Help(null) }]);
     wireInnerTabs(body);
     wireMarks(body, id, (fid, mark) => { findings.forEach((f) => { if (f.id === fid) f.mark = mark; }); });
@@ -6092,9 +6159,19 @@ function renderHexView() {
 
 function setupMlHex() {
   const ms = document.getElementById("ml-case");
-  if (ms) ms.addEventListener("change", () => { _mlCase = ms.value; loadMlView(ms.value); });
+  if (ms) ms.addEventListener("change", () => { _mlCase = ms.value; loadMlView(ms.value); loadObjPicker("ml", ms.value); });
   const cs = document.getElementById("c2-case");
-  if (cs) cs.addEventListener("change", () => { _c2Case = cs.value; loadC2View(cs.value); });
+  if (cs) cs.addEventListener("change", () => { _c2Case = cs.value; loadC2View(cs.value); loadObjPicker("c2", cs.value); });
+  const ys = document.getElementById("yara-case");
+  if (ys) ys.addEventListener("change", () => loadObjPicker("yara", ys.value));
+  // the picker follows the case the select shows when a tab is opened
+  ["yara", "ml", "c2"].forEach((m) => {
+    const box = document.getElementById(`${m}-objs`);
+    if (box) box.addEventListener("toggle", () => {
+      const sel = document.getElementById(`${m}-case`);
+      if (box.open && sel && (!_objPick[m] || _objPick[m].cid !== sel.value)) loadObjPicker(m, sel.value);
+    });
+  });
   const mlRun = document.getElementById("ml-run");
   if (mlRun) mlRun.addEventListener("click", async () => {
     const sel = document.getElementById("ml-case");
