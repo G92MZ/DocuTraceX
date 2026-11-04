@@ -56,7 +56,7 @@ def _xor_chars(s: str, key: str) -> str:
     return "".join(chr(ord(c) ^ ord(key[i % len(key)])) for i, c in enumerate(s))
 
 
-def _aes(data: bytes, key: bytes) -> Iterable[tuple[str, bytes]]:
+def _aes(data: bytes, key: bytes, any_pad: bool = False) -> Iterable[tuple[str, bytes]]:
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
     if len(data) < 16 or len(data) % 16 or len(key) not in (16, 24, 32):
         return
@@ -69,13 +69,21 @@ def _aes(data: bytes, key: bytes) -> Iterable[tuple[str, bytes]]:
         pad = out[-1]
         if 1 <= pad <= 16 and out.endswith(bytes([pad]) * pad):
             yield label, out[:-pad]
+        elif any_pad:                                   # zero / no padding (files are recognised by magic)
+            yield label, out
 
 
-def _keys(raw: list[str]) -> list[tuple[str, bytes]]:
+def _keys(raw: list[Any]) -> list[tuple[str, bytes]]:
     """Key candidates from a key string: as text, MD5 / SHA-256 of it (Rijndael
-    with MD5(key) is the classic of njRAT / Agent Tesla builders), Base64 of it."""
+    with MD5(key) is the classic of njRAT / Agent Tesla builders), Base64 of it;
+    static byte[] arrays as they are."""
     out: list[tuple[str, bytes]] = []
     for k in raw:
+        if isinstance(k, (bytes, bytearray)):
+            if 1 <= len(k) <= 256:
+                out += [(f"byte[{len(k)}] {bytes(k[:8]).hex()}…", bytes(k)),
+                        (f"MD5(byte[{len(k)}])", hashlib.md5(k).digest())]
+            continue
         kb = k.encode()
         out += [(f'"{k[:24]}"', kb), (f'MD5("{k[:24]}")', hashlib.md5(kb).digest()),
                 (f'SHA-256("{k[:24]}")', hashlib.sha256(kb).digest())]
@@ -85,9 +93,10 @@ def _keys(raw: list[str]) -> list[tuple[str, bytes]]:
     return out
 
 
-def _attempts(s: str, keys: list[str], hints: set[str]) -> Iterable[tuple[str, str]]:
-    raw = _b64(s)
-    if raw is not None:
+def _attempts(s: Any, keys: list[Any], hints: set[str]) -> Iterable[tuple[str, str]]:
+    is_bytes = isinstance(s, (bytes, bytearray))
+    raw = bytes(s) if is_bytes else _b64(s)
+    if raw is not None and not is_bytes:
         t = _text(raw)
         if t:
             yield "Base64", t
@@ -97,21 +106,25 @@ def _attempts(s: str, keys: list[str], hints: set[str]) -> Iterable[tuple[str, s
                 for ml, out in _aes(raw, kb):
                     t = _text(out)
                     if t:
-                        yield f"AES-{len(kb) * 8} {ml}, key {kl}", t
+                        yield f"{'' if is_bytes else 'Base64 + '}AES-{len(kb) * 8} {ml}, key {kl}", t
             if "xor" in hints:
                 t = _text(_xor(raw, kb))
                 if t:
-                    yield f"Base64 + XOR key {kl}", t
-        if "xor" in hints and kl.startswith('"'):
+                    yield f"{'byte[]' if is_bytes else 'Base64'} + XOR key {kl}", t
+        if "xor" in hints and kl.startswith('"') and not is_bytes:
             t = _xor_chars(s, kb.decode())
             if _printable(t):
                 yield f"XOR chars key {kl}", t
     if "xor" in hints and not keys:                     # single-byte XOR, no key in sight
         data = raw if raw is not None else s.encode("latin-1", "ignore")
+        if is_bytes:
+            t0 = _text(data)
+            if t0:
+                yield "byte[] (plain)", t0
         for k in range(1, 256):
             t = _text(bytes(b ^ k for b in data))
             if t and t != s:
-                yield f"{'Base64 + ' if raw is not None else ''}XOR 0x{k:02x}", t
+                yield f"{'Base64 + ' if raw is not None and not is_bytes else ''}XOR 0x{k:02x}", t
 
 
 _IOCISH = re.compile(r"(?i)[a-z0-9-]+\.[a-z]{2,}\b|\b\d{1,3}(?:\.\d{1,3}){3}\b|https?://|[a-z]:\\|%[a-z]+%|\w@\w+\.\w")
@@ -151,7 +164,8 @@ def decrypt(methods: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if not hints:
                 continue
             data, extra = args[0], args[1:]
-            keys = list(dict.fromkeys(extra + [k for k in dec["_all_strings"] if k != data]))[:6]
+            keys = [k for k in extra] + [k for k in dec.get("_arrays") or []] + [k for k in dec["_all_strings"] if k != data]
+            keys = list({(type(k), k): k for k in keys}.values())[:8]
             n += 1
             if n > MAX_INPUTS or len(results) >= MAX_RESULTS:
                 return results
@@ -166,9 +180,51 @@ def decrypt(methods: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     continue
                 if best is None or sc > best[0]:
                     best = (sc, how, out)
-            if best and best[0] >= 1 and (data, best[2]) not in seen:
-                seen.add((data, best[2]))
-                results.append({"decryptor": dec["method"], "caller": caller["method"], "input": data[:300],
+            if best and best[0] >= 1 and (str(data), best[2]) not in seen:
+                seen.add((str(data), best[2]))
+                shown = f"byte[{len(data)}] {bytes(data[:48]).hex()}" if isinstance(data, (bytes, bytearray)) else data[:300]
+                results.append({"decryptor": dec["method"], "caller": caller["method"], "input": shown,
                                 "output": best[2][:4000], "how": best[1]})
     return results
 
+
+
+# --- encrypted resources --------------------------------------------------------
+_MAGIC = (b"MZ", b"PK\x03\x04", b"%PDF", b"\x1f\x8b", b"\x89PNG", b"{\\rtf", b"\xd0\xcf\x11\xe0", b"Rar!", b"7z\xbc\xaf")
+
+
+def _entropy(b: bytes) -> float:
+    import math
+    from collections import Counter
+    b = b[:65536]
+    return -sum(c / len(b) * math.log2(c / len(b)) for c in Counter(b).values()) if b else 0.0
+
+
+def _payload(b: bytes) -> str | None:
+    if b.startswith(_MAGIC):
+        return {b"MZ": "exe", b"PK": "zip", b"%P": "pdf", b"\x1f\x8b": "gz", b"\x89P": "png"}.get(b[:2], "bin")
+    return None
+
+
+def decrypt_blob(raw: bytes, methods: list[dict[str, Any]]) -> tuple[str, bytes, str] | None:
+    """Try the decryptors of the assembly (their key strings / static arrays and
+    algorithm) on an encrypted resource; keep only a recognisable file."""
+    if len(raw) < 16:
+        return None
+    for m in methods:
+        hints = _hints(m)
+        if not hints & {"aes", "xor"}:
+            continue
+        keys = _keys(list(m.get("_arrays") or []) + list(m["_all_strings"]))
+        for kl, kb in keys:
+            if "aes" in hints:
+                cands = [(ml, out) for ml, out in _aes(raw, kb, any_pad=True) if _payload(out)]
+                if cands:                                 # ECB / CBC share block 1: keep the cleanest
+                    ml, out = min(cands, key=lambda c: _entropy(c[1]))
+                    return f"AES-{len(kb) * 8} {ml}, key {kl} ({m['method']})", out, _payload(out) or "bin"
+            if "xor" in hints:
+                out = _xor(raw, kb)
+                ext = _payload(out)
+                if ext:
+                    return f"XOR key {kl} ({m['method']})", out, ext
+    return None

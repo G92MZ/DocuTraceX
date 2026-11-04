@@ -71,6 +71,20 @@ def scan_object(path: Path, data: bytes) -> list[dict[str, Any]]:
             out += stealers.extract_all(data)
         except Exception as exc:  # noqa: BLE001
             log.warning("c2 extractor stealers failed on %s: %s", path.name, exc)
+    # settings the .NET analysis decrypted statically (CIL decryptors, .resources)
+    if out and data[:2] == b"MZ" and b"BSJB" in data:
+        try:
+            from ..dotnet import static_strings
+            dec = set(static_strings(data))
+        except Exception:  # noqa: BLE001
+            dec = set()
+        for cfg in out:
+            vals = [str(v) for v in (cfg.get("fields") or {}).values()] + [str(v) for v in cfg.get("c2") or []]
+            hit = sorted({d for d in dec for v in vals if d and (d == v or (len(d) >= 6 and d in v) or (len(v) >= 6 and v in d))})
+            if hit:
+                cfg["decrypted_statically"] = hit[:20]
+                cfg["method"] = (f"{cfg.get('method', '')}".replace("plain .NET strings", ".NET strings")
+                                 + " · settings decrypted statically by the .NET analysis")
     # A Cobalt Strike stager also matches the generic block_api shape: keep CS.
     if any(r["family"] == "Cobalt Strike" for r in out):
         out = [r for r in out if not r["family"].startswith("Metasploit")]
