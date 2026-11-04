@@ -145,3 +145,35 @@ def reading(score: float, threshold: float | None, ref: dict[str, Any] | None) -
                 f"Malware evading the model can also score this low ({_p(1 - mal)} of test malware scores lower).")
     return head + body
 
+
+
+def atypical(model: str, vec: Any, important: list[int], names: list[tuple[str, str]] | None = None) -> dict[str, Any] | None:
+    """How unlike the EMBER2024 test files an object is, on the features the
+    model relies on most: a value present in < 1 % of BOTH classes, missing where > 97 % of
+    both have it, or beyond the 99th percentile of BOTH (when it is a quantity). {checked, unusual, share, examples}."""
+    st = model_stats(model)
+    if not st:
+        return None
+    fm, fb = st["feat"]["malicious"], st["feat"]["benign"]
+    hits: list[str] = []
+    checked = 0
+    for idx in important:
+        if idx >= len(fm["nz"]) or idx >= len(vec):
+            continue
+        name = names[idx][1] if names and idx < len(names) else str(idx)
+        if name in _CATEGORICAL or name.startswith("DOS header "):
+            continue
+        v = abs(float(vec[idx]))
+        checked += 1
+        if v == 0:                       # absent where nearly every file of both classes has it
+            if fm["nz"][idx] > 0.97 and fb["nz"][idx] > 0.97:
+                hits.append(f"no {name}")
+            continue
+        rare_presence = fm["nz"][idx] < 0.01 and fb["nz"][idx] < 0.01
+        qm, qb = fm["q"][idx], fb["q"][idx]
+        beyond = (not set(qm) | set(qb) <= {0.0, 1.0}) and v > qm[-1] and v > qb[-1]
+        if rare_presence or beyond:
+            hits.append(name)
+    if not checked:
+        return None
+    return {"checked": checked, "unusual": len(hits), "share": round(len(hits) / checked, 3), "examples": hits[:6]}

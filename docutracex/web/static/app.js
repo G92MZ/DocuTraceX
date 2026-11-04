@@ -3790,14 +3790,17 @@ function paneMl(ml, findings, caseId) {
         <span class="hint-line">${escapeHtml(it.format || it.file_type || "")}</span>
         ${it.status === "ok" ? `<span class="mono"><b>${escapeHtml(it.score.toFixed(4))}</b></span>` : ""}
         ${verdict} ${mk}
+        ${(it.atypicality || {}).atypical ? `<span class="badge badge-warn" title="${escapeHtml(`${it.atypicality.unusual} of the ${it.atypicality.checked} features the model relies on most are unlike both malware and goodware of EMBER2024: ${(it.atypicality.examples || []).join(", ")}`)}">unusual for the model: score less reliable</span>` : ""}
+        ${(it.similar || []).length ? `<span class="hint-line">≈ ${Math.round(100 * it.similar[0].similarity)}% like ${escapeHtml(it.similar[0].label.split(" › ").pop())} (case ${escapeHtml(it.similar[0].case)})</span>` : ""}
         ${(((it.labels || {}).family || [])[0] || {}).confidence === "high" ? (() => { const f0 = it.labels.family[0];
           return `<span class="hint-line">family? ${escapeHtml(f0.name)}${f0.generic ? " (generic AV name)" : (f0.type && f0.type !== "unknown" ? ` (${escapeHtml(f0.type)})` : "")}${it.family_note ? " ⚠" : ""}</span>`; })() : ""}
       </summary>
-      <div style="padding:8px 10px">${mlDetail(it, f, pct)}</div>
+      <div style="padding:8px 10px">${mlDetail(it, f, pct)}
+        ${it.status === "ok" ? `<h4 class="formats-title">Similar objects in your other cases</h4>${mlSimilar(it)}` : ""}</div>
     </details>`;
   }).join("");
   return innerTabs("ml", [
-    { id: "results", label: `Results (${items.length})`, html: `<div class="ml-pane">${head}${extras}${rows}</div>` },
+    { id: "results", label: `Results (${items.length})`, html: `<div class="ml-pane">${head}${extras}${mlChain(ml.chain, pct)}${rows}</div>` },
     { id: "help", label: "Help", html: mlHelp(ml) },
   ]);
 }
@@ -3998,6 +4001,28 @@ function mlScoreChart(ref, score, th) {
     share of EMBER2024 test files scoring at or above each score (logit scale) · dashed: threshold · solid: this file</div>`;
 }
 
+// Highest score of the case and the stage it comes from (a loader often looks innocent).
+function mlChain(c, pct) {
+  if (!c) return "";
+  const where = c.from_stage
+    ? `from a <b>stage</b> of the case, not the original (original: ${c.original_score != null ? c.original_score.toFixed(4) : "—"})`
+    : "the original itself";
+  return `<div class="ml-chain"><b>Highest score of the case: ${c.max_score.toFixed(4)}</b>${c.verdict ? ` · ${escapeHtml(c.verdict)}` : ""} —
+    <span class="mono">${escapeHtml(c.object || "")}</span>, ${where}</div>`;
+}
+
+function mlSimilar(it) {
+  const sims = it.similar || [];
+  if (!sims.length) return `<p class="hint-line">No object of an earlier case is seen alike by the model (≥ 60 % of the trees).</p>`;
+  return `<table class="cases"><thead><tr><th title="Share of the model's trees that route both files to the same leaf">Similarity</th><th>Object</th><th>Case</th><th>Score</th></tr></thead><tbody>${
+    sims.map((x) => `<tr><td><b>${Math.round(100 * x.similarity)}%</b>${x.same_file ? ' <span class="badge badge-muted">same file</span>' : ""}</td>
+      <td class="mono">${escapeHtml(x.label)}<div class="hint-line">${escapeHtml((x.sha256 || "").slice(0, 16))}</div></td>
+      <td><a href="#" class="mono" data-open-case="${escapeHtml(x.case)}">${escapeHtml(x.case)}</a></td>
+      <td class="mono">${x.score != null ? Number(x.score).toFixed(4) : ""}</td></tr>`).join("")}</tbody></table>
+    <p class="hint-line">How alike the detector sees them (same leaves in its trees), not a byte comparison: it links variants, repacks and
+      the same family across your cases.</p>`;
+}
+
 function mlDetail(it, f, pct) {
   if (it.status !== "ok") return `<p class="hint-line">${escapeHtml(it.detail || it.status)}</p>`;
   const m = it.metrics || {};
@@ -4007,6 +4032,9 @@ function mlDetail(it, f, pct) {
     ["Detection at that threshold", m["tpr_at_fpr_0.01"] != null ? `${pct(m["tpr_at_fpr_0.01"])} of the EMBER2024 test malware` : ""],
     ["On evasive malware", m.challenge_detected_at_1pct_fpr != null ? `${pct(m.challenge_detected_at_1pct_fpr)} of the challenge set` : ""],
     ["Recipe", (it.recipe || []).join(" → ")],
+    ["Typical for the model?", it.atypicality ? (it.atypicality.atypical
+      ? `NO — ${it.atypicality.unusual} of its ${it.atypicality.checked} most-used features are unlike both malware and goodware of EMBER2024 (${escapeHtml((it.atypicality.examples || []).join(", "))}) — treat the score with care`
+      : `yes (${it.atypicality.unusual} of ${it.atypicality.checked} most-used features unusual)`) : ""],
     ["Compared with EMBER2024", it.score_ref ? `a score of ${it.score.toFixed(4)} or more: ${pct(it.score_ref.malicious_ge)} of test malware, ${pct(it.score_ref.benign_ge)} of test goodware` : ""],
   ]) + (it.score_ref ? (it.score_ref.reading ? `<p class="ml-reading">${escapeHtml(it.score_ref.reading)}</p>` : "")
         + mlScoreChart(it.score_ref, it.score, it.threshold) : "");
@@ -6228,3 +6256,11 @@ renderFormats();
 loadDiagnostics(); // initial load to set the nav indicator
 loadCases();
 loadConcurrency();
+
+// "Similar objects" → open that case
+document.addEventListener("click", (e) => {
+  const a = e.target.closest && e.target.closest("[data-open-case]");
+  if (!a) return;
+  e.preventDefault();
+  openComponents(a.getAttribute("data-open-case"));
+});
