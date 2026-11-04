@@ -233,6 +233,40 @@ def _findings(item: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+RES_DIR = "dotnet_resources"
+MIN_RESOURCE = 16
+MAX_CHILDREN = 60
+
+
+def _resource_child(root: Path, sha: str, label: str, x: dict[str, Any], raw: bytes) -> dict[str, Any] | None:
+    """Write a managed resource under extracted/dotnet_resources/ for the nested
+    analysis; Costura's ``*.compressed`` resources are deflated first."""
+    import zlib
+    if len(raw) < MIN_RESOURCE:
+        return None
+    name = x["name"]
+    recipe = ["dotnet-resource", name]
+    data = raw
+    if name.lower().startswith("costura.") and name.lower().endswith(".compressed"):
+        try:
+            data = zlib.decompress(raw, -15)
+            name = name[:-len(".compressed")]
+            recipe.append("deflate")
+            x["costura"] = True
+        except zlib.error:
+            pass
+    safe = re.sub(r"[^\w.\-]+", "_", name).strip("._")[-100:] or "resource.bin"
+    out = root / "extracted" / RES_DIR / sha[:12] / safe
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(data)
+    except OSError:
+        return None
+    x["stored_path"] = out.relative_to(root).as_posix()
+    return {"path": str(out), "filename": safe, "origin": f".NET resource {x['name']} of {label}",
+            "recipe": recipe, "source": "code-resources"}
+
+
 def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) -> dict[str, Any]:
     from .. import golang
     from ..codeanalysis.case import is_dotnet
@@ -266,11 +300,15 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
             log.warning(".NET metadata failed on %s: %s", p.name, exc)
             r = {"error": f"metadata parser: {exc}"[:300]}
         for x in r.get("resources") or []:
-            x.pop("_data", None)
+            raw = x.pop("_data", b"")
+            child = _resource_child(root, sha, t["label"], x, raw)
+            if child:
+                res.setdefault("_children", []).append(child)
         item["result"] = r
         item["ioc_sources"] = [{"location": f"{t['label']} › #US", "text": s} for s in (r.get("strings") or [])[:3000]]
         res["objects"].append(item)
         if not r.get("error"):
             res["findings"].extend(_findings(item))
+    res["_children"] = (res.get("_children") or [])[:MAX_CHILDREN]
     res["counts"] = {"objects": len(res["objects"]), "findings": len(res["findings"])}
     return res

@@ -2471,11 +2471,18 @@ def dotnet_loader_exe() -> bytes:
                       {"ns": "InvoiceViewer", "name": "NativeMethods",
                        "methods": [{"name": "VirtualAlloc", "pinvoke": ("kernel32.dll", "VirtualAlloc")},
                                    {"name": "CreateThread", "pinvoke": ("kernel32.dll", "CreateThread")}]}],
-            "resources": [("InvoiceViewer.Resources.stage2.bin", payload)],
+            "resources": [("InvoiceViewer.Resources.stage2.bin", payload),
+                          ("costura.invoicehelper.dll.compressed", _deflate(b"MZ" + b"inert helper library (text) " * 40))],
             "user_strings": [CODE_URL, "Software\\Microsoft\\Windows\\CurrentVersion\\Run", "InvoiceViewer",
                              "203.0.113.47"]}
     return bk.pe(bits=32, gui=True, dotnet_md=spec, version={"CompanyName": "Invoice Sync Example",
                                                              "FileDescription": "Invoice Viewer"})
+
+
+def _deflate(b: bytes) -> bytes:
+    import zlib
+    c = zlib.compressobj(9, zlib.DEFLATED, -15)
+    return c.compress(b) + c.flush()
 
 
 def dotnet_samples() -> dict[str, bytes]:
