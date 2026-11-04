@@ -61,6 +61,39 @@ def _owners(t: Any) -> dict[int, str]:
     return {rid: by_id[id(m)] for rid, m in enumerate(t.MethodDef or [], 1) if id(m) in by_id}
 
 
+def static_fields(pe: Any) -> dict[int, bytes]:
+    """Field rid → initial bytes of the static arrays (FieldRVA + the size of
+    their ``__StaticArrayInitTypeSize=N`` value type, from ClassLayout)."""
+    t = pe.net.mdtables
+    sizes: dict[int, int] = {}
+    for cl in getattr(t, "ClassLayout", None) or []:
+        sizes[int(cl.struct.Parent_Index)] = int(cl.ClassSize or 0)
+    names = {i: str(td.TypeName) for i, td in enumerate(t.TypeDef or [], 1)}
+    out: dict[int, bytes] = {}
+    for fr in getattr(t, "FieldRva", None) or []:
+        try:
+            frid = int(fr.struct.Field_Index)
+            sg = t.Field[frid - 1].Signature
+            sig = bytes(sg.value if isinstance(getattr(sg, "value", None), (bytes, bytearray)) else b"")
+            size = 0
+            if len(sig) >= 3 and sig[0] == 0x06 and sig[1] == 0x11:
+                b, i = sig[2], 3                          # compressed TypeDefOrRef coded index
+                if b & 0x80:
+                    b = ((b & 0x3F) << 8 | sig[3]) if not b & 0x40 else ((b & 0x1F) << 24 | sig[3] << 16 | sig[4] << 8 | sig[5])
+                tag, trid = b & 3, b >> 2
+                if tag == 0:
+                    size = sizes.get(trid) or 0
+                    if not size and names.get(trid, "").startswith("__StaticArrayInitTypeSize="):
+                        size = int(names[trid].split("=", 1)[1].split("_")[0] or 0)
+            elif len(sig) >= 2 and sig[0] == 0x06:
+                size = {0x02: 1, 0x04: 1, 0x05: 1, 0x06: 2, 0x07: 2, 0x08: 4, 0x09: 4, 0x0A: 8, 0x0B: 8}.get(sig[1], 0)
+            if 0 < size <= 16 * 1024 * 1024:
+                out[frid] = bytes(pe.get_data(int(fr.Rva), size))
+        except Exception:  # noqa: BLE001
+            continue
+    return out
+
+
 def disassemble(pe: Any) -> dict[str, Any]:
     from dncil.cil.body import CilMethodBody
     from dncil.cil.body.reader import CilMethodBodyReaderBase
@@ -85,6 +118,7 @@ def disassemble(pe: Any) -> dict[str, Any]:
     t = pe.net.mdtables
     us = pe.net.user_strings
     owners = _owners(t)
+    fields = static_fields(pe)
     methods: list[dict[str, Any]] = []
     done = errors = 0
     for rid, m in enumerate(t.MethodDef or [], 1):
@@ -100,9 +134,11 @@ def disassemble(pe: Any) -> dict[str, Any]:
         done += 1
         calls: list[str] = []
         strings: list[str] = []
-        pending: list[str] = []                        # ldstr args right before a call
-        sites: list[tuple[int, list[str]]] = []        # (own method rid, string args)
+        pending: list[Any] = []                        # ldstr / static byte[] args right before a call
+        sites: list[tuple[int, list[Any]]] = []        # (own method rid, args)
+        arrays: list[bytes] = []                       # static byte[] initialised here (keys, blobs)
         ops: set[str] = set()
+        token_field = 0
         for insn in body.instructions:
             op = insn.opcode.name
             ops.add(op)
@@ -116,9 +152,12 @@ def disassemble(pe: Any) -> dict[str, Any]:
                 except Exception:  # noqa: BLE001
                     pass
                 continue
+            if op == "ldtoken" and getattr(insn.operand, "table", None) == 0x04:
+                token_field = insn.operand.rid
+                continue
             if op in CALL_OPS and getattr(insn.operand, "table", None) == 0x06 and pending:
                 sites.append((insn.operand.rid, pending[-3:]))
-            if not op.startswith(("ldc", "nop")):
+            if not op.startswith(("ldc", "nop", "newarr", "dup")):
                 pending = []
             if op in CALL_OPS and hasattr(insn.operand, "table"):
                 tok = insn.operand
@@ -131,6 +170,11 @@ def disassemble(pe: Any) -> dict[str, Any]:
                 if row is None:
                     continue
                 name = owners.get(tok.rid, "?") if tok.table == 0x06 else _name(tok.table, row)
+                if name.endswith("RuntimeHelpers::InitializeArray") and token_field in fields:
+                    arr = fields[token_field]
+                    arrays.append(arr)
+                    pending = [arr]
+                    token_field = 0
                 if name not in calls:
                     calls.append(name)
         cats: dict[str, int] = {}
@@ -144,8 +188,9 @@ def disassemble(pe: Any) -> dict[str, Any]:
         score += min(len(strings), 5) // 2
         methods.append({"method": owners.get(rid, f"#{rid}"), "rid": rid, "size": int(body.code_size or 0),
                         "calls": calls[:MAX_CALLS], "strings": strings[:40], "categories": sorted(cats), "score": score,
-                        "_ops": ops, "_sites": sites, "_all_strings": strings})
-    internal = [{k: m.pop(k) for k in ("_ops", "_sites", "_all_strings")} | {"method": m["method"], "rid": m["rid"],
+                        "_ops": ops, "_sites": sites, "_all_strings": strings, "_arrays": arrays,
+                        "arrays": [f"byte[{len(a)}] {a[:16].hex()}" for a in arrays[:10]]})
+    internal = [{k: m.pop(k) for k in ("_ops", "_sites", "_all_strings", "_arrays")} | {"method": m["method"], "rid": m["rid"],
                  "calls": m["calls"]} for m in methods]
     interesting = sorted((m for m in methods if m["score"] > 0), key=lambda m: -m["score"])[:MAX_INTERESTING]
     return {"methods": done, "errors": errors, "interesting": interesting,

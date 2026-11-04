@@ -53,7 +53,7 @@ class _Heap:
 
 
 _OP = {"ldstr": 0x72, "call": 0x28, "callvirt": 0x6F, "newobj": 0x73, "pop": 0x26, "ret": 0x2A, "calldef": 0x28,
-       "xor": 0x61, "ldarg.0": 0x02}
+       "xor": 0x61, "ldarg.0": 0x02, "initarray": 0x00}
 
 
 def _ops(ops: list[tuple], us: _Heap, rids: dict[str, int] | None = None) -> bytes:
@@ -64,6 +64,11 @@ def _ops(ops: list[tuple], us: _Heap, rids: dict[str, int] | None = None) -> byt
         out.append(_OP[op])
         if op == "ldstr":
             out += struct.pack("<I", 0x70000000 | us.us(arg[0]))
+        elif op == "initarray":                     # ldc.i4 n; newarr byte; dup; ldtoken f; call InitializeArray
+            name, size, mr = arg
+            out[-1:] = b"\x20" + struct.pack("<i", size) + b"\x8d" + struct.pack("<I", 0x01000001) + b"\x25"
+            out += b"\xd0" + struct.pack("<I", 0x04000000 | (rids or {})["field:" + name])
+            out += b"\x28" + struct.pack("<I", 0x0A000000 | (mr + 1))
         elif op == "calldef":
             out += struct.pack("<I", 0x06000000 | (rids or {})[arg[0]])
         elif op in ("call", "callvirt", "newobj"):
@@ -119,7 +124,8 @@ def build(va: int, spec: dict[str, Any]) -> tuple[bytes, int, int, int, int, int
     sig_ctor = bl.blob(b"\x20\x00\x01")                               # instance void .ctor()
     for s in spec.get("user_strings") or []:
         us.us(s)
-    rows: dict[int, list[bytes]] = {t: [] for t in (0x00, 0x01, 0x02, 0x06, 0x0A, 0x0C, 0x1A, 0x1C, 0x20, 0x23, 0x28)}
+    rows: dict[int, list[bytes]] = {t: [] for t in (0x00, 0x01, 0x02, 0x04, 0x06, 0x0A, 0x0C, 0x0F, 0x1A, 0x1C, 0x1D,
+                                                    0x20, 0x23, 0x28)}
     rows[0x00].append(struct.pack("<HHHHH", 0, st.str(spec["assembly"] + ".exe"), 1, 0, 0))
     refs = spec.get("refs") or [("mscorlib", (4, 0, 0, 0))]
     for name, ver in refs:
@@ -133,9 +139,24 @@ def build(va: int, spec: dict[str, Any]) -> tuple[bytes, int, int, int, int, int
     il_blobs: list[bytes] = []
     meth_rows: list[tuple[int, int, int, int, int]] = []              # (il index or -1, implflags, flags, name, sig)
     types = [{"ns": "", "name": "<Module>", "methods": []}] + list(spec.get("types") or [])
+    # static byte[] initialisers: fields of <PrivateImplementationDetails> typed
+    # __StaticArrayInitTypeSize=N (ClassLayout gives N), data at a FieldRVA
+    arrays = list(spec.get("static_arrays") or [])           # [(field name, bytes)]
+    field_rids = {name: i for i, (name, _) in enumerate(arrays, 1)}
+    pid_index = size_index = {}
+    if arrays:
+        pid_index = len(types) + 1
+        types.append({"ns": "", "name": "<PrivateImplementationDetails>", "methods": [], "_fields": True})
+        size_index = {}
+        for _, data in arrays:
+            if len(data) not in size_index:
+                size_index[len(data)] = len(types) + 1
+                types.append({"ns": "", "name": f"__StaticArrayInitTypeSize={len(data)}", "methods": [],
+                              "_size": len(data)})
     entry = 0
     rids = {f"{t['name']}::{m['name']}": i for i, (t, m) in
             enumerate(((t, m) for t in types for m in t.get("methods") or []), 1)}
+    rids.update({"field:" + n: r for n, r in field_rids.items()})
     for t in types:
         first = len(meth_rows) + 1
         for m in t.get("methods") or []:
@@ -177,6 +198,12 @@ def build(va: int, spec: dict[str, Any]) -> tuple[bytes, int, int, int, int, int
         out += bytes([0x02 | (len(il) << 2)]) + il
         while len(out) % 4:
             out.append(0)
+    field_rva = []
+    for _, data in arrays:
+        while len(out) % 8:
+            out.append(0)
+        field_rva.append(va + len(out))
+        out += data
     rows[0x06] = [struct.pack("<IHHHHH", il_rva[i] if i >= 0 else 0, impl, fl, nm, sg, 1)
                   for i, impl, fl, nm, sg in meth_rows]
     n_methods = len(meth_rows)
@@ -184,7 +211,16 @@ def build(va: int, spec: dict[str, Any]) -> tuple[bytes, int, int, int, int, int
     for k, (flags, nm, ns, first) in enumerate(rows[0x02]):
         nxt = rows[0x02][k + 1][3] if k + 1 < len(rows[0x02]) else n_methods + 1
         first = min(first, nxt)
-        tdefs.append(struct.pack("<IHHHHH", flags, nm, ns, 0, 1, first))
+        flist = 1 if k + 1 <= (pid_index or 10 ** 6) else len(arrays) + 1
+        if types[k].get("_size"):
+            flags = 0x00000113                                     # sealed explicit value type
+        tdefs.append(struct.pack("<IHHHHH", flags, nm, ns, 0, flist, first))
+    for n, ti in size_index.items():
+        rows[0x0F].append(struct.pack("<HIH", 1, n, ti))
+    for k, (name, data) in enumerate(arrays, 1):
+        sig = bl.blob(bytes([0x06, 0x11, (size_index[len(data)] << 2) & 0x7F if size_index[len(data)] < 32 else 0]))
+        rows[0x04].append(struct.pack("<HHH", 0x0133, st.str(name), sig))   # static assembly initonly HasFieldRVA
+        rows[0x1D].append(struct.pack("<IH", field_rva[k - 1], k))
     rows[0x02] = tdefs
     valid = sum(1 << t for t, r in rows.items() if r)
     tables = struct.pack("<IBBBBQQ", 0, 2, 0, 0, 1, valid, 0x16003301FA00)

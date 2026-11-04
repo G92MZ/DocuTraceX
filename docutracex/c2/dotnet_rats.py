@@ -49,6 +49,21 @@ def _clr_metadata(data: bytes) -> bytes | None:
 
 
 def user_strings(data: bytes) -> list[str]:
+    """Every string of the #US heap of a .NET assembly, plus the ones the .NET
+    analysis decrypts statically (CIL decryptors, .resources string entries):
+    the extractors then see the settings an obfuscated builder hides."""
+    heap = heap_user_strings(data)
+    if not heap:
+        return heap
+    try:
+        from ..dotnet import static_strings
+        extra = [s for s in static_strings(data) if s not in set(heap)]
+    except Exception:  # noqa: BLE001  (decryption is a bonus, never a failure)
+        extra = []
+    return heap + extra
+
+
+def heap_user_strings(data: bytes) -> list[str]:
     """Every string of the #US heap of a .NET assembly."""
     md = _clr_metadata(data)
     if not md or md[:4] != b"BSJB":
