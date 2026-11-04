@@ -5104,6 +5104,7 @@ function goObjectTabs(o, i) {
     { id: "strings", label: c.strings ? `Strings (${c.strings})` : "Strings", html: cxSlot(c, sha, "go", "strings", g) },
     { id: "graph", label: "Call graph", html: cxSlot(c, sha, "go", "graph", g) },
     { id: "resources", label: cxResLabel(c), html: cxSlot(c, sha, "go", "resources", g) },
+    { id: "caps", label: cxCapsLabel(c), html: cxSlot(c, sha, "go", "caps", g) },
     { id: "crypto", label: cxCryptoLabel(c), html: cxSlot(c, sha, "go", "crypto", g) },
     { id: "types", label: o.types ? `Types (${o.types.user_types})` : "Types",
       html: o.types ? `<div class="gt" data-gt-sha="${escapeHtml(sha)}" data-gt-group="${escapeHtml(g)}" data-gt-code="${cxOk(c) ? 1 : 0}"><p class="hint-line">Loading…</p></div>`
@@ -5172,6 +5173,39 @@ function cxResources(d) {
     ${emb}
     ${certs ? `<h4 class="formats-title">Certificates and keys</h4><table class="cases"><thead><tr><th>Type</th><th>Subject</th><th>Validity</th><th>Offset</th></tr></thead><tbody>${certs}</tbody></table>` : ""}
     ${comp ? `<h4 class="formats-title">Compressed data</h4><table class="cases"><thead><tr><th>Format</th><th>Offset</th><th>Size</th><th>First bytes</th><th></th></tr></thead><tbody>${comp}</tbody></table>` : ""}`;
+}
+
+function cxCapsLabel(c) {
+  const r = (c && c.resources) || {};
+  return r.capabilities ? `Capabilities (${r.capabilities})` : "Capabilities";
+}
+
+const CX_SEV = { critical: "bad", high: "bad", medium: "warn", low: "muted", info: "muted" };
+
+function cxCaps(d) {
+  const c = d.capabilities || {};
+  const e = (x) => escapeHtml(String(x ?? ""));
+  if (c.error) return `<p class="bad-text">Capability analysis failed: ${e(c.error)}</p>`;
+  const caps = c.capabilities || [];
+  const capaNote = c.capa_available ? "contrasted with capa (same ATT&CK technique)"
+    : `capa ${c.capa_status === "skipped" ? "was skipped on this object" : "did not run on this object"}: no contrast`;
+  const rows = caps.map((x, i) => `<details class="disclose cx-cap"${i < 3 ? " open" : ""}>
+      <summary><span class="badge badge-${CX_SEV[x.severity] || "muted"}">${e(x.severity)}</span>
+        <b>${e(x.name)}</b> <span class="mono hint-line">${e(x.attack)}</span>
+        <span class="badge badge-${x.confidence === "high" ? "ok" : "warn"}">${e(x.confidence)} confidence</span>
+        ${x.capa === null || x.capa === undefined ? "" : x.capa.length ? `<span class="badge badge-muted" title="${e(x.capa.join(", "))}">also capa</span>` : '<span class="badge badge-muted">not in capa</span>'}
+        <span class="hint-line">${x.functions.length} function(s)</span></summary>
+      <div class="cx-cap-body">${x.functions.map((f) => `<div class="cx-cap-fn">
+          <button type="button" class="cx-link" data-cx-open="${f.addr}">${e(f.name)}</button>
+          <span class="badge badge-${f.confidence === "high" ? "ok" : "warn"}">${e(f.confidence)}</span>
+          <div class="cx-cap-ev">${f.evidence.map((v) => `<span class="badge badge-muted">${e(v.kind)}</span> <span class="mono">${e(v.detail)}</span>`).join("<br>")}</div>
+        </div>`).join("")}</div></details>`).join("");
+  const capaOnly = (c.capa_only || []).map((x) => `<div><span class="mono">${e(x.attack)}</span> <span class="hint-line">${e(x.name)}</span></div>`).join("");
+  return `<p class="hint-line">A capability is only reported when the code supports it: a call to the right Go package or API plus at least one more
+      independent signal (another call, a string that function uses, a static decryption). Reachability from an entry point raises the confidence.
+      High-confidence capabilities that capa does not already report become findings. ${e(capaNote)}.</p>
+    ${rows || '<p class="hint-line">No capability with enough correlated evidence.</p>'}
+    ${capaOnly ? `<details class="disclose"><summary>Only in capa (${(c.capa_only || []).length})</summary><div class="cx-cap-body">${capaOnly}</div></details>` : ""}`;
 }
 
 function cxCryptoLabel(c) {
@@ -5465,6 +5499,9 @@ async function cxRender(el, caseId) {
   } else if (part === "resources") {
     el.innerHTML = cxResources(d);
     wireFileActions(el, caseId);
+  } else if (part === "caps") {
+    el.innerHTML = cxCaps(d);
+    cxWireOpen(el, caseId, sha, mode, group);
   } else if (part === "crypto") {
     el.innerHTML = cxCrypto(d);
     cxWireOpen(el, caseId, sha, mode, group);
@@ -5787,6 +5824,7 @@ function paneCode(cm) {
       { id: "apis", label: `APIs (${c.apis || 0})`, html: cxSlot(c, o.sha256, "native", "apis", g) },
       { id: "graph", label: "Call graph", html: cxSlot(c, o.sha256, "native", "graph", g) },
       { id: "resources", label: cxResLabel(c), html: cxSlot(c, o.sha256, "native", "resources", g) },
+      { id: "caps", label: cxCapsLabel(c), html: cxSlot(c, o.sha256, "native", "caps", g) },
       { id: "crypto", label: cxCryptoLabel(c), html: cxSlot(c, o.sha256, "native", "crypto", g) },
     ])}`;
   };

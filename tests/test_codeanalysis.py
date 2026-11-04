@@ -145,7 +145,7 @@ def test_case_pipeline_go_and_native(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert fv["decompiled"]["status"] == "ok" and fv["callers"][0]["name"] == "main.main.func1" and fv["ops"]
     dv = client.post(f"/api/cases/{cid}/code/{c['sha256']}/go/fn/{addr}/decompile").json()
     assert dv["decompiled"]["on_demand"] is True
-    assert obj["types"]["with_methods"] == 3                       # main.Config, http.Client, cipher.gcm
+    assert obj["types"]["with_methods"] == 5        # main.Config, http.Client, cipher.gcm, registry.Key, exec.Cmd
     ty = client.get(f"/api/cases/{cid}/golang/{c['sha256']}/types").json()
     cfgt = next(t for t in ty["types"] if t["name"] == "main.Config")
     assert cfgt["methods"][0]["method"] == "load" and cfgt["source"] == "method names"
@@ -236,7 +236,8 @@ def test_case_pipeline_resources_and_iocs(tmp_path: Path, monkeypatch: pytest.Mo
     iocs = {i["value"] for i in read_json(paths.subresult("iocs"))["iocs"]}
     assert {URL, "203.0.113.47", "cdn-update.example.net"} <= iocs
     full = code_case.load(paths.root, o["sha256"], "go")
-    assert full["dependencies"]["without_code"] == ["github.com/kbinani/screenshot", "golang.org/x/sys"]
+    assert full["dependencies"]["without_code"] == ["github.com/kbinani/screenshot"]
+    assert full["dependencies"]["with_code"] == ["golang.org/x/sys"]              # registry (main.persist)
     assert all("data" not in f for fs in full["resources"]["embed"] for f in fs["files"])
 
 
@@ -317,3 +318,66 @@ def test_crypto_on_the_go_sample(tmp_path: Path) -> None:
     plain = {x["method"].split(" ")[0]: x for x in r["plaintexts"]}
     assert plain["AES-GCM"]["plaintext"] == ms.CODE_CONFIG and plain["AES-GCM"]["status"] == "reconstructed"
     assert plain["XOR"]["plaintext"] == ms.CODE_SECRET and plain["XOR"]["function"] == "main.decryptConfig"
+
+
+# --- phase 9: capabilities -------------------------------------------------------------
+
+def _fn(name: str, callees: list[str], strings: list[str] = (), addr: int = 0x1000, **kw) -> dict:
+    return {"addr": addr, "name": name, "user": True, "callee_names": list(callees), "calls": [],
+            "strings": [{"value": s} for s in strings], **kw}
+
+
+def test_capabilities_need_code_plus_another_signal() -> None:
+    from docutracex.codeanalysis import capabilities as caps
+    g = {"edges": [], "roots": []}
+    only_string = {"functions": [_fn("main.a", [], ["Login Data", "password"])]}
+    assert caps.analyze(only_string, g)["capabilities"] == []            # a string alone is never a capability
+    one_call = {"functions": [_fn("main.b", ["os/exec.Command"])]}
+    assert caps.analyze(one_call, g)["capabilities"] == []               # nor a single call
+    both = {"functions": [_fn("main.c", ["os/exec.Command"], ["cmd.exe /c whoami"])]}
+    c = caps.analyze(both, g)["capabilities"]
+    assert [x["id"] for x in c] == ["cmd_exec"] and c[0]["confidence"] == "medium"
+    reach = {"edges": [{"from": 0x10, "to": 0x1000, "kind": "call"}], "roots": [0x10]}
+    both["functions"].append(_fn("main.main", [], addr=0x10))
+    assert caps.analyze(both, reach)["capabilities"][0]["confidence"] == "high"
+    # injection needs two of its APIs; a download needs the write half too
+    inj = {"functions": [_fn("fcn.1", ["imp.KERNEL32.dll_VirtualAllocEx", "imp.KERNEL32.dll_WriteProcessMemory"])]}
+    assert [x["id"] for x in caps.analyze(inj, g)["capabilities"]] == ["injection"]
+    dl = {"functions": [_fn("main.d", ["net/http.Get"], ["https://x.example/a.exe"])]}
+    assert "download_write" not in {x["id"] for x in caps.analyze(dl, g)["capabilities"]}
+
+
+def test_capabilities_contrast_with_capa_and_findings() -> None:
+    from docutracex.codeanalysis import capabilities as caps
+    full = {"functions": [_fn("main.p", ["golang.org/x/sys/windows/registry.OpenKey", "golang.org/x/sys/windows/registry.Key.SetStringValue"],
+                              [r"Software\Microsoft\Windows\CurrentVersion\Run"]),
+                          _fn("main.r", ["os/exec.Command", "os/exec.(*Cmd).Run"], ["powershell -enc AAAA"], addr=0x2000)]}
+    capa = {"status": "ok", "capabilities": [{"name": "persist via Run registry key", "attack": [{"id": "T1547.001"}]},
+                                             {"name": "check for debugger", "attack": [{"id": "T1622"}]}]}
+    r = caps.analyze(full, {"edges": [], "roots": []}, capa)
+    by = {c["id"]: c for c in r["capabilities"]}
+    assert by["run_key"]["capa"] == ["persist via Run registry key"] and by["cmd_exec"]["capa"] == []
+    assert r["capa_only"] == [{"attack": "T1622", "name": "check for debugger"}]
+    f = caps.findings(r, "x.exe")
+    assert [x["rule"] for x in f] == ["code:cap:cmd_exec"]                 # run_key is already capa's finding
+
+
+@needs_rizin
+def test_capabilities_in_the_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from docutracex import analyze, cases
+    from docutracex.config import settings
+    from docutracex.storage import CasePaths, read_json
+
+    monkeypatch.setattr(settings, "cases_dir", tmp_path)
+    monkeypatch.setattr(settings, "goresym_executable", lambda: None)
+    m = cases.create_case(io.BytesIO(CODE["go/sample_go_code.exe"]), "factura.exe", cases_dir=tmp_path)
+    analyze.analyze_case(tmp_path / m["analysis_id"])
+    paths = CasePaths(m["analysis_id"], cases_dir=tmp_path)
+    g = read_json(paths.subresult("golang"))
+    full = code_case.load(paths.root, g["objects"][0]["sha256"], "go")
+    by = {c["id"]: c for c in full["capabilities"]["capabilities"]}
+    assert {"cmd_exec", "run_key", "http_c2", "decode"} <= set(by)
+    assert by["run_key"]["functions"][0]["name"] == "main.persist" and by["run_key"]["attack"] == "T1547.001"
+    assert by["http_c2"]["functions"][0]["name"] == "main.beacon"
+    rules = {f["rule"] for f in g["findings"]}
+    assert {"code:cap:cmd_exec", "code:cap:run_key"} <= rules

@@ -163,6 +163,7 @@ def analyze_native_case(root: Path, original: Path, nested_tree: list[dict[str, 
         if item["code"].get("status") in ("ok", "partial"):
             try:
                 res.setdefault("_children", []).extend(enrich(root, p, data, sha, "native", item))
+                res.setdefault("findings", []).extend(item.pop("findings", None) or [])
             except Exception as exc:  # noqa: BLE001
                 log.warning("resources / strings step failed on %s: %s", item["label"], exc)
         res["objects"].append(item)
@@ -204,7 +205,7 @@ def overview(full: dict[str, Any]) -> dict[str, Any]:
             strings.append({"value": pt["text"][:500], "function": pt["function"], "source": "decrypted",
                             "addr": pt.get("data_va")})
     return {"summary": full.get("summary") or {}, "functions": light, "strings": strings,
-            "crypto": full.get("crypto") or {},
+            "crypto": full.get("crypto") or {}, "capabilities": full.get("capabilities") or {},
             "apis": full.get("apis") or [], "resources": full.get("resources") or {},
             "dependencies": full.get("dependencies")}
 
@@ -367,14 +368,14 @@ def _paths(root: Path):
     return CasePaths(root.name, cases_dir=root.parent)
 
 
-def floss_located(root: Path, stored_path: str, original: bool) -> list[dict[str, Any]]:
-    """FLOSS decoded / stack / tight strings (with their function) of one object,
-    from the binary module of the case (original) or of its nested view."""
+def binary_item(root: Path, stored_path: str, original: bool) -> dict[str, Any]:
+    """The binary-module item (FLOSS, capa…) of one object: from the case
+    (original) or from its nested view."""
     from ..storage import read_json
     try:
         paths = _paths(root)
     except Exception:  # noqa: BLE001
-        return []
+        return {}
     mods: dict[str, Any] = {}
     if original:
         mods = {"msi": read_json(paths.subresult("msi")) or {}}
@@ -392,10 +393,14 @@ def floss_located(root: Path, stored_path: str, original: bool) -> list[dict[str
             from ..nested import view_path
             mods = (read_json(view_path(paths, node["view_id"])) or {}).get("modules") or {}
     for it in (mods.get("msi") or {}).get("items") or []:
-        loc = (it.get("floss") or {}).get("located")
-        if loc:
-            return loc
-    return []
+        if it.get("floss") or it.get("capa"):
+            return it
+    return {}
+
+
+def floss_located(root: Path, stored_path: str, original: bool) -> list[dict[str, Any]]:
+    """FLOSS decoded / stack / tight strings (with their function) of one object."""
+    return (binary_item(root, stored_path, original).get("floss") or {}).get("located") or []
 
 
 def attach_floss(full: dict[str, Any], located: list[dict[str, Any]]) -> int:
@@ -493,13 +498,25 @@ def enrich(root: Path, path: Path, data: bytes, sha256: str, mode: str, item: di
         log.warning("crypto step failed on %s: %s", label, exc)
         full["crypto"] = {"algorithms": [], "constants": [], "functions": [], "keys": [], "plaintexts": [],
                           "not_recoverable": [], "error": str(exc)[:300]}
+    # phase 9: capabilities from correlated evidence, contrasted with capa
+    try:
+        from . import capabilities as _caps
+        capa = binary_item(root, item.get("stored_path") or "", bool(item.get("original"))).get("capa")
+        full["capabilities"] = _caps.analyze(full, graph(full), capa)
+        item["findings"] = _caps.findings(full["capabilities"], label)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("capabilities step failed on %s: %s", label, exc)
+        full["capabilities"] = {"capabilities": [], "error": str(exc)[:300]}
     summary = {"floss_linked": n, "floss": len(full.get("floss") or []),
                "embed_files": sum(len(fs["files"]) for fs in res["embed"]),
                "certificates": sum(1 for c in res["certificates"] if not c.get("private")),
                "private_keys": sum(1 for c in res["certificates"] if c.get("private")),
                "compressed": len(res["compressed"]),
                "crypto_algorithms": len(full["crypto"]["algorithms"]), "crypto_functions": len(full["crypto"]["functions"]),
-               "keys": len(full["crypto"]["keys"]), "decrypted": len(full["crypto"]["plaintexts"])}
+               "keys": len(full["crypto"]["keys"]), "decrypted": len(full["crypto"]["plaintexts"]),
+               "capabilities": len(full["capabilities"].get("capabilities") or []),
+               "capabilities_high": sum(1 for c in full["capabilities"].get("capabilities") or []
+                                        if c["confidence"] == "high")}
     if mode == "go":
         from . import resources as _r
         fnames = [x["name"] for x in names or []]

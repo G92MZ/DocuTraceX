@@ -2106,6 +2106,8 @@ def _sealed() -> bytes:
 
 
 CODE_SEALED = _sealed()
+CODE_RUN_KEY = b"Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+CODE_CMDLINE = b"cmd.exe /c whoami /all"
 
 
 def _aes_sbox() -> bytes:
@@ -2295,6 +2297,22 @@ def go_code_exe() -> bytes:
         ("rip", "sealed", b"\x48\x8d\x0d"), b"\xbf" + _st.pack("<I", len(CODE_SEALED)),  # lea rcx,[ct]; mov edi,len
         ("rel32", "gcmopen", b"\xe8"),                                          # call crypto/cipher.(*gcm).Open
         b"\x48\x83\xc4\x28\xc3", b"\xcc" * 3,
+        # main.persist: registry.OpenKey(HKCU, `Software\Microsoft\Windows\CurrentVersion\Run`) → SetStringValue
+        ("label", "persist"),
+        b"\x48\x83\xec\x28",
+        ("rip", "runkey", b"\x48\x8d\x05"), b"\xbb" + _st.pack("<I", len(CODE_RUN_KEY)),
+        ("rel32", "openkey", b"\xe8"), ("rel32", "setvalue", b"\xe8"),
+        b"\x48\x83\xc4\x28\xc3", b"\xcc" * 3,
+        # main.runCmd: exec.Command("cmd.exe /c whoami") → (*Cmd).Output
+        ("label", "runcmd"),
+        b"\x48\x83\xec\x28",
+        ("rip", "cmdline", b"\x48\x8d\x05"), b"\xbb" + _st.pack("<I", len(CODE_CMDLINE)),
+        ("rel32", "execcmd", b"\xe8"), ("rel32", "cmdoutput", b"\xe8"),
+        b"\x48\x83\xc4\x28\xc3", b"\xcc" * 3,
+        ("label", "openkey"), b"\xc3", b"\xcc" * 15,
+        ("label", "setvalue"), b"\xc3", b"\xcc" * 15,
+        ("label", "execcmd"), b"\xc3", b"\xcc" * 15,
+        ("label", "cmdoutput"), b"\xc3", b"\xcc" * 15,
         ("label", "newcipher"), b"\xc3", b"\xcc" * 15,
         ("label", "newgcm"), b"\xc3", b"\xcc" * 15,
         ("label", "gcmopen"), b"\xc3", b"\xcc" * 15,
@@ -2310,7 +2328,13 @@ def go_code_exe() -> bytes:
              ("runtime.newproc", meta["newproc"], meta["deferreturn"] - meta["newproc"]),
              ("runtime.deferreturn", meta["deferreturn"], meta["cfgload"] - meta["deferreturn"]),
              ("main.(*Config).load", meta["cfgload"], meta["openconfig"] - meta["cfgload"]),
-             ("main.openConfig", meta["openconfig"], meta["newcipher"] - meta["openconfig"]),
+             ("main.openConfig", meta["openconfig"], meta["persist"] - meta["openconfig"]),
+             ("main.persist", meta["persist"], meta["runcmd"] - meta["persist"]),
+             ("main.runCmd", meta["runcmd"], meta["openkey"] - meta["runcmd"]),
+             ("golang.org/x/sys/windows/registry.OpenKey", meta["openkey"], meta["setvalue"] - meta["openkey"]),
+             ("golang.org/x/sys/windows/registry.Key.SetStringValue", meta["setvalue"], meta["execcmd"] - meta["setvalue"]),
+             ("os/exec.Command", meta["execcmd"], meta["cmdoutput"] - meta["execcmd"]),
+             ("os/exec.(*Cmd).Output", meta["cmdoutput"], meta["newcipher"] - meta["cmdoutput"]),
              ("crypto/aes.NewCipher", meta["newcipher"], meta["newgcm"] - meta["newcipher"]),
              ("crypto/cipher.NewGCM", meta["newgcm"], meta["gcmopen"] - meta["newgcm"]),
              ("crypto/cipher.(*gcm).Open", meta["gcmopen"], meta["end"] - meta["gcmopen"])]
@@ -2323,7 +2347,8 @@ def go_code_exe() -> bytes:
         # the URL is a Go string: bytes with no NUL, referenced by pointer + length
         return bk.pe(bits=64, gui=False, imports={"kernel32.dll": ["VirtualAlloc", "ExitProcess"]}, code=c,
                      sections=[(".rdata", pcln + CODE_URL.encode() + blob.encode("latin-1") + b"\x00" * 8
-                                + CODE_GCM_KEY + CODE_GCM_NONCE + CODE_SEALED + _aes_sbox() + _sha256_k(), 0x40000040),
+                                + CODE_GCM_KEY + CODE_GCM_NONCE + CODE_SEALED + CODE_RUN_KEY + CODE_CMDLINE
+                                + _aes_sbox() + _sha256_k(), 0x40000040),
                                (".data", _go_buildinfo("go1.22.5", "windows") + md, 0xC0000040),
                                (".embed", emb, 0x40000040)],
                      strings=[bid.decode("latin-1")])
@@ -2332,7 +2357,8 @@ def go_code_exe() -> bytes:
     assert bf.section(".text").va == text_va
     rvas = {"url": bf.off_to_va(first.find(CODE_URL.encode())) - base,
             "blob": bf.off_to_va(first.find(blob.encode("latin-1"))) - base}
-    for k, v in (("gcmkey", CODE_GCM_KEY), ("gcmnonce", CODE_GCM_NONCE), ("sealed", CODE_SEALED)):
+    for k, v in (("gcmkey", CODE_GCM_KEY), ("gcmnonce", CODE_GCM_NONCE), ("sealed", CODE_SEALED),
+                 ("runkey", CODE_RUN_KEY), ("cmdline", CODE_CMDLINE)):
         rvas[k] = bf.off_to_va(first.find(v)) - base
     linked = _x64_link(code, meta, text_va - base, rvas)
     off = first.find(_st.pack("<I", 0xFFFFFFF1) + b"\x00\x00")
