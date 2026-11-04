@@ -296,7 +296,7 @@ whether their tools run at all). Also:
   Software Foundation, Oracle, Google, Qt…: `python311.dll`, `vcruntime`, Qt…) are not
   analysed (`DOCUTRACEX_TOOLS_SKIP_TRUSTED=0` analyses them); a broken or untrusted
   signature never qualifies, so a side-loaded fake `vcruntime140.dll` still is;
-- **large files** (> 8 MB, `DOCUTRACEX_FLOSS_LARGE_MB`): FLOSS without *tight strings*
+- **large files** (> 15 MB, `DOCUTRACEX_FLOSS_LARGE_MB`): FLOSS without *tight strings*
   (the slowest part), decoded and stack strings kept. `sample_bloated_invoice.exe`, `sample_pyinstaller.exe`
 and the MSI / archive samples exercise it.
 

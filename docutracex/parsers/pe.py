@@ -516,7 +516,7 @@ def _tools_workers() -> int:
 
 # Large binaries: FLOSS's "tight strings" (emulating every tight loop) is what
 # takes minutes; above this size it is skipped (decoded + stack strings stay).
-FLOSS_LARGE_BYTES = int(_os.environ.get("DOCUTRACEX_FLOSS_LARGE_MB", "8")) * 1024 * 1024
+FLOSS_LARGE_BYTES = int(_os.environ.get("DOCUTRACEX_FLOSS_LARGE_MB", "15")) * 1024 * 1024
 FLOSS_LARGE_ARGS = ["--no", "tight"]
 # Valid Authenticode from these publishers = library / runtime code (python3x.dll,
 # vcruntime, Qt…): FLOSS / capa would spend minutes on code nobody suspects.
