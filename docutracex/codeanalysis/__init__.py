@@ -141,6 +141,38 @@ class _Reader:
         return s if len(s) >= 4 and all(c.isprintable() or c in "\t\r\n" for c in s) else ""
 
 
+_IMM = re.compile(r"mov\s+\w+,\s*(0x[0-9a-f]+|\d+)$")
+_XOR_IMM = re.compile(r"xor\s+(?:byte |word |dword |qword )?[^,]+,\s*(0x[0-9a-f]+|\d+)$")
+
+
+def _data_refs(ops: list[dict[str, Any]]) -> tuple[list[list[int | None]], list[int]]:
+    """Data the function points at ([address, length or None] — the length when a
+    ``mov reg, imm`` follows the ``lea``, as Go slices / strings and many C calls
+    do) and the immediates it XORs with (decoding keys)."""
+    blobs: dict[int, int | None] = {}
+    keys: list[int] = []
+    for i, op in enumerate(ops):
+        dis = (op.get("disasm") or "").lower()
+        m = _XOR_IMM.match(dis)
+        if m:
+            k = int(m.group(1), 0)
+            if 0 < k < 1 << 32 and k not in keys:
+                keys.append(k)
+        ptr = op.get("ptr") if op.get("refptr") is not False else None
+        if not isinstance(ptr, int) or ptr <= 0 or op.get("type") in ("call", "jmp", "cjmp"):
+            continue
+        n = None
+        for nxt in ops[i + 1:i + 4]:
+            mm = _IMM.match((nxt.get("disasm") or "").lower())
+            if mm:
+                v = int(mm.group(1), 0)
+                n = v if 1 <= v <= 1 << 20 else None
+                break
+        if blobs.get(ptr) is None:
+            blobs[ptr] = n
+    return [[a, n] for a, n in list(blobs.items())[:64]], keys[:16]
+
+
 def _strings_and_xor(ops: list[dict[str, Any]], reader: _Reader, mode: str) -> tuple[list[dict[str, Any]], int]:
     out: list[dict[str, Any]] = []
     xor = 0
@@ -270,6 +302,7 @@ def analyze(path: Path, *, mode: str, names: list[dict[str, Any]] | None, out_fi
                     elif t in _CALL_TYPES and t != "jmp" and not op.get("jump"):
                         indirect += 1                             # target in a register / memory: unresolved
                 strs, xor = _strings_and_xor(ops, reader, mode)
+                refs, xkeys = _data_refs(ops)
                 back = sum(1 for op in ops if op.get("type") == "cjmp" and isinstance(op.get("jump"), int)
                            and a <= op["jump"] < (op.get("offset") or 0))       # backward branches = loops
                 functions[a] = {
@@ -280,6 +313,7 @@ def analyze(path: Path, *, mode: str, names: list[dict[str, Any]] | None, out_fi
                     "callee_names": [c for c in dict.fromkeys(callees) if c != _flag(n["name"], "go.")][:200],
                     "strings": strs[:100], "xor_ops": xor, "instructions": len(ops),
                     "indirect_calls": indirect, "spawns": sorted(set(spawns)),
+                    "data_refs": refs, "xor_keys": xkeys,
                 }
                 disasm[a] = ops
             if r.get("killed") and "memory" in (r.get("killed") or ""):

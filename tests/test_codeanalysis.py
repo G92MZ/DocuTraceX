@@ -74,7 +74,7 @@ def test_native_engine(tmp_path: Path) -> None:
     full = json.loads(out.read_text())
     top = full["functions"][0]
     assert "network" in top["categories"] and any(st["value"] == URL for st in top["strings"])
-    dec = next(f for f in full["functions"] if f["xor_ops"] >= 2)
+    dec = next(f for f in full["functions"] if f.get("xor_keys"))
     assert dec["loops"] >= 1 and "transform" in dec["categories"]
     entry = next(f for f in full["functions"] if f["name"] == "entry0")
     assert len(entry["calls"]) == 2
@@ -103,7 +103,7 @@ def test_go_engine_restores_names(tmp_path: Path) -> None:
     assert by["main.beacon"]["strings"][0]["value"] == URL                # Go string: pointer + length
     assert "net/http.(*Client).Do" in full["decompiled"][str(by["main.beacon"]["addr"])]["code"]
     one = ca.decompile_one(p, by["main.decryptConfig"]["addr"], mode="go", names=names, lock_path=tmp_path / "lock")
-    assert one["status"] == "ok" and "0x5a" in one["code"] and one["ops"]
+    assert one["status"] == "ok" and "0xa5" in one["code"] and one["ops"]
 
     g = code_case.graph(full)
     kinds = {(e["from"], e["to"]): e["kind"] for e in g["edges"]}
@@ -145,7 +145,7 @@ def test_case_pipeline_go_and_native(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert fv["decompiled"]["status"] == "ok" and fv["callers"][0]["name"] == "main.main.func1" and fv["ops"]
     dv = client.post(f"/api/cases/{cid}/code/{c['sha256']}/go/fn/{addr}/decompile").json()
     assert dv["decompiled"]["on_demand"] is True
-    assert obj["types"]["with_methods"] == 2                       # main.Config, http.Client
+    assert obj["types"]["with_methods"] == 3                       # main.Config, http.Client, cipher.gcm
     ty = client.get(f"/api/cases/{cid}/golang/{c['sha256']}/types").json()
     cfgt = next(t for t in ty["types"] if t["name"] == "main.Config")
     assert cfgt["methods"][0]["method"] == "load" and cfgt["source"] == "method names"
@@ -262,3 +262,58 @@ def test_padded_original_is_analysed_in_its_clean_child(tmp_path: Path, monkeypa
     assert orig["code"]["status"] == "skipped" and orig["code"]["clean_child"]
     child = next(o for o in code["objects"] if not o["original"])
     assert child["code"]["status"] in ("ok", "partial")
+
+
+# --- phase 8: cryptography -----------------------------------------------------------
+
+def test_crypto_constants_and_custom_base64() -> None:
+    from docutracex.codeanalysis import crypto
+    from docutracex.golang import binfmt
+    data = CODE["go/sample_go_code.exe"]
+    names = {c["constant"] for c in crypto.scan_constants(data, binfmt.parse(data))}
+    assert {"AES S-box", "SHA-256 round constants"} <= names
+    alpha = b"ZYXWVUTSRQPONMLKJIHGFEDCBAzyxwvutsrqponmlkjihgfedcba9876543210+/"
+    blob = b"MZ" + b"\x00" * 100 + alpha + b"\x00" * 10
+    hits = crypto.scan_constants(blob, binfmt.parse(blob))
+    assert [h["algorithm"] for h in hits] == ["Base64 (custom alphabet)"]
+    std = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    assert crypto.scan_constants(b"\x00" + std + b"\x00", binfmt.parse(b"\x00")) == []
+
+
+def test_crypto_static_decryption_primitives() -> None:
+    from cryptography.hazmat.primitives import padding
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
+    from docutracex.codeanalysis import crypto
+    key, iv = bytes(range(32)), bytes(range(16))
+    pt, method = crypto._try_decrypt("AES-GCM", ms.CODE_GCM_KEY, ms.CODE_GCM_NONCE, ms.CODE_SEALED)
+    assert pt == ms.CODE_CONFIG and "authenticated" in method
+    assert crypto._try_decrypt("AES-GCM", key, ms.CODE_GCM_NONCE, ms.CODE_SEALED) is None      # wrong key: tag fails
+    p = padding.PKCS7(128).padder()
+    msg = b"powershell -enc ... invoice payload"
+    e = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+    ct = e.update(p.update(msg) + p.finalize()) + e.finalize()
+    assert crypto._try_decrypt("AES-CBC", key, iv, ct)[0] == msg
+    assert crypto._try_decrypt("RC4", b"secretkey", None, crypto._rc4(b"secretkey", msg))[0] == msg
+
+
+@needs_rizin
+def test_crypto_on_the_go_sample(tmp_path: Path) -> None:
+    from docutracex.codeanalysis import _Reader, crypto
+    from docutracex.golang import binfmt
+    data = CODE["go/sample_go_code.exe"]
+    p = tmp_path / "agent.exe"
+    p.write_bytes(data)
+    names = code_case.go_names(data, detect.identify(data))
+    out = tmp_path / "go.json"
+    ca.analyze(p, mode="go", names=names, out_file=out, lock_path=tmp_path / "lock")
+    full = json.loads(out.read_text())
+    r = crypto.analyze(full, data, binfmt.parse(data), _Reader(data), names, "go")
+    algos = {a["algorithm"] for a in r["algorithms"]}
+    assert {"AES", "SHA-256", "block-cipher modes"} <= algos
+    fn = next(f for f in r["functions"] if f["name"] == "main.openConfig")
+    assert fn["roles"] == ["decrypt"]
+    assert {k["size"] for k in r["keys"] if k["function"] == "main.openConfig"} == {32, 12}
+    plain = {x["method"].split(" ")[0]: x for x in r["plaintexts"]}
+    assert plain["AES-GCM"]["plaintext"] == ms.CODE_CONFIG and plain["AES-GCM"]["status"] == "reconstructed"
+    assert plain["XOR"]["plaintext"] == ms.CODE_SECRET and plain["XOR"]["function"] == "main.decryptConfig"
