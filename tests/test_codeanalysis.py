@@ -238,3 +238,27 @@ def test_case_pipeline_resources_and_iocs(tmp_path: Path, monkeypatch: pytest.Mo
     full = code_case.load(paths.root, o["sha256"], "go")
     assert full["dependencies"]["without_code"] == ["github.com/kbinani/screenshot", "golang.org/x/sys"]
     assert all("data" not in f for fs in full["resources"]["embed"] for f in fs["files"])
+
+
+def test_clean_child_detection() -> None:
+    from docutracex import golang
+    assert golang.clean_child([{"filename": "big.exe", "stored_path": "extracted/x/big.exe", "recipe": ["debloat", "padded"]}]) == "big.exe"
+    assert golang.clean_child([{"filename": "u.exe", "stored_path": "e/u.exe", "source": "unpack"}]) == "u.exe"
+    assert golang.clean_child([{"filename": "a.txt", "stored_path": "e/a.txt", "recipe": ["zip"]}]) == ""
+
+
+@needs_rizin
+def test_padded_original_is_analysed_in_its_clean_child(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from docutracex import analyze, cases
+    from docutracex.config import settings
+    from docutracex.storage import CasePaths, read_json
+
+    pytest.importorskip("debloat")
+    monkeypatch.setattr(settings, "cases_dir", tmp_path)
+    m = cases.create_case(io.BytesIO(ms.bloated_exe()), "factura.exe", cases_dir=tmp_path)
+    analyze.analyze_case(tmp_path / m["analysis_id"])
+    code = read_json(CasePaths(m["analysis_id"], cases_dir=tmp_path).subresult("code"))
+    orig = next(o for o in code["objects"] if o["original"])
+    assert orig["code"]["status"] == "skipped" and orig["code"]["clean_child"]
+    child = next(o for o in code["objects"] if not o["original"])
+    assert child["code"]["status"] in ("ok", "partial")
