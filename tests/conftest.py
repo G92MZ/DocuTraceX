@@ -11,6 +11,9 @@ from pathlib import Path
 # Tests check behaviour, not limits: run the analysis time limits unscaled (the
 # app's default factor is 5), so a test with an endless-loop script stays fast.
 os.environ.setdefault("DOCUTRACEX_TIMEOUT_FACTOR", "1")
+# Most tests exercise YARA / ML / C2 through a full analysis: keep them automatic
+# there (in the app they are on demand; test_ondemand_modules covers that).
+os.environ.setdefault("DOCUTRACEX_AUTO_MODULES", "yara,ml,c2")
 
 ROOT = Path(__file__).resolve().parent.parent
 ARCHIVE = ROOT / "samples" / "samples.zip"
