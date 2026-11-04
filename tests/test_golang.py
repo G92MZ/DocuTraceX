@@ -169,3 +169,34 @@ def test_diagnostics_has_goresym_check() -> None:
 
     c = next(x for x in run_checks()["checks"] if x["name"] == "GoReSym (Go metadata)")
     assert c["status"] == "ok" or c["retry"] == "goresym"
+
+
+# --- phase 2: types, interfaces, methods, source files ----------------------------
+
+def test_types_from_goresym_and_method_names() -> None:
+    from docutracex.golang import types as go_types
+    raw = {"Types": [{"VA": 0x5000, "Str": "main.Config", "Kind": "Struct",
+                      "Reconstructed": "type main.Config struct {\n    C2    string\n    Sleep int\n}"},
+                     {"VA": 0x5100, "Str": "*main.Config", "Kind": "Pointer", "Reconstructed": "type *main.Config = main_Config"},
+                     {"VA": 0x5200, "Str": "fs.PathError", "Kind": "Struct", "Reconstructed": "type fs.PathError struct {}"},
+                     {"VA": 0x5300, "Str": "[0]*go.shape.int", "Kind": "Array"}],
+           "Interfaces": [{"VA": 0x6000, "Str": "main.Beaconer", "Kind": "Interface",
+                           "Reconstructed": "type main.Beaconer interface {Beacon() error\n}"}],
+           "Files": ["/home/dev/agent/main.go", "/usr/local/go/src/runtime/proc.go",
+                     "/root/go/pkg/mod/golang.org/x/sys@v0.21.0/windows/zsyscall.go"]}
+    names = [{"name": "main.(*Config).load", "start": 0x1000, "user": True},
+             {"name": "main.Config.String", "start": 0x1100, "user": True},
+             {"name": "main.main.func1", "start": 0x1200, "user": True},
+             {"name": "io/fs.(*PathError).Error", "start": 0x2000, "user": False}]
+    r = go_types.build(raw, names, "example.com/agent")
+    by = {t["name"]: t for t in r["types"]}
+    cfg = by["main.Config"]
+    assert cfg["user"] and cfg["kind"] == "Struct" and cfg["fields"] == 2 and cfg["va"] == 0x5000
+    assert [(m["method"], m["pointer"], m["addr"]) for m in cfg["methods"]] == [("String", False, 0x1100), ("load", True, 0x1000)]
+    assert by["main.Beaconer"]["kind"] == "Interface" and not by["fs.PathError"]["user"]
+    assert by["fs.PathError"]["methods"][0]["method"] == "Error"
+    assert not any("go.shape" in n or n.startswith("*") for n in by)
+    assert r["user_files"] == ["/home/dev/agent/main.go"]
+    # without GoReSym the receivers still come from the function table
+    r2 = go_types.build({}, names)
+    assert {t["name"] for t in r2["types"]} == {"main.Config", "fs.PathError"} and not r2["summary"]["goresym"]

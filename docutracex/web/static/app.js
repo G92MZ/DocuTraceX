@@ -5077,6 +5077,9 @@ function goObjectTabs(o, i) {
     { id: "strings", label: c.strings ? `Strings (${c.strings})` : "Strings", html: cxSlot(c, sha, "go", "strings", g) },
     { id: "graph", label: "Call graph", html: cxSlot(c, sha, "go", "graph", g) },
     { id: "resources", label: cxResLabel(c), html: cxSlot(c, sha, "go", "resources", g) },
+    { id: "types", label: o.types ? `Types (${o.types.user_types})` : "Types",
+      html: o.types ? `<div class="gt" data-gt-sha="${escapeHtml(sha)}" data-gt-group="${escapeHtml(g)}" data-gt-code="${cxOk(c) ? 1 : 0}"><p class="hint-line">Loading…</p></div>`
+                    : '<p class="hint-line">No type information (GoReSym not provisioned or it refused the file, and no methods in the function table).</p>' },
     { id: "deps", label: deps.length ? `Dependencies (${deps.length})` : "Dependencies",
       html: goDeps(o) + (cxOk(c) ? `<h4 class="formats-title">Declared versus code found</h4>${cxSlot(c, sha, "go", "depscheck", g)}` : "") },
   ]);
@@ -5607,8 +5610,86 @@ async function cgRender(el, caseId, sha, mode, group) {
   }
 }
 
+// --- Go types (phase 2) ----------------------------------------------------------
+const _gt = { data: {}, flt: {}, open: {} };
+
+function gtRows(d, f, k) {
+  const q = (f.q || "").toLowerCase();
+  let ts = d.types || [];
+  if (f.user) ts = ts.filter((t) => t.user);
+  if (f.kind) ts = ts.filter((t) => (t.kind || "?") === f.kind);
+  if (q) ts = ts.filter((t) => t.name.toLowerCase().includes(q) || (t.reconstructed || "").toLowerCase().includes(q)
+                         || (t.methods || []).some((m) => m.method.toLowerCase().includes(q)));
+  const shown = ts.slice(0, 800);
+  return `<p class="hint-line">${ts.length} type(s)${ts.length > shown.length ? `, first ${shown.length} shown` : ""} — click one for its definition and methods.</p>
+    <div class="cx-scroll"><table class="cases"><thead><tr><th>Type</th><th>Kind</th><th>Package</th><th>Fields</th><th>Methods</th><th>Source</th></tr></thead><tbody>${
+    shown.map((t, i) => `<tr class="cx-row" data-gt-row="${i}"><td class="mono cx-name">${escapeHtml(t.name)}</td><td>${escapeHtml(t.kind || "?")}</td>
+      <td class="mono">${escapeHtml(t.package || "")}</td><td>${t.fields || ""}</td><td>${(t.methods || []).length || ""}</td>
+      <td><span class="badge badge-muted">${escapeHtml(t.source)}</span></td></tr>${_gt.open[k] === t.name ? `<tr><td colspan="6">${gtDetail(t, f.code)}</td></tr>` : ""}`).join("")}</tbody></table></div>`;
+}
+
+function gtDetail(t, code) {
+  const ms = (t.methods || []).map((m) => `<div>${code && m.addr != null
+      ? `<button type="button" class="cx-link" data-gt-open="${m.addr}">${escapeHtml(m.method)}</button>` : `<span class="mono">${escapeHtml(m.method)}</span>`}
+      <span class="hint-line">${m.pointer ? "(*T)" : "(T)"} · ${cxHex(m.addr)}</span></div>`).join("");
+  return `<div class="cx-split">
+    <div><h4 class="formats-title">Definition <span class="hint-line">${t.va ? "type descriptor @" + cxHex(t.va) : "from method names only"}</span></h4>
+      ${t.reconstructed ? `<pre class="cx-code">${cxHighlightC(t.reconstructed)}</pre>` : '<p class="hint-line">No reconstruction (GoReSym did not see this type).</p>'}</div>
+    <div><h4 class="formats-title">Methods (${(t.methods || []).length})</h4>${ms ? `<div class="cx-scroll cx-small">${ms}</div>` : '<p class="hint-line">None in the function table.</p>'}</div></div>`;
+}
+
+async function gtRender(el, caseId) {
+  const sha = el.getAttribute("data-gt-sha"), group = el.getAttribute("data-gt-group");
+  const k = `${caseId}|${sha}`;
+  try {
+    if (!_gt.data[k]) {
+      const r = await fetch(`/api/cases/${encodeURIComponent(caseId)}/golang/${sha}/types`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.detail || r.status);
+      _gt.data[k] = j;
+    }
+  } catch (err) { el.innerHTML = `<p class="bad-text">${escapeHtml(String(err.message || err))}</p>`; return; }
+  const d = _gt.data[k], sm = d.summary || {};
+  const f = _gt.flt[k] || (_gt.flt[k] = { q: "", kind: "", user: true });
+  f.code = el.getAttribute("data-gt-code") === "1";
+  const kinds = [...new Set((d.types || []).map((t) => t.kind || "?"))].sort();
+  el.innerHTML = `<p class="hint-line">${sm.user_types || 0} program type(s) of ${sm.types || 0}, ${sm.interfaces || 0} interface(s),
+      ${sm.with_methods || 0} with methods${sm.goresym ? " — definitions from GoReSym" : " — from method names (GoReSym did not parse this file)"}.</p>
+    <div class="cx-toolbar"><input type="search" class="gt-q" placeholder="Filter types, fields or methods" value="${escapeHtml(f.q)}">
+      <select class="gt-kind"><option value="">all kinds</option>${kinds.map((x) => `<option${x === f.kind ? " selected" : ""}>${escapeHtml(x)}</option>`).join("")}</select>
+      <label class="hint-line"><input type="checkbox" class="gt-user"${f.user ? " checked" : ""}> program types only</label></div>
+    <div class="gt-list">${gtRows(d, f, k)}</div>
+    ${(d.files || []).length ? `<h4 class="formats-title">Source files (${(d.user_files || []).length} of the program, ${d.files.length} in total)</h4>
+      <p class="hint-line">Paths recorded at build time: they can reveal the build machine, user name and project layout.</p>
+      <div class="cx-scroll cx-small">${(d.user_files || []).map((x) => `<div class="mono">${escapeHtml(x)}</div>`).join("") || '<span class="hint-line">Only Go toolchain / module-cache files.</span>'}</div>` : ""}`;
+  const redraw = () => {
+    el.querySelector(".gt-list").innerHTML = gtRows(d, f, k);
+    wire();
+  };
+  const wire = () => {
+    el.querySelectorAll("[data-gt-row]").forEach((tr) => tr.addEventListener("click", () => {
+      const all = (d.types || []).filter((t) => (!f.user || t.user) && (!f.kind || (t.kind || "?") === f.kind));
+      const q = (f.q || "").toLowerCase();
+      const list = q ? all.filter((t) => t.name.toLowerCase().includes(q) || (t.reconstructed || "").toLowerCase().includes(q)
+                        || (t.methods || []).some((m) => m.method.toLowerCase().includes(q))) : all;
+      const t = list[Number(tr.getAttribute("data-gt-row"))];
+      _gt.open[k] = _gt.open[k] === t.name ? null : t.name;
+      redraw();
+    }));
+    el.querySelectorAll("[data-gt-open]").forEach((b) => b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      cxOpen(caseId, sha, "go", group, b.getAttribute("data-gt-open"));
+    }));
+  };
+  el.querySelector(".gt-q").addEventListener("input", (ev) => { f.q = ev.target.value; redraw(); });
+  el.querySelector(".gt-kind").addEventListener("change", (ev) => { f.kind = ev.target.value; redraw(); });
+  el.querySelector(".gt-user").addEventListener("change", (ev) => { f.user = ev.target.checked; redraw(); });
+  wire();
+}
+
 function wireCodeExplorers(root, caseId) {
   if (!caseId) return;
+  root.querySelectorAll(".gt[data-gt-sha]").forEach((el) => gtRender(el, caseId));
   root.querySelectorAll(".cx[data-cx-sha]").forEach((el) => cxRender(el, caseId));
   // "Look here first" links in the summaries: open the function in the Code subtab of the same object
   root.querySelectorAll("button.cx-link[data-cx-sha]").forEach((b) => b.addEventListener("click", () => {

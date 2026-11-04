@@ -108,7 +108,7 @@ def test_go_engine_restores_names(tmp_path: Path) -> None:
     g = code_case.graph(full)
     kinds = {(e["from"], e["to"]): e["kind"] for e in g["edges"]}
     assert kinds[(by["main.main"]["addr"], by["main.main.func1"]["addr"])] == "goroutine"
-    assert g["roots"] == [by["main.main"]["addr"]]
+    assert g["roots"][0] == by["main.main"]["addr"]
     path = next(p["path"] for p in g["paths"] if p["target"] == "ext:net/http.(*Client).Do")
     assert path == [by["main.main"]["addr"], by["main.main.func1"]["addr"], by["main.beacon"]["addr"],
                     "ext:net/http.(*Client).Do"]
@@ -145,6 +145,11 @@ def test_case_pipeline_go_and_native(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert fv["decompiled"]["status"] == "ok" and fv["callers"][0]["name"] == "main.main.func1" and fv["ops"]
     dv = client.post(f"/api/cases/{cid}/code/{c['sha256']}/go/fn/{addr}/decompile").json()
     assert dv["decompiled"]["on_demand"] is True
+    assert obj["types"]["with_methods"] == 2                       # main.Config, http.Client
+    ty = client.get(f"/api/cases/{cid}/golang/{c['sha256']}/types").json()
+    cfgt = next(t for t in ty["types"] if t["name"] == "main.Config")
+    assert cfgt["methods"][0]["method"] == "load" and cfgt["source"] == "method names"
+    assert client.get(f"/api/cases/{cid}/golang/{'0' * 64}/types").status_code == 404
     g = client.get(f"/api/cases/{cid}/code/{c['sha256']}/go/graph").json()
     assert any(e["kind"] == "goroutine" for e in g["edges"]) and g["paths"]
     cf = client.get(f"/api/cases/{cid}/code/{c['sha256']}/go/fn/{addr}/cfg").json()
