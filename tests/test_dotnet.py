@@ -56,6 +56,12 @@ def test_case_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert o["original"] and o["result"]["assembly"]["name"] == "InvoiceViewer"
     assert all("_data" not in x for x in o["result"]["resources"])
     assert {"dotnet:obfuscator", "dotnet:pinvoke_injection"} <= {f["rule"] for f in d["findings"]}
+    stored = {x["name"]: x for x in o["result"]["resources"]}
+    assert stored["costura.invoicehelper.dll.compressed"]["costura"] is True
+    tree = read_json(paths.subresult("nested"))["tree"]
+    kids = {n["filename"]: n for n in tree}
+    assert "InvoiceViewer.Resources.stage2.bin" in kids and kids["costura.invoicehelper.dll"]["recipe"][-1] == "deflate"
+    assert (paths.root / stored["InvoiceViewer.Resources.stage2.bin"]["stored_path"]).is_file()
     iocs = {i["value"] for i in read_json(paths.subresult("iocs"))["iocs"]}
     assert {ms.CODE_URL, "203.0.113.47"} <= iocs
     # a native binary gets no .NET result
