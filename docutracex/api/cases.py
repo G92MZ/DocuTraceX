@@ -802,3 +802,22 @@ def code_cfg(analysis_id: str, sha256: str, mode: str, addr: int) -> dict:
     if r.get("status") == "unavailable":
         raise HTTPException(status_code=503, detail="Rizin + rz-ghidra not provisioned")
     return r
+
+
+@router.get("/{analysis_id}/golang/{sha256}/types")
+def go_types_view(analysis_id: str, sha256: str) -> dict:
+    """Types, interfaces, methods and source files of one Go object."""
+    import re as _re
+
+    from ..golang import types as go_types
+    from ..storage import CasePaths, read_json
+    if not _re.fullmatch(r"[0-9a-f]{64}", sha256):
+        raise HTTPException(status_code=400, detail="bad id")
+    try:
+        case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    data = read_json(go_types.types_file(CasePaths(analysis_id).root, sha256))
+    if data is None:
+        raise HTTPException(status_code=404, detail="no type information for this object")
+    return data
