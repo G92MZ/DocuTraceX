@@ -8,7 +8,8 @@ language without going through the web app:
 
 It reads the same ``cases/`` folder as the web app (``DOCUTRACEX_CASES_DIR``
 overrides it). Tools (see ``ai_tools``): list_cases, case_summary,
-get_findings, get_iocs, get_module, get_network_checks, search_case — none
+get_findings, get_iocs, get_module, get_network_checks, search_case,
+list_code_objects, list_functions, get_function, get_decrypted, get_nested_tree, get_ml — none
 can modify a case or touch the network.
 """
 
@@ -27,7 +28,9 @@ if os.environ.get("DOCUTRACEX_CASES_DIR"):
 NAME = "docutracex"
 INSTRUCTIONS = ("Read-only access to DocuTraceX forensic cases (Office/PDF/RTF/email maldoc analysis). "
                 "Start with list_cases, then case_summary / get_findings / get_iocs; use get_module for a tool's "
-                "raw output and get_network_checks for URL/domain/IP checks.")
+                "raw output and get_network_checks for URL/domain/IP checks. For binaries: list_code_objects → "
+                "list_functions → get_function; get_decrypted for what was decrypted statically, "
+                "get_nested_tree for the chain of stages, get_ml for scores and similar objects in other cases.")
 
 
 def build_server():
@@ -75,6 +78,39 @@ def build_server():
     def search_case(case_id: str, q: str, limit: int = 40) -> dict:
         """Case-insensitive text search across every result of a case (findings, IOCs, module outputs)."""
         return ai_tools.search_case(case_id, q, limit)
+
+    @server.tool()
+    def list_code_objects(case_id: str) -> dict:
+        """Binaries of the case analysed as code (native with Rizin + rz-ghidra, Go, .NET CIL) and the
+        'object' id to use with list_functions / get_function."""
+        return ai_tools.list_code_objects(case_id)
+
+    @server.tool()
+    def list_functions(case_id: str, object: str, category: Optional[str] = None, name: Optional[str] = None,
+                       limit: int = 40) -> dict:
+        """Functions (native / Go) or .NET methods of interest of one object, most interesting first."""
+        return ai_tools.list_functions(case_id, object, category, name, limit)
+
+    @server.tool()
+    def get_function(case_id: str, object: str, function: str, max_chars: int = 12000) -> dict:
+        """One function: pseudocode (if decompiled), disassembly, callers, callees, strings; for .NET the
+        framework calls, literals, static arrays and the strings it decrypts."""
+        return ai_tools.get_function(case_id, object, function, max_chars)
+
+    @server.tool()
+    def get_decrypted(case_id: str, limit: int = 80) -> dict:
+        """Everything decrypted or decoded statically in the case, with the routine used."""
+        return ai_tools.get_decrypted(case_id, limit)
+
+    @server.tool()
+    def get_nested_tree(case_id: str, max_depth: int = 6) -> dict:
+        """Tree of extracted, unpacked, hidden and decrypted stages, with how each was obtained."""
+        return ai_tools.get_nested_tree(case_id, max_depth)
+
+    @server.tool()
+    def get_ml(case_id: str) -> dict:
+        """ML scores, unusual-for-the-model flags, similar objects in other cases, highest score of the chain."""
+        return ai_tools.get_ml(case_id)
 
     return server
 
