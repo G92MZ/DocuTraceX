@@ -2924,6 +2924,10 @@ async function openComponents(analysisId, keepTab, viewId) {
       const n = (gom.counts || {}).go || 0;
       sections.push({ id: "golang", label: `Go (${n})`, html: paneGo(gom) });
     }
+    const dnm = mods.dotnet;
+    if (dnm && (dnm.objects || []).some((o) => o.result && !o.result.error)) {
+      sections.push({ id: "dotnet", label: `.NET (${dnm.objects.filter((o) => o.result && !o.result.error).length})`, html: paneDotnet(dnm) });
+    }
     const cdm = mods.code;
     if (cdm && (cdm.objects || []).some((o) => cxOk(o.code))) {
       const n = cdm.objects.filter((o) => cxOk(o.code)).length;
@@ -5813,6 +5817,52 @@ function wireCodeExplorers(root, caseId) {
     const group = pane ? pane.getAttribute("data-ipane-group") : "";
     cxOpen(caseId, b.getAttribute("data-cx-sha"), b.getAttribute("data-cx-mode"), group, b.getAttribute("data-cx-open"));
   }));
+}
+
+// --- .NET (phase 1: metadata) ---------------------------------------------------------
+function dnObject(o, i) {
+  const r = o.result || {};
+  const e = (x) => escapeHtml(String(x ?? ""));
+  const g = `dn-${i}`;
+  const a = r.assembly || {};
+  const types = (r.types || []).filter((t) => t.name !== "<Module>");
+  const summary = `${o.stored_path ? fileActions(o.stored_path) : ""}${goKv([
+      ["Assembly", e(`${a.name || ""} ${a.version || ""}`)], ["Module", e(r.module || "")], ["Runtime", e(r.runtime || "")],
+      ["Entry point", e(r.entry_point || "")], ["CLR flags", e((r.flags || []).join(", "))],
+      ["References", e((r.references || []).map((x) => `${x.name} ${x.version}`).join(" · "))],
+      ["Contents", e(`${(r.counts || {}).types || 0} types · ${(r.counts || {}).methods || 0} methods · ${(r.counts || {}).pinvoke || 0} P/Invoke · ${(r.counts || {}).resources || 0} resources · ${(r.counts || {}).strings || 0} strings`)],
+      ["Obfuscators / packers", (r.obfuscators || []).map((x) => `<span class="badge badge-warn" title="${e(x.evidence)}">${e(x.name)}</span>`).join(" ")],
+      ["Traits", e((r.traits || []).join(" · "))]])}`;
+  const typesHtml = types.length ? `<div class="cx-scroll"><table class="cases"><thead><tr><th>Type</th><th>Methods</th></tr></thead><tbody>${
+      types.map((t) => `<tr><td class="mono">${e(t.namespace ? t.namespace + "." : "")}<b>${e(t.name)}</b></td><td class="mono">${
+        (t.methods || []).map((m) => `${e(m.name)}${m.pinvoke ? ` <span class="badge badge-warn">P/Invoke ${e(m.pinvoke.dll)}</span>` : ""}`).join("<br>")}</td></tr>`).join("")}</tbody></table></div>` : "";
+  const pin = (r.pinvoke || []).map((p) => `<tr><td class="mono">${e(p.dll)}</td><td class="mono">${e(p.entry)}</td><td class="mono">${e(p.method)}</td>
+      <td>${cxCats(p.categories)} ${p.injection ? '<span class="badge badge-bad">injection / shellcode</span>' : ""}</td></tr>`).join("");
+  const apis = (r.apis || []).map((x) => `<tr><td class="mono">${e(x.type)}</td><td>${cxCats([x.category])} <span class="hint-line">${e(x.label)}</span></td>
+      <td class="mono">${(x.members || []).map(e).join(", ")}</td></tr>`).join("");
+  const apiHtml = `${pin ? `<h4 class="formats-title">P/Invoke (native APIs called from managed code)</h4><table class="cases"><thead><tr><th>DLL</th><th>Function</th><th>Declared as</th><th>Behaviour</th></tr></thead><tbody>${pin}</tbody></table>` : ""}
+    ${apis ? `<h4 class="formats-title">Framework APIs referenced</h4><table class="cases"><thead><tr><th>Type</th><th>Behaviour</th><th>Members used</th></tr></thead><tbody>${apis}</tbody></table>` : ""}`;
+  const res = (r.resources || []).map((x) => `<tr><td class="mono">${e(x.name)}</td><td>${x.size}</td>
+      <td>${x.entropy >= 7.5 ? `<span class="badge badge-warn">${x.entropy}</span>` : x.entropy}</td><td class="mono">${e(x.head)}</td>
+      <td class="mono">${e((x.sha256 || "").slice(0, 16))}</td></tr>`).join("");
+  const strs = (r.strings || []).map((x) => `<div class="mono">${e(x)}</div>`).join("");
+  return innerTabs(g, [
+    { id: "summary", label: "Summary", html: summary },
+    { id: "types", label: `Types & methods (${types.length})`, html: typesHtml || '<p class="hint-line">No types.</p>' },
+    { id: "apis", label: `P/Invoke & APIs (${(r.pinvoke || []).length + (r.apis || []).length})`, html: apiHtml.trim() || '<p class="hint-line">No P/Invoke and no notable framework API.</p>' },
+    { id: "resources", label: `Resources (${(r.resources || []).length})`, html: res ? `<table class="cases"><thead><tr><th>Name</th><th>Size</th><th>Entropy</th><th>First bytes</th><th>SHA-256</th></tr></thead><tbody>${res}</tbody></table>` : '<p class="hint-line">No managed resources.</p>' },
+    { id: "strings", label: `Strings (${(r.strings || []).length})`, html: strs ? `<p class="hint-line">User strings (#US heap): the literals the code uses.</p><div class="cx-scroll cx-small">${strs}</div>` : '<p class="hint-line">No user strings (encrypted by an obfuscator?).</p>' },
+  ]);
+}
+
+function paneDotnet(dm) {
+  const objs = (dm.objects || []).filter((o) => o.result && !o.result.error);
+  const warn = (dm.warnings || []).map((w) => `<div class="hint-line">⚠ ${escapeHtml(w)}</div>`).join("");
+  const body = objs.length === 1 ? dnObject(objs[0], 0)
+    : innerTabs("dn-objs", objs.map((o, i) => ({ id: `o${i}`, label: `${o.label}`.slice(-48), html: dnObject(o, i) })));
+  return `<div class="ml-pane"><p class="hint-line">.NET assemblies of the case (original and nested), read statically from their CLR
+    metadata: identity, references, types and methods, P/Invoke, framework APIs, resources, user strings and obfuscators. Nothing is loaded or run.</p>
+    ${warn}${body}</div>`;
 }
 
 function paneCode(cm) {

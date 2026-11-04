@@ -2445,6 +2445,43 @@ def _go_embed_section(va: int) -> bytes:
     return sec + gzip.compress(note, mtime=0) + b"\x00" * 16
 
 
+# --- .NET analysis: an inert assembly with the metadata the .NET tab reads -------------
+DOTNET_PAYLOAD_KEY = bytes.fromhex("3f1a5c7e9b2d4f6081a3c5e7092b4d6f")
+
+
+def dotnet_loader_exe() -> bytes:
+    """InvoiceViewer.exe: references WebClient / Assembly.Load / Registry, P/Invokes
+    VirtualAlloc + CreateThread, carries the ConfuserEx marker attribute and an
+    AES-encrypted resource (an MZ+text stub); every method body is ``ret``."""
+    import binkit as bk
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    stub = b"MZ" + b"inert invoice viewer stage 2 (text, not code) " * 90
+    stub += b"\x00" * (-len(stub) % 16)
+    enc = Cipher(algorithms.AES(DOTNET_PAYLOAD_KEY), modes.CBC(b"\x00" * 16)).encryptor()
+    payload = enc.update(stub) + enc.finalize()
+    spec = {"assembly": "InvoiceViewer", "version": (2, 1, 0, 0),
+            "refs": [("mscorlib", (4, 0, 0, 0)), ("System", (4, 0, 0, 0))],
+            "typerefs": [(0, "System.Reflection", "Assembly"), (None, "", "ConfusedByAttribute"),
+                         (1, "System.Net", "WebClient"), (0, "Microsoft.Win32", "RegistryKey"),
+                         (0, "System.Security.Cryptography", "RijndaelManaged")],
+            "memberrefs": [(1, ".ctor"), (2, "DownloadData"), (0, "Load"), (3, "SetValue"), (4, "CreateDecryptor")],
+            "attributes": [("module", 1)],
+            "types": [{"ns": "InvoiceViewer", "name": "Program", "methods": [{"name": "Main", "entry": True},
+                                                                         {"name": "LoadStage"}]},
+                      {"ns": "InvoiceViewer", "name": "NativeMethods",
+                       "methods": [{"name": "VirtualAlloc", "pinvoke": ("kernel32.dll", "VirtualAlloc")},
+                                   {"name": "CreateThread", "pinvoke": ("kernel32.dll", "CreateThread")}]}],
+            "resources": [("InvoiceViewer.Resources.stage2.bin", payload)],
+            "user_strings": [CODE_URL, "Software\\Microsoft\\Windows\\CurrentVersion\\Run", "InvoiceViewer",
+                             "203.0.113.47"]}
+    return bk.pe(bits=32, gui=True, dotnet_md=spec, version={"CompanyName": "Invoice Sync Example",
+                                                             "FileDescription": "Invoice Viewer"})
+
+
+def dotnet_samples() -> dict[str, bytes]:
+    return {"dotnet/sample_dotnet_loader.exe": dotnet_loader_exe()}
+
+
 def code_samples() -> dict[str, bytes]:
     return {"code/sample_code_loader.exe": code_loader_exe(), "go/sample_go_code.exe": go_code_exe()}
 
@@ -2512,6 +2549,7 @@ def build_all() -> dict[str, bytes]:
     out.update(c2_samples())
     out.update(go_samples())
     out.update(code_samples())
+    out.update(dotnet_samples())
     out["encrypted/sample_encrypted.eml"] = encrypted_eml()
     out["encrypted/sample_velvet.xlsm"] = velvet_xlsm()
     return out
