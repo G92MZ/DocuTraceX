@@ -99,14 +99,70 @@ def go_names(data: bytes, ident: dict[str, Any], goresym_raw: Path | None = None
     return out
 
 
+CACHE_DIR = ".code-cache"
+CACHE_MAX_MB = _env_int("DOCUTRACEX_CODE_CACHE_MB", 2048)
+
+
+def _cache_on() -> bool:
+    return os.environ.get("DOCUTRACEX_CODE_CACHE", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _cache_key(sha256: str, mode: str) -> str:
+    """Same binary + same engine + same limits → same result: reuse it."""
+    from . import BUDGET_S, DECOMPILE_N, ENGINE_VERSION, INVENTORY_MAX, MAX_S, MEM_MB
+    sig = hashlib.sha256(f"{ENGINE_VERSION}|{BUDGET_S}|{MAX_S}|{MEM_MB}|{DECOMPILE_N}|{INVENTORY_MAX}".encode()).hexdigest()[:12]
+    return f"{sha256}.{mode}.{sig}.json"
+
+
+def _cache_get(root: Path, sha256: str, mode: str) -> Path | None:
+    if not _cache_on():
+        return None
+    p = root.parent / CACHE_DIR / _cache_key(sha256, mode)
+    return p if p.is_file() else None
+
+
+def _cache_put(root: Path, sha256: str, mode: str, src: Path) -> None:
+    """Keep the raw engine result (before the per-case enrichment) for other cases; oldest out first."""
+    if not _cache_on():
+        return
+    import shutil
+    d = root.parent / CACHE_DIR
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src, d / _cache_key(sha256, mode))
+        files = sorted(d.glob("*.json"), key=lambda x: x.stat().st_mtime)
+        total = sum(f.stat().st_size for f in files)
+        while files and total > CACHE_MAX_MB * 1024 * 1024:
+            f = files.pop(0)
+            total -= f.stat().st_size
+            f.unlink(missing_ok=True)
+    except OSError as exc:
+        log.warning("code-analysis cache: %s", exc)
+
+
 def analyze_object(root: Path, path: Path, sha256: str, mode: str, names: list[dict[str, Any]] | None,
                    progress=None) -> dict[str, Any]:
     from . import analyze, available
+    out = result_file(root, sha256, mode)
+    hit = _cache_get(root, sha256, mode)
+    if hit is not None:                                        # analysed before in another case: no Rizin run
+        try:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            full = json.loads(hit.read_text(encoding="utf-8"))
+            s = dict(full.get("summary") or {})
+            s["cached"] = True
+            full["summary"] = s
+            out.write_text(json.dumps(full), encoding="utf-8")
+            hit.touch()
+            s["sha256"] = sha256
+            s["mode"] = mode
+            return s
+        except (OSError, ValueError) as exc:
+            log.warning("code-analysis cache unreadable (%s): analysing again", exc)
     if not available():
         return {"status": "unavailable",
                 "detail": "Rizin + rz-ghidra not provisioned: Diagnostics → Retry (rizin), or "
                           "scripts/setup_portable_python.py --component rizin"}
-    out = result_file(root, sha256, mode)
     try:
         s = analyze(path, mode=mode, names=names, out_file=out, lock_path=lock_path(root), progress=progress)
     except TimeoutError as exc:
@@ -114,6 +170,8 @@ def analyze_object(root: Path, path: Path, sha256: str, mode: str, names: list[d
     except Exception as exc:  # noqa: BLE001
         log.warning("code analysis failed on %s: %s", path.name, exc)
         return {"status": "failed", "detail": str(exc)[:300]}
+    if s.get("status") == "ok":                                # partial results are not reused: they may finish next time
+        _cache_put(root, sha256, mode, out)
     s["sha256"] = sha256
     s["mode"] = mode
     return s
@@ -226,6 +284,9 @@ def function_view(full: dict[str, Any], addr: int) -> dict[str, Any] | None:
     known = [{"addr": a, "name": by_addr[a]["name"]} for a in f.get("calls") or [] if a in by_addr]
     out["callees"] = known
     out["callee_names"] = f.get("callee_names") or []
+    out["interface_targets"] = [{"addr": t, "name": by_addr[t]["name"] if t in by_addr else n}
+                                for ic in full.get("interface_calls") or [] if ic["from"] == addr
+                                for t, n in zip(ic["targets"], ic["methods"])][:100]
     out["spawns"] = [{"addr": a, "name": by_addr[a]["name"] if a in by_addr else f"{a:#x}"} for a in f.get("spawns") or []]
     out["decompiled"] = (full.get("decompiled") or {}).get(str(addr))
     out["ops"] = (full.get("disasm") or {}).get(str(addr))
@@ -293,6 +354,36 @@ def cfg_on_demand(root: Path, path: Path, sha256: str, mode: str, addr: int) -> 
 SENSITIVE = ("network", "exec", "process", "persistence", "crypto")
 
 
+def itab_calls(full: dict[str, Any], reader, names: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Go interface calls resolved statically. A method call through an
+    interface loads an itab {inter, _type, hash, _, fun[]} and calls one of its
+    ``fun`` slots through a register; when a function with indirect calls
+    points at such an itab, its slots are the concrete methods it may call."""
+    starts = {n["start"]: n["name"] for n in names}
+    out = []
+    for f in full.get("functions") or []:
+        if not f.get("indirect_calls"):
+            continue
+        for a, _n in f.get("data_refs") or []:
+            head = reader.at(a, 16)
+            if len(head) < 16:
+                continue
+            inter, typ = int.from_bytes(head[:8], "little"), int.from_bytes(head[8:], "little")
+            if not inter or not typ or not reader.at(inter, 8) or not reader.at(typ, 8):
+                continue
+            targets = []
+            for i in range(32):
+                w = reader.at(a + 0x18 + 8 * i, 8)
+                v = int.from_bytes(w, "little") if len(w) == 8 else 0
+                if v not in starts:
+                    break
+                targets.append(v)
+            if targets:
+                out.append({"from": f["addr"], "itab": a, "targets": targets,
+                            "methods": [starts[t] for t in targets]})
+    return out[:2000]
+
+
 def graph(full: dict[str, Any], max_paths: int = 25) -> dict[str, Any]:
     """The program call graph: analysed functions as nodes, direct calls and
     goroutine launches as edges, the calls into sensitive library code as leaf
@@ -304,7 +395,11 @@ def graph(full: dict[str, Any], max_paths: int = 25) -> dict[str, Any]:
     fns = full.get("functions") or []
     mode = (full.get("summary") or {}).get("mode", "native")
     by = {f["addr"]: f for f in fns}
-    nodes = [{"id": f["addr"], "name": f["name"], "score": f.get("score", 0), "categories": f.get("categories") or [],
+    crypto_fns = {x["name"] for x in (full.get("crypto") or {}).get("functions") or []}
+    crypto_fns |= {x["function"] for x in (full.get("crypto") or {}).get("plaintexts") or []}
+    nodes = [{"id": f["addr"], "name": f["name"], "score": f.get("score", 0),
+              "categories": (f.get("categories") or []) + (["crypto"] if f["name"] in crypto_fns
+                                                           and "crypto" not in (f.get("categories") or []) else []),
               "traits": f.get("traits") or [], "user": f.get("user", True), "indirect": f.get("indirect_calls", 0)}
              for f in fns]
     edges = []
@@ -316,6 +411,11 @@ def graph(full: dict[str, Any], max_paths: int = 25) -> dict[str, Any]:
         for c in f.get("spawns") or []:
             if c in by:
                 edges.append({"from": f["addr"], "to": c, "kind": "goroutine"})
+    for ic in full.get("interface_calls") or []:              # possible targets of an interface call
+        for t in ic["targets"]:
+            if t in by and t != ic["from"]:
+                edges.append({"from": ic["from"], "to": t, "kind": "interface"})
+    for f in fns:
         known = {by[c]["name"] for c in f.get("calls") or [] if c in by}
         for n in f.get("callee_names") or []:
             if n in known:
@@ -502,6 +602,13 @@ def enrich(root: Path, path: Path, data: bytes, sha256: str, mode: str, item: di
         log.warning("crypto step failed on %s: %s", label, exc)
         full["crypto"] = {"algorithms": [], "constants": [], "functions": [], "keys": [], "plaintexts": [],
                           "not_recoverable": [], "error": str(exc)[:300]}
+    # interface calls: an itab loaded before an indirect call gives its concrete methods
+    if mode == "go":
+        try:
+            from . import _Reader
+            full["interface_calls"] = itab_calls(full, _Reader(data), names or [])
+        except Exception as exc:  # noqa: BLE001
+            log.warning("interface resolution failed on %s: %s", label, exc)
     # phase 7: Garble literal strings, rebuilt by emulating only their decoding closures
     try:
         from . import garble as _garble
