@@ -18,21 +18,41 @@
   </header>
 
   <nav class="tabs" aria-label="Main navigation">
-    <button class="tab is-active" type="button" data-view="new"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 15v5h16v-5"/></svg><span>New analysis</span></button>
-    <button class="tab" type="button" data-view="cases"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18v14H3z"/><path d="M3 6l2-3h5l2 3"/><path d="M7 11h10M7 15h6"/></svg><span>Cases</span> <span id="cases-active-dot" class="cases-active-dot" hidden title="Analyses queued or running"></span></button>
-    <button class="tab" type="button" data-view="marks"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z"/></svg><span>Marks</span></button>
-    <button class="tab" type="button" data-view="components"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 3 7l9 5 9-5-9-5z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg><span>Components</span></button>
-    <button class="tab" type="button" data-view="reports"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6v20h12V6z"/><path d="M14 2v4h4M9 13h6M9 17h6M9 9h2"/></svg><span>Reports</span></button>
-    <button class="tab" type="button" data-view="tasks"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3 6 1.5 1.5L7 5M3 12l1.5 1.5L7 11M3 18l1.5 1.5L7 17"/></svg><span>Tasks</span></button>
-    <button class="tab" type="button" data-view="yara"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><span>YARA</span></button>
-    <button class="tab" type="button" data-view="ml"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/><path d="M10 10h4v4h-4z"/></svg><span>Machine Learning</span></button>
-    <button class="tab" type="button" data-view="c2"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M8.5 15.5a5 5 0 0 1 0-7M15.5 8.5a5 5 0 0 1 0 7"/><path d="M5.6 18.4a9 9 0 0 1 0-12.8M18.4 5.6a9 9 0 0 1 0 12.8"/></svg><span>C2 / Beacons</span></button>
-    <button class="tab" type="button" data-view="hex"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z"/><path d="M7 9h2M11 9h2M15 9h2M7 13h2M11 13h2M15 13h2"/></svg><span>Hex</span></button>
-    <button class="tab" type="button" data-view="ai"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg><span>AI</span></button>
-    <button class="tab tab-right" type="button" data-view="settings"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>Settings</span></button>
-    <button class="tab" type="button" data-view="diagnostics">
+    <div class="tab-group tab-group-cases" role="group" aria-label="Cases">
+      <span class="tab-group-label" title="Upload, follow and find your analyses">Cases</span>
+      <div class="tab-group-items">
+      <button class="tab is-active" type="button" data-view="new"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 15v5h16v-5"/></svg><span>New analysis</span></button>
+      <button class="tab" type="button" data-view="tasks"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3 6 1.5 1.5L7 5M3 12l1.5 1.5L7 11M3 18l1.5 1.5L7 17"/></svg><span>Tasks</span></button>
+      <button class="tab" type="button" data-view="cases"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18v14H3z"/><path d="M3 6l2-3h5l2 3"/><path d="M7 11h10M7 15h6"/></svg><span>Cases</span> <span id="cases-active-dot" class="cases-active-dot" hidden title="Analyses queued or running"></span></button>
+      </div>
+    </div>
+    <div class="tab-group tab-group-main" role="group" aria-label="Analysis">
+      <span class="tab-group-label" title="What the sample is and does, your marks and the report">Analysis</span>
+      <div class="tab-group-items">
+      <button class="tab" type="button" data-view="components"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 3 7l9 5 9-5-9-5z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg><span>Components</span></button>
+      <button class="tab" type="button" data-view="marks"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z"/></svg><span>Marks</span></button>
+      <button class="tab" type="button" data-view="reports"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6v20h12V6z"/><path d="M14 2v4h4M9 13h6M9 17h6M9 9h2"/></svg><span>Reports</span></button>
+      </div>
+    </div>
+    <div class="tab-group tab-group-extra" role="group" aria-label="Complementary">
+      <span class="tab-group-label" title="Extra engines and views over the same case">Complementary</span>
+      <div class="tab-group-items">
+      <button class="tab" type="button" data-view="yara"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><span>YARA</span></button>
+      <button class="tab" type="button" data-view="ml"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/><path d="M10 10h4v4h-4z"/></svg><span>Machine Learning</span></button>
+      <button class="tab" type="button" data-view="c2"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M8.5 15.5a5 5 0 0 1 0-7M15.5 8.5a5 5 0 0 1 0 7"/><path d="M5.6 18.4a9 9 0 0 1 0-12.8M18.4 5.6a9 9 0 0 1 0 12.8"/></svg><span>C2 / Beacons</span></button>
+      <button class="tab" type="button" data-view="hex"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z"/><path d="M7 9h2M11 9h2M15 9h2M7 13h2M11 13h2M15 13h2"/></svg><span>Hex</span></button>
+      <button class="tab" type="button" data-view="ai"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg><span>AI</span></button>
+      </div>
+    </div>
+    <div class="tab-group tab-group-system" role="group" aria-label="System">
+      <span class="tab-group-label" title="Configuration and health of the tools">System</span>
+      <div class="tab-group-items">
+      <button class="tab" type="button" data-view="settings" title="Settings"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>Settings</span></button>
+      <button class="tab" type="button" data-view="diagnostics" title="Diagnostics">
       <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span>Diagnostics</span> <span id="diag-dot" class="diag-dot"></span>
     </button>
+      </div>
+    </div>
   </nav>
 
   <main class="content">
