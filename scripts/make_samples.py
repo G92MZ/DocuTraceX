@@ -2238,13 +2238,14 @@ def go_code_exe() -> bytes:
     text_va = base + 0x1000
     pcln = _go_pclntab_funcs(funcs, extra, text_va)
 
-    def build(c: bytes, md: bytes) -> bytes:
+    def build(c: bytes, md: bytes, emb: bytes) -> bytes:
         # the URL is a Go string: bytes with no NUL, referenced by pointer + length
         return bk.pe(bits=64, gui=False, imports={"kernel32.dll": ["VirtualAlloc", "ExitProcess"]}, code=c,
                      sections=[(".rdata", pcln + CODE_URL.encode() + blob.encode(), 0x40000040),
-                               (".data", _go_buildinfo("go1.22.5", "windows") + md, 0xC0000040)],
+                               (".data", _go_buildinfo("go1.22.5", "windows") + md, 0xC0000040),
+                               (".embed", emb, 0x40000040)],
                      strings=[bid.decode("latin-1")])
-    first = build(code, b"\x00" * 32)
+    first = build(code, b"\x00" * 32, _go_embed_section(0))
     bf = binfmt.parse(first)
     assert bf.section(".text").va == text_va
     rvas = {"url": bf.off_to_va(first.find(CODE_URL.encode())) - base,
@@ -2252,7 +2253,47 @@ def go_code_exe() -> bytes:
     linked = _x64_link(code, meta, text_va - base, rvas)
     off = first.find(_st.pack("<I", 0xFFFFFFF1) + b"\x00\x00")
     va = bf.off_to_va(off) or 0
-    return build(linked, _st.pack("<4Q", va, va + 72, len(funcs), len(funcs)))
+    emb_va = bf.section(".embed").va
+    return build(linked, _st.pack("<4Q", va, va + 72, len(funcs), len(funcs)), _go_embed_section(emb_va))
+
+
+# A throw-away self-signed certificate (its key was never kept) for cdn-update.example.net.
+CODE_CERT = """-----BEGIN CERTIFICATE-----
+MIIBlzCCAT2gAwIBAgIEXKGrHjAKBggqhkjOPQQDAjBAMR8wHQYDVQQDDBZjZG4t
+dXBkYXRlLmV4YW1wbGUubmV0MR0wGwYDVQQKDBRJbnZvaWNlIFN5bmMgRXhhbXBs
+ZTAeFw0yNjAxMDEwMDAwMDBaFw0yNzAxMDEwMDAwMDBaMEAxHzAdBgNVBAMMFmNk
+bi11cGRhdGUuZXhhbXBsZS5uZXQxHTAbBgNVBAoMFEludm9pY2UgU3luYyBFeGFt
+cGxlMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEVfpPPNayQuPaBdcby0lTGn51
+hZsYRmsv36/uHEwFjH27T+zim/ZPUTlTPtqEy3/B3pZL/zgUTZLroIWfWdnsTqMl
+MCMwIQYDVR0RBBowGIIWY2RuLXVwZGF0ZS5leGFtcGxlLm5ldDAKBggqhkjOPQQD
+AgNIADBFAiAEcSUn/JldTFu8/d5UOjVRUTi8lF5MevXfiXJbvpVHNgIhAK/f6u6L
+mMObFeN/9RHR3gYitowbF1uIEeWJmuOKH2t8
+-----END CERTIFICATE-----
+"""
+CODE_EMBED = {"assets/config.json": ('{"c2": "https://cdn-update.example.net/invoice/sync", "sleep": 60, '
+                                     '"fallback": "203.0.113.47"}\n').encode(),
+              "assets/readme.txt": b"Invoice sync agent - internal build.\n"}
+
+
+def _go_embed_section(va: int) -> bytes:
+    """An embed.FS image at ``va``: slice header → []file{name, data, hash} → names / bodies,
+    plus the certificate and a gzip-compressed copy of an invoice note (inert text)."""
+    import gzip
+    import hashlib
+    import struct as _st
+    files = sorted(CODE_EMBED.items())
+    pool = 24 + 48 * len(files)
+    blob, ents = bytearray(), []
+    for name, body in files:
+        n_off = pool + len(blob)
+        blob += name.encode()
+        d_off = pool + len(blob)
+        blob += body
+        ents.append(_st.pack("<4Q", va + n_off, len(name), va + d_off, len(body)) + hashlib.sha256(body).digest()[:16])
+    sec = _st.pack("<3Q", va + 24, len(files), len(files)) + b"".join(ents) + bytes(blob)
+    sec += b"\x00" * 16 + CODE_CERT.encode() + b"\x00" * 16
+    note = ("Invoice INV-2026-0413 sync log: " + "upload pending; " * 120).encode()
+    return sec + gzip.compress(note, mtime=0) + b"\x00" * 16
 
 
 def code_samples() -> dict[str, bytes]:

@@ -887,7 +887,8 @@ function paneFindings(findings, ids, ctx) {
   const node = (n, chain) => {
     if (!subtreeCount(n, chain)) return "";       // files with nothing found below them stay in Nested
     const kids = (n.children || []).map((c) => node(c, `${chain} › ${c.filename}`)).join("");
-    const extra = (n.decrypted_from ? `<span class="badge badge-warn">🔓 decrypted stage</span>` : "")
+    const extra = (n.decrypted_from ? (n.source === "code-resources" ? `<span class="badge badge-warn">📦 embedded resource</span>`
+                                          : `<span class="badge badge-warn">🔓 decrypted stage</span>`) : "")
       + (n.view_id ? `<button class="btn btn-sm nested-open" type="button" data-open-view="${escapeHtml(n.view_id)}" title="Open this file's own analysis (its tabs)">Open analysis ↗</button>` : "");
     return card(n.filename, n.kind, byChain[chain] || [], kids, false, extra);
   };
@@ -2483,7 +2484,9 @@ function nestedNode(n) {
     <div class="nested-row">
       <b class="mono nested-name">${escapeHtml(n.filename)}</b>
       <span class="badge badge-muted">${escapeHtml(n.kind)}</span>
-      ${n.decrypted_from ? `<span class="badge badge-warn" title="Recovered by decrypting/decoding: ${escapeHtml(n.decrypted_from)}">🔓 decrypted stage</span>` : ""}
+      ${n.decrypted_from ? (n.source === "code-resources"
+        ? `<span class="badge badge-warn" title="Recovered from the binary: ${escapeHtml(n.decrypted_from)}">📦 embedded resource</span>`
+        : `<span class="badge badge-warn" title="Recovered by decrypting/decoding: ${escapeHtml(n.decrypted_from)}">🔓 decrypted stage</span>`) : ""}
       ${lock}${pwc}
       ${fcount ? "" : fList}
       ${open}${codeLinks}
@@ -5073,7 +5076,9 @@ function goObjectTabs(o, i) {
     { id: "code", label: "Code", html: cxSlot(c, sha, "go", "code", g) },
     { id: "strings", label: c.strings ? `Strings (${c.strings})` : "Strings", html: cxSlot(c, sha, "go", "strings", g) },
     { id: "graph", label: "Call graph", html: cxSlot(c, sha, "go", "graph", g) },
-    { id: "deps", label: deps.length ? `Dependencies (${deps.length})` : "Dependencies", html: goDeps(o) },
+    { id: "resources", label: cxResLabel(c), html: cxSlot(c, sha, "go", "resources", g) },
+    { id: "deps", label: deps.length ? `Dependencies (${deps.length})` : "Dependencies",
+      html: goDeps(o) + (cxOk(c) ? `<h4 class="formats-title">Declared versus code found</h4>${cxSlot(c, sha, "go", "depscheck", g)}` : "") },
   ]);
 }
 
@@ -5109,6 +5114,47 @@ function cxSlot(c, sha, mode, part, group) {
   }
   return `<div class="cx" data-cx-sha="${escapeHtml(sha)}" data-cx-mode="${escapeHtml(mode)}" data-cx-part="${part}"
     data-cx-group="${escapeHtml(group)}"><p class="hint-line">Loading…</p></div>`;
+}
+
+function cxResLabel(c) {
+  const r = (c && c.resources) || {};
+  const n = (r.embed_files || 0) + (r.certificates || 0) + (r.private_keys || 0) + (r.compressed || 0);
+  return n ? `Resources (${n})` : "Resources";
+}
+
+function cxResources(d) {
+  const r = d.resources || {};
+  const e = (x) => escapeHtml(String(x ?? ""));
+  const sz = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`);
+  const emb = (r.embed || []).map((fs) => `<h4 class="formats-title">go:embed file system <span class="hint-line">@${cxHex(fs.fs_va)} · ${fs.files.length} entr${fs.files.length === 1 ? "y" : "ies"}</span></h4>
+    <table class="cases"><thead><tr><th>Name</th><th>Size</th><th>SHA-256</th><th></th></tr></thead><tbody>${fs.files.map((f) => `<tr>
+      <td class="mono">${e(f.name)}</td><td>${f.dir ? "dir" : sz(f.size)}</td><td class="mono">${e((f.sha256 || "").slice(0, 16))}</td>
+      <td>${f.stored_path ? fileActions(f.stored_path) : ""}</td></tr>`).join("")}</tbody></table>`).join("");
+  const certs = (r.certificates || []).map((c) => `<tr><td>${c.private ? '<span class="badge badge-bad">private key</span>' : `<span class="badge badge-muted">${e(c.type.toUpperCase())}</span>`} ${e(c.label)}</td>
+      <td class="mono">${e(c.subject || "")}${c.issuer && c.issuer !== c.subject ? `<div class="hint-line">issuer ${e(c.issuer)}</div>` : c.self_signed ? '<div class="hint-line">self-signed</div>' : ""}</td>
+      <td class="mono">${e(c.not_before ? `${c.not_before.slice(0, 10)} → ${(c.not_after || "").slice(0, 10)}` : "")}</td>
+      <td class="mono">${cxHex(c.offset)}</td></tr>`).join("");
+  const comp = (r.compressed || []).map((c) => `<tr><td>${e(c.type)}</td><td class="mono">${cxHex(c.offset)}</td><td>${sz(c.size)} → ${sz(c.decompressed_size)}</td>
+      <td class="mono">${e(c.head)}</td><td>${c.stored_path ? fileActions(c.stored_path) : '<span class="hint-line">small: not extracted</span>'}</td></tr>`).join("");
+  if (!emb && !certs && !comp) return '<p class="hint-line">No embedded files, certificates, keys or compressed data found.</p>';
+  return `<p class="hint-line">Found statically in the binary. Embedded files and decompressed streams are analysed as nested children (Nested panel).</p>
+    ${emb}
+    ${certs ? `<h4 class="formats-title">Certificates and keys</h4><table class="cases"><thead><tr><th>Type</th><th>Subject</th><th>Validity</th><th>Offset</th></tr></thead><tbody>${certs}</tbody></table>` : ""}
+    ${comp ? `<h4 class="formats-title">Compressed data</h4><table class="cases"><thead><tr><th>Format</th><th>Offset</th><th>Size</th><th>First bytes</th><th></th></tr></thead><tbody>${comp}</tbody></table>` : ""}`;
+}
+
+function cxDepsCheck(d) {
+  const x = d.dependencies;
+  if (!x) return '<p class="hint-line">Not available for this object.</p>';
+  const e = (v) => escapeHtml(String(v));
+  const per = x.functions_per_module || {};
+  return `<p class="hint-line">Modules declared in BuildInfo against the packages that have functions in pclntab.
+      A declared module with no code may be unused or renamed (Garble); code from an undeclared package may be vendored or copied in.</p>
+    <table class="cases"><tbody>
+      <tr><th>Declared, with code</th><td>${(x.with_code || []).map((m) => `<div class="mono">${e(m)} <span class="hint-line">${per[m] || 0} function(s)</span></div>`).join("") || "—"}</td></tr>
+      <tr><th>Declared, no code found</th><td>${(x.without_code || []).map((m) => `<div class="mono">${e(m)}</div>`).join("") || "—"}</td></tr>
+      <tr><th>Code from undeclared packages</th><td>${(x.undeclared || []).map(([m, n]) => `<div class="mono">${e(m)} <span class="hint-line">${n} function(s)</span></div>`).join("") || "—"}</td></tr>
+    </tbody></table>`;
 }
 
 function cxSummaryBox(c, sha, mode) {
@@ -5231,8 +5277,9 @@ function cxFnView(k, d, f) {
     <div class="cx-cols3">
       <div><h4 class="formats-title">Called by (${(f.callers || []).length})</h4>${cxFnLinks(f.callers || [], "No callers found (entry point, callback or indirect call).")}</div>
       <div><h4 class="formats-title">Calls (${(f.callees || []).length + ext.length})</h4>${cxFnLinks([...(f.callees || []), ...ext], "No direct calls.")}</div>
-      <div><h4 class="formats-title">Strings (${(f.strings || []).length})</h4>${(f.strings || []).length
-        ? `<div class="cx-scroll cx-small">${f.strings.map((s) => `<div class="mono" title="${cxHex(s.addr)}">${e(s.value)}</div>`).join("")}</div>`
+      <div><h4 class="formats-title">Strings (${(f.strings || []).length + (f.floss || []).length})</h4>${(f.strings || []).length || (f.floss || []).length
+        ? `<div class="cx-scroll cx-small">${(f.strings || []).map((s) => `<div class="mono" title="${cxHex(s.addr)}">${e(s.value)}</div>`).join("")}${
+            (f.floss || []).map((s) => `<div class="mono" title="FLOSS ${e(s.kind)} string"><span class="badge badge-warn">FLOSS ${e(s.kind)}</span> ${e(s.value)}</div>`).join("")}</div>`
         : '<p class="hint-line">No strings referenced.</p>'}</div>
     </div>`;
 }
@@ -5254,9 +5301,10 @@ function cxStrings(k, d) {
   const shown = all.slice(0, 1500);
   return `<div class="cx-toolbar"><input type="search" class="cx-sq" placeholder="Filter strings" value="${escapeHtml(flt.q)}"></div>
     <div class="cx-slist"><p class="hint-line">${all.length} string(s) referenced by the analysed code${all.length > shown.length ? `, first ${shown.length} shown` : ""}.</p>
-    <div class="cx-scroll"><table class="cases"><thead><tr><th>String</th><th>Used in</th><th>Address</th></tr></thead><tbody>${
+    <div class="cx-scroll"><table class="cases"><thead><tr><th>String</th><th>Used in</th><th>Source</th><th>Address</th></tr></thead><tbody>${
       shown.map((s) => `<tr><td class="mono">${escapeHtml(s.value)}</td>
         <td>${byName[s.function] != null ? `<button type="button" class="cx-link" data-cx-open="${byName[s.function]}">${escapeHtml(s.function)}</button>` : escapeHtml(s.function || "")}</td>
+        <td><span class="badge badge-${s.source && s.source !== "code" ? "warn" : "muted"}">${escapeHtml(s.source || "code")}</span></td>
         <td class="mono">${cxHex(s.addr)}</td></tr>`).join("")}</tbody></table></div></div>`;
 }
 
@@ -5341,6 +5389,11 @@ async function cxRender(el, caseId) {
   } else if (part === "apis") {
     el.innerHTML = cxApis(k, d);
     cxWireOpen(el, caseId, sha, mode, group);
+  } else if (part === "resources") {
+    el.innerHTML = cxResources(d);
+    wireFileActions(el, caseId);
+  } else if (part === "depscheck") {
+    el.innerHTML = cxDepsCheck(d);
   } else if (part === "graph") {
     cgRender(el, caseId, sha, mode, group);
   }
@@ -5578,6 +5631,7 @@ function paneCode(cm) {
       { id: "strings", label: `Strings (${c.strings || 0})`, html: cxSlot(c, o.sha256, "native", "strings", g) },
       { id: "apis", label: `APIs (${c.apis || 0})`, html: cxSlot(c, o.sha256, "native", "apis", g) },
       { id: "graph", label: "Call graph", html: cxSlot(c, o.sha256, "native", "graph", g) },
+      { id: "resources", label: cxResLabel(c), html: cxSlot(c, o.sha256, "native", "resources", g) },
     ])}`;
   };
   const body = !objs.length ? '<p class="hint-line">No native object could be analysed.</p>'

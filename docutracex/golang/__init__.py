@@ -132,6 +132,12 @@ def _code_phase(root: Path, res: dict[str, Any], go: list[dict[str, Any]], raw_d
         done += 1
         o["code"] = code_case.analyze_object(root, p, o["sha256"], "go", names)
         o["code"]["functions_total"] = len(names)
+        if o["code"].get("status") in ("ok", "partial"):
+            try:
+                res.setdefault("_children", []).extend(code_case.enrich(
+                    root, p, data, o["sha256"], "go", o, names=names, buildinfo=r.get("buildinfo")))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Go resources / strings step failed on %s: %s", o.get("label"), exc)
 
 
 def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) -> dict[str, Any]:
