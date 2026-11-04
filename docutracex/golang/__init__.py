@@ -97,6 +97,33 @@ def _findings(item: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+def _types_phase(root: Path, res: dict[str, Any], go: list[dict[str, Any]], raw_dir: Path,
+                 paths: dict[str, Path]) -> None:
+    """Phase 2: types, interfaces, methods and source files of every distinct Go object."""
+    import json
+
+    from ..codeanalysis import case as code_case
+    from . import types as go_types
+    for o in go:
+        if o.get("duplicate_of"):
+            continue
+        r = o["result"]
+        p = paths.get(o.get("sha256") or "")
+        if p is None:
+            continue
+        try:
+            data = p.read_bytes()
+            gr_raw = raw_dir / ((r.get("goresym") or {}).get("raw_file") or "-")
+            raw = json.loads(gr_raw.read_text(encoding="utf-8")) if gr_raw.is_file() else {}
+            names = code_case.go_names(data, r, gr_raw)
+            t = go_types.build(raw if isinstance(raw, dict) else {}, names, (r.get("buildinfo") or {}).get("path", ""))
+            if t["types"] or t["files"]:
+                go_types.write(root, o["sha256"], t)
+                o["types"] = t["summary"]
+        except Exception as exc:  # noqa: BLE001  (never breaks the case)
+            log.warning("Go types step failed on %s: %s", o.get("label"), exc)
+
+
 def _code_phase(root: Path, res: dict[str, Any], go: list[dict[str, Any]], raw_dir: Path,
                 paths: dict[str, Path]) -> None:
     """Phases 3-4: functions, priority, decompilation (Rizin + rz-ghidra) of
@@ -199,6 +226,7 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
         res["objects"].append(item)
         res["findings"].extend(_findings(item))
     go = [o for o in res["objects"] if (o.get("result") or {}).get("state") in ("Confirmed", "Likely")]
+    _types_phase(root, res, go, raw_dir, paths_by_sha)
     _code_phase(root, res, go, raw_dir, paths_by_sha)
     for o in res["objects"]:
         (o.get("result") or {}).pop("_pcln", None)        # internal: parser state for the function table
