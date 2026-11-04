@@ -766,3 +766,39 @@ def code_decompile(analysis_id: str, sha256: str, mode: str, addr: int) -> dict:
     if r.get("status") == "unavailable":
         raise HTTPException(status_code=503, detail="Rizin + rz-ghidra not provisioned")
     return code_case.function_view(code_case.load(paths.root, sha256, mode) or full, addr) or {}
+
+
+@router.get("/{analysis_id}/code/{sha256}/{mode}/graph")
+def code_graph(analysis_id: str, sha256: str, mode: str) -> dict:
+    """Call graph of one analysed binary (nodes, edges, roots, paths to sensitive code)."""
+    from ..codeanalysis import case as code_case
+    _m, _p, full = _code_ctx(analysis_id, sha256, mode)
+    return code_case.graph(full)
+
+
+@router.get("/{analysis_id}/code/{sha256}/{mode}/fn/{addr}/cfg")
+def code_cfg(analysis_id: str, sha256: str, mode: str, addr: int) -> dict:
+    """Control-flow graph of one function (computed on first request, then kept)."""
+    from pathlib import Path as _P
+
+    from ..codeanalysis import case as code_case
+    from ..storage import read_json
+    manifest, paths, full = _code_ctx(analysis_id, sha256, mode)
+    if code_case.function_view(full, addr) is None:
+        raise HTTPException(status_code=404, detail="function not in the analysis")
+    cached = (full.get("cfg") or {}).get(str(addr))
+    if cached:
+        return cached
+    orig_rel = (manifest.get("original") or {}).get("stored_path") or ""
+    original = paths.root / orig_rel if orig_rel else _P("/nonexistent")
+    tree = (read_json(paths.subresult("nested")) or {}).get("tree") or []
+    target = code_case.locate(paths.root, original, tree, sha256)
+    if target is None:
+        raise HTTPException(status_code=404, detail="the binary is no longer in the case")
+    try:
+        r = code_case.cfg_on_demand(paths.root, target, sha256, mode, addr)
+    except TimeoutError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if r.get("status") == "unavailable":
+        raise HTTPException(status_code=503, detail="Rizin + rz-ghidra not provisioned")
+    return r

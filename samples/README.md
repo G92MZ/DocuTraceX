@@ -229,7 +229,7 @@ buffer in place → a function that hands the invoice C2 URL
 
 | Sample | What it shows |
 | --- | --- |
-| `go/sample_go_code.exe` | Go PE whose pclntab really maps `main.main`, `main.decryptConfig`, `main.beacon` and `net/http.(*Client).Do`: the names come back in Functions / Code and in the pseudocode; `main.beacon` ranks first (*communications* + URL, read as a Go string: pointer + length), `main.decryptConfig` is flagged as a XOR loop; callers / callees link them |
+| `go/sample_go_code.exe` | Go PE whose pclntab really maps `main.main`, `main.decryptConfig`, `main.beacon`, the closure `main.main.func1` and `net/http.(*Client).Do`: the names come back in Functions / Code and in the pseudocode; `main.beacon` ranks first (*communications* + URL, read as a Go string: pointer + length), `main.decryptConfig` is flagged as a XOR loop. **Call graph**: `main.main` (*entry · goroutine · defer*) launches `main.main.func1` with `go` (dashed edge), which calls `main.beacon`; the path *main.main → main.main.func1 → main.beacon → net/http.(\*Client).Do* is listed, and the CFG of `main.decryptConfig` shows its loop (back edge) |
 | `code/sample_code_loader.exe` | native PE32+ (not Go): Components → **Code** — 3 functions, the one calling `InternetOpenA` / `InternetOpenUrlA` with the URL first, the XOR loop second; APIs lists the wininet imports with the function that calls them |
 
 ## C2 / Beacons tab
