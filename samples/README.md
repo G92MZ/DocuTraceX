@@ -292,6 +292,22 @@ PyInstaller bundles and files over 64 MB are not started ahead (the triage decid
 whether their tools run at all). `sample_bloated_invoice.exe`, `sample_pyinstaller.exe`
 and the MSI / archive samples exercise it.
 
+## AI tab and MCP: asking about the code of a case
+
+The AI chat (your OpenAI-compatible / LiteLLM endpoint, or a local one) and the
+MCP server (`python -m docutracex.mcp_server`) share read-only tools. Besides
+findings, IOCs, modules and network checks they reach the deep analyses:
+`list_code_objects` → `list_functions` (by priority / behaviour) →
+`get_function` (pseudocode, disassembly, callers, callees, strings; for .NET the
+calls, literals, static arrays and what the method decrypts), `get_decrypted`
+(everything decrypted statically, with the routine), `get_nested_tree` (stages
+and how each was obtained) and `get_ml` (scores, unusual-for-the-model, similar
+objects in other cases). Try on `make_samples.dotnet_bitmap_loader_exe(make_samples.dotnet_stealer_exe())`:
+"¿qué descifra el método Main del stealer?" → `smtp.billing-portal.example`,
+`accounts@billing-portal.example`, `587`; on `code/sample_code_loader.exe`:
+"¿qué hace la función de red?" → its pseudocode with `InternetOpenUrlA` and the C2 URL.
+The model must support tool calling; answers are trimmed to fit its context.
+
 ## YARA, Machine Learning and C2: choosing the objects
 
 The three tabs have **Objects to scan** under the case selector: every object of
