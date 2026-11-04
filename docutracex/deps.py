@@ -113,6 +113,11 @@ TOOL_DEPS: list[Dependency] = [
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
     ),
     Dependency(
+        "unicorn", "unicorn", "Go: Garble string recovery (emulates only the decoding routines, in a separate process)",
+        required=False,
+        install_hint="run scripts/setup_portable_python.py (installed into the portable)",
+    ),
+    Dependency(
         "mmh3", "mmh3", "Machine Learning tab: EMBER feature hashing (MurmurHash3)",
         required=False,
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
