@@ -70,6 +70,7 @@ when possible, skipped cleanly when absent.
 | `DOCUTRACEX_FLOSS_TIMEOUT`, `DOCUTRACEX_CAPA_TIMEOUT`, `DOCUTRACEX_UNPACK_TIMEOUT` | per-tool time limits (before the factor) |
 | `DOCUTRACEX_CA_BUNDLE` | extra CA bundle for network checks behind a TLS-inspecting proxy |
 | `DOCUTRACEX_EMBER_FAMILY` | `1` downloads the optional ML family model at install |
+| `DOCUTRACEX_AUTO_MODULES` | YARA, Machine Learning and C2 run on demand (their tabs); list any of `yara,ml,c2` to run them in every full analysis too |
 | `DOCUTRACEX_RIZIN` | an existing `rizin` (with the rz-ghidra plugin) for the code analysis |
 | `DOCUTRACEX_CODE_AUTO` | `0` turns the automatic code analysis off (default on) |
 | `DOCUTRACEX_CODE_BUDGET_MIN`, `DOCUTRACEX_CODE_MAX_MIN`, `DOCUTRACEX_CODE_MEM_MB` | code analysis limits per binary: budget (30 min), hard limit while still producing (40 min), memory (3072 MB) |
