@@ -2105,7 +2105,7 @@ def _x64_link(code: bytes, meta: dict, text_rva: int, rvas: dict[str, int]) -> b
     import struct as _st
     out = bytearray(code)
     for pos, kind, target in meta["_fix"]:
-        dest = text_rva + meta[target] if kind == "rel32" else rvas[target]
+        dest = text_rva + meta[target] if kind in ("rel32", "riplabel") else rvas[target]
         _st.pack_into("<i", out, pos, dest - (text_rva + pos + 4))
     return bytes(out)
 
@@ -2193,7 +2193,9 @@ def _go_pclntab_funcs(funcs: list[tuple[str, int, int]], extra: list[str], text_
 
 def go_code_exe() -> bytes:
     """Go-like PE32+ with real functions in pclntab: main.main → main.decryptConfig
-    (XOR loop) → main.beacon → net/http.(*Client).Do(C2 URL as Go string)."""
+    (XOR loop), then ``go func(){ beacon() }()`` (closure main.main.func1 handed
+    to runtime.newproc) and a deferred call; main.beacon → net/http.(*Client).Do
+    (C2 URL as Go string)."""
     import struct as _st
 
     import binkit as bk
@@ -2202,15 +2204,36 @@ def go_code_exe() -> bytes:
     http = [("rip", "url", b"\x48\x8d\x05"),                       # lea rax, [rip+url]
             b"\xbb" + _st.pack("<I", len(CODE_URL)),                 # mov ebx, len  (Go string: ptr + len)
             ("rel32", "httpdo", b"\xe8")]                           # call net/http.(*Client).Do
-    body = _code_body(http) + [("label", "httpdo"), b"\xc3", b"\xcc" * 15, ("label", "end")]
+    body = [
+        ("label", "main"),
+        b"\x48\x83\xec\x28",                                    # sub rsp, 0x28
+        ("rip", "blob", b"\x48\x8d\x0d"),                          # lea rcx, [rip+blob]
+        ("rel32", "decode", b"\xe8"),                              # call main.decryptConfig
+        ("riplabel", "func1", b"\x48\x8d\x05"),                    # lea rax, [main.main.func1]
+        ("rel32", "newproc", b"\xe8"),                             # call runtime.newproc   (go func1())
+        ("rel32", "deferreturn", b"\xe8"),                         # call runtime.deferreturn
+        b"\x48\x83\xc4\x28\xc3",                                # add rsp, 0x28 ; ret
+        b"\xcc" * 3,
+        *_code_body([])[7:14],                                     # decode: the XOR loop
+        ("label", "beacon"),
+        b"\x48\x83\xec\x28", *http, b"\x48\x83\xc4\x28\xc3", b"\xcc" * 3,
+        ("label", "func1"),
+        b"\x48\x83\xec\x28", ("rel32", "beacon", b"\xe8"), b"\x48\x83\xc4\x28\xc3", b"\xcc" * 3,
+        ("label", "httpdo"), b"\xc3", b"\xcc" * 15,
+        ("label", "newproc"), b"\xc3", b"\xcc" * 15,
+        ("label", "deferreturn"), b"\xc3", b"\xcc" * 15,
+        ("label", "end")]
     code, meta = _x64(body)
     blob = "\x1f\x2e\x3d\x4c" * 8
     bid = b'\xff Go build ID: "Zq9xWv8uTs7rQp6oNm5l/Kj4iHg3fEd2cBa1zYx0w/Vu9tSr8qPo7nMl6kJi5h/Gf4eDc3bAa2zZy1xW"\n \xff'
     funcs = [("main.main", meta["main"], meta["decode"] - meta["main"]),
              ("main.decryptConfig", meta["decode"], meta["beacon"] - meta["decode"]),
-             ("main.beacon", meta["beacon"], meta["httpdo"] - meta["beacon"]),
-             ("net/http.(*Client).Do", meta["httpdo"], meta["end"] - meta["httpdo"])]
-    extra = [n for n in GO_STD if n != "net/http.(*Client).Do"]
+             ("main.beacon", meta["beacon"], meta["func1"] - meta["beacon"]),
+             ("main.main.func1", meta["func1"], meta["httpdo"] - meta["func1"]),
+             ("net/http.(*Client).Do", meta["httpdo"], meta["newproc"] - meta["httpdo"]),
+             ("runtime.newproc", meta["newproc"], meta["deferreturn"] - meta["newproc"]),
+             ("runtime.deferreturn", meta["deferreturn"], meta["end"] - meta["deferreturn"])]
+    extra = [n for n in GO_STD if n not in ("net/http.(*Client).Do", "runtime.newproc")]
     base = 0x140000000                                              # binkit PE32+ image base, .text at RVA 0x1000
     text_va = base + 0x1000
     pcln = _go_pclntab_funcs(funcs, extra, text_va)

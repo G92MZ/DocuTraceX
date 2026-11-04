@@ -5072,6 +5072,7 @@ function goObjectTabs(o, i) {
     { id: "functions", label: c.functions_analyzed ? `Functions (${c.functions_analyzed})` : "Functions", html: cxSlot(c, sha, "go", "functions", g) },
     { id: "code", label: "Code", html: cxSlot(c, sha, "go", "code", g) },
     { id: "strings", label: c.strings ? `Strings (${c.strings})` : "Strings", html: cxSlot(c, sha, "go", "strings", g) },
+    { id: "graph", label: "Call graph", html: cxSlot(c, sha, "go", "graph", g) },
     { id: "deps", label: deps.length ? `Dependencies (${deps.length})` : "Dependencies", html: goDeps(o) },
   ]);
 }
@@ -5095,6 +5096,7 @@ const _cx = { data: {}, fn: {}, sel: {}, flt: {}, loading: {} };
 const CX_CAT_CLS = { process: "bad", exec: "bad", network: "warn", crypto: "warn", persistence: "warn",
                      transform: "muted", files: "muted", recon: "muted" };
 const cxHex = (n) => (n == null ? "" : "0x" + Number(n).toString(16));
+const cxTraits = (ts) => (ts || []).map((t) => `<span class="badge cg-trait">${escapeHtml(t)}</span>`).join(" ");
 const cxCats = (cs) => (cs || []).map((c) => `<span class="badge badge-${CX_CAT_CLS[c] || "muted"}">${escapeHtml(c)}</span>`).join(" ");
 
 function cxOk(c) { return c && c.sha256 && (c.status === "ok" || c.status === "partial"); }
@@ -5163,7 +5165,7 @@ function cxFnRows(d, flt) {
       <th title="bytes">Size</th><th title="basic blocks">Blocks</th><th>Callers</th><th>Callees</th><th>Strings</th><th></th></tr></thead><tbody>${
     shown.map((f) => `<tr class="cx-row" data-cx-open="${f.addr}">
       <td>${f.rank || ""}</td><td class="mono cx-name" title="${escapeHtml((f.reasons || []).join("\n"))}">${escapeHtml(f.name)}</td>
-      <td class="mono">${cxHex(f.addr)}</td><td>${f.score || 0}</td><td>${cxCats(f.categories)}</td>
+      <td class="mono">${cxHex(f.addr)}</td><td>${f.score || 0}</td><td>${cxCats(f.categories)} ${cxTraits(f.traits)}</td>
       <td>${f.size || ""}</td><td>${f.blocks || ""}</td><td>${f.callers || 0}</td><td>${f.callees || 0}</td><td>${f.strings || 0}</td>
       <td>${f.decompiled ? '<span class="badge badge-ok" title="pseudocode ready">C</span>' : ""}</td></tr>`).join("")}</tbody></table></div>`;
 }
@@ -5218,7 +5220,9 @@ function cxFnView(k, d, f) {
   return `<div class="cx-fnhead">
       <div><span class="mono cx-title">${e(f.name)}</span> <span class="hint-line">${cxHex(f.addr)} · ${f.size || 0} bytes · ${f.blocks || 0} blocks
         · complexity ${f.complexity ?? "?"}${f.loops ? ` · ${f.loops} loop(s)` : ""}${f.xor_ops ? ` · ${f.xor_ops} XOR` : ""} · score ${f.score || 0} (#${f.rank || "?"})</span></div>
-      <div>${cxCats(f.categories)} ${(f.reasons || []).map((r) => `<span class="hint-line">· ${e(r)}</span>`).join(" ")}</div>
+      <div>${cxCats(f.categories)} ${cxTraits(f.traits)} ${(f.reasons || []).map((r) => `<span class="hint-line">· ${e(r)}</span>`).join(" ")}</div>
+      ${(f.spawns || []).length ? `<div class="hint-line">launches goroutine(s): ${f.spawns.map((x) => `<button type="button" class="cx-link" data-cx-open="${x.addr}">${e(x.name)}</button>`).join(" ")}</div>` : ""}
+      ${f.indirect_calls ? `<div class="hint-line">${f.indirect_calls} indirect call(s) whose target is computed at run time: not resolved statically</div>` : ""}
     </div>
     <div class="cx-split">
       <div><h4 class="formats-title">Pseudocode <span class="hint-line">rz-ghidra${dec.on_demand ? " · on demand" : ""}</span></h4>${pseudo}</div>
@@ -5337,6 +5341,216 @@ async function cxRender(el, caseId) {
   } else if (part === "apis") {
     el.innerHTML = cxApis(k, d);
     cxWireOpen(el, caseId, sha, mode, group);
+  } else if (part === "graph") {
+    cgRender(el, caseId, sha, mode, group);
+  }
+}
+
+
+// --- Call graph + CFG (SVG, layered layout; no external library) -------------------
+const _cg = { data: {}, center: {}, cfg: {} };
+
+async function cgLoad(caseId, sha, mode) {
+  const k = cxKey(caseId, sha, mode);
+  if (_cg.data[k]) return _cg.data[k];
+  const r = await fetch(`/api/cases/${encodeURIComponent(caseId)}/code/${sha}/${mode}/graph`);
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.detail || r.status);
+  j.byId = new Map(j.nodes.map((n) => [String(n.id), n]));
+  j.out = new Map(); j.in = new Map();
+  j.edges.forEach((e) => {
+    const a = String(e.from), b = String(e.to);
+    (j.out.get(a) || j.out.set(a, []).get(a)).push(e);
+    (j.in.get(b) || j.in.set(b, []).get(b)).push(e);
+  });
+  _cg.data[k] = j;
+  return j;
+}
+
+function cgShort(name, n) {
+  name = String(name || "");
+  return name.length > n ? "…" + name.slice(-(n - 1)) : name;
+}
+
+function cgEgo(g, center, depth) {
+  // columns: callers (depth..1), center, callees (1..depth); at most 12 per column
+  const cols = [[String(center)]];
+  const seen = new Set(cols[0]);
+  const step = (frontier, dir) => {
+    const next = [];
+    frontier.forEach((id) => ((dir < 0 ? g.in : g.out).get(id) || []).forEach((e) => {
+      const o = String(dir < 0 ? e.from : e.to);
+      if (!seen.has(o)) { seen.add(o); next.push(o); }
+    }));
+    return next;
+  };
+  let left = [String(center)], right = [String(center)];
+  const L = [], R = [];
+  for (let d = 0; d < depth; d++) {
+    left = step(left, -1); right = step(right, 1);
+    if (left.length) L.unshift(left); if (right.length) R.push(right);
+  }
+  return [...L, ...cols, ...R].map((c) => ({ ids: c.slice(0, 12), more: Math.max(0, c.length - 12) }));
+}
+
+function cgEgoSvg(g, center, depth) {
+  const cols = cgEgo(g, center, depth);
+  const W = 230, H = 34, GX = 70, GY = 12, PAD = 10;
+  const pos = new Map();
+  const maxRows = Math.max(...cols.map((c) => c.ids.length + (c.more ? 1 : 0)));
+  const height = PAD * 2 + maxRows * (H + GY);
+  cols.forEach((c, ci) => {
+    const n = c.ids.length + (c.more ? 1 : 0);
+    const y0 = PAD + (height - PAD * 2 - n * (H + GY)) / 2;
+    c.ids.forEach((id, ri) => pos.set(id, { x: PAD + ci * (W + GX), y: y0 + ri * (H + GY) }));
+    if (c.more) c.moreAt = { x: PAD + ci * (W + GX), y: y0 + c.ids.length * (H + GY) };
+  });
+  const width = PAD * 2 + cols.length * (W + GX) - GX;
+  let edges = "";
+  g.edges.forEach((e) => {
+    const a = pos.get(String(e.from)), b = pos.get(String(e.to));
+    if (!a || !b || a.x === b.x) return;
+    const x1 = a.x + W, y1 = a.y + H / 2, x2 = b.x, y2 = b.y + H / 2;
+    if (x2 < x1) return;
+    const mx = (x1 + x2) / 2;
+    edges += `<path class="cg-edge${e.kind === "goroutine" ? " cg-go" : ""}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" marker-end="url(#cg-arrow)"/>`;
+  });
+  let boxes = "";
+  pos.forEach((p, id) => {
+    const n = g.byId.get(id) || { name: id };
+    const cls = ["cg-node", id === String(center) ? "is-center" : "", n.external ? "is-ext" : "",
+      (n.categories || []).length ? `cat-${CX_CAT_CLS[n.categories[0]] || "muted"}` : ""].join(" ");
+    const tags = [...(n.categories || []), ...(n.traits || []).filter((t) => t !== "library")].slice(0, 3).join(" · ");
+    boxes += `<g class="${cls}" data-cg-node="${escapeHtml(id)}" transform="translate(${p.x},${p.y})">
+      <title>${escapeHtml(n.name)}${tags ? "\n" + escapeHtml(tags) : ""}${n.score ? `\nscore ${n.score}` : ""}</title>
+      <rect width="${W}" height="${H}" rx="6"/>
+      <text x="8" y="14" class="cg-name">${escapeHtml(cgShort(n.name, 34))}</text>
+      <text x="8" y="27" class="cg-tags">${escapeHtml(tags || (n.external ? "library" : ""))}</text></g>`;
+  });
+  cols.forEach((c) => { if (c.more) boxes += `<text x="${c.moreAt.x + 8}" y="${c.moreAt.y + 20}" class="cg-tags">+${c.more} more</text>`; });
+  return `<svg class="cg-svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+    <defs><marker id="cg-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="cg-arrowhead"/></marker></defs>
+    ${edges}${boxes}</svg>`;
+}
+
+function cgCfgSvg(cfg, entry) {
+  const blocks = cfg.blocks || [];
+  if (!blocks.length) return '<p class="hint-line">No basic blocks.</p>';
+  const by = new Map(blocks.map((b) => [b.addr, b]));
+  const layer = new Map();
+  const start = by.has(entry) ? entry : blocks[0].addr;
+  layer.set(start, 0);
+  const q = [start];
+  while (q.length) {
+    const u = q.shift();
+    (cfg.edges || []).filter((e) => e.from === u).forEach((e) => {
+      if (!layer.has(e.to)) { layer.set(e.to, layer.get(u) + 1); q.push(e.to); }
+    });
+  }
+  let maxL = Math.max(...layer.values());
+  blocks.forEach((b) => { if (!layer.has(b.addr)) layer.set(b.addr, ++maxL); });
+  const rows = [];
+  blocks.forEach((b) => { const l = layer.get(b.addr); (rows[l] = rows[l] || []).push(b); });
+  const W = 300, LH = 14, GX = 30, GY = 40, PAD = 14, SHOW = 7;
+  const hOf = (b) => 22 + LH * Math.min(SHOW + 1, (b.ops || []).length || 1);
+  const pos = new Map();
+  let y = PAD, width = 0;
+  rows.forEach((r) => {
+    if (!r) return;
+    r.sort((a, b) => a.addr - b.addr);
+    const h = Math.max(...r.map(hOf));
+    r.forEach((b, i) => pos.set(b.addr, { x: PAD + i * (W + GX), y, h: hOf(b) }));
+    width = Math.max(width, PAD * 2 + r.length * (W + GX) - GX);
+    y += h + GY;
+  });
+  const height = y - GY + PAD + 20;
+  width += 40;
+  let edges = "";
+  (cfg.edges || []).forEach((e) => {
+    const a = pos.get(e.from), b = pos.get(e.to);
+    if (!a || !b) return;
+    const cls = `cg-edge cfg-${e.kind}`;
+    if (b.y > a.y) {
+      const x1 = a.x + W / 2 + (e.kind === "fail" ? 40 : e.kind === "jump" ? -40 : 0), y1 = a.y + a.h;
+      const x2 = b.x + W / 2, y2 = b.y;
+      edges += `<path class="${cls}" d="M${x1},${y1} C${x1},${y1 + 25} ${x2},${y2 - 25} ${x2},${y2}" marker-end="url(#cfg-arrow)"/>`;
+    } else {                                               // back edge: loop, drawn around the right side
+      const x1 = a.x + W, y1 = a.y + a.h - 8, x2 = b.x + W, y2 = b.y + 8, bend = Math.max(x1, x2) + 30;
+      edges += `<path class="${cls} cfg-back" d="M${x1},${y1} C${bend},${y1} ${bend},${y2} ${x2},${y2}" marker-end="url(#cfg-arrow)"/>`;
+    }
+  });
+  let boxes = "";
+  blocks.forEach((b) => {
+    const p = pos.get(b.addr);
+    const ops = b.ops || [];
+    const lines = ops.slice(0, SHOW).map((o, i) => `<text x="8" y="${30 + i * LH}" class="cfg-op">${escapeHtml(cgShort(o.disasm || "", 44))}</text>`).join("");
+    const more = ops.length > SHOW ? `<text x="8" y="${30 + SHOW * LH}" class="cg-tags">… ${b.ninstr - SHOW} more</text>` : "";
+    boxes += `<g transform="translate(${p.x},${p.y})" class="cfg-block"><rect width="${W}" height="${p.h}" rx="5"/>
+      <text x="8" y="14" class="cg-tags">${cxHex(b.addr)} · ${b.ninstr} instr.</text>${lines}${more}</g>`;
+  });
+  return `<svg class="cg-svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+    <defs><marker id="cfg-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="cg-arrowhead"/></marker></defs>
+    ${edges}${boxes}</svg>`;
+}
+
+function cgPaths(g) {
+  const nm = (id) => (g.byId.get(String(id)) || { name: String(id) }).name;
+  if (!g.paths.length) return '<p class="hint-line">No function with a sensitive behaviour (network, execution, injection, persistence, crypto).</p>';
+  return g.paths.map((p) => p.path
+    ? `<div class="cg-path">${p.path.map((id) => `<button type="button" class="cx-link" data-cg-go="${escapeHtml(String(id))}">${escapeHtml(cgShort(nm(id), 40))}</button>`).join(' <span class="hint-line">→</span> ')}</div>`
+    : `<div class="cg-path"><span class="mono">${escapeHtml(nm(p.target))}</span> <span class="hint-line">— ${escapeHtml(p.note)}</span></div>`).join("");
+}
+
+async function cgRender(el, caseId, sha, mode, group) {
+  const k = cxKey(caseId, sha, mode);
+  let g;
+  try { g = await cgLoad(caseId, sha, mode); } catch (err) {
+    el.innerHTML = `<p class="bad-text">Could not load the call graph: ${escapeHtml(String(err.message || err))}</p>`;
+    return;
+  }
+  const userNodes = g.nodes.filter((n) => !n.external);
+  if (!userNodes.length) { el.innerHTML = '<p class="hint-line">No functions.</p>'; return; }
+  const center = _cg.center[k] ?? String((g.byId.get(String(_cx.sel[k])) || g.byId.get(String(g.roots[0])) || userNodes[0]).id);
+  _cg.center[k] = center;
+  const depth = _cg.depth || 2;
+  const cn = g.byId.get(center) || {};
+  const opts = userNodes.slice().sort((a, b) => b.score - a.score).slice(0, 400).map((n) =>
+    `<option value="${escapeHtml(String(n.id))}"${String(n.id) === center ? " selected" : ""}>${escapeHtml(n.name)} (${n.score})</option>`).join("");
+  el.innerHTML = `<div class="cx-toolbar"><select class="cg-pick">${opts}</select>
+      <label class="hint-line">depth <select class="cg-depth">${[1, 2, 3].map((d) => `<option${d === depth ? " selected" : ""}>${d}</option>`).join("")}</select></label>
+      <span class="hint-line">${g.nodes.length} nodes · ${g.edges.length} edges · ${g.unresolved} unresolved indirect call(s) — click a box to centre it, double-click to open it in Code</span></div>
+    <div class="cg-legend hint-line"><span class="cg-key"></span> call <span class="cg-key cg-go"></span> goroutine (go f())
+      <span class="cg-key is-ext"></span> library / API · callers on the left, callees on the right</div>
+    <div class="cg-wrap">${cgEgoSvg(g, center, depth)}</div>
+    <h4 class="formats-title">Paths from the entry points to sensitive code</h4><div class="cx-scroll cx-small">${cgPaths(g)}</div>
+    <h4 class="formats-title">Control flow — <span class="mono">${escapeHtml(cn.name || "")}</span>
+      <span class="hint-line"><span class="cg-key cfg-jump"></span> taken <span class="cg-key cfg-fail"></span> not taken <span class="cg-key cfg-always"></span> always / back edge = loop</span></h4>
+    <div class="cg-wrap cg-cfg"><p class="hint-line">${cn.external ? "Library function: no control flow (it is not part of the analysed code)." : "Loading…"}</p></div>`;
+  const go = (id) => { _cg.center[k] = String(id); cgRender(el, caseId, sha, mode, group); };
+  el.querySelector(".cg-pick").addEventListener("change", (ev) => go(ev.target.value));
+  el.querySelector(".cg-depth").addEventListener("change", (ev) => { _cg.depth = Number(ev.target.value); go(center); });
+  el.querySelectorAll("[data-cg-node]").forEach((n) => {
+    n.addEventListener("click", () => go(n.getAttribute("data-cg-node")));
+    n.addEventListener("dblclick", () => { const id = n.getAttribute("data-cg-node"); if (!id.startsWith("ext:")) cxOpen(caseId, sha, mode, group, id); });
+  });
+  el.querySelectorAll("[data-cg-go]").forEach((b) => b.addEventListener("click", () => go(b.getAttribute("data-cg-go"))));
+  if (cn.external) return;
+  const box = el.querySelector(".cg-cfg");
+  const ck = `${k}|${center}`;
+  try {
+    let cfg = _cg.cfg[ck];
+    if (!cfg) {
+      const r = await fetch(`/api/cases/${encodeURIComponent(caseId)}/code/${sha}/${mode}/fn/${center}/cfg`);
+      cfg = await r.json();
+      if (!r.ok) throw new Error(cfg.detail || r.status);
+      _cg.cfg[ck] = cfg;
+    }
+    if (_cg.center[k] !== center) return;
+    box.innerHTML = cfg.status === "ok"
+      ? `${cfg.truncated ? '<p class="hint-line">Large function: first blocks only.</p>' : ""}<p class="hint-line">${cfg.blocks.length} block(s), ${cfg.edges.length} edge(s), ${cfg.loops} back edge(s)</p>${cgCfgSvg(cfg, Number(center))}`
+      : `<p class="hint-line">No control-flow graph: ${escapeHtml(cfg.detail || cfg.status)}</p>`;
+  } catch (err) {
+    box.innerHTML = `<p class="bad-text">${escapeHtml(String(err.message || err))}</p>`;
   }
 }
 
@@ -5363,6 +5577,7 @@ function paneCode(cm) {
       { id: "code", label: "Code", html: cxSlot(c, o.sha256, "native", "code", g) },
       { id: "strings", label: `Strings (${c.strings || 0})`, html: cxSlot(c, o.sha256, "native", "strings", g) },
       { id: "apis", label: `APIs (${c.apis || 0})`, html: cxSlot(c, o.sha256, "native", "apis", g) },
+      { id: "graph", label: "Call graph", html: cxSlot(c, o.sha256, "native", "graph", g) },
     ])}`;
   };
   const body = !objs.length ? '<p class="hint-line">No native object could be analysed.</p>'
