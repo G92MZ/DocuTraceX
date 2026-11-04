@@ -214,6 +214,10 @@ _TOOL_OUTPUT_LOC = re.compile(r"(?:^|[/› ])tools/[^/]+/output$")
 _DIGEST_LABEL = re.compile(r"(?i)\b(?:md5|sha-?1|sha-?256|sha-?512|hash)\s*[:=]\s*['\"]?$")
 
 
+_HEX_BLOB = re.compile(r"(?<![A-Fa-f0-9])(?:[A-Fa-f0-9]{64,}[ \t]*\r?\n\s*){2,}[A-Fa-f0-9]{16,}")
+_HEX_DATA = re.compile(r"(?i)0000|ffff|504b0304|3c3f786d6c")
+
+
 def _random_hex(value: str) -> bool:
     """A digest is random-looking: no long runs of one nibble (``00000000``,
     ``ffffffff`` — padding in a hex dump) and enough distinct hex digits."""
@@ -222,6 +226,7 @@ def _random_hex(value: str) -> bool:
 
 
 def _clean_url(url: str) -> str:
+    url = re.sub(r"\[[A-Za-z_]*$", "", url)       # fwlink…[VSDNETURLMSG: an MSI property after it
     return url.rstrip(".,;:)]}'\"")
 
 
@@ -257,6 +262,44 @@ def _known_tld(domain: str, strict: bool = False) -> bool:
             len(tld) == 2 and len(domain.split(".")) >= 3
         )
     return True
+
+
+# Certificate infrastructure (CRL / OCSP / CA certs / CPS of the public CAs):
+# every signed binary carries them, they are not indicators.
+_CA_HOST = re.compile(
+    r"(?:^|\.)(?:digicert|sectigo|ssl|globalsign|usertrust|comodoca|comodo|verisign|symantec|symcb|symcd"
+    r"|entrust|godaddy|letsencrypt|lencr|amazontrust|thawte|geotrust|certum|identrust|quovadisglobal"
+    r"|starfieldtech|rapidssl)\.(?:com|net|org|pl)$")
+_MS_PKI = re.compile(r"(?i)^https?://(?:www|crl|ocsp|pki)\.microsoft\.com/(?:pki|pkiops)/")
+# Hosts quoted by open-source license / credit text bundled with runtimes
+# (CPython's LICENSE, bzip2, Apache / OSI notices).
+_REFERENCE_HOSTS = {
+    "beopen.com", "www.beopen.com", "pythonlabs.com", "www.pythonlabs.com", "cwi.nl", "www.cwi.nl",
+    "cnri.reston.va.us", "www.cnri.reston.va.us", "hdl.handle.net", "opensource.org", "www.opensource.org",
+    "apache.org", "www.apache.org", "xkcd.com", "crl.microsoft.com",
+}
+_REFERENCE_EMAILS = {"jseward@acm.org", "jseward@bzip.org", "nadeem.vawda@gmail.com", "jloup@gzip.org",
+                     "madler@alumni.caltech.edu"}
+
+
+def _is_reference_host(domain: str) -> bool:
+    return domain in _REFERENCE_HOSTS or bool(_CA_HOST.search(domain))
+
+
+# "obj.member" that is code, not a host: an identifier everybody uses as the
+# object (this.top, self.af, builtins.id, thread.local) or a TLD that in
+# practice is a property name / reserved (.name, .invalid, .local, .windows).
+_CODE_OBJECTS = {"this", "self", "builtins", "collections", "thread", "os", "sys", "window", "document",
+                 "math", "proto", "prototype", "props", "prop", "options", "config", "params", "data"}
+_MEMBER_TLDS = {"invalid", "local", "localhost", "name", "windows", "abc", "data", "style", "properties",
+                "property", "target", "events", "observer", "py"}
+# Minified JS / code bundles: count of code tokens per text
+_CODE_TOKENS = re.compile(r"\bfunction\b|=>|\bthis\.|\bvar |\breturn\b|\};|\)\{")
+
+
+def _code_like(text: str) -> bool:
+    n = len(_CODE_TOKENS.findall(text[:200000]))
+    return n >= 10 and n * 400 >= min(len(text), 200000)
 
 
 # Code namespaces that look like hosts (java.io, javax.crypto, android.os…).
@@ -478,6 +521,14 @@ def _scan_text(
         ):
             continue
         args = match.group("args").split()
+        # code, not a command line: an assignment / comparison (cmd = name,
+        # nc += prev, cmd in topics), a printf format (type %.100s, at %p)
+        if (re.fullmatch(r"(?:[=!<>+*/%&|^-]=?|==|in|is|and|or|not)", args[0])
+                or re.match(r"%[-+ #0]*\d*(?:\.\d+)?[a-z]", args[0])
+                or args[0].startswith("//")
+                or (match.group("cmd").lower() in _AMBIGUOUS_COMMANDS and not match.group("exe")
+                    and re.fullmatch(r"([\"'])[a-z]+\1", args[0], re.I) and len(args) == 1)):
+            continue
         # prose, not a command line ("PowerShell deobfuscated before analysis")
         if len(args) >= 2 and all(re.fullmatch(r"[a-z]{3,}", w) for w in args[:4]):
             continue
@@ -506,7 +557,8 @@ def _scan_text(
         url_spans.append((match.start(), match.start() + len(url)))
         domain = _domain_of(url)
 
-        if domain in _NAMESPACE_HOSTS or _is_tool_url(url):
+        if domain in _NAMESPACE_HOSTS or _is_tool_url(url) or (
+                domain and _is_reference_host(domain)) or _MS_PKI.match(url):
             continue
 
         tld = (domain or "").rsplit(".", 1)[-1]
@@ -543,7 +595,7 @@ def _scan_text(
             continue
 
         before = text[max(0, match.start() - 14):match.start()]
-        if _VERSION_BEFORE.search(before) or (
+        if _VERSION_BEFORE.search(before) or re.search(r"\d\.$", before) or (
             text[match.end():match.end() + 1] == "."
             and text[match.end() + 1:match.end() + 2].isdigit()
         ):
@@ -563,8 +615,15 @@ def _scan_text(
             )
 
     tool_output = bool(_TOOL_OUTPUT_LOC.search(location or ""))
+    # hex-encoded data split in lines (a hash list has no 0000 / PK runs)
+    blobs = [(m.start(), m.end()) for m in _HEX_BLOB.finditer(text) if _HEX_DATA.search(m.group(0))]
     for match in _HASH_RE.finditer(text):
         if not _random_hex(match.group(0)):
+            continue
+        # a line of a hex blob (hex dump / hex-encoded data split in lines), or
+        # the head of a WIN_CERTIFICATE (dwLength, revision 0x200, PKCS#7)
+        if (any(a <= match.start() < b for a, b in blobs)
+                or re.match(r"(?i)[0-9a-f]{8}000202003082", match.group(0))):
             continue
         if tool_output and _DIGEST_LABEL.search(text[max(0, match.start() - 24):match.start()]):
             continue
@@ -575,6 +634,8 @@ def _scan_text(
 
     for match in _EMAIL_RE.finditer(text):
         email = match.group(0).rstrip(".,;:")
+        if email.lower() in _REFERENCE_EMAILS:
+            continue
         if (len(email) <= 254 and len(email.split("@", 1)[0]) <= 64
                 and tlds.is_known(email.rsplit(".", 1)[-1])):
             col.add(
@@ -629,6 +690,7 @@ def _scan_text(
             or len(value) < 4
             or not _valid_filepath(value)
             or _is_self_path(value)
+            or re.match(r"(?i)[a-z]:\\a\\(?:\d+|_work)\\", value)   # Azure / GitHub build agent (D:\a\1\s\…)
         ):
             continue
 
@@ -646,6 +708,7 @@ def _scan_text(
                 _ctx(text, match.start(), match.end()),
             )
 
+    code_text = _code_like(text)
     for match in _DOMAIN_RE.finditer(text):
         if any(a <= match.start() < b for a, b in url_spans):
             continue
@@ -662,6 +725,12 @@ def _scan_text(
             or domain in _NAMESPACE_HOSTS
             or (domain.endswith(".so") and re.match(r"\.\d", text[match.end():match.end() + 2]))  # libfoo.so.1
             or _CODE_MEMBER_AFTER.match(text, match.end())              # a.download = …, obj.show(…)
+            or _is_reference_host(domain)
+            or (len(labels := domain.split(".")) == 2 and labels[1] in _MEMBER_TLDS)
+            or labels[0] in _CODE_OBJECTS
+            or text[match.start() - 1:match.start()] == "]"            # [MsiProperty].NET
+            # bundled code: a bare host is only one written as a string literal
+            or (code_text and text[match.start() - 1:match.start()] not in ("\"", "'", "`", "/", "@"))
         ):
             continue
 
@@ -784,7 +853,13 @@ _MODULE_SKIP_PATHS = {
     "msi": re.compile(
         r"items\[\d+\]/(?:file|kind|machine|subsystem|imports_dll(?:\[\d+\])?|capa(?:[/\[].*)?"
         r"|lief/(?:libraries|imports|delay_imports|export_name|exports|sections|format|resource_types|linker"
-        r"|mitigations|dll_characteristics)(?:[/\[].*)?)$"),
+        r"|mitigations|dll_characteristics|overlay/head)(?:[/\[].*)?"
+        # certificate bookkeeping (serials, thumbprints, CA issuer / policy OIDs)
+        r"|(?:signature|lief/authenticode|lief/signatures)/.*(?:serial_number|serial|thumbprint"
+        r"|certificate_policies(?:\[\d+\])?|issuer)"
+        r"|extraction/entries\[\d+\]/(?:name|path|stored_path))$"),
+    # the C2 extractors' own bookkeeping (step names, which tool ran)
+    "c2": re.compile(r"^(?:timings(?:[/\[].*)?|configs\[\d+\]/tools/[^/]+/tool)$"),
     # emldump's dump of a non-text MIME part (an RTF / Office / binary
     # attachment) is markup and hex, not prose: the attachment itself is
     # analysed as a nested child, which is where its IOCs come from.

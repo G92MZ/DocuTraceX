@@ -196,6 +196,11 @@ Indicators that must **not** appear in the IOCs tab:
   - the smuggling page's `a.download = …` is not the domain `a.download`;
   - the MD5s that rtfobj prints for the objects it carves (`MD5 = '…'`) are not hashes of the sample.
 - **`sample_marker_drop.js`**: the dropper writes a 1-byte lock file and a real `upd.ps1`. Only the `.ps1` becomes a nested child. Tiny non-code drops and stages (markers, counters, "ok") are not stages; short code (a `.bat` with `start x.exe`) still is.
+- **`sample_ioc_noise.bat`** — signed-MSI / bundled-runtime noise is dropped: CA hosts (`crl3.digicert.com`, `sectigo.com/CPS`),
+  CPython license hosts (`www.pythonlabs.com`), code members (`builtins.id`, `self.af`, `os.py`, `1.invalid`, `action.name`),
+  MSI properties (`[RuntimeVsdnetRTName].NET`), OID tails (`1.3.6.1`), build-agent paths (`D:\a\1\s\…`), `cmd = 'LIST'`, `nc += prev`.
+  Real indicators (`billing-portal.example`, `C:\Users\Public\…`) still appear. Also dropped in real MSIs: certificate serials /
+  thumbprints / issuers, hex blobs split in lines, minified-JS members (`e.top`, `this.data`).
 - **Any PE / ELF analysed with capa** — capability and ATT&CK names ("query or enumerate registry key", "Query Registry") are not commands.
 
 ## Go binaries (Components → Go)
