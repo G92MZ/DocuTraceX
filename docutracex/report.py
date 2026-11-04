@@ -129,16 +129,27 @@ def _c2_section(c2: dict[str, Any] | None, findings: list[dict[str, Any]]) -> st
             "<th>Mark</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>")
 
 
-def _nested_section(nested: dict[str, Any] | None) -> str:
+def _nested_section(nested: dict[str, Any] | None, confirmed: set[tuple[str, str, str]]) -> str:
+    """Only what the analyst confirmed: the nested objects that carry a finding
+    marked True positive (and the path down to them), with just those findings."""
     tree = (nested or {}).get("tree", [])
     if not tree:
         return ""
 
+    def keep(f: dict[str, Any]) -> bool:
+        return (f.get("rule", ""), f.get("detail", ""), f.get("location", "")) in confirmed
+
+    def count(nodes: list[dict[str, Any]]) -> int:
+        return sum(1 + count(n.get("children") or []) for n in nodes or [])
+
     def node(n: dict[str, Any]) -> str:
-        fnd = n.get("findings", [])
+        fnd = [f for f in n.get("findings", []) if keep(f)]
+        children = "".join(node(c) for c in n.get("children", []))
+        if not fnd and not children:
+            return ""
         head = (f"<div class='nnode'><b>{_e(n.get('filename'))}</b> "
                 f"<span class='chip'>{_e(n.get('kind'))}</span> "
-                f"<span class='muted'>{len(fnd)} finding(s)</span>")
+                f"<span class='muted'>{len(fnd)} confirmed finding(s)</span>")
         if n.get("decrypted_from"):
             recipe = " → ".join(n.get("recipe") or [])
             head += (f"<div class='muted'>decoded/decrypted from {_e(n['decrypted_from'])}"
@@ -148,10 +159,14 @@ def _nested_section(nested: dict[str, Any] | None) -> str:
             f"color:{_SEV_COLOR.get(f.get('severity'), '#888')}'>{_e(f.get('severity'))}</span> "
             f"<code>{_e(f.get('tool'))}/{_e(f.get('rule'))}</code> {_e(f.get('detail'))}</div>"
             for f in fnd)
-        children = "".join(node(c) for c in n.get("children", []))
         return head + inner + (f"<div class='nchildren'>{children}</div>" if children else "") + "</div>"
 
-    return "<h2>Nested (recursive) analysis</h2>" + "".join(node(n) for n in tree)
+    body = "".join(node(n) for n in tree)
+    total = count(tree)
+    note = (f"<p class='muted'>Only the nested objects with a finding you marked <b>True positive</b> "
+            f"(and the path down to them). {total} nested object(s) were analysed in total.</p>")
+    return ("<h2>Nested (recursive) analysis</h2>" + note
+            + (body or "<p class='muted'>No nested finding marked True positive.</p>"))
 
 
 def _metadata_section(modules: dict[str, Any]) -> str:
@@ -240,6 +255,7 @@ def build_report_html(analysis_id: str, cases_dir=None, all_iocs: bool = False) 
     # The report shows only the analyst-confirmed (True positive) findings.
     tp_findings = [f for f in findings if (f.get("mark") or {}).get("state") == "true_positive"]
     tp_count = len(tp_findings)
+    confirmed = {(f.get("rule", ""), f.get("detail", ""), f.get("location", "")) for f in tp_findings}
     sev_counts = {s: 0 for s in _SEV_ORDER}
     for f in tp_findings:
         sev_counts[f.get("severity", "info")] = sev_counts.get(f.get("severity", "info"), 0) + 1
@@ -308,7 +324,7 @@ def build_report_html(analysis_id: str, cases_dir=None, all_iocs: bool = False) 
 {_iocs_section(iocs, imarks, all_iocs)}
 {_c2_section(modules.get('c2'), findings)}
 {_ml_section(_ml_enriched(paths), marks_service.read_marks(paths))}
-{_nested_section(modules.get('nested'))}
+{_nested_section(modules.get('nested'), confirmed)}
 {_metadata_section(modules)}
 <div class="muted" style="margin-top:32px">DocuTraceX · static analysis only — nothing in the sample was executed.</div>
 </body></html>"""
