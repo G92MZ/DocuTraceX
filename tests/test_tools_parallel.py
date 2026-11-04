@@ -17,12 +17,15 @@ from docutracex.parsers import pe as pe_mod  # noqa: E402
 
 
 @pytest.fixture()
-def fake_tools(monkeypatch: pytest.MonkeyPatch):
+def fake_tools(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    from docutracex.config import settings
+    monkeypatch.setattr(settings, "cases_dir", tmp_path / "cases")          # the tool cache lives there
+    monkeypatch.setenv("DOCUTRACEX_TOOLS_SKIP_TRUSTED", "0")
     live = {"now": 0, "max": 0, "calls": []}
     lock = threading.Lock()
 
     def tool(name):
-        def run(path):
+        def run(path, *_extra):
             if not Path(path).name.startswith(("k", "a.exe")):     # a run left by another test: not ours
                 return {"status": "ok", "tool": name, **({"strings": []} if name == "floss" else {"capabilities": []})}
             with lock:
@@ -83,3 +86,33 @@ def test_packed_and_huge_are_not_prefetched(tmp_path: Path, fake_tools) -> None:
     packed = tmp_path / "packed.exe"
     packed.write_bytes(bk.pe(bits=32, gui=False, code=b"\xc3" + os.urandom(64 * 1024)))
     assert pe_mod._worth_prefetch(packed) is False
+
+
+def test_cache_across_cases_trusted_skip_and_large_files(tmp_path: Path, fake_tools, monkeypatch: pytest.MonkeyPatch) -> None:
+    p = tmp_path / "a.exe"
+    p.write_bytes(bk.pe(bits=32, gui=False))
+    fake_tools["want"] = 2
+    pe_mod.tools_for(p)
+    n = len(fake_tools["calls"])
+    floss, capa = pe_mod.tools_for(p)                          # same file again (another case): from the cache
+    assert floss.get("cached") and capa.get("cached") and len(fake_tools["calls"]) == n
+    # a library signed by a trusted publisher is not analysed at all
+    monkeypatch.setenv("DOCUTRACEX_TOOLS_SKIP_TRUSTED", "1")
+    from docutracex.parsers import authenticode
+    monkeypatch.setattr(authenticode, "verify", lambda path, **k: {
+        "status": "valid", "signer": {"subject": "CN=Python Software Foundation, O=Python Software Foundation, C=US"}})
+    q = tmp_path / "a.exe"                                    # (the cache is not consulted before the signature)
+    floss, capa = pe_mod._both(q)
+    assert floss["status"] == capa["status"] == "skipped" and floss["trusted_signer"] == "Python Software Foundation"
+    monkeypatch.setattr(authenticode, "verify", lambda path, **k: {"status": "hash_mismatch",
+                                                                    "signer": {"subject": "O=Microsoft Corporation"}})
+    assert pe_mod._trusted_signer(q) is None                   # a broken signature is never trusted
+    # large file: FLOSS without tight strings
+    seen = {}
+    monkeypatch.setattr(pe_mod, "_run_floss", lambda path, extra=None: (seen.__setitem__("x", extra), {"status": "ok"})[1])
+    monkeypatch.setattr(pe_mod, "FLOSS_LARGE_BYTES", 10)
+    monkeypatch.setattr(authenticode, "verify", lambda path, **k: {"status": "not_signed"})
+    big = tmp_path / "big.exe"
+    big.write_bytes(bk.pe(bits=32, gui=False) + b"\x00" * 64)
+    pe_mod._both(big)
+    assert seen["x"] == pe_mod.FLOSS_LARGE_ARGS
