@@ -3464,6 +3464,33 @@ async function showYaraResults(analysisId) {
   wireFileActions(out, analysisId);
 }
 
+// YARA / Machine Learning / C2 run on demand: re-run that module alone on the case.
+async function runModuleOnCase(module, cid, status, btn, label) {
+  if (!cid) { status.textContent = "Choose a case first."; return false; }
+  btn.disabled = true;
+  status.textContent = `${label}…`;
+  try {
+    const rr = await fetch(`/api/cases/${encodeURIComponent(cid)}/rerun`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ module }) }).then((r) => r.json());
+    const tid = rr.task && rr.task.id;
+    startTaskPoller();
+    for (let i = 0; i < 7200 && tid; i++) {
+      const t = (await fetch("/api/tasks").then((r) => r.json())).tasks.find((x) => x.id === tid) || {};
+      if (["completed", "failed", "cancelled"].includes(t.state)) {
+        status.textContent = t.state === "completed" ? "Done." : `Finished: ${t.state}.`;
+        return t.state === "completed";
+      }
+      status.textContent = `${label}… (${t.state || "queued"})`;
+      await new Promise((res) => setTimeout(res, 1000));
+    }
+  } catch (err) {
+    status.textContent = "Failed.";
+  } finally {
+    btn.disabled = false;
+  }
+  return false;
+}
+
 async function scanCaseWithYara() {
   const sel = document.getElementById("yara-case");
   const status = document.getElementById("yara-scan-status");
@@ -3592,10 +3619,10 @@ function hexContext(x) {
 }
 
 function paneYara(yara, findings, analysisId) {
-  if (!yara) return `<p class="hint-line">YARA did not run for this case.</p>`;
+  if (!yara) return `<p class="hint-line">YARA runs on demand: compile your rules and press <b>Scan case</b> in the YARA tab.</p>`;
   if (!yara.rule_count) return `<p class="hint-line">${escapeHtml(yara.error || "No compiled YARA rules.")} Compile rules in the YARA tab, then scan the case.</p>`;
   const scanned = yara.scanned || [];
-  let html = `<p class="hint-line">${yara.rule_count} rule(s) · ${yara.files_scanned} file(s) scanned · ${yara.match_count} match(es). Runs automatically on every analysed object (original, extracted, nested, decoded stages). <b>Hits are not findings until you mark them</b> (True positive, False positive, …): a marked hit joins Findings, and True positives reach the report.</p>`;
+  let html = `<p class="hint-line">${yara.rule_count} rule(s) · ${yara.files_scanned} file(s) scanned · ${yara.match_count} match(es). Runs on demand (Scan case) over every analysed object (original, extracted, nested, decoded stages). <b>Hits are not findings until you mark them</b> (True positive, False positive, …): a marked hit joins Findings, and True positives reach the report.</p>`;
   if (!scanned.length) return html + `<p class="hint-line">No matches.</p>`;
   const byId = {};
   (findings || []).forEach((f) => { byId[f.id] = f; });
@@ -4993,7 +5020,7 @@ async function loadMlView(caseId) {
     const findings = d.ml_findings || [];
     body.innerHTML = ml ? paneMl(ml, findings, id)
       : innerTabs("ml", [
-          { id: "results", label: "Results", html: '<p class="hint-line">Machine Learning did not run on this case (no PE, .NET, PDF, ELF or APK object, or the case predates it — re-analyse it).</p>' },
+          { id: "results", label: "Results", html: '<p class="hint-line">Machine Learning runs on demand: press <b>Run Machine Learning</b> to score every PE, .NET, PDF, ELF and APK object of this case.</p>' },
           { id: "help", label: "Help", html: mlHelp({}) }]);
     wireInnerTabs(body);
     wireMarks(body, id, (fid, mark) => { findings.forEach((f) => { if (f.id === fid) f.mark = mark; }); });
@@ -5818,7 +5845,7 @@ async function loadC2View(caseId) {
     const findings = (d.findings || []).filter((f) => f.source === "c2");
     body.innerHTML = c2 ? paneC2(c2, findings, id)
       : innerTabs("c2", [
-          { id: "results", label: "Results", html: '<p class="hint-line">The C2 search did not run on this case (it predates it) — re-analyse it.</p>' },
+          { id: "results", label: "Results", html: '<p class="hint-line">The C2 search runs on demand: press <b>Search C2 configurations</b> to look for implant configurations in every object of this case.</p>' },
           { id: "help", label: "Help", html: c2Help(null) }]);
     wireInnerTabs(body);
     wireMarks(body, id, (fid, mark) => { findings.forEach((f) => { if (f.id === fid) f.mark = mark; }); });
@@ -5856,6 +5883,17 @@ function setupMlHex() {
   if (ms) ms.addEventListener("change", () => { _mlCase = ms.value; loadMlView(ms.value); });
   const cs = document.getElementById("c2-case");
   if (cs) cs.addEventListener("change", () => { _c2Case = cs.value; loadC2View(cs.value); });
+  const mlRun = document.getElementById("ml-run");
+  if (mlRun) mlRun.addEventListener("click", async () => {
+    const sel = document.getElementById("ml-case");
+    await runModuleOnCase("ml", sel && sel.value, document.getElementById("ml-run-status"), mlRun, "Scoring");
+    loadMlView(sel && sel.value);
+  });
+  const c2Run = document.getElementById("c2-run");
+  if (c2Run) c2Run.addEventListener("click", async () => {
+    await runModuleOnCase("c2", cs && cs.value, document.getElementById("c2-run-status"), c2Run, "Searching");
+    loadC2View(cs && cs.value);
+  });
   const hs = document.getElementById("hex-case");
   if (hs) hs.addEventListener("change", () => { hexResetCase(hs.value); renderHexView(); });
 }
