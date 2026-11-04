@@ -1497,6 +1497,15 @@ def bloated_exe() -> bytes:
     return lief_helper_dll() + b"\x00" * (24 * 1024 * 1024)
 
 
+def bloated_section_exe() -> bytes:
+    """Binary padding inside a section (no overlay), inert: a binkit stub whose
+    .data section is 6 MB of zeros. debloat has to check every section's
+    compression ratio to find it (the path that logs with print()-style keywords)."""
+    import binkit as bk
+    return bk.pe(bits=32, gui=False, imports={"kernel32.dll": ["ExitProcess"]},
+                 strings=["invoice sync agent"], sections=[(".data", b"\x00" * (6 * 1024 * 1024), 0xC0000040)])
+
+
 def invoice_viewer_apk() -> bytes:
     """Inert Android package (Machine Learning tab, APK model): a ZIP with a
     stub AndroidManifest.xml, a stub classes.dex and resources that carry the
@@ -2338,7 +2347,7 @@ def build_all() -> dict[str, bytes]:
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
         "sample_obf_techniques.js": obf_techniques_js(),
         "sample_chain_dropper.js": chain_dropper_js(), "sample_msxml_dropper.js": msxml_dropper_js(), "sample_wsh_selfread.js": wsh_selfread_dropper_js(), "sample_xor_stager.ps1": xor_stager_ps1(),
-        "sample_encoded_blobs.ps1": encoded_blobs_ps1(), "sample_crypto_loader.ps1": crypto_loader_ps1(), "sample_invoke_obfuscation.ps1": invoke_obfuscation_ps1(), "sample_xor_loader.vbs": xor_loader_vbs(), "sample_dosfuscation.bat": dosfuscation_bat(), "sample_exec_chain.py": exec_chain_py(), "sample_lief_helper.dll": lief_helper_dll(), "sample_bloated_invoice.exe": bloated_exe(), "ml/sample_invoice_viewer.apk": invoice_viewer_apk(),
+        "sample_encoded_blobs.ps1": encoded_blobs_ps1(), "sample_crypto_loader.ps1": crypto_loader_ps1(), "sample_invoke_obfuscation.ps1": invoke_obfuscation_ps1(), "sample_xor_loader.vbs": xor_loader_vbs(), "sample_dosfuscation.bat": dosfuscation_bat(), "sample_exec_chain.py": exec_chain_py(), "sample_lief_helper.dll": lief_helper_dll(), "sample_bloated_invoice.exe": bloated_exe(), "sample_bloated_section.exe": bloated_section_exe(), "ml/sample_invoice_viewer.apk": invoice_viewer_apk(),
         "sample_stage2.ps1": stage2_ps1(), "sample_dropper.vbs": dropper_vbs(),
         "sample_dropper.bat": dropper_bat(), "sample_ioc_noise.bat": ioc_noise_bat(), "sample_loader.hta": loader_hta(),
         "sample_shortcut.pdf.lnk": shortcut_lnk(), "sample_shortcut.url": internet_shortcut_url(),
