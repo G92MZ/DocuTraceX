@@ -5846,11 +5846,26 @@ function dnObject(o, i) {
       <td>${x.entropy >= 7.5 ? `<span class="badge badge-warn">${x.entropy}</span>` : x.entropy}</td><td class="mono">${e(x.head)}</td>
       <td class="mono">${e((x.sha256 || "").slice(0, 16))}</td><td>${x.costura ? '<span class="badge badge-muted">Costura (deflated)</span> ' : ""}${x.stored_path ? fileActions(x.stored_path) : ""}</td></tr>`).join("");
   const strs = (r.strings || []).map((x) => `<div class="mono">${e(x)}</div>`).join("");
+  const cil = r.cil || {};
+  const mi = (cil.interesting || []).map((m) => `<tr><td class="mono"><b>${e(m.method)}</b><div class="hint-line">${m.size} bytes of IL</div></td>
+      <td>${cxCats(m.categories)}</td><td class="mono cx-small">${(m.calls || []).map(e).join("<br>")}</td>
+      <td class="mono cx-small">${(m.strings || []).map(e).join("<br>")}</td></tr>`).join("");
+  const cilHtml = cil.error ? `<p class="hint-line">⚠ ${e(cil.error)}</p>`
+    : `<p class="hint-line">CIL of ${cil.methods || 0} method bodies decoded statically (dncil)${cil.errors ? `, ${cil.errors} unreadable` : ""}.
+       Methods sorted by what they call: loaders, network, crypto, persistence… with the literals each one loads (<span class="mono">ldstr</span>).</p>
+       ${mi ? `<div class="cx-scroll"><table class="cases"><thead><tr><th>Method</th><th>Behaviour</th><th>Calls</th><th>Strings</th></tr></thead><tbody>${mi}</tbody></table></div>`
+         : '<p class="hint-line">No method calls anything notable.</p>'}`;
+  const entries = (r.resources || []).filter((x) => x.entries).map((x) => `<h4 class="formats-title">${e(x.name)} <span class="hint-line">${e(x.resources_format || "")}</span></h4>
+      <table class="cases"><thead><tr><th>Entry</th><th>Type</th><th>Size</th><th>Value</th></tr></thead><tbody>${x.entries.map((en) =>
+        `<tr><td class="mono">${e(en.name)}</td><td class="mono">${e(en.type)}</td><td>${en.size ?? ""}</td><td class="mono">${
+          en.value !== undefined ? e(String(en.value).slice(0, 300)) : ""}${en.pe ? ' <span class="badge badge-bad">PE</span>' : ""}${
+          en.carved ? ` <span class="badge badge-muted">carved ${e(en.carved)}</span>` : ""}${en.stored_path ? fileActions(en.stored_path) : ""}</td></tr>`).join("")}</tbody></table>`).join("");
   return innerTabs(g, [
     { id: "summary", label: "Summary", html: summary },
     { id: "types", label: `Types & methods (${types.length})`, html: typesHtml || '<p class="hint-line">No types.</p>' },
+    { id: "cil", label: `Methods of interest (${(cil.interesting || []).length})`, html: cilHtml },
     { id: "apis", label: `P/Invoke & APIs (${(r.pinvoke || []).length + (r.apis || []).length})`, html: apiHtml.trim() || '<p class="hint-line">No P/Invoke and no notable framework API.</p>' },
-    { id: "resources", label: `Resources (${(r.resources || []).length})`, html: res ? `<table class="cases"><thead><tr><th>Name</th><th>Size</th><th>Entropy</th><th>First bytes</th><th>SHA-256</th><th></th></tr></thead><tbody>${res}</tbody></table><p class="hint-line">Every resource is also analysed as a nested child (Nested panel).</p>` : '<p class="hint-line">No managed resources.</p>' },
+    { id: "resources", label: `Resources (${(r.resources || []).length})`, html: res ? `<table class="cases"><thead><tr><th>Name</th><th>Size</th><th>Entropy</th><th>First bytes</th><th>SHA-256</th><th></th></tr></thead><tbody>${res}</tbody></table><p class="hint-line">Every resource is also analysed as a nested child (Nested panel); <span class="mono">.resources</span> files are opened and each binary entry becomes the child.</p>${entries}` : '<p class="hint-line">No managed resources.</p>' },
     { id: "strings", label: `Strings (${(r.strings || []).length})`, html: strs ? `<p class="hint-line">User strings (#US heap): the literals the code uses.</p><div class="cx-scroll cx-small">${strs}</div>` : '<p class="hint-line">No user strings (encrypted by an obfuscator?).</p>' },
   ]);
 }

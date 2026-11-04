@@ -52,6 +52,59 @@ class _Heap:
         return self.idx[key]
 
 
+_OP = {"ldstr": 0x72, "call": 0x28, "callvirt": 0x6F, "newobj": 0x73, "pop": 0x26, "ret": 0x2A}
+
+
+def _ops(ops: list[tuple], us: _Heap) -> bytes:
+    """Tiny IL from (op, arg): ldstr "text" / call|callvirt|newobj memberref index / pop / ret."""
+    out = bytearray()
+    for op, *arg in ops:
+        out.append(_OP[op])
+        if op == "ldstr":
+            out += struct.pack("<I", 0x70000000 | us.us(arg[0]))
+        elif op in ("call", "callvirt", "newobj"):
+            out += struct.pack("<I", 0x0A000000 | (arg[0] + 1))
+    return bytes(out)
+
+
+def _7bit(n: int) -> bytes:
+    out = bytearray()
+    while n >= 0x80:
+        out.append(n & 0x7F | 0x80)
+        n >>= 7
+    return bytes(out + bytes([n]))
+
+
+def resources(entries: list[tuple[str, Any]]) -> bytes:
+    """A .resources file (ResourceReader v2): str → string, bytes → byte[],
+    ("stream", bytes) → Stream."""
+    def s(x: str) -> bytes:
+        b = x.encode()
+        return _7bit(len(b)) + b
+    reader = s("System.Resources.ResourceReader, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089")
+    reader += s("System.Resources.RuntimeResourceSet")
+    out = bytearray(struct.pack("<iii", -1091581234, 1, len(reader)) + reader)
+    out += struct.pack("<iii", 2, len(entries), 0)
+    while len(out) % 8:
+        out += b"PAD"[len(out) % 3:len(out) % 3 + 1]
+    data, names = bytearray(), bytearray()
+    positions = []
+    for name, v in entries:
+        positions.append(len(names))
+        nb = name.encode("utf-16-le")
+        names += _7bit(len(nb)) + nb + struct.pack("<i", len(data))
+        if isinstance(v, str):
+            data += _7bit(1) + s(v)
+        elif isinstance(v, tuple):
+            data += _7bit(0x21) + struct.pack("<i", len(v[1])) + v[1]
+        else:
+            data += _7bit(0x20) + struct.pack("<i", len(v)) + v
+    out += b"".join(struct.pack("<i", i) for i in range(len(entries)))      # name hashes (unused)
+    out += b"".join(struct.pack("<i", p) for p in positions)
+    out += struct.pack("<i", len(out) + 4 + len(names))
+    return bytes(out + names + data)
+
+
 def build(va: int, spec: dict[str, Any]) -> tuple[bytes, int, int, int, int, int]:
     """spec: {assembly, version, refs: [(name, version)], typerefs: [(scope_ref_index|None, ns, name)],
     types: [{ns, name, methods: [{name, il?, pinvoke?: (dll, entry)}]}], memberrefs: [(typeref_idx, name)],
@@ -88,7 +141,7 @@ def build(va: int, spec: dict[str, Any]) -> tuple[bytes, int, int, int, int, int
                 mi = [r[0] for r in spec["_modrefs"]].index(dll)
                 rows[0x1C].append(struct.pack("<HHHH", 0x0100, len(meth_rows) << 1 | 1, st.str(ep), mi + 1))
             else:
-                il_blobs.append(m.get("il") or b"\x2a")
+                il_blobs.append(_ops(m["ops"], us) if m.get("ops") else (m.get("il") or b"\x2a"))
                 meth_rows.append((len(il_blobs) - 1, 0, 0x0096, st.str(m["name"]), sig_void))
                 if m.get("entry"):
                     entry = 0x06000000 | len(meth_rows)
