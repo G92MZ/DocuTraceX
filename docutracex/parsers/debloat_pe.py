@@ -94,6 +94,10 @@ def _mb(n: int) -> str:
     return f"{n / 1048576:.1f} MB" if n >= 1048576 else f"{n / 1024:.1f} KB"
 
 
+def _quiet(*_args: Any, **_kwargs: Any) -> None:
+    """debloat's log callback: newer releases pass print()-style keywords (end=, flush=)."""
+
+
 def _main(src: str, dst: str) -> dict[str, Any]:
     import os
 
@@ -101,7 +105,7 @@ def _main(src: str, dst: str) -> dict[str, Any]:
     from debloat import processor
 
     pe = pefile.PE(src, fast_load=True)
-    code = processor.process_pe(pe, dst, False, False, lambda _m: None, os.path.getsize(src), extract=False)
+    code = processor.process_pe(pe, dst, False, False, _quiet, os.path.getsize(src), extract=False)
     return {"code": code, "method": processor.RESULT_CODES.get(code, str(code)).rstrip(".")}
 
 
