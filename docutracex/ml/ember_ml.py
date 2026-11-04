@@ -25,6 +25,8 @@ FILE…``) so a slow parse or a crash costs only this step. Nothing is executed.
 
 from __future__ import annotations
 
+import hashlib
+
 import json
 import subprocess
 import sys
@@ -321,6 +323,19 @@ def _classify(paths: list[str], mdir: str) -> list[dict[str, Any]]:
             X = vec[:nf].reshape(1, -1)
             score = float(b.predict(X)[0])
             contrib = b.predict(X, pred_contrib=True)[0]           # nf values + bias
+            prox: dict[str, Any] = {}
+            try:                                                   # leaves: similarity across cases + support
+                from . import proximity
+                leaves = np.asarray(b.predict(X, pred_leaf=True)[0], dtype=np.int64)
+                prox = {"_leaves": proximity.pack(leaves)}
+                from .dist import atypical
+                imp = _important(b, model)
+                aty = atypical(f"EMBER2024_{model}", vec, imp, names)
+                if aty:
+                    aty["atypical"] = aty["share"] >= ATYPICAL_SHARE
+                    prox["atypicality"] = aty
+            except Exception:  # noqa: BLE001  (an extra, never the score)
+                pass
             th = (thresholds.get(model) or {}).get("threshold_fpr_0.01")
             blocks: dict[str, float] = {}
             for i in range(nf):
@@ -354,7 +369,7 @@ def _classify(paths: list[str], mdir: str) -> list[dict[str, Any]]:
                                     if k in ("tpr_at_fpr_0.01", "roc_auc", "challenge_detected_at_1pct_fpr")},
                         "bias": float(contrib[-1]),
                         "blocks": dict(sorted(blocks.items(), key=lambda kv: -abs(kv[1]))),
-                        "top_features": top, "feature_version": ef.FEATURE_VERSION,
+                        "top_features": top, "feature_version": ef.FEATURE_VERSION, **prox,
                         "score_ref": _score_ref(f"EMBER2024_{model}", score),
                         # tag/family models were trained on malware only: shown only when
                         # the detector puts the object above its threshold
@@ -391,8 +406,7 @@ def classify(paths: list[Path], timeout: int | None = None) -> list[dict[str, An
     return res
 
 
-if __name__ == "__main__":
-    sys.stdout.write(json.dumps(_classify(sys.argv[2:], sys.argv[1]), default=float))
+# (the child entry point is at the end of the module: everything above must be defined)
 
 
 # --- case integration ----------------------------------------------------------------
@@ -417,7 +431,11 @@ def targets(root: Path, original: Path, nested_tree: list[dict[str, Any]]) -> li
     out: list[dict[str, Any]] = []
     seen: set[str] = set()
     if _supported(original):
-        out.append({"label": original.name, "path": str(original), "stored_path": "", "chain": ""})
+        try:
+            osha = hashlib.sha256(original.read_bytes()).hexdigest()
+        except OSError:
+            osha = ""
+        out.append({"label": original.name, "path": str(original), "stored_path": "", "chain": "", "sha256": osha})
 
     def walk(nodes: list[dict[str, Any]], chain: str) -> None:
         for n in nodes or []:
@@ -503,6 +521,33 @@ def _classify_parallel(paths: list[Path]) -> list[dict[str, Any]]:
     return [r for part in parts for r in part]
 
 
+ATYPICAL_SHARE = 0.05        # >= 5 % of the top features unlike both classes (real PEs measured: 0-1 %; synthetic stubs: 6-7 %)
+_IMPORTANT: dict[str, list[int]] = {}
+
+
+def _important(booster: Any, key: str, n: int = 200) -> list[int]:
+    """The features the model splits on most (total gain)."""
+    import numpy as np
+    if key not in _IMPORTANT:
+        gain = booster.feature_importance(importance_type="gain")
+        _IMPORTANT[key] = [int(i) for i in np.argsort(-gain)[:n] if gain[i] > 0]
+    return _IMPORTANT[key]
+
+
+def chain_summary(items: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The highest score of the case and the stage it comes from: in a loader
+    chain the final stage is what matters, the loader often looks innocent."""
+    ok = [x for x in items if x.get("status") == "ok" and x.get("score") is not None]
+    if not ok:
+        return None
+    top = max(ok, key=lambda x: x["score"])
+    orig = next((x for x in ok if not x.get("stored_path")), None)
+    return {"max_score": top["score"], "object": top.get("label", ""), "stored_path": top.get("stored_path", ""),
+            "verdict": top.get("verdict"), "depth": (top.get("label") or "").count("›"),
+            "original_score": orig["score"] if orig else None,
+            "from_stage": bool(orig) and top is not orig and top["score"] > (orig["score"] or 0)}
+
+
 def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]],
                  only: set[str] | None = None) -> dict[str, Any]:
     """The Machine Learning module result for a case. ``only`` = object ids
@@ -537,7 +582,15 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]],
             item["finding_id"] = finding_id(f["tool"], f["rule"], f["location"], f["detail"])
             res["findings"].append(f)
         res["items"].append(item)
+    try:
+        from ..config import settings
+        from .proximity import similar_and_index
+        similar_and_index(Path(settings.cases_dir), Path(root).name, res["items"])
+    except Exception:  # noqa: BLE001
+        for x in res["items"]:
+            x.pop("_leaves", None)
     res["items"].sort(key=lambda x: -(x.get("score") if x.get("score") is not None else -1))
+    res["chain"] = chain_summary(res["items"])
     res["counts"] = {"objects": len(res["items"]),
                      "scored": sum(1 for x in res["items"] if x.get("status") == "ok"),
                      "findings": 0}       # triage-only: not counted until marked
@@ -545,3 +598,7 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]],
         res["status"] = next((x.get("status") for x in res["items"]), "error")
         res["detail"] = next((x.get("detail") for x in res["items"] if x.get("detail")), "")
     return res
+
+
+if __name__ == "__main__":
+    sys.stdout.write(json.dumps(_classify(sys.argv[2:], sys.argv[1]), default=float))
