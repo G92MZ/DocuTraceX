@@ -145,6 +145,11 @@ def analyze_native_case(root: Path, original: Path, nested_tree: list[dict[str, 
         seen.add(sha)
         item = {"label": t["label"], "stored_path": t["stored_path"], "original": bool(t.get("original")),
                 "sha256": sha, "size": len(data)}
+        if t.get("clean_child"):
+            item["code"] = {"status": "skipped", "clean_child": t["clean_child"],
+                            "detail": f"padded / packed: analysed in its clean child {t['clean_child']}"}
+            res["objects"].append(item)
+            continue
         if is_dotnet(data):
             item["code"] = {"status": "skipped", "detail": ".NET assembly: native code analysis does not apply"}
             res["objects"].append(item)

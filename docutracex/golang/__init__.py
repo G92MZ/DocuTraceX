@@ -38,15 +38,30 @@ def _native(path: Path) -> bool:
     return any(head.startswith(m) for m in NATIVE_MAGICS)
 
 
+CLEAN_RECIPES = ("debloat", "unpack")
+
+
+def clean_child(children: list[dict[str, Any]]) -> str:
+    """Name of the debloated / unpacked child of an object, if it has one: the
+    code analysis (Rizin, types…) is done there, not on the padded / packed file."""
+    for c in children or []:
+        if ((c.get("recipe") or [""])[0] in CLEAN_RECIPES or c.get("source") in CLEAN_RECIPES) \
+                and c.get("stored_path"):
+            return c.get("filename") or c["stored_path"]
+    return ""
+
+
 def targets(root: Path, original: Path, nested_tree: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The original and every nested PE / ELF / Mach-O object (unique by path)."""
+    """The original and every nested PE / ELF / Mach-O object (unique by path).
+    ``clean_child`` names the debloated / unpacked child that supersedes it."""
     out: list[dict[str, Any]] = []
     if _native(original):
         try:
             rel = original.resolve().relative_to(root.resolve()).as_posix()
         except ValueError:
             rel = ""
-        out.append({"label": original.name, "path": original, "stored_path": rel, "chain": "", "original": True})
+        out.append({"label": original.name, "path": original, "stored_path": rel, "chain": "", "original": True,
+                    "clean_child": clean_child(nested_tree)})
     seen: set[str] = set()
 
     def walk(nodes: list[dict[str, Any]], chain: str) -> None:
@@ -57,7 +72,8 @@ def targets(root: Path, original: Path, nested_tree: list[dict[str, Any]]) -> li
             p = root / sp if sp else None
             if p is not None and sp not in seen and p.is_file() and _native(p):
                 seen.add(sp)
-                out.append({"label": f"nested › {here}", "path": p, "stored_path": sp, "chain": here})
+                out.append({"label": f"nested › {here}", "path": p, "stored_path": sp, "chain": here,
+                            "clean_child": clean_child(n.get("children") or [])})
             walk(n.get("children") or [], here)
 
     walk(nested_tree, "")
@@ -105,7 +121,7 @@ def _types_phase(root: Path, res: dict[str, Any], go: list[dict[str, Any]], raw_
     from ..codeanalysis import case as code_case
     from . import types as go_types
     for o in go:
-        if o.get("duplicate_of"):
+        if o.get("duplicate_of") or o.get("clean_child"):
             continue
         r = o["result"]
         p = paths.get(o.get("sha256") or "")
@@ -139,6 +155,10 @@ def _code_phase(root: Path, res: dict[str, Any], go: list[dict[str, Any]], raw_d
     done = 0
     for o in go:
         if o.get("duplicate_of"):
+            continue
+        if o.get("clean_child"):
+            o["code"] = {"status": "skipped", "clean_child": o["clean_child"],
+                         "detail": f"padded / packed: analysed in its clean child {o['clean_child']}"}
             continue
         r = o["result"]
         if done >= code_case.max_objects():
@@ -185,6 +205,8 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
         p: Path = t["path"]
         item: dict[str, Any] = {"label": t["label"], "stored_path": t["stored_path"],
                                 "original": bool(t.get("original"))}
+        if t.get("clean_child"):
+            item["clean_child"] = t["clean_child"]
         try:
             size = p.stat().st_size
             if size > MAX_SIZE:
