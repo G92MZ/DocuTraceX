@@ -25,7 +25,7 @@ def test_metadata_of_the_sample() -> None:
     assert {(p["dll"], p["entry"]) for p in r["pinvoke"]} == {("kernel32.dll", "VirtualAlloc"), ("kernel32.dll", "CreateThread")}
     assert all(p["injection"] for p in r["pinvoke"])
     apis = {a["type"]: a for a in r["apis"]}
-    assert apis["System.Net.WebClient"]["members"] == ["DownloadData"]
+    assert apis["System.Net.WebClient"]["members"] == [".ctor", "DownloadData"]
     assert apis["System.Reflection.Assembly"]["members"] == ["Load"]
     assert {"Microsoft.Win32.RegistryKey", "System.Security.Cryptography.RijndaelManaged"} <= set(apis)
     assert [o["name"] for o in r["obfuscators"]] == ["ConfuserEx"]
@@ -62,6 +62,17 @@ def test_case_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     kids = {n["filename"]: n for n in tree}
     assert "InvoiceViewer.Resources.stage2.bin" in kids and kids["costura.invoicehelper.dll"]["recipe"][-1] == "deflate"
     assert (paths.root / stored["InvoiceViewer.Resources.stage2.bin"]["stored_path"]).is_file()
+    # phase 2: .resources entries become the children, CIL locates the loader and its strings
+    rs = stored["InvoiceViewer.Properties.Resources.resources"]
+    ents = {e["name"]: e for e in rs["entries"]}
+    assert ents["UpdateHost"]["value"] == "cdn-update.example.net" and ents["invoice_stage3"]["pe"] is True
+    assert any(k.endswith("invoice_stage3.exe") for k in kids)
+    assert "dotnet:resource_pe" in {f["rule"] for f in d["findings"]}
+    load = next(f for f in d["findings"] if f["rule"] == "dotnet:assembly_load")
+    assert "InvoiceViewer.Program::LoadStage" in load["evidence"]
+    locs = {s["location"] for s in o["ioc_sources"]}
+    assert any(x.endswith("InvoiceViewer.Program::LoadStage") for x in locs)
+    assert any("resources › UpdateHost" in x for x in locs)
     iocs = {i["value"] for i in read_json(paths.subresult("iocs"))["iocs"]}
     assert {ms.CODE_URL, "203.0.113.47"} <= iocs
     # a native binary gets no .NET result
@@ -69,3 +80,17 @@ def test_case_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                            "n.exe", cases_dir=tmp_path)
     analyze.analyze_case(tmp_path / m2["analysis_id"])
     assert read_json(CasePaths(m2["analysis_id"], cases_dir=tmp_path).subresult("dotnet")) is None
+
+
+def test_cil_and_resources_units() -> None:
+    import dnkit
+    from docutracex.dotnet import resources as R
+    r = dotnet.parse(ms.dotnet_loader_exe())
+    top = r["cil"]["interesting"][0]
+    assert top["method"] == "InvoiceViewer.Program::LoadStage"
+    assert top["calls"] == ["System.Net.WebClient::.ctor", "System.Net.WebClient::DownloadData", "System.Reflection.Assembly::Load"]
+    assert {"loader", "network"} <= set(top["categories"]) and top["strings"] == [ms.CODE_URL]
+    blob = dnkit.resources([("a", "x"), ("b", b"MZ" + b"t" * 30), ("c", ("stream", b"PK\x03\x04" + b"z" * 20))])
+    ents = R.parse(blob)["entries"]
+    assert [(e["name"], e["type"]) for e in ents] == [("a", "string"), ("b", "byte[]"), ("c", "Stream")]
+    assert R.parse(blob[:40]).get("error") and R.parse(b"junk" * 10).get("error")

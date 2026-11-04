@@ -173,8 +173,17 @@ def parse(data: bytes) -> dict[str, Any]:
                     break
         out["typerefs"] = sorted(refs)[:2000]
         # resources
+        res_rva = int(getattr(n.struct, "ResourcesRva", 0) or 0)
+        offsets = {_s(m.Name): int(m.Offset or 0) for m in (t.ManifestResource or []) if not m.Implementation}
         for r in n.resources or []:
             raw = r.data if isinstance(r.data, (bytes, bytearray)) else b""
+            if not raw and res_rva and _s(r.name) in offsets:   # dnfile parsed a .resources: take the raw bytes
+                try:
+                    at = res_rva + offsets[_s(r.name)]
+                    ln = int.from_bytes(pe.get_data(at, 4), "little")
+                    raw = bytes(pe.get_data(at + 4, ln)) if 0 < ln <= MAX_SIZE else b""
+                except Exception:  # noqa: BLE001
+                    raw = b""
             out["resources"].append({"name": _s(r.name), "size": len(raw), "public": bool(getattr(r, "public", True)),
                                      "entropy": _entropy(raw[:1 << 20]), "sha256": hashlib.sha256(raw).hexdigest() if raw else "",
                                      "head": raw[:8].hex(), "_data": bytes(raw)})
@@ -204,6 +213,13 @@ def parse(data: bytes) -> dict[str, Any]:
             out["traits"].append(f"{round(100 * odd / total)}% of type / method names are unreadable (renamed by an obfuscator)")
         if any(r["entropy"] > 7.5 and r["size"] > 4096 for r in out["resources"]):
             out["traits"].append("high-entropy resource(s): encrypted / compressed payload?")
+        try:
+            from .cil import disassemble
+            c = disassemble(pe)
+            out["_cil_strings"] = c.pop("_strings")
+            out["cil"] = c
+        except Exception as exc:  # noqa: BLE001  (CIL is best effort)
+            out["cil"] = {"error": f"CIL disassembly: {exc}"[:200]}
         out["counts"] = {"types": len(t.TypeDef or []), "methods": total - len(t.TypeDef or []),
                          "pinvoke": len(out["pinvoke"]), "resources": len(out["resources"]), "strings": len(out["strings"])}
         return out
@@ -230,6 +246,19 @@ def _findings(item: dict[str, Any]) -> list[dict[str, Any]]:
         out.append({"rule": "dotnet:assembly_load", "severity": "medium", "tool": "dotnet", "location": loc,
                     "detail": "loads an assembly at run time (Assembly.Load: in-memory payload?) (T1620)",
                     "evidence": "System.Reflection.Assembly.Load", "attack": "T1620"})
+    cil = r.get("cil") or {}
+    loaders = [m for m in cil.get("interesting") or [] if "loader" in m["categories"]
+               and any(c.startswith("System.Reflection.Assembly::Load") for c in m["calls"])]
+    for o in out:
+        if o["rule"] == "dotnet:assembly_load" and loaders:
+            o["evidence"] = "; ".join(f"{m['method']} → {', '.join(c for c in m['calls'] if '::Load' in c)}"
+                                      for m in loaders[:4])
+    for x in r.get("resources") or []:
+        for e in x.get("entries") or []:
+            if e.get("pe"):
+                out.append({"rule": "dotnet:resource_pe", "severity": "high", "tool": "dotnet", "location": loc,
+                            "detail": f"PE embedded in managed resource {x['name']} › {e['name']} ({e['type']})",
+                            "evidence": f"{e['size']} bytes", "attack": "T1027.009"})
     return out
 
 
@@ -267,6 +296,9 @@ def _resource_child(root: Path, sha: str, label: str, x: dict[str, Any], raw: by
             "recipe": recipe, "source": "code-resources"}
 
 
+from .resources import is_resources, parse as parse_resources  # noqa: E402
+
+
 def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) -> dict[str, Any]:
     from .. import golang
     from ..codeanalysis.case import is_dotnet
@@ -299,13 +331,39 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
         except Exception as exc:  # noqa: BLE001  (a malformed assembly never breaks the case)
             log.warning(".NET metadata failed on %s: %s", p.name, exc)
             r = {"error": f"metadata parser: {exc}"[:300]}
+        res_strings: list[tuple[str, str]] = []
         for x in r.get("resources") or []:
             raw = x.pop("_data", b"")
+            if is_resources(raw):
+                rs = parse_resources(raw)
+                if not rs.get("error"):
+                    x["entries"] = []
+                    for e in rs["entries"]:
+                        blob = e.pop("_data", None)
+                        if e.get("type") == "string" and e.get("value"):
+                            res_strings.append((f"{x['name']} › {e['name']}", e["value"]))
+                        if blob:
+                            e["pe"] = blob[:2] == b"MZ"
+                            ext = e.get("carved") or ("exe" if e["pe"] else "bin")
+                            sub = {"name": f"{x['name']}.{e['name']}.{ext}"}
+                            child = _resource_child(root, sha, t["label"], sub, blob)
+                            if child:
+                                e["stored_path"] = sub.get("stored_path", "")
+                                res.setdefault("_children", []).append(child)
+                        x["entries"].append(e)
+                    x["resources_format"] = f"ResourceReader v{rs['version']}, {rs['count']} entries"
+                    continue
+                x["resources_error"] = rs["error"]
             child = _resource_child(root, sha, t["label"], x, raw)
             if child:
                 res.setdefault("_children", []).append(child)
         item["result"] = r
-        item["ioc_sources"] = [{"location": f"{t['label']} › #US", "text": s} for s in (r.get("strings") or [])[:3000]]
+        cil_strings = r.pop("_cil_strings", None) or []
+        located = {s for _, s in cil_strings}
+        item["ioc_sources"] = (
+            [{"location": f"{t['label']} › {m}", "text": s} for m, s in cil_strings[:3000]]
+            + [{"location": f"{t['label']} › resources › {n}", "text": v} for n, v in res_strings[:2000]]
+            + [{"location": f"{t['label']} › #US", "text": s} for s in (r.get("strings") or [])[:3000] if s not in located])
         res["objects"].append(item)
         if not r.get("error"):
             res["findings"].extend(_findings(item))
