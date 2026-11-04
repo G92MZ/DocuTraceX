@@ -747,18 +747,22 @@ def run_checks() -> dict[str, Any]:
         from .codeanalysis import available as _rz_ok
         from .codeanalysis import rz as _rz
         rexe = _rz.executable()
-        ok = bool(rexe) and _rz_ok()
-        ver = _rz.version(rexe) if ok else ""
+        present = bool(rexe) and _rz_ok()
+        ver = _rz.version(rexe) if present else ""
+        ok = present and bool(ver)                     # it must also start (Windows: VC++ runtime)
         checks.append(Check(
             category="External tools",
             name="Rizin + rz-ghidra (code analysis)",
             status="ok" if ok else "warn",
             detail=(f"{ver or 'rizin'} at {rexe}" if ok else
-                    (f"rizin at {rexe} but the rz-ghidra decompiler plugin is missing" if rexe else
+                    (f"rizin at {rexe} does not start (on Windows: Visual C++ runtime missing)" if present else
+                     f"rizin at {rexe} but the rz-ghidra decompiler plugin is missing" if rexe else
                      "not provisioned (optional; no functions / decompilation tab)")),
             remedy="" if ok else ("press Retry (downloads the pinned, SHA-256-verified Cutter bundle that ships "
-                                  "Rizin + rz-ghidra), or point DOCUTRACEX_RIZIN at an existing rizin; on Windows "
-                                  "it needs the Microsoft Visual C++ 2015-2022 x64 runtime"),
+                                  "Rizin + rz-ghidra; on Windows it also places the Visual C++ runtime next to "
+                                  "rizin.exe, nothing installed system-wide), or point DOCUTRACEX_RIZIN at an existing "
+                                  "rizin; if it still does not start, install the Microsoft Visual C++ 2015-2022 x64 "
+                                  "redistributable"),
             purpose="Functions, call graph, strings, priority and pseudocode of Go and native PE / ELF / Mach-O "
                     "binaries (static: nothing is executed)",
             retry="rizin",
