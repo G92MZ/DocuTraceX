@@ -2222,6 +2222,7 @@ def go_code_exe() -> bytes:
         ("label", "httpdo"), b"\xc3", b"\xcc" * 15,
         ("label", "newproc"), b"\xc3", b"\xcc" * 15,
         ("label", "deferreturn"), b"\xc3", b"\xcc" * 15,
+        ("label", "cfgload"), b"\xc3", b"\xcc" * 15,          # method main.(*Config).load (Types tab)
         ("label", "end")]
     code, meta = _x64(body)
     blob = "\x1f\x2e\x3d\x4c" * 8
@@ -2232,7 +2233,8 @@ def go_code_exe() -> bytes:
              ("main.main.func1", meta["func1"], meta["httpdo"] - meta["func1"]),
              ("net/http.(*Client).Do", meta["httpdo"], meta["newproc"] - meta["httpdo"]),
              ("runtime.newproc", meta["newproc"], meta["deferreturn"] - meta["newproc"]),
-             ("runtime.deferreturn", meta["deferreturn"], meta["end"] - meta["deferreturn"])]
+             ("runtime.deferreturn", meta["deferreturn"], meta["cfgload"] - meta["deferreturn"]),
+             ("main.(*Config).load", meta["cfgload"], meta["end"] - meta["cfgload"])]
     extra = [n for n in GO_STD if n not in ("net/http.(*Client).Do", "runtime.newproc")]
     base = 0x140000000                                              # binkit PE32+ image base, .text at RVA 0x1000
     text_va = base + 0x1000

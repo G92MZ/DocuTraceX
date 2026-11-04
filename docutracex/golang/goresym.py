@@ -28,7 +28,7 @@ def analyze(path: Path, raw_dir: Path | None = None, sha256: str = "") -> dict[s
     exe = executable()
     if exe is None:
         return {"available": False, "detail": "GoReSym not provisioned (tools/goresym/)"}
-    rec = run([str(exe), str(path)], f"GoReSym {path.name}", timeout=tmo(TIMEOUT), bound=MAX_OUT)
+    rec = run([str(exe), "-t", "-p", str(path)], f"GoReSym {path.name}", timeout=tmo(TIMEOUT), bound=MAX_OUT)
     out: dict[str, Any] = {"available": True, "command": rec.get("command"), "returncode": rec.get("returncode"),
                            "duration_s": rec.get("duration_s"), "stderr": rec.get("stderr")}
     if rec.get("error"):
