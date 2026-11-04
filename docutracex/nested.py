@@ -525,6 +525,20 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
         except Exception as exc:  # noqa: BLE001
             node.setdefault("code_error", str(exc))
 
+    # A file hidden in the pixels of an image child (any image: archive member,
+    # attachment, resource…) becomes its child — only a well-formed file is kept.
+    if depth < MAX_DEPTH and stego_is_image(data):
+        try:
+            got = stego_child(data, name, work / "stego" / node["sha256"][:12])
+            if got:
+                kids.append((Path(got["path"]), got["filename"]))
+                origins[got["path"]] = got["origin"]
+                recipes[got["path"]] = got["recipe"]
+                node["stego"] = {k: got[k] for k in ("how", "kind", "size")}
+                add_findings([got["finding"]], "stego")
+        except Exception as exc:  # noqa: BLE001
+            node.setdefault("code_error", f"stego: {exc}")
+
     # Full IOC material of THIS child: every analyzer sub-result gathered above,
     # reduced to {module, location, text} by the common builder — so a child is
     # mined as deeply as a top-level file, past the caps that finding evidence
@@ -582,6 +596,30 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
 
 
 VIEWS_DIR = "nested_views"
+
+
+def stego_is_image(data: bytes) -> bool:
+    from . import stego
+    return stego.is_image(data)
+
+
+def stego_child(data: bytes, name: str, out_dir: Path, keys: list[Any] | None = None) -> dict[str, Any] | None:
+    """Decode an image and write the file hidden in its pixels, if any:
+    {path, filename, origin, recipe, how, kind, size, finding}."""
+    from . import stego
+    got = stego.extract(data, keys)
+    if not got:
+        return None
+    how, payload, kind = got
+    out_dir.mkdir(parents=True, exist_ok=True)
+    fname = f"{Path(name).stem or 'image'}.pixels.{kind}"
+    out = out_dir / fname
+    out.write_bytes(payload)
+    return {"path": str(out), "filename": fname, "origin": f"hidden in the pixels of {name} ({how})",
+            "recipe": ["stego", how], "how": how, "kind": kind, "size": len(payload),
+            "finding": {"tool": "stego", "rule": "stego:payload", "severity": "high",
+                        "detail": f"{kind.upper()} hidden in the pixels of the image {name} ({len(payload)} bytes)",
+                        "evidence": how, "attack": "T1027.003"}}
 
 
 def view_path(paths: CasePaths, view_id: str) -> Path:

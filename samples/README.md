@@ -239,6 +239,21 @@ buffer in place → a function that hands the invoice C2 URL
 | `code/sample_code_loader.exe` | native PE32+ (not Go): Components → **Code** — 3 functions (Crypto decodes the XOR-encoded buffer), the one calling `InternetOpenA` / `InternetOpenUrlA` with the URL first, the XOR loop second; APIs lists the wininet imports with the function that calls them |
 | ↳ Decompile all (background) | Analyse it with `DOCUTRACEX_CODE_DECOMPILE=1` (only the top function decompiled automatically): **Functions** shows *Decompile all 2 without pseudocode*. The job runs on the server (one Rizin session per 5 functions), the list gets its **C** badges as chunks land, and the tab can be left and re-opened (progress and *Stop* while running; *last run: 2 decompiled* after). Functions the automatic pass left as *too large* get their own *Decompile the N large function(s)* button. |
 
+## Images with a hidden file (any image of a case)
+
+Every image that reaches **Nested** (archive members, attachments, resources,
+extracted objects) and the case's own file when it is an image are decoded
+(Pillow) and their pixels read the ways loaders write them: bytes by rows /
+columns in RGB · BGR · RGBA · ARGB · BGRA, and LSB (1–2 low bits) by rows /
+columns, MSB / LSB first; each stream as it is, after a 4-byte length, as
+Base64, compressed, single-byte XOR, or XOR / AES with the keys of a carrying
+.NET assembly. Only a **well-formed** file is kept (PE, ELF, Mach-O, ZIP, 7z,
+RAR, gzip, PDF, OLE, shebang / PowerShell script), cut to its real size.
+
+| Sample | What it shows |
+| --- | --- |
+| `stego/sample_stego_invoice.zip` | `factura_scan.png` (noise-like picture) hides an inert ELF in the low bit of R, G, B (*LSB1 RGB, MSB first*): **Nested** → the PNG has the child `factura_scan.pixels.elf` and the finding *ELF hidden in the pixels of the image* (high, T1027.003); the ELF's string `cdn-update.example.net` reaches the IOCs. `leeme.txt` is plain. |
+
 ## .NET assemblies (Components → .NET)
 
 Built by `dotnet_samples()` in `scripts/make_samples.py` with `scripts/dnkit.py`
