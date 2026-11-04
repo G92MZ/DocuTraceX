@@ -493,3 +493,48 @@ def test_notable_modules_embed_kinds_and_crypto_paths() -> None:
             "crypto": {"functions": [{"name": "main.seal"}], "plaintexts": []}}
     g = code_case.graph(full)
     assert any(p["target"] == 2 and p["path"] == [1, 2] for p in g["paths"])
+
+
+def test_decompile_all_background_job(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Chunks run in a thread, each chunk is merged and saved; status survives in the batch file."""
+    import time as _t
+    sha = "ab" * 32
+    root = tmp_path / "case"
+    f = code_case.result_file(root, sha, "native")
+    f.parent.mkdir(parents=True)
+    fns = [{"addr": 0x1000 + i, "name": f"fcn.{i}", "user": True, "rank": i + 1, "decompiled": i == 0,
+            "decompile_note": "too large for the automatic pass: decompile it on demand" if i % 2 else None}
+           for i in range(12)]
+    f.write_text(json.dumps({"functions": fns}), encoding="utf-8")
+    full = code_case.load(root, sha, "native")
+    assert len(code_case.batch_targets(full, "large")) == 6 and len(code_case.batch_targets(full, "all")) == 11
+    calls = []
+
+    def fake(path, addrs, **kw):
+        calls.append(list(addrs))
+        return {a: ({"status": "ok", "code": f"int f_{a:x}(void);", "ops": []} if a != 0x1003
+                    else {"status": "failed", "detail": "x"}) for a in addrs}
+    monkeypatch.setattr(ca, "decompile_many", fake)
+    st = code_case.start_batch(root, tmp_path / "bin", sha, "native", "large")
+    assert st["state"] == "running" and st["total"] == 6
+    for _ in range(100):
+        if code_case.batch_status(root, sha, "native")["state"] == "completed":
+            break
+        _t.sleep(0.05)
+    st = code_case.batch_status(root, sha, "native")
+    assert st["state"] == "completed" and (st["done"], st["ok"], st["failed"]) == (6, 5, 1)
+    assert [len(c) for c in calls] == [5, 1]
+    full = code_case.load(root, sha, "native")
+    assert full["decompiled"][str(0x1005)]["status"] == "ok"
+    assert code_case.batch_targets(full, "large") == [0x1003]            # only the failure is left
+    code_case._jobs.clear()
+    assert code_case.batch_status(root, sha, "native")["state"] == "completed"   # from the file
+
+
+@needs_rizin
+def test_decompile_many_real(tmp_path: Path) -> None:
+    import binkit as bk
+    exe = tmp_path / "a.exe"
+    exe.write_bytes(bk.pe(bits=32, gui=False))
+    r = ca.decompile_many(exe, [0x401000], mode="native", names=None, lock_path=tmp_path / ".lock")
+    assert set(r) == {0x401000} and r[0x401000]["status"] in ("ok", "failed")

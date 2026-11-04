@@ -464,6 +464,38 @@ def decompile_one(path: Path, addr: int, *, mode: str, names: list[dict[str, Any
             "detail": (r.get("killed") or r.get("stderr") or r.get("error") or "rz-ghidra could not decompile it")[-300:]}
 
 
+def decompile_many(path: Path, addrs: list[int], *, mode: str, names: list[dict[str, Any]] | None,
+                   lock_path: Path) -> dict[int, dict[str, Any]]:
+    """Decompile several functions in ONE Rizin session (one analysis pass for
+    all of them): {addr: decompile_one-like result}."""
+    if not available():
+        return {a: {"status": "unavailable"} for a in addrs}
+    prelude = ["f- reloc.*"] if mode == "go" else ["aa"]
+    names_by_addr = {}
+    for n in names or []:
+        names_by_addr[n["start"]] = n["name"]
+        prelude.append(f"f {_flag(n['name'], 'go.')} {max(1, n['end'] - n['start'])} @ {n['start']:#x}")
+    cmds: list[tuple[str, str]] = []
+    for i, addr in enumerate(addrs):
+        if mode == "go":
+            cmds.append((f"af{i}", f"af @ {addr:#x}"))
+        cmds += [(f"d{i}", f"pdfj @ {addr:#x}"), (f"g{i}", f"pdgj @ {addr:#x}")]
+    with rz.exclusive(lock_path, wait_s=1800):
+        r = rz.run(path, cmds, timeout=300 + 240 * len(addrs), mem_mb=MEM_MB, prelude=prelude)
+    out: dict[int, dict[str, Any]] = {}
+    for i, addr in enumerate(addrs):
+        pdf = rz.as_json(r["outputs"].get(f"d{i}")) or {}
+        ops = _trim_ops(pdf.get("ops") or []) if isinstance(pdf, dict) else []
+        g = rz.as_json(r["outputs"].get(f"g{i}"))
+        if isinstance(g, dict) and g.get("code"):
+            out[addr] = {"status": "ok", "code": _pretty(g["code"], g.get("annotations") or [], names_by_addr), "ops": ops}
+        else:
+            out[addr] = {"status": "failed", "ops": ops,
+                         "detail": (r.get("killed") or r.get("stderr") or r.get("error")
+                                    or "rz-ghidra could not decompile it")[-300:]}
+    return out
+
+
 def cfg_one(path: Path, addr: int, *, mode: str, names: list[dict[str, Any]] | None,
             lock_path: Path) -> dict[str, Any]:
     """Control-flow graph of one function: basic blocks (with their

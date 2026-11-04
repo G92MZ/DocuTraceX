@@ -768,6 +768,53 @@ def code_decompile(analysis_id: str, sha256: str, mode: str, addr: int) -> dict:
     return code_case.function_view(code_case.load(paths.root, sha256, mode) or full, addr) or {}
 
 
+def _code_target(manifest, paths, sha256: str):
+    from pathlib import Path as _P
+
+    from ..codeanalysis import case as code_case
+    from ..storage import read_json
+    orig_rel = (manifest.get("original") or {}).get("stored_path") or ""
+    original = paths.root / orig_rel if orig_rel else _P("/nonexistent")
+    tree = (read_json(paths.subresult("nested")) or {}).get("tree") or []
+    target = code_case.locate(paths.root, original, tree, sha256)
+    if target is None:
+        raise HTTPException(status_code=404, detail="the binary is no longer in the case")
+    return target
+
+
+@router.get("/{analysis_id}/code/{sha256}/{mode}/decompile-all")
+def code_decompile_all_status(analysis_id: str, sha256: str, mode: str) -> dict:
+    """State of the background "decompile all" job of one binary, and how many
+    functions each choice would decompile."""
+    from ..codeanalysis import case as code_case
+    _m, paths, full = _code_ctx(analysis_id, sha256, mode)
+    st = code_case.batch_status(paths.root, sha256, mode)
+    st["pending"] = {w: len(code_case.batch_targets(full, w)) for w in ("large", "all")}
+    return st
+
+
+@router.post("/{analysis_id}/code/{sha256}/{mode}/decompile-all")
+def code_decompile_all(analysis_id: str, sha256: str, mode: str, which: str = "large") -> dict:
+    """Start decompiling, in the background, the large functions (``which=large``)
+    or every program function still without pseudocode (``which=all``)."""
+    from ..codeanalysis import available
+    from ..codeanalysis import case as code_case
+    if which not in ("large", "all"):
+        raise HTTPException(status_code=400, detail="which must be large or all")
+    if not available():
+        raise HTTPException(status_code=503, detail="Rizin + rz-ghidra not provisioned")
+    manifest, paths, _full = _code_ctx(analysis_id, sha256, mode)
+    return code_case.start_batch(paths.root, _code_target(manifest, paths, sha256), sha256, mode, which)
+
+
+@router.delete("/{analysis_id}/code/{sha256}/{mode}/decompile-all")
+def code_decompile_all_cancel(analysis_id: str, sha256: str, mode: str) -> dict:
+    """Stop the background job after the chunk in progress (what is done is kept)."""
+    from ..codeanalysis import case as code_case
+    _m, paths, _full = _code_ctx(analysis_id, sha256, mode)
+    return code_case.cancel_batch(paths.root, sha256, mode)
+
+
 @router.get("/{analysis_id}/code/{sha256}/{mode}/graph")
 def code_graph(analysis_id: str, sha256: str, mode: str) -> dict:
     """Call graph of one analysed binary (nodes, edges, roots, paths to sensitive code)."""
