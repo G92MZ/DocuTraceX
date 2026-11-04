@@ -134,3 +134,23 @@ def test_static_arrays_encrypted_resource_and_c2(tmp_path: Path) -> None:
     assert cfgs[0]["c2"] == ["smtp.billing-portal.example"]
     assert "accounts@billing-portal.example" in cfgs[0]["decrypted_statically"]
     assert "decrypted statically" in cfgs[0]["method"]
+
+
+def test_bitmap_pixel_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from docutracex import analyze, cases
+    from docutracex.config import settings
+    from docutracex.storage import CasePaths, read_json
+    monkeypatch.setattr(settings, "cases_dir", tmp_path)
+    m = cases.create_case(io.BytesIO(ms.dotnet_bitmap_loader_exe()), "gallery.exe", cases_dir=tmp_path)
+    analyze.analyze_case(tmp_path / m["analysis_id"])
+    paths = CasePaths(m["analysis_id"], cases_dir=tmp_path)
+    d = read_json(paths.subresult("dotnet"))
+    o = d["objects"][0]["result"]
+    ent = o["resources"][0]["entries"][0]
+    assert ent["type"] == "System.Drawing.Bitmap" and ent["stego"]["type"] == "exe"
+    assert ent["stego"]["how"] == 'pixels by columns, RGB: XOR key "4417290360015521"'
+    assert "dotnet:bitmap_payload" in {f["rule"] for f in d["findings"]}
+    top = o["cil"]["interesting"][0]
+    assert top["method"] == "InvoiceGallery.Gallery::Decode" and "called by a loader" in top["categories"]
+    kids = {n["filename"] for n in read_json(paths.subresult("nested"))["tree"]}
+    assert any(k.endswith("Gallery.pixels.exe") for k in kids)

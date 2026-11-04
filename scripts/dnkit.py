@@ -86,14 +86,16 @@ def _7bit(n: int) -> bytes:
 
 def resources(entries: list[tuple[str, Any]]) -> bytes:
     """A .resources file (ResourceReader v2): str → string, bytes → byte[],
-    ("stream", bytes) → Stream."""
+    ("stream", bytes) → Stream, ("object", "Type, Assembly", bytes) → a
+    serialized user type (BinaryFormatter-like blob, e.g. a Bitmap with its PNG)."""
     def s(x: str) -> bytes:
         b = x.encode()
         return _7bit(len(b)) + b
     reader = s("System.Resources.ResourceReader, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089")
     reader += s("System.Resources.RuntimeResourceSet")
     out = bytearray(struct.pack("<iii", -1091581234, 1, len(reader)) + reader)
-    out += struct.pack("<iii", 2, len(entries), 0)
+    utypes = list(dict.fromkeys(v[1] for _, v in entries if isinstance(v, tuple) and v[0] == "object"))
+    out += struct.pack("<iii", 2, len(entries), len(utypes)) + b"".join(s(t) for t in utypes)
     while len(out) % 8:
         out += b"PAD"[len(out) % 3:len(out) % 3 + 1]
     data, names = bytearray(), bytearray()
@@ -104,6 +106,8 @@ def resources(entries: list[tuple[str, Any]]) -> bytes:
         names += _7bit(len(nb)) + nb + struct.pack("<i", len(data))
         if isinstance(v, str):
             data += _7bit(1) + s(v)
+        elif isinstance(v, tuple) and v[0] == "object":
+            data += _7bit(0x40 + utypes.index(v[1])) + b"\x00\x01\x00\x00\x00\xff\xff\xff\xff" + v[2]
         elif isinstance(v, tuple):
             data += _7bit(0x21) + struct.pack("<i", len(v[1])) + v[1]
         else:
