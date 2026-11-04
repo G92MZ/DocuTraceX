@@ -1122,6 +1122,21 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         log.warning("Go identification skipped for %s: %s", paths.root.name, exc)
 
+    # .NET assemblies (original + nested): metadata, P/Invoke, APIs, resources,
+    # user strings and obfuscators (dnfile). Never fails the case.
+    try:
+        from . import dotnet
+        nested_dn = (read_json(paths.subresult("nested")) or {}).get("tree") or []
+        dres = run(".net: metadata of every .NET assembly (types, P/Invoke, APIs, resources, strings, obfuscators)",
+                   lambda: dotnet.analyze_case(paths.root, original, nested_dn))
+        if dres.get("objects"):
+            write_subresult(paths, "dotnet", dres)
+            if "dotnet" not in ran:
+                ran.append("dotnet")
+            findings_total += len(dres.get("findings") or [])
+    except Exception as exc:  # noqa: BLE001
+        log.warning(".NET analysis skipped for %s: %s", paths.root.name, exc)
+
     # Code analysis (Rizin + rz-ghidra) of native PE / ELF / Mach-O objects that
     # are not Go (those are done by the Go module) and not .NET. Never fails the case.
     try:
@@ -1303,7 +1318,7 @@ def auto_modules() -> set[str]:
 _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto",
                "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole",
                "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules", "javascript", "rtf",
-               "powershell", "vbscript", "batch", "shortcut", "msi", "python", "java", "onenote", "ml", "c2", "golang", "code")
+               "powershell", "vbscript", "batch", "shortcut", "msi", "python", "java", "onenote", "ml", "c2", "golang", "code", "dotnet")
 # Modules whose findings feed the consolidated view (includes derived ones).
 _COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file", "pyinstaller")
 
@@ -1459,6 +1474,9 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
         from . import golang
         res = golang.analyze_case(paths.root, original,
                                   (read_json(paths.subresult("nested")) or {}).get("tree") or [])
+    elif module == "dotnet":
+        from . import dotnet
+        res = dotnet.analyze_case(paths.root, original, (read_json(paths.subresult("nested")) or {}).get("tree") or [])
     elif module == "code":
         from .codeanalysis import case as code_case
         res = code_case.analyze_native_case(paths.root, original,

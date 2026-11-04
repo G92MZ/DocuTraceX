@@ -245,24 +245,28 @@ def pe(*, bits: int = 32, dll: bool = False, gui: bool = True,
        timestamp: int = 0x6713A2C0, code: bytes = b"\xc3", text_name: str = ".text",
        text_flags: int = 0x60000020, pdb: str | None = None, version: dict[str, str] | None = None,
        manifest: bool = False, rich: bool = False, reloc: bool = False, checksum: bool = False,
-       rcdata: list[tuple[str, bytes]] | None = None) -> bytes:
+       rcdata: list[tuple[str, bytes]] | None = None, dotnet_md: dict | None = None) -> bytes:
     """An inert PE32 / PE32+. ``sections`` are extra (name, data, characteristics).
     ``pdb`` / ``version`` / ``manifest`` / ``rich`` / ``reloc`` / ``checksum`` add
     what a normal MSVC build carries (debug directory, version resource, Rich
     header, relocations, correct header checksum)."""
     ptr = 8 if bits == 64 else 4
     imports = dict(imports or {})
-    if dotnet:
+    if dotnet or dotnet_md:
         imports = {"mscoree.dll": ["_CorDllMain" if dll else "_CorExeMain"]}
     secs: list[list] = []                                   # [name, va, data, flags]
     va = SA
     text = bytearray(code)
     clr = None
-    if dotnet:
+    if dotnet or dotnet_md:
         text = bytearray(b"\xff\x25\x00\x20\x40\x00")       # jmp [_CorExeMain] stub, never run here
         while len(text) % 16:
             text.append(0)
-        blob, clr_size, _md, _r, _rs = _dotnet(va + len(text), **dotnet)
+        if dotnet_md:
+            import dnkit
+            blob, clr_size, *_ = dnkit.build(va + len(text), dotnet_md)
+        else:
+            blob, clr_size, _md, _r, _rs = _dotnet(va + len(text), **dotnet)
         clr = (va + len(text), clr_size)
         text += blob
     secs.append([text_name, va, bytes(text), text_flags])

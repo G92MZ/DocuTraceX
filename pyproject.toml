@@ -56,6 +56,9 @@ tools = [
     "mmh3>=4.0",
     # Go: Garble string recovery — emulates only the decoding closures, in a separate process (GPL-2)
     "unicorn>=2.0",
+    # .NET analysis: CLR metadata and CIL (MIT, pure Python)
+    "dnfile>=0.15",
+    "dncil>=1.0",
     "signify==0.7.1",
     # Encrypted Office detection + default-password decryption (evasion check).
     "msoffcrypto-tool>=5.1",
