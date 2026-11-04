@@ -2610,6 +2610,7 @@ function renderSubtabs() {
   wireUnlock(bodyEl, _openCaseId);
   wireFind(bodyEl);
   wireInnerTabs(bodyEl);
+  wireCodeExplorers(bodyEl, _openCaseId);
   applyFind();
 }
 
@@ -2919,6 +2920,11 @@ async function openComponents(analysisId, keepTab, viewId) {
     if (gom && (gom.objects || []).some((o) => (o.result || {}).state && (o.result || {}).state !== "Not detected")) {
       const n = (gom.counts || {}).go || 0;
       sections.push({ id: "golang", label: `Go (${n})`, html: paneGo(gom) });
+    }
+    const cdm = mods.code;
+    if (cdm && (cdm.objects || []).some((o) => cxOk(o.code))) {
+      const n = cdm.objects.filter((o) => cxOk(o.code)).length;
+      sections.push({ id: "code", label: `Code (${n})`, html: paneCode(cdm) });
     }
     const pim = mods.pyinstaller;
     if (pim && pim.is_pyinstaller) {
@@ -5003,7 +5009,7 @@ function goKv(rows) {
     .map(([k, v]) => `<tr><th>${escapeHtml(k)}</th><td class="mono">${v}</td></tr>`).join("")}</tbody></table>`;
 }
 
-function goObject(o, open) {
+function goSummary(o) {
   const r = o.result || {};
   const b = r.binary || {};
   const bi = r.buildinfo || {};
@@ -5026,37 +5032,347 @@ function goObject(o, open) {
         ct.map((c) => `<tr><td>${e(c.field)}</td><td class="mono">${e(c.docutracex ?? "")}</td><td class="mono">${e(c.goresym ?? "")}</td>
           <td>${c.agree === true ? '<span class="badge badge-ok">agree</span>' : c.agree === false ? '<span class="badge badge-bad">differ</span>' : ""}</td></tr>`).join("")}
         <tr><td>functions</td><td></td><td class="mono">${e(gr.user_functions)} user</td><td></td></tr></tbody></table>`;
+  return `${o.stored_path ? fileActions(o.stored_path) : ""}
+      ${r.reason ? `<p class="hint-line">${e(r.reason)}</p>` : ""}
+      <div class="cx-cols">
+        <div>${goKv([["State", `<span class="badge badge-${GO_STATE_CLS[r.state] || "muted"}">${e(r.state || "?")}</span> score ${e(r.score ?? 0)}${r.confirmed_by ? ` · confirmed by ${e(r.confirmed_by)}` : ""}`],
+          ["Go version", e(r.go_version || "")], ["Format", e(`${(b.format || "").toUpperCase()} ${b.arch || ""} ${b.bits ? b.bits + "-bit" : ""} ${b.os || ""}`)],
+          ["Main module", e(bi.path || "")], ["Module version", e((bi.main || {}).version || "")],
+          ["Go build ID", e(r.go_build_id || "")], ["GNU build ID", e(b.gnu_build_id || "")],
+          ["pclntab", pc.magic ? e(`${pc.magic} (Go ${pc.version_range}) · ${pc.nfunc} functions · ptr ${pc.ptr_size} · @0x${(pc.offset || 0).toString(16)}${pc.section ? " · " + pc.section : ""}`) : ""],
+          ["moduledata", r.moduledata ? e(`${r.moduledata.layout} @0x${r.moduledata.offset.toString(16)}`) : ""],
+          ["Traits", traits.length ? e(traits.join(" · ")) : ""],
+          ["Duplicate", o.duplicate_of ? e(`same file as ${o.duplicate_of}`) : ""]])}</div>
+        <div>${cxSummaryBox(o.code, o.sha256, "go")}</div>
+      </div>
+      <details class="disclose"><summary>Identification evidence (${(r.evidence || []).length})</summary>
+        <table class="cases"><thead><tr><th>Kind</th><th>Detail</th><th>Offset</th><th>Points</th><th></th></tr></thead><tbody>${ev}</tbody></table></details>
+      <details class="disclose"><summary>GoReSym contrast</summary>${grHtml}</details>`;
+}
+
+function goDeps(o) {
+  const bi = (o.result || {}).buildinfo || {};
+  const e = (x) => escapeHtml(String(x));
   const deps = bi.deps || [];
   const settings = Object.entries(bi.settings || {});
-  return `<details class="disclose ml-item"${open ? " open" : ""}>
-    <summary><span class="badge badge-${GO_STATE_CLS[r.state] || "muted"}">${e(r.state || "?")}</span>
-      <span class="mono">${e(o.label)}</span> <span class="hint-line">${e(r.go_version || "")} · ${e((b.format || "").toUpperCase())} ${e(b.arch || "")}
-      · score ${e(r.score ?? 0)}${r.confirmed_by ? ` · confirmed by ${e(r.confirmed_by)}` : ""}${o.duplicate_of ? ` · same file as ${e(o.duplicate_of)}` : ""}</span></summary>
-    <div style="padding:8px 10px">
-      ${o.stored_path ? fileActions(o.stored_path) : ""}
-      ${r.reason ? `<p class="hint-line">${e(r.reason)}</p>` : ""}
-      ${goKv([["Go version", e(r.go_version || "")], ["Format", e(`${(b.format || "").toUpperCase()} ${b.arch || ""} ${b.bits ? b.bits + "-bit" : ""} ${b.os || ""}`)],
-        ["Main module", e(bi.path || "")], ["Module version", e((bi.main || {}).version || "")],
-        ["Go build ID", e(r.go_build_id || "")], ["GNU build ID", e(b.gnu_build_id || "")],
-        ["pclntab", pc.magic ? e(`${pc.magic} (Go ${pc.version_range}) · ${pc.nfunc} functions · ptr ${pc.ptr_size} · @0x${(pc.offset || 0).toString(16)}${pc.section ? " · " + pc.section : ""}`) : ""],
-        ["moduledata", r.moduledata ? e(`${r.moduledata.layout} @0x${r.moduledata.offset.toString(16)}`) : ""],
-        ["Traits", traits.length ? e(traits.join(" · ")) : ""],
-        ["User functions (sample)", (r.function_sample || []).length ? e(`${r.user_functions || 0} — ${(r.function_sample || []).slice(0, 12).join(", ")}`) : ""]])}
-      <h4 class="formats-title">Evidence</h4>
-      <table class="cases"><thead><tr><th>Kind</th><th>Detail</th><th>Offset</th><th>Points</th><th></th></tr></thead><tbody>${ev}</tbody></table>
-      ${deps.length ? `<details class="disclose"><summary>Dependencies (${deps.length})</summary>${goKv(deps.map((d) => [d.path, e(`${d.version || ""}${d.replace ? " ⇒ " + d.replace : ""}`)]))}</details>` : ""}
-      ${settings.length ? `<details class="disclose"><summary>Build settings (${settings.length})</summary>${goKv(settings.map(([k, v]) => [k, e(v)]))}</details>` : ""}
-      <h4 class="formats-title">GoReSym contrast</h4>${grHtml}
-    </div></details>`;
+  if (!deps.length && !settings.length) return '<p class="hint-line">No BuildInfo dependencies (stripped, very old Go, or removed).</p>';
+  return `${deps.length ? `<table class="cases"><thead><tr><th>Module</th><th>Version</th><th>Replaced by</th><th>Sum</th></tr></thead><tbody>${
+      deps.map((d) => `<tr><td class="mono">${e(d.path || "")}</td><td class="mono">${e(d.version || "")}</td>
+        <td class="mono">${e(d.replace || "")}</td><td class="mono">${e(d.sum || "")}</td></tr>`).join("")}</tbody></table>` : ""}
+    ${settings.length ? `<h4 class="formats-title">Build settings (${settings.length})</h4>${goKv(settings.map(([k, v]) => [k, e(v)]))}` : ""}`;
+}
+
+function goObjectTabs(o, i) {
+  const sha = o.sha256 || "";
+  const g = `go-${i}`;
+  const c = o.code || {};
+  const deps = ((o.result || {}).buildinfo || {}).deps || [];
+  return innerTabs(g, [
+    { id: "summary", label: "Summary", html: goSummary(o) },
+    { id: "functions", label: c.functions_analyzed ? `Functions (${c.functions_analyzed})` : "Functions", html: cxSlot(c, sha, "go", "functions", g) },
+    { id: "code", label: "Code", html: cxSlot(c, sha, "go", "code", g) },
+    { id: "strings", label: c.strings ? `Strings (${c.strings})` : "Strings", html: cxSlot(c, sha, "go", "strings", g) },
+    { id: "deps", label: deps.length ? `Dependencies (${deps.length})` : "Dependencies", html: goDeps(o) },
+  ]);
 }
 
 function paneGo(g) {
   const objs = (g.objects || []).filter((o) => (o.result || {}).state !== "Not detected");
   const warn = (g.warnings || []).map((w) => `<div class="hint-line">⚠ ${escapeHtml(w)}</div>`).join("");
-  return `<div class="ml-pane"><p class="hint-line">Go Malware Intelligence — identification (static: BuildInfo, pclntab,
-    moduledata, build IDs, runtime; contrasted with GoReSym). ${g.objects_scanned || 0} native object(s) of the case checked,
-    <b>${(g.counts || {}).go || 0}</b> Go binary(ies). Function recovery, disassembly and decompilation come in the next phases.</p>
-    ${warn}${objs.map((o, i) => goObject(o, i < 2)).join("")}</div>`;
+  const intro = `<p class="hint-line">Go Malware Intelligence — static: identification (BuildInfo, pclntab, moduledata,
+    build IDs, runtime; contrasted with GoReSym), recovered function names, priority and pseudocode (Rizin + rz-ghidra).
+    ${g.objects_scanned || 0} native object(s) checked, <b>${(g.counts || {}).go || 0}</b> Go binary(ies).</p>`;
+  const body = objs.length === 1 ? goObjectTabs(objs[0], 0)
+    : innerTabs("go-objs", objs.map((o, i) => ({ id: `o${i}`, label: `${o.label}`.slice(-48), status: (GO_STATE_CLS[(o.result || {}).state] === "bad" ? "bad" : "skip"),
+        statusLabel: (o.result || {}).state || "", html: goObjectTabs(o, i) })));
+  return `<div class="ml-pane">${intro}${warn}${body}</div>`;
+}
+
+// --- Code analysis explorer (Go subtabs + native "Code" tab) -----------------------
+// Summaries travel with the case; the function list, strings, APIs and each
+// function's pseudocode / disassembly are fetched from the API when shown.
+const _cx = { data: {}, fn: {}, sel: {}, flt: {}, loading: {} };
+const CX_CAT_CLS = { process: "bad", exec: "bad", network: "warn", crypto: "warn", persistence: "warn",
+                     transform: "muted", files: "muted", recon: "muted" };
+const cxHex = (n) => (n == null ? "" : "0x" + Number(n).toString(16));
+const cxCats = (cs) => (cs || []).map((c) => `<span class="badge badge-${CX_CAT_CLS[c] || "muted"}">${escapeHtml(c)}</span>`).join(" ");
+
+function cxOk(c) { return c && c.sha256 && (c.status === "ok" || c.status === "partial"); }
+
+function cxSlot(c, sha, mode, part, group) {
+  if (!cxOk(c)) {
+    const st = (c && c.status) || "not run";
+    return `<p class="hint-line">Code analysis ${escapeHtml(st)}${c && c.detail ? ": " + escapeHtml(c.detail) : ""}.
+      ${st === "unavailable" ? "Install Rizin + rz-ghidra from Diagnostics (Retry) and re-analyse the case." : ""}</p>`;
+  }
+  return `<div class="cx" data-cx-sha="${escapeHtml(sha)}" data-cx-mode="${escapeHtml(mode)}" data-cx-part="${part}"
+    data-cx-group="${escapeHtml(group)}"><p class="hint-line">Loading…</p></div>`;
+}
+
+function cxSummaryBox(c, sha, mode) {
+  if (!c) return '<p class="hint-line">Code analysis did not run on this object (re-analyse the case).</p>';
+  if (!cxOk(c)) return cxSlot(c, sha, mode, "summary", "");
+  const e = (x) => escapeHtml(String(x));
+  const lim = c.limits || {};
+  const top = (c.top || []).map((f) => `<tr><td>${f.score}</td>
+      <td><button type="button" class="cx-link" data-cx-open="${f.addr}" data-cx-sha="${e(sha)}" data-cx-mode="${e(mode)}">${e(f.name)}</button></td>
+      <td>${cxCats(f.categories)}</td></tr>`).join("");
+  return `${goKv([["Code analysis", `<span class="badge badge-${c.status === "ok" ? "ok" : "warn"}">${e(c.status)}</span> ${e(c.engine || "")} ${c.rizin ? "· " + e(c.rizin) : ""}`],
+      ["Functions", e(`${c.functions_analyzed || 0} analysed${c.functions_total ? ` of ${c.functions_total}` : ""}`)],
+      ["Decompiled", e(`${c.decompiled || 0} (priority order)`)], ["Strings", e(c.strings || 0)],
+      ["Imported APIs", c.apis ? e(c.apis) : ""],
+      ["Time", e(`${c.elapsed_s || 0} s${c.extended ? " (extended past the budget while still producing)" : ""} · budget ${lim.budget_min || "?"}–${lim.max_min || "?"} min · ${lim.mem_mb || "?"} MB`)]])}
+    ${(c.warnings || []).map((w) => `<div class="hint-line">⚠ ${e(w)}</div>`).join("")}
+    ${top ? `<h4 class="formats-title">Look here first</h4><table class="cases"><thead><tr><th>Score</th><th>Function</th><th>Behaviour</th></tr></thead><tbody>${top}</tbody></table>` : ""}`;
+}
+
+function cxKey(caseId, sha, mode) { return `${caseId}|${sha}|${mode}`; }
+
+async function cxLoad(caseId, sha, mode) {
+  const k = cxKey(caseId, sha, mode);
+  if (_cx.data[k]) return _cx.data[k];
+  if (!_cx.loading[k]) {
+    _cx.loading[k] = fetch(`/api/cases/${encodeURIComponent(caseId)}/code/${sha}/${mode}`)
+      .then((r) => (r.ok ? r.json() : r.json().then((j) => Promise.reject(new Error(j.detail || r.status)))))
+      .then((d) => { _cx.data[k] = d; return d; })
+      .finally(() => { delete _cx.loading[k]; });
+  }
+  return _cx.loading[k];
+}
+
+async function cxLoadFn(caseId, sha, mode, addr, decompile) {
+  const k = `${cxKey(caseId, sha, mode)}|${addr}`;
+  if (_cx.fn[k] && !decompile) return _cx.fn[k];
+  const url = `/api/cases/${encodeURIComponent(caseId)}/code/${sha}/${mode}/fn/${addr}${decompile ? "/decompile" : ""}`;
+  const r = await fetch(url, decompile ? { method: "POST" } : {});
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.detail || r.status);
+  _cx.fn[k] = j;
+  return j;
+}
+
+function cxFnRows(d, flt) {
+  const q = (flt.q || "").toLowerCase();
+  let fns = d.functions || [];
+  if (flt.user) fns = fns.filter((f) => f.user);
+  if (flt.cat) fns = fns.filter((f) => (f.categories || []).includes(flt.cat));
+  if (q) fns = fns.filter((f) => (f.name || "").toLowerCase().includes(q) || cxHex(f.addr).includes(q));
+  const shown = fns.slice(0, 600);
+  return `<p class="hint-line">${fns.length} function(s)${fns.length > shown.length ? `, first ${shown.length} shown` : ""} — sorted by priority.</p>
+    <div class="cx-scroll"><table class="cases cx-fns"><thead><tr><th>#</th><th>Function</th><th>Address</th><th>Score</th><th>Behaviour</th>
+      <th title="bytes">Size</th><th title="basic blocks">Blocks</th><th>Callers</th><th>Callees</th><th>Strings</th><th></th></tr></thead><tbody>${
+    shown.map((f) => `<tr class="cx-row" data-cx-open="${f.addr}">
+      <td>${f.rank || ""}</td><td class="mono cx-name" title="${escapeHtml((f.reasons || []).join("\n"))}">${escapeHtml(f.name)}</td>
+      <td class="mono">${cxHex(f.addr)}</td><td>${f.score || 0}</td><td>${cxCats(f.categories)}</td>
+      <td>${f.size || ""}</td><td>${f.blocks || ""}</td><td>${f.callers || 0}</td><td>${f.callees || 0}</td><td>${f.strings || 0}</td>
+      <td>${f.decompiled ? '<span class="badge badge-ok" title="pseudocode ready">C</span>' : ""}</td></tr>`).join("")}</tbody></table></div>`;
+}
+
+function cxFunctions(k, d) {
+  const flt = _cx.flt[k] || (_cx.flt[k] = { q: "", cat: "", user: true });
+  const cats = [...new Set((d.functions || []).flatMap((f) => f.categories || []))].sort();
+  return `<div class="cx-toolbar">
+      <input type="search" class="cx-q" placeholder="Filter by name or address" value="${escapeHtml(flt.q)}">
+      <select class="cx-cat"><option value="">all behaviours</option>${cats.map((c) => `<option${c === flt.cat ? " selected" : ""}>${escapeHtml(c)}</option>`).join("")}</select>
+      <label class="hint-line"><input type="checkbox" class="cx-user"${flt.user ? " checked" : ""}> program code only</label>
+    </div><div class="cx-fnlist">${cxFnRows(d, flt)}</div>`;
+}
+
+function cxHighlightC(code) {
+  const re = /(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|("(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')|\b(0x[0-9a-fA-F]+|\d+)\b|\b(if|else|while|for|do|return|goto|break|continue|switch|case|default|sizeof)\b|\b(void|char|short|int|long|unsigned|signed|bool|float|double|struct|union|const|code|undefined\d*|u?int\d+_t|size_t|byte|uchar|ushort|uint|ulong)\b/g;
+  let out = "", last = 0, m;
+  while ((m = re.exec(code))) {
+    out += escapeHtml(code.slice(last, m.index));
+    const cls = m[1] ? "tk-com" : m[2] ? "tk-str" : m[3] ? "tk-num" : m[4] ? "tk-kw" : "tk-ty";
+    out += `<span class="${cls}">${escapeHtml(m[0])}</span>`;
+    last = re.lastIndex;
+  }
+  return out + escapeHtml(code.slice(last));
+}
+
+function cxDisasm(ops) {
+  if (!ops || !ops.length) return '<p class="hint-line">No disassembly kept for this function (press “Decompile now” to fetch it).</p>';
+  return `<pre class="cx-code">${ops.map((o) => {
+    const t = o.type || "";
+    const cls = /call/.test(t) ? "da-call" : /jmp|cjmp/.test(t) ? "da-jmp" : /ret/.test(t) ? "da-ret" : "";
+    return `<span class="da-off">${cxHex(o.offset).padEnd(12)}</span><span class="da-bytes">${escapeHtml((o.bytes || "").slice(0, 20).padEnd(21))}</span><span class="${cls}">${escapeHtml(o.disasm || "")}</span>`;
+  }).join("\n")}</pre>`;
+}
+
+function cxFnLinks(list, emptyText) {
+  if (!list.length) return `<p class="hint-line">${emptyText}</p>`;
+  return `<div class="cx-scroll cx-small">${list.map((x) => x.addr != null
+    ? `<div><button type="button" class="cx-link" data-cx-open="${x.addr}">${escapeHtml(x.name)}</button></div>`
+    : `<div class="mono">${escapeHtml(x.name)}</div>`).join("")}</div>`;
+}
+
+function cxFnView(k, d, f) {
+  const e = (x) => escapeHtml(String(x));
+  const dec = f.decompiled || {};
+  const known = new Set((f.callees || []).map((c) => c.name));
+  const ext = (f.callee_names || []).filter((n) => !known.has(n)).map((n) => ({ name: n }));
+  const pseudo = dec.status === "ok"
+    ? `<pre class="cx-code">${cxHighlightC(dec.code || "")}</pre>`
+    : `<p class="hint-line">${dec.status === "failed" ? `Not decompiled: ${e(dec.detail || "")}` : e(f.decompile_note || "Not decompiled in the automatic pass.")}</p>
+       <button type="button" class="btn btn-ghost btn-sm" data-cx-decompile="${f.addr}">Decompile now</button>`;
+  return `<div class="cx-fnhead">
+      <div><span class="mono cx-title">${e(f.name)}</span> <span class="hint-line">${cxHex(f.addr)} · ${f.size || 0} bytes · ${f.blocks || 0} blocks
+        · complexity ${f.complexity ?? "?"}${f.loops ? ` · ${f.loops} loop(s)` : ""}${f.xor_ops ? ` · ${f.xor_ops} XOR` : ""} · score ${f.score || 0} (#${f.rank || "?"})</span></div>
+      <div>${cxCats(f.categories)} ${(f.reasons || []).map((r) => `<span class="hint-line">· ${e(r)}</span>`).join(" ")}</div>
+    </div>
+    <div class="cx-split">
+      <div><h4 class="formats-title">Pseudocode <span class="hint-line">rz-ghidra${dec.on_demand ? " · on demand" : ""}</span></h4>${pseudo}</div>
+      <div><h4 class="formats-title">Disassembly <span class="hint-line">Rizin</span></h4>${cxDisasm(f.ops)}</div>
+    </div>
+    <div class="cx-cols3">
+      <div><h4 class="formats-title">Called by (${(f.callers || []).length})</h4>${cxFnLinks(f.callers || [], "No callers found (entry point, callback or indirect call).")}</div>
+      <div><h4 class="formats-title">Calls (${(f.callees || []).length + ext.length})</h4>${cxFnLinks([...(f.callees || []), ...ext], "No direct calls.")}</div>
+      <div><h4 class="formats-title">Strings (${(f.strings || []).length})</h4>${(f.strings || []).length
+        ? `<div class="cx-scroll cx-small">${f.strings.map((s) => `<div class="mono" title="${cxHex(s.addr)}">${e(s.value)}</div>`).join("")}</div>`
+        : '<p class="hint-line">No strings referenced.</p>'}</div>
+    </div>`;
+}
+
+function cxCode(k, d) {
+  const sel = _cx.sel[k] ?? ((d.functions || [])[0] || {}).addr;
+  const opts = (d.functions || []).slice(0, 400).map((f) =>
+    `<option value="${f.addr}"${f.addr === sel ? " selected" : ""}>#${f.rank} ${escapeHtml(f.name)} (${f.score})</option>`).join("");
+  return `<div class="cx-toolbar"><select class="cx-pick">${opts}</select>
+      <span class="hint-line">pick a function, or open one from Functions / Strings${d.apis && d.apis.length ? " / APIs" : ""}</span></div>
+    <div class="cx-fn" data-cx-addr="${sel ?? ""}"><p class="hint-line">Loading…</p></div>`;
+}
+
+function cxStrings(k, d) {
+  const flt = _cx.flt[k + "|s"] || (_cx.flt[k + "|s"] = { q: "" });
+  const q = flt.q.toLowerCase();
+  const byName = Object.fromEntries((d.functions || []).map((f) => [f.name, f.addr]));
+  const all = (d.strings || []).filter((s) => !q || (s.value || "").toLowerCase().includes(q) || (s.function || "").toLowerCase().includes(q));
+  const shown = all.slice(0, 1500);
+  return `<div class="cx-toolbar"><input type="search" class="cx-sq" placeholder="Filter strings" value="${escapeHtml(flt.q)}"></div>
+    <div class="cx-slist"><p class="hint-line">${all.length} string(s) referenced by the analysed code${all.length > shown.length ? `, first ${shown.length} shown` : ""}.</p>
+    <div class="cx-scroll"><table class="cases"><thead><tr><th>String</th><th>Used in</th><th>Address</th></tr></thead><tbody>${
+      shown.map((s) => `<tr><td class="mono">${escapeHtml(s.value)}</td>
+        <td>${byName[s.function] != null ? `<button type="button" class="cx-link" data-cx-open="${byName[s.function]}">${escapeHtml(s.function)}</button>` : escapeHtml(s.function || "")}</td>
+        <td class="mono">${cxHex(s.addr)}</td></tr>`).join("")}</tbody></table></div></div>`;
+}
+
+function cxApis(k, d) {
+  const byName = Object.fromEntries((d.functions || []).map((f) => [f.name, f.addr]));
+  const apis = d.apis || [];
+  if (!apis.length) return '<p class="hint-line">No import table (static binary, or imports resolved at run time).</p>';
+  return `<p class="hint-line">${apis.length} imported function(s); the ones linked to a behaviour come first.</p>
+    <div class="cx-scroll"><table class="cases"><thead><tr><th>Library</th><th>Function</th><th>Behaviour</th><th>Called from</th></tr></thead><tbody>${
+    apis.map((a) => `<tr><td class="mono">${escapeHtml(a.lib || "")}</td><td class="mono">${escapeHtml(a.name)}${a.ordinal && !a.name ? "#" + a.ordinal : ""}</td>
+      <td>${cxCats(a.categories)}</td><td>${(a.used_by || []).slice(0, 8).map((n) => byName[n] != null
+        ? `<button type="button" class="cx-link" data-cx-open="${byName[n]}">${escapeHtml(n)}</button>` : escapeHtml(n)).join(" ")}${
+        (a.used_by || []).length > 8 ? ` <span class="hint-line">+${a.used_by.length - 8}</span>` : ""}</td></tr>`).join("")}</tbody></table></div>`;
+}
+
+async function cxRenderFn(el, caseId, sha, mode, addr, decompile) {
+  const k = cxKey(caseId, sha, mode);
+  const box = el.querySelector(".cx-fn");
+  if (!box || addr == null || addr === "") { if (box) box.innerHTML = '<p class="hint-line">No functions.</p>'; return; }
+  box.innerHTML = `<p class="hint-line">${decompile ? "Decompiling… (Rizin + rz-ghidra; this can take a while)" : "Loading…"}</p>`;
+  try {
+    const f = await cxLoadFn(caseId, sha, mode, addr, decompile);
+    box.innerHTML = cxFnView(k, _cx.data[k], f);
+    box.querySelectorAll("[data-cx-decompile]").forEach((b) => b.addEventListener("click", () =>
+      cxRenderFn(el, caseId, sha, mode, Number(b.getAttribute("data-cx-decompile")), true)));
+    cxWireOpen(box, caseId, sha, mode, el.getAttribute("data-cx-group"));
+  } catch (err) {
+    box.innerHTML = `<p class="bad-text">${escapeHtml(String(err.message || err))}</p>`;
+  }
+}
+
+function cxOpen(caseId, sha, mode, group, addr) {
+  const k = cxKey(caseId, sha, mode);
+  _cx.sel[k] = Number(addr);
+  const root = document.getElementById("comp-body") || document;
+  const tab = group && root.querySelector(`.itab[data-itab-group="${CSS.escape(group)}"][data-itab="code"]`);
+  if (tab) tab.click();
+  root.querySelectorAll(`.cx[data-cx-part="code"][data-cx-sha="${CSS.escape(sha)}"][data-cx-mode="${CSS.escape(mode)}"]`).forEach((el) => {
+    const pick = el.querySelector(".cx-pick");
+    if (pick) pick.value = String(addr);
+    cxRenderFn(el, caseId, sha, mode, Number(addr));
+    el.scrollIntoView({ block: "nearest" });
+  });
+}
+
+function cxWireOpen(scope, caseId, sha, mode, group) {
+  scope.querySelectorAll("[data-cx-open]").forEach((b) => b.addEventListener("click", () =>
+    cxOpen(caseId, sha, mode, group, b.getAttribute("data-cx-open"))));
+}
+
+async function cxRender(el, caseId) {
+  const sha = el.getAttribute("data-cx-sha"), mode = el.getAttribute("data-cx-mode");
+  const part = el.getAttribute("data-cx-part"), group = el.getAttribute("data-cx-group");
+  const k = cxKey(caseId, sha, mode);
+  let d;
+  try { d = await cxLoad(caseId, sha, mode); } catch (err) {
+    el.innerHTML = `<p class="bad-text">Could not load the code analysis: ${escapeHtml(String(err.message || err))}</p>`;
+    return;
+  }
+  if (part === "functions") {
+    el.innerHTML = cxFunctions(k, d);
+    const flt = _cx.flt[k];
+    const redraw = () => { el.querySelector(".cx-fnlist").innerHTML = cxFnRows(d, flt); cxWireOpen(el.querySelector(".cx-fnlist"), caseId, sha, mode, group); };
+    el.querySelector(".cx-q").addEventListener("input", (ev) => { flt.q = ev.target.value; redraw(); });
+    el.querySelector(".cx-cat").addEventListener("change", (ev) => { flt.cat = ev.target.value; redraw(); });
+    el.querySelector(".cx-user").addEventListener("change", (ev) => { flt.user = ev.target.checked; redraw(); });
+    cxWireOpen(el, caseId, sha, mode, group);
+  } else if (part === "code") {
+    el.innerHTML = cxCode(k, d);
+    el.querySelector(".cx-pick").addEventListener("change", (ev) => { _cx.sel[k] = Number(ev.target.value); cxRenderFn(el, caseId, sha, mode, Number(ev.target.value)); });
+    cxRenderFn(el, caseId, sha, mode, el.querySelector(".cx-fn").getAttribute("data-cx-addr"));
+  } else if (part === "strings") {
+    el.innerHTML = cxStrings(k, d);
+    el.querySelector(".cx-sq").addEventListener("input", (ev) => {
+      _cx.flt[k + "|s"].q = ev.target.value;
+      const tmp = document.createElement("div");
+      tmp.innerHTML = cxStrings(k, d);
+      el.querySelector(".cx-slist").replaceWith(tmp.querySelector(".cx-slist"));
+      cxWireOpen(el.querySelector(".cx-slist"), caseId, sha, mode, group);
+    });
+    cxWireOpen(el, caseId, sha, mode, group);
+  } else if (part === "apis") {
+    el.innerHTML = cxApis(k, d);
+    cxWireOpen(el, caseId, sha, mode, group);
+  }
+}
+
+function wireCodeExplorers(root, caseId) {
+  if (!caseId) return;
+  root.querySelectorAll(".cx[data-cx-sha]").forEach((el) => cxRender(el, caseId));
+  // "Look here first" links in the summaries: open the function in the Code subtab of the same object
+  root.querySelectorAll("button.cx-link[data-cx-sha]").forEach((b) => b.addEventListener("click", () => {
+    const pane = b.closest(".ipane");
+    const group = pane ? pane.getAttribute("data-ipane-group") : "";
+    cxOpen(caseId, b.getAttribute("data-cx-sha"), b.getAttribute("data-cx-mode"), group, b.getAttribute("data-cx-open"));
+  }));
+}
+
+function paneCode(cm) {
+  const objs = (cm.objects || []).filter((o) => cxOk(o.code));
+  const skipped = (cm.objects || []).filter((o) => !cxOk(o.code));
+  const warn = (cm.warnings || []).map((w) => `<div class="hint-line">⚠ ${escapeHtml(w)}</div>`).join("");
+  const tabsFor = (o, i) => {
+    const c = o.code, g = `code-${i}`;
+    return `${o.stored_path ? fileActions(o.stored_path) : ""}${innerTabs(g, [
+      { id: "summary", label: "Summary", html: cxSummaryBox(c, o.sha256, "native") },
+      { id: "functions", label: `Functions (${c.functions_analyzed || 0})`, html: cxSlot(c, o.sha256, "native", "functions", g) },
+      { id: "code", label: "Code", html: cxSlot(c, o.sha256, "native", "code", g) },
+      { id: "strings", label: `Strings (${c.strings || 0})`, html: cxSlot(c, o.sha256, "native", "strings", g) },
+      { id: "apis", label: `APIs (${c.apis || 0})`, html: cxSlot(c, o.sha256, "native", "apis", g) },
+    ])}`;
+  };
+  const body = !objs.length ? '<p class="hint-line">No native object could be analysed.</p>'
+    : objs.length === 1 ? tabsFor(objs[0], 0)
+    : innerTabs("code-objs", objs.map((o, i) => ({ id: `o${i}`, label: `${o.label}`.slice(-48), html: tabsFor(o, i) })));
+  return `<div class="ml-pane"><p class="hint-line">Code analysis — static (Rizin + rz-ghidra): functions sorted by what
+    they do, pseudocode and disassembly side by side, callers / callees, strings and imported APIs. Nothing is executed.</p>
+    ${warn}${body}
+    ${skipped.length ? `<details class="disclose"><summary>Not analysed (${skipped.length})</summary>${skipped.map((o) =>
+      `<div class="hint-line"><span class="mono">${escapeHtml(o.label)}</span> — ${escapeHtml((o.code || {}).detail || (o.code || {}).status || "")}</div>`).join("")}</details>` : ""}</div>`;
 }
 
 // --- C2 / Beacons view ---------------------------------------------------------

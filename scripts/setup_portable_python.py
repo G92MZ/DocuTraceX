@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -1082,6 +1083,130 @@ def install_goresym() -> bool:
     return True
 
 
+# --- Rizin + rz-ghidra (code analysis engine: disassembly + decompilation) --------
+# The Rizin releases ship no rz-ghidra; the official Cutter bundle does (rizin
+# 0.9.1 + core_ghidra + the SLEIGH processor specs), so only the command-line part
+# of it is kept: rizin + its libraries + plugins + share/rizin (no Qt, no Python).
+# Pinned + SHA-256. LGPL-3.0 (Rizin, rz-ghidra) / Apache-2.0 (Ghidra decompiler).
+RIZIN_DIR = TOOLS / "rizin"
+CUTTER_VERSION = "v2.5.0"
+CUTTER_BASE = f"https://github.com/rizinorg/cutter/releases/download/{CUTTER_VERSION}/"
+CUTTER_ASSETS = {
+    ("windows", "x86_64"): ("Cutter-v2.5.0-Windows-x86_64.zip",
+                            "a04154a03a392dbf5886a629938582f7d23a93636fa0611c3e1c34905b197e69"),
+    ("linux", "x86_64"): ("Cutter-v2.5.0-Linux-x86_64.AppImage",
+                          "b8ad215d7a9e2af9e1f463511229f16e1f4745a0fb541413e5f4787f949ac0cf"),
+    ("darwin", "aarch64"): ("Cutter-v2.5.0-macOS-arm64.dmg",
+                            "ec08477489cb7f769d4121e5084b09131b02b6a801ac7a2d5896a67e87193452"),
+    ("darwin", "x86_64"): ("Cutter-v2.5.0-macOS-x86_64.dmg",
+                           "02a7f1c507239691b151e6cc41a5d33f89d672ec443f12890e31087ad37271a6"),
+}
+
+
+def rizin_executable() -> Path | None:
+    for c in (RIZIN_DIR / "rizin.exe", RIZIN_DIR / "bin" / "rizin"):
+        if c.is_file():
+            return c
+    hits = sorted(RIZIN_DIR.glob("**/MacOS/rizin")) + sorted(RIZIN_DIR.glob("**/bin/rizin"))
+    return hits[0] if hits else None
+
+
+def _rizin_ok() -> bool:
+    exe = rizin_executable()
+    return exe is not None and any(RIZIN_DIR.glob("**/core_ghidra.*"))
+
+
+def _copy_tree(src: Path, dst: Path) -> None:
+    if src.is_dir():
+        shutil.copytree(src, dst, dirs_exist_ok=True, symlinks=True)
+
+
+def install_rizin() -> bool:
+    """Rizin + rz-ghidra into tools/rizin/ — optional; without it the Go /
+    native code analysis (functions, disassembly, pseudocode) is skipped."""
+    import hashlib
+    import io
+    import os
+
+    if _rizin_ok():
+        return True
+    plat = "windows" if sys.platform.startswith("win") else ("darwin" if sys.platform == "darwin" else "linux")
+    asset = CUTTER_ASSETS.get((plat, _arch()))
+    if asset is None:
+        print(f"[=] Rizin + rz-ghidra: no official build for {plat}/{_arch()}; code analysis stays disabled.")
+        return False
+    name, sha = asset
+    print(f"[>] Downloading Rizin + rz-ghidra (Cutter {CUTTER_VERSION} bundle, ~140 MB) for {plat}")
+    try:
+        data = _get(CUTTER_BASE + name)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] Could not download {name} ({exc}); code analysis stays disabled.")
+        return False
+    got = hashlib.sha256(data).hexdigest()
+    if got != sha:
+        print(f"[!] Rizin bundle: SHA-256 mismatch (got {got}, expected {sha}) — NOT installed.")
+        return False
+    shutil.rmtree(RIZIN_DIR, ignore_errors=True)
+    RIZIN_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        if plat == "windows":
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                for m in z.infolist():
+                    rel = m.filename.split("/", 1)[1] if "/" in m.filename else ""
+                    low = rel.lower()
+                    keep = (low.count("/") == 0 and (low == "rizin.exe" or low.startswith("rz-") and low.endswith(".exe")
+                                                     or low.startswith("rz_") and low.endswith(".dll") or low == "z.dll")) \
+                        or low.startswith(("lib/rizin/", "share/rizin/"))
+                    if not keep or m.is_dir():
+                        continue
+                    out = RIZIN_DIR / rel
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    with z.open(m) as src, out.open("wb") as dst:
+                        shutil.copyfileobj(src, dst)
+        elif plat == "linux":
+            with tempfile.TemporaryDirectory() as td:
+                app = Path(td) / "cutter.AppImage"
+                app.write_bytes(data)
+                app.chmod(0o755)
+                # the AppImage runtime only unpacks its own squashfs here (no Cutter is started)
+                subprocess.run([str(app), "--appimage-extract"], cwd=td, check=True,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=900)
+                usr = Path(td) / "squashfs-root" / "usr"
+                (RIZIN_DIR / "bin").mkdir(parents=True, exist_ok=True)
+                for b in usr.glob("bin/r*"):
+                    if b.name == "rizin" or b.name.startswith("rz-"):
+                        shutil.copy2(b, RIZIN_DIR / "bin" / b.name)
+                (RIZIN_DIR / "lib").mkdir(parents=True, exist_ok=True)
+                for so in usr.glob("lib/librz_*"):
+                    shutil.copy2(so, RIZIN_DIR / "lib" / so.name, follow_symlinks=False)
+                _copy_tree(usr / "lib" / "rizin", RIZIN_DIR / "lib" / "rizin")
+                _copy_tree(usr / "share" / "rizin", RIZIN_DIR / "share" / "rizin")
+        else:                                                    # macOS: mount the dmg read-only, copy the app
+            with tempfile.TemporaryDirectory() as td:
+                dmg = Path(td) / "cutter.dmg"
+                dmg.write_bytes(data)
+                mnt = Path(td) / "mnt"
+                mnt.mkdir()
+                subprocess.run(["hdiutil", "attach", "-nobrowse", "-readonly", "-mountpoint", str(mnt), str(dmg)],
+                               check=True, stdout=subprocess.DEVNULL, timeout=600)
+                try:
+                    app = next(mnt.glob("*.app"))
+                    _copy_tree(app, RIZIN_DIR / app.name)
+                finally:
+                    subprocess.run(["hdiutil", "detach", str(mnt)], stdout=subprocess.DEVNULL, timeout=120)
+        exe = rizin_executable()
+        if exe and plat != "windows":
+            os.chmod(exe, 0o755)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] Rizin bundle: could not extract ({exc}).")
+        return False
+    if not _rizin_ok():
+        print("[!] Rizin bundle extracted but rizin / rz-ghidra were not found in it.")
+        return False
+    print(f"[+] Rizin + rz-ghidra at {RIZIN_DIR}")
+    return True
+
+
 def _capa_ok() -> bool:
     return (CAPA_DIR / "capa.exe").is_file()
 
@@ -1744,6 +1869,7 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
     _clear_mark("floss")
     _clear_mark("capa")
     _clear_mark("goresym")
+    _clear_mark("rizin")
     install_webcrack()   # portable Node + webcrack (JS deobfuscation)
     install_boxps()      # PowerShell Core + box-ps (PowerShell sandbox)
     install_pycdc()      # pycdc (.pyc decompiler, built from source)
@@ -1751,6 +1877,7 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
     install_floss()      # Mandiant FLOSS standalone (PE obfuscated strings; Windows)
     install_capa()       # Mandiant capa standalone (PE capabilities/ATT&CK; Windows)
     install_goresym()    # Mandiant GoReSym (Go metadata recovery; Go Malware Intelligence)
+    install_rizin()      # Rizin + rz-ghidra (code analysis: functions, disassembly, pseudocode)
     # PE packer / installer unpackers. Each is optional and independently guarded.
     for _name in ("upx", "7zip", "die", "innoextract", "nuitka-extractor",
                   "autoit-ripper", "evbunpack"):
@@ -1852,6 +1979,7 @@ def _ensure_optional() -> None:
                               ("floss", _floss_ok, install_floss),
                               ("capa", _capa_ok, install_capa),
                               ("goresym", _goresym_ok, install_goresym),
+                              ("rizin", _rizin_ok, install_rizin),
                               ("upx", _upx_ok, install_upx),
                               ("7zip", _sevenzip_ok, install_7zip),
                               ("die", _die_ok, install_die),
@@ -1977,6 +2105,7 @@ COMPONENTS: dict = {
     "floss": lambda: bool(install_floss()) and _floss_ok(),
     "capa": lambda: bool(install_capa()) and _capa_ok(),
     "goresym": lambda: bool(install_goresym()) and _goresym_ok(),
+    "rizin": lambda: bool(install_rizin()) and _rizin_ok(),
     "upx": lambda: bool(install_upx()) and _upx_ok(),
     "7zip": lambda: bool(install_7zip()) and _sevenzip_ok(),
     "die": lambda: bool(install_die()) and _die_ok(),
