@@ -241,3 +241,24 @@ def test_debloat_bloated_section_without_overlay(tmp_path) -> None:
     src.write_bytes(ms.bloated_section_exe())
     rec = debloat_pe.run(src, tmp_path / "out" / "bloated.exe")
     assert rec["status"] != "error", rec
+
+
+def test_dotnet_obfuscator_is_not_a_stub(monkeypatch) -> None:
+    """DIE calls ConfuserEx a 'protector': on a .NET assembly that is obfuscation, not a
+    stub hiding the code — FLOSS / capa still run and no 'unpacking not possible' finding."""
+    import pefile
+
+    from docutracex.parsers import unpack
+    monkeypatch.setattr(unpack, "run_die", lambda p: {"status": "ok"})
+    monkeypatch.setattr(unpack, "die_families", lambda d: ([], ["Confuser 1.X"]))
+    import tempfile
+    from pathlib import Path
+    with tempfile.TemporaryDirectory() as t:
+        p = Path(t) / "a.exe"
+        p.write_bytes(ms.dotnet_loader_exe())
+        rec = unpack.process(p, p.read_bytes(), pefile.PE(str(p)), None)
+        assert rec["status"] == "obfuscated" and "Confuser 1.X" in rec["detail"] and not rec["findings"]
+        n = Path(t) / "n.exe"
+        n.write_bytes(ms.code_loader_exe())                       # the same label on a native PE: still a protector
+        rec2 = unpack.process(n, n.read_bytes(), pefile.PE(str(n)), None)
+        assert rec2["status"] == "no_static" and rec2["findings"][0]["rule"] == "pe_protector"

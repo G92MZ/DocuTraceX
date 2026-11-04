@@ -292,6 +292,14 @@ def heuristics(blob: bytes, pe: Any | None) -> list[dict[str, str]]:
     return hits
 
 
+def _is_dotnet(pe: Any | None) -> bool:
+    try:
+        d = pe.OPTIONAL_HEADER.DATA_DIRECTORY[14]
+        return bool(d.VirtualAddress and d.Size)
+    except (AttributeError, IndexError):
+        return False
+
+
 def no_static_hits(pe: Any | None) -> list[str]:
     """Protector/packer labels with no static unpacker (by section names)."""
     if pe is None:
@@ -561,7 +569,7 @@ def process(path: Path, blob: bytes, pe: Any | None, out_dir: Path | None,
       detected      [{family, label, by, evidence}]   (unpackable families)
       die           DIE status + raw detections (when run)
       no_static     labels of protectors with no static unpacker
-      status        none | unpacked | failed | not_provisioned | no_static | detected
+      status        none | unpacked | failed | not_provisioned | no_static | detected | obfuscated (.NET)
       tool, detail, duration_s, files [{name, size}], scripts [{file, text}]
       _files        [(abs_path, display_name)]  — popped by the caller
       findings      [...] (pe-style dicts, tool "unpack")
@@ -591,6 +599,13 @@ def process(path: Path, blob: bytes, pe: Any | None, out_dir: Path | None,
     labels = ", ".join(h["label"] for h in rec["detected"])
 
     if not rec["detected"]:
+        if rec["no_static"] and _is_dotnet(pe):
+            # a .NET obfuscator (ConfuserEx, .NET Reactor…) renames and encrypts inside the
+            # assembly: there is no stub hiding it, the metadata and CIL are all there
+            rec["status"] = "obfuscated"
+            rec["detail"] = (f".NET assembly obfuscated with {', '.join(rec['no_static'])} — the assembly is intact "
+                             f"(see the .NET tab); FLOSS / capa still run")
+            return rec
         if rec["no_static"]:
             rec["status"] = "no_static"
             rec["detail"] = (f"packed/protected with {', '.join(rec['no_static'])} — "

@@ -2192,7 +2192,7 @@ function wireInnerTabs(root) {
 const _TOOL_STATUS = { ok: ["ok", "ran"], skipped: ["skip", "skipped"], not_provisioned: ["off", "not provisioned"],
                        not_installed: ["off", "not installed"], timeout: ["bad", "timeout"], error: ["bad", "error"],
                        unpacked: ["ok", "unpacked"], none: ["ok", "not packed"], detected: ["skip", "detected"],
-                       failed: ["bad", "failed"], no_static: ["bad", "protector"],
+                       failed: ["bad", "failed"], no_static: ["bad", "protector"], obfuscated: ["skip", ".NET obfuscator"],
                        debloated: ["bad", "padded"], clean: ["ok", "no padding"] };
 function toolTab(id, label, rec, html) {
   const st = rec ? (_TOOL_STATUS[rec.status] || ["off", rec.status || ""]) : null;
