@@ -801,6 +801,14 @@ def sources_from_modules(
     sources: list[dict[str, Any]] = []
 
     for name, data in modules.items():
+        if name in ("golang", "code") and isinstance(data, dict):
+            # only the strings the analysed code uses (and FLOSS / certificates),
+            # never the Go metadata (module paths such as github.com/... are not IOCs)
+            for obj in data.get("objects") or []:
+                for item in obj.get("ioc_sources") or []:
+                    if isinstance(item, dict) and isinstance(item.get("text"), str) and item["text"].strip():
+                        sources.append({"module": name, "location": item.get("location", ""), "text": item["text"]})
+            continue
         if name in _SKIP_MODULES or not isinstance(data, (dict, list)):
             continue
 
