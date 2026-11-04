@@ -200,12 +200,16 @@ def overview(full: dict[str, Any]) -> dict[str, Any]:
         light.append(x)
     strings = [dict(x, source=x.get("source") or "code") for x in full.get("strings") or []]
     strings += full.get("floss") or []
+    for g in (full.get("garble") or {}).get("strings") or []:
+        strings.append({"value": g["value"][:500], "function": g["function"], "source": "Garble (emulated)",
+                        "addr": g["addr"]})
     for pt in (full.get("crypto") or {}).get("plaintexts") or []:
         if pt.get("text"):
             strings.append({"value": pt["text"][:500], "function": pt["function"], "source": "decrypted",
                             "addr": pt.get("data_va")})
     return {"summary": full.get("summary") or {}, "functions": light, "strings": strings,
             "crypto": full.get("crypto") or {}, "capabilities": full.get("capabilities") or {},
+            "garble": full.get("garble") or {},
             "apis": full.get("apis") or [], "resources": full.get("resources") or {},
             "dependencies": full.get("dependencies")}
 
@@ -498,6 +502,18 @@ def enrich(root: Path, path: Path, data: bytes, sha256: str, mode: str, item: di
         log.warning("crypto step failed on %s: %s", label, exc)
         full["crypto"] = {"algorithms": [], "constants": [], "functions": [], "keys": [], "plaintexts": [],
                           "not_recoverable": [], "error": str(exc)[:300]}
+    # phase 7: Garble literal strings, rebuilt by emulating only their decoding closures
+    try:
+        from . import garble as _garble
+        full["garble"] = _garble.recover(full, data, binfmt.parse(data), names or [], mode)
+        by_name = {f["name"]: f for f in full.get("functions") or []}
+        for g in full["garble"].get("strings") or []:
+            fn = by_name.get(g["function"])
+            if fn is not None:
+                fn.setdefault("floss", []).append({"value": g["value"], "kind": "Garble, emulated"})
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Garble step failed on %s: %s", label, exc)
+        full["garble"] = {"status": "failed", "detail": str(exc)[:300], "strings": []}
     # phase 9: capabilities from correlated evidence, contrasted with capa
     try:
         from . import capabilities as _caps
@@ -515,6 +531,7 @@ def enrich(root: Path, path: Path, data: bytes, sha256: str, mode: str, item: di
                "crypto_algorithms": len(full["crypto"]["algorithms"]), "crypto_functions": len(full["crypto"]["functions"]),
                "keys": len(full["crypto"]["keys"]), "decrypted": len(full["crypto"]["plaintexts"]),
                "capabilities": len(full["capabilities"].get("capabilities") or []),
+               "garble_strings": len((full.get("garble") or {}).get("strings") or []),
                "capabilities_high": sum(1 for c in full["capabilities"].get("capabilities") or []
                                         if c["confidence"] == "high")}
     if mode == "go":
@@ -531,6 +548,8 @@ def enrich(root: Path, path: Path, data: bytes, sha256: str, mode: str, item: di
         src.append({"location": f"{label} › {s.get('function') or ''}", "text": s.get("value") or ""})
     for s in (full.get("floss") or [])[:3000]:
         src.append({"location": f"{label} › {s.get('function') or 'FLOSS'} ({s.get('source')})", "text": s["value"]})
+    for g in (full.get("garble") or {}).get("strings") or []:
+        src.append({"location": f"{label} › {g['function']} (Garble literal, emulated)", "text": g["value"]})
     for pt in full["crypto"]["plaintexts"]:
         if pt.get("text"):
             src.append({"location": f"{label} › {pt['function']} (decrypted: {pt['method']})", "text": pt["text"]})
