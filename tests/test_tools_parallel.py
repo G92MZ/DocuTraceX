@@ -27,7 +27,13 @@ def fake_tools(monkeypatch: pytest.MonkeyPatch):
                 live["now"] += 1
                 live["max"] = max(live["max"], live["now"])
                 live["calls"].append((name, Path(path).name))
-            time.sleep(0.3)
+            # hold until a second tool overlaps (or 3 s): overlap is checked, not timing
+            for _ in range(300):
+                with lock:
+                    if live["now"] >= live.get("want", 2):
+                        break
+                time.sleep(0.01)
+            time.sleep(0.05)
             with lock:
                 live["now"] -= 1
             return {"status": "ok", "tool": name, **({"strings": ["s"]} if name == "floss" else {"capabilities": []})}
@@ -53,6 +59,7 @@ def test_both_tools_run_at_the_same_time(tmp_path: Path, fake_tools) -> None:
 
 def test_prefetch_runs_ahead_and_is_used_once(tmp_path: Path, fake_tools, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(pe_mod, "_tools_workers", lambda: 2)
+    fake_tools["want"] = 4
     files = []
     for i in range(4):
         p = tmp_path / f"k{i}.exe"
