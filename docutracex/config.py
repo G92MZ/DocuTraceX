@@ -214,6 +214,20 @@ class Settings:
                 return c
         return None
 
+    def rizin_executable(self) -> Path | None:
+        """Rizin (with the rz-ghidra decompiler plugin) under ``tools/rizin/`` —
+        the code analysis engine. ``DOCUTRACEX_RIZIN`` overrides. Absent → the
+        Go / native code analysis is skipped with a warning."""
+        env = os.environ.get("DOCUTRACEX_RIZIN")
+        if env and Path(env).is_file():
+            return Path(env)
+        base = self.tools_dir / "rizin"
+        for c in (base / "rizin.exe", base / "bin" / "rizin"):
+            if c.is_file():
+                return c
+        hits = sorted(base.glob("**/MacOS/rizin")) if base.is_dir() else []
+        return hits[0] if hits else None
+
 
 settings = Settings()
 

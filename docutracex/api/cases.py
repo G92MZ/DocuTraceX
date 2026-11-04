@@ -702,3 +702,67 @@ async def netcheck_asset(analysis_id: str, path: str):
         "Content-Security-Policy": ("default-src 'none'; style-src 'unsafe-inline'; img-src data:; "
                                     "font-src data:; form-action 'none'; sandbox"),
         "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer"})
+
+
+# --- Code analysis (Go tab subtabs / Code tab) -----------------------------------
+
+def _code_ctx(analysis_id: str, sha256: str, mode: str):
+    import re as _re
+
+    from ..codeanalysis import case as code_case
+    from ..storage import CasePaths
+    if not _re.fullmatch(r"[0-9a-f]{64}", sha256) or mode not in ("go", "native"):
+        raise HTTPException(status_code=400, detail="bad code result id")
+    try:
+        manifest = case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    paths = CasePaths(analysis_id)
+    full = code_case.load(paths.root, sha256, mode)
+    if full is None:
+        raise HTTPException(status_code=404, detail="no code analysis for this object")
+    return manifest, paths, full
+
+
+@router.get("/{analysis_id}/code/{sha256}/{mode}")
+def code_overview(analysis_id: str, sha256: str, mode: str) -> dict:
+    """Summary, function list, strings and imported APIs of one analysed binary."""
+    from ..codeanalysis import case as code_case
+    _m, _p, full = _code_ctx(analysis_id, sha256, mode)
+    return code_case.overview(full)
+
+
+@router.get("/{analysis_id}/code/{sha256}/{mode}/fn/{addr}")
+def code_function(analysis_id: str, sha256: str, mode: str, addr: int) -> dict:
+    """One function: metadata, callers / callees, strings, pseudocode, disassembly."""
+    from ..codeanalysis import case as code_case
+    _m, _p, full = _code_ctx(analysis_id, sha256, mode)
+    fv = code_case.function_view(full, addr)
+    if fv is None:
+        raise HTTPException(status_code=404, detail="function not in the analysis")
+    return fv
+
+
+@router.post("/{analysis_id}/code/{sha256}/{mode}/fn/{addr}/decompile")
+def code_decompile(analysis_id: str, sha256: str, mode: str, addr: int) -> dict:
+    """Decompile (and disassemble) one function now, and keep the result."""
+    from pathlib import Path as _P
+
+    from ..codeanalysis import case as code_case
+    from ..storage import read_json
+    manifest, paths, full = _code_ctx(analysis_id, sha256, mode)
+    if code_case.function_view(full, addr) is None:
+        raise HTTPException(status_code=404, detail="function not in the analysis")
+    orig_rel = (manifest.get("original") or {}).get("stored_path") or ""
+    original = paths.root / orig_rel if orig_rel else _P("/nonexistent")
+    tree = (read_json(paths.subresult("nested")) or {}).get("tree") or []
+    target = code_case.locate(paths.root, original, tree, sha256)
+    if target is None:
+        raise HTTPException(status_code=404, detail="the binary is no longer in the case")
+    try:
+        r = code_case.decompile_on_demand(paths.root, target, sha256, mode, addr)
+    except TimeoutError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if r.get("status") == "unavailable":
+        raise HTTPException(status_code=503, detail="Rizin + rz-ghidra not provisioned")
+    return code_case.function_view(code_case.load(paths.root, sha256, mode) or full, addr) or {}

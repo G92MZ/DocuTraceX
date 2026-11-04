@@ -2075,6 +2075,167 @@ def _go_pe(names: list[str], version: str = "go1.22.5") -> bytes:
     return build(_st.pack("<4Q", va, va + 72, len(names), len(names)))
 
 
+# --- Code analysis (Rizin + rz-ghidra): binaries with a few real x86-64 functions --------
+# Tiny, hand-encoded and never run: a main that XOR-decodes a buffer in place and
+# hands the invoice C2 URL to an HTTP call (an import for the native PE, a Go
+# function for the Go one). Enough for the engine to find functions, callers /
+# callees, the URL string, the XOR loop and pseudocode. Nothing else in them.
+
+CODE_URL = "https://cdn-update.example.net/invoice/sync"
+
+
+def _x64(ops: list) -> tuple[bytes, dict[str, int]]:
+    """Tiny assembler: items are bytes, ("label", name) or (kind, target, raw) where
+    kind is "rel32" (call/jmp rel32 to a label) or "rip" (disp32 to an absolute RVA
+    given in ``target``, relative to the end of the instruction of length raw+4)."""
+    out, labels, fix = bytearray(), {}, []
+    for op in ops:
+        if isinstance(op, (bytes, bytearray)):
+            out += op
+        elif op[0] == "label":
+            labels[op[1]] = len(out)
+        else:
+            out += op[2]
+            fix.append((len(out), op[0], op[1]))
+            out += b"\x00\x00\x00\x00"
+    return bytes(out), {"_fix": fix, **labels}  # type: ignore[dict-item]
+
+
+def _x64_link(code: bytes, meta: dict, text_rva: int, rvas: dict[str, int]) -> bytes:
+    import struct as _st
+    out = bytearray(code)
+    for pos, kind, target in meta["_fix"]:
+        dest = text_rva + meta[target] if kind == "rel32" else rvas[target]
+        _st.pack_into("<i", out, pos, dest - (text_rva + pos + 4))
+    return bytes(out)
+
+
+def _code_body(http_call: list) -> list:
+    return [
+        ("label", "main"),
+        b"\x48\x83\xec\x28",                                    # sub rsp, 0x28
+        ("rip", "blob", b"\x48\x8d\x0d"),                          # lea rcx, [rip+blob]
+        ("rel32", "decode", b"\xe8"),                              # call decode
+        ("rel32", "beacon", b"\xe8"),                              # call beacon
+        b"\x48\x83\xc4\x28\xc3",                                # add rsp, 0x28 ; ret
+        b"\xcc" * 3,
+        ("label", "decode"),
+        b"\x31\xc0",                                              # xor eax, eax
+        ("label", "dloop"),
+        b"\x8a\x14\x01\x80\xf2\x5a\x88\x14\x01",                 # mov dl,[rcx+rax]; xor dl,0x5a; mov [rcx+rax],dl
+        b"\x30\x54\x01\x01",                                      # xor [rcx+rax+1], dl
+        b"\x48\xff\xc0\x48\x83\xf8\x20\x72\xea",                 # inc rax; cmp rax,0x20; jb dloop
+        b"\x48\x89\xc8\xc3",                                      # mov rax, rcx ; ret
+        b"\xcc" * 2,
+        ("label", "beacon"),
+        b"\x48\x83\xec\x28",                                    # sub rsp, 0x28
+        *http_call,
+        b"\x48\x83\xc4\x28\xc3",
+        b"\xcc" * 3,
+    ]
+
+
+def code_loader_exe() -> bytes:
+    """Native PE32+: main → decode (XOR loop) → beacon → InternetOpenUrlA(C2 URL)."""
+    import binkit as bk
+    sys.path.insert(0, str(ROOT))
+    from docutracex.golang import binfmt
+    imports = {"wininet.dll": ["InternetOpenA", "InternetOpenUrlA", "InternetReadFile"],
+               "kernel32.dll": ["VirtualAlloc", "ExitProcess"]}
+    http = [b"\x31\xc9\x31\xd2\x45\x31\xc0\x45\x31\xc9",          # xor ecx,ecx; xor edx,edx; xor r8d,r8d; xor r9d,r9d
+            ("rip", "InternetOpenA", b"\xff\x15"),                # call [InternetOpenA]
+            b"\x48\x89\xc1",                                      # mov rcx, rax
+            ("rip", "url", b"\x48\x8d\x15"),                       # lea rdx, [rip+url]
+            b"\x45\x31\xc0\x45\x31\xc9",
+            ("rip", "InternetOpenUrlA", b"\xff\x15")]             # call [InternetOpenUrlA]
+    code, meta = _x64(_code_body(http))
+    blob = "\x1f\x2e\x3d\x4c" * 8
+
+    def build(c: bytes) -> bytes:
+        return bk.pe(bits=64, gui=False, imports=imports, code=c, strings=[CODE_URL, blob, "invoice sync"])
+    first = build(code)
+    import pefile
+    pe = pefile.PE(data=first)
+    rvas = {i.name.decode(): i.address - pe.OPTIONAL_HEADER.ImageBase for d in pe.DIRECTORY_ENTRY_IMPORT for i in d.imports}
+    bf = binfmt.parse(first)
+    rvas["url"] = bf.off_to_va(first.find(CODE_URL.encode())) - pe.OPTIONAL_HEADER.ImageBase
+    rvas["blob"] = bf.off_to_va(first.find(blob.encode())) - pe.OPTIONAL_HEADER.ImageBase
+    text = next(sec for sec in pe.sections if sec.Name.rstrip(b"\x00") == b".text").VirtualAddress
+    return build(_x64_link(code, meta, text, rvas))
+
+
+def _go_pclntab_funcs(funcs: list[tuple[str, int, int]], extra: list[str], text_start: int) -> bytes:
+    """Go 1.20+ pclntab whose functab really maps ``funcs`` [(name, text offset, size)]."""
+    import struct as _st
+    names = [f[0] for f in funcs] + extra
+    blob, offs = bytearray(), {}
+    for n in names:
+        offs[n] = len(blob)
+        blob += n.encode() + b"\x00"
+    hdr = 8 + 8 * 8
+    fname = hdr
+    cu = fname + len(blob)
+    filetab = cu + 16
+    pctab = filetab + 16
+    pcln = pctab + 16                                                 # the functab
+    nf = len(funcs)
+    tab = bytearray()
+    func_base = 8 * (nf + 1)
+    for k, (_n, eoff, _sz) in enumerate(funcs):
+        tab += _st.pack("<II", eoff, func_base + 16 * k)
+    last = funcs[-1]
+    tab += _st.pack("<II", last[1] + last[2], 0)
+    for n, eoff, _sz in funcs:
+        tab += _st.pack("<Ii8x", eoff, offs[n])
+    head = _st.pack("<IBBBB", 0xFFFFFFF1, 0, 0, 1, 8) + _st.pack("<8Q", nf, 1, text_start, fname, cu, filetab, pctab, pcln)
+    return head + bytes(blob) + b"\x00" * 48 + bytes(tab) + b"\x00" * 32
+
+
+def go_code_exe() -> bytes:
+    """Go-like PE32+ with real functions in pclntab: main.main → main.decryptConfig
+    (XOR loop) → main.beacon → net/http.(*Client).Do(C2 URL as Go string)."""
+    import struct as _st
+
+    import binkit as bk
+    sys.path.insert(0, str(ROOT))
+    from docutracex.golang import binfmt
+    http = [("rip", "url", b"\x48\x8d\x05"),                       # lea rax, [rip+url]
+            b"\xbb" + _st.pack("<I", len(CODE_URL)),                 # mov ebx, len  (Go string: ptr + len)
+            ("rel32", "httpdo", b"\xe8")]                           # call net/http.(*Client).Do
+    body = _code_body(http) + [("label", "httpdo"), b"\xc3", b"\xcc" * 15, ("label", "end")]
+    code, meta = _x64(body)
+    blob = "\x1f\x2e\x3d\x4c" * 8
+    bid = b'\xff Go build ID: "Zq9xWv8uTs7rQp6oNm5l/Kj4iHg3fEd2cBa1zYx0w/Vu9tSr8qPo7nMl6kJi5h/Gf4eDc3bAa2zZy1xW"\n \xff'
+    funcs = [("main.main", meta["main"], meta["decode"] - meta["main"]),
+             ("main.decryptConfig", meta["decode"], meta["beacon"] - meta["decode"]),
+             ("main.beacon", meta["beacon"], meta["httpdo"] - meta["beacon"]),
+             ("net/http.(*Client).Do", meta["httpdo"], meta["end"] - meta["httpdo"])]
+    extra = [n for n in GO_STD if n != "net/http.(*Client).Do"]
+    base = 0x140000000                                              # binkit PE32+ image base, .text at RVA 0x1000
+    text_va = base + 0x1000
+    pcln = _go_pclntab_funcs(funcs, extra, text_va)
+
+    def build(c: bytes, md: bytes) -> bytes:
+        # the URL is a Go string: bytes with no NUL, referenced by pointer + length
+        return bk.pe(bits=64, gui=False, imports={"kernel32.dll": ["VirtualAlloc", "ExitProcess"]}, code=c,
+                     sections=[(".rdata", pcln + CODE_URL.encode() + blob.encode(), 0x40000040),
+                               (".data", _go_buildinfo("go1.22.5", "windows") + md, 0xC0000040)],
+                     strings=[bid.decode("latin-1")])
+    first = build(code, b"\x00" * 32)
+    bf = binfmt.parse(first)
+    assert bf.section(".text").va == text_va
+    rvas = {"url": bf.off_to_va(first.find(CODE_URL.encode())) - base,
+            "blob": bf.off_to_va(first.find(blob.encode())) - base}
+    linked = _x64_link(code, meta, text_va - base, rvas)
+    off = first.find(_st.pack("<I", 0xFFFFFFF1) + b"\x00\x00")
+    va = bf.off_to_va(off) or 0
+    return build(linked, _st.pack("<4Q", va, va + 72, len(funcs), len(funcs)))
+
+
+def code_samples() -> dict[str, bytes]:
+    return {"code/sample_code_loader.exe": code_loader_exe(), "go/sample_go_code.exe": go_code_exe()}
+
+
 def go_samples() -> dict[str, bytes]:
     names = GO_STD + GO_USER
     garbled = GO_STD + [f"{p}.{f}" for p, f in (("kQ7xMpR2", "Run"), ("Zt9LwA3b", "init"), ("Hn4cVy8E", "send"),
@@ -2137,6 +2298,7 @@ def build_all() -> dict[str, bytes]:
     out.update(ml_samples())
     out.update(c2_samples())
     out.update(go_samples())
+    out.update(code_samples())
     out["encrypted/sample_encrypted.eml"] = encrypted_eml()
     out["encrypted/sample_velvet.xlsm"] = velvet_xlsm()
     return out

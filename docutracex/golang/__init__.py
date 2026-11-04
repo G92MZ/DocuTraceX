@@ -97,6 +97,43 @@ def _findings(item: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+def _code_phase(root: Path, res: dict[str, Any], go: list[dict[str, Any]], raw_dir: Path,
+                paths: dict[str, Path]) -> None:
+    """Phases 3-4: functions, priority, decompilation (Rizin + rz-ghidra) of
+    every distinct Go object, within the per-binary budget."""
+    from ..codeanalysis import available
+    from ..codeanalysis import case as code_case
+    if not go or not code_case.enabled():
+        return
+    if not available():
+        res["warnings"].append("Rizin + rz-ghidra not provisioned: no functions / decompilation "
+                               "(Diagnostics → Retry, or scripts/setup_portable_python.py --component rizin)")
+        return
+    done = 0
+    for o in go:
+        if o.get("duplicate_of"):
+            continue
+        r = o["result"]
+        if done >= code_case.max_objects():
+            o["code"] = {"status": "skipped", "detail": f"only {code_case.max_objects()} Go objects per case are analysed"}
+            continue
+        p = paths.get(o.get("sha256") or "")
+        if p is None or not p.is_file():
+            continue
+        try:
+            data = p.read_bytes()
+        except OSError:
+            continue
+        gr_raw = raw_dir / ((r.get("goresym") or {}).get("raw_file") or "-")
+        names = code_case.go_names(data, r, gr_raw)
+        if not names:
+            o["code"] = {"status": "skipped", "detail": "no Go function table could be read (pclntab missing or altered)"}
+            continue
+        done += 1
+        o["code"] = code_case.analyze_object(root, p, o["sha256"], "go", names)
+        o["code"]["functions_total"] = len(names)
+
+
 def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) -> dict[str, Any]:
     from . import detect, goresym
 
@@ -108,6 +145,7 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
                                "(Diagnostics → Retry, or scripts/setup_portable_python.py --component goresym)")
     raw_dir = root / "raw" / "golang"
     cache: dict[str, dict[str, Any]] = {}
+    paths_by_sha: dict[str, Path] = {}
     tgts = targets(root, original, nested_tree)
     res["objects_scanned"] = len(tgts)
     for t in tgts:
@@ -127,6 +165,7 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
             continue
         sha = hashlib.sha256(data).hexdigest()
         item["sha256"] = sha
+        paths_by_sha.setdefault(sha, p)
         if sha in cache:                               # the same binary twice in the case
             item["result"] = cache[sha]
             item["duplicate_of"] = next(o["label"] for o in res["objects"] if o.get("sha256") == sha)
@@ -154,6 +193,9 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
         res["objects"].append(item)
         res["findings"].extend(_findings(item))
     go = [o for o in res["objects"] if (o.get("result") or {}).get("state") in ("Confirmed", "Likely")]
+    _code_phase(root, res, go, raw_dir, paths_by_sha)
+    for o in res["objects"]:
+        (o.get("result") or {}).pop("_pcln", None)        # internal: parser state for the function table
     res["counts"] = {"objects": len(res["objects"]), "go": len(go), "findings": len(res["findings"])}
     if res["findings"]:
         res["status"] = "ok_with_findings"

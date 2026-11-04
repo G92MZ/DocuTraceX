@@ -17,6 +17,7 @@ The **Diagnostics** tab shows which ones are available; a **Retry** button on a 
 | Didier Stevens Suite | oledump (+ plugins), zipdump, pdfid, pdf-parser, emldump, rtfdump, decode-vbe, 1768 (Cobalt Strike configurations) |
 | Shortcuts | LnkParse3 |
 | Go | GoReSym (Mandiant, MIT) — contrast for the own Go parser |
+| Code analysis | Rizin (LGPL-3.0) with rz-ghidra (LGPL-3.0, embedding the Ghidra decompiler, Apache-2.0), taken from the Cutter release bundle (GPL-3.0) — functions, pseudocode and disassembly of Go and native binaries |
 | Binaries | pefile, LIEF, debloat, FLOSS, capa, UPX, AutoIt-Ripper, innoextract, 7-Zip, nuitka-extractor, evbunpack, Detect It Easy |
 | Python / Java | pycdc, CFR |
 | Scripts | STPyV8 (JavaScript sandbox), webcrack (on a portable Node), box-ps (on portable PowerShell Core) |
@@ -29,7 +30,7 @@ The **Diagnostics** tab shows which ones are available; a **Retry** button on a 
 ## Licences
 
 DocuTraceX is Apache-2.0 and ships no GPL code. GPL/LGPL tools (pcodedmp,
-peepdf-3, py7zr, box-ps and pycdc — GPL-3.0 —, UPX, 7-Zip) are installed into
+peepdf-3, py7zr, box-ps and pycdc — GPL-3.0 —, UPX, 7-Zip, Rizin / rz-ghidra) are installed into
 the portable at provisioning time or picked up from `tools/`, and invoked as
 separate processes, never shipped in this repository. PowerShell Core, Node and
 webcrack are MIT. webcrack pulls `isolated-vm`, which ships prebuilt binaries
@@ -69,3 +70,7 @@ when possible, skipped cleanly when absent.
 | `DOCUTRACEX_FLOSS_TIMEOUT`, `DOCUTRACEX_CAPA_TIMEOUT`, `DOCUTRACEX_UNPACK_TIMEOUT` | per-tool time limits (before the factor) |
 | `DOCUTRACEX_CA_BUNDLE` | extra CA bundle for network checks behind a TLS-inspecting proxy |
 | `DOCUTRACEX_EMBER_FAMILY` | `1` downloads the optional ML family model at install |
+| `DOCUTRACEX_RIZIN` | an existing `rizin` (with the rz-ghidra plugin) for the code analysis |
+| `DOCUTRACEX_CODE_AUTO` | `0` turns the automatic code analysis off (default on) |
+| `DOCUTRACEX_CODE_BUDGET_MIN`, `DOCUTRACEX_CODE_MAX_MIN`, `DOCUTRACEX_CODE_MEM_MB` | code analysis limits per binary: budget (30 min), hard limit while still producing (40 min), memory (3072 MB) |
+| `DOCUTRACEX_CODE_OBJECTS`, `DOCUTRACEX_CODE_DECOMPILE` | binaries analysed per case (3) and functions decompiled automatically per binary (100; the rest on demand) |
