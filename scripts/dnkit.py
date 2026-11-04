@@ -52,16 +52,20 @@ class _Heap:
         return self.idx[key]
 
 
-_OP = {"ldstr": 0x72, "call": 0x28, "callvirt": 0x6F, "newobj": 0x73, "pop": 0x26, "ret": 0x2A}
+_OP = {"ldstr": 0x72, "call": 0x28, "callvirt": 0x6F, "newobj": 0x73, "pop": 0x26, "ret": 0x2A, "calldef": 0x28,
+       "xor": 0x61, "ldarg.0": 0x02}
 
 
-def _ops(ops: list[tuple], us: _Heap) -> bytes:
-    """Tiny IL from (op, arg): ldstr "text" / call|callvirt|newobj memberref index / pop / ret."""
+def _ops(ops: list[tuple], us: _Heap, rids: dict[str, int] | None = None) -> bytes:
+    """Tiny IL from (op, arg): ldstr "text" / call|callvirt|newobj memberref index /
+    calldef "Type::Method" (own method) / xor / ldarg.0 / pop / ret."""
     out = bytearray()
     for op, *arg in ops:
         out.append(_OP[op])
         if op == "ldstr":
             out += struct.pack("<I", 0x70000000 | us.us(arg[0]))
+        elif op == "calldef":
+            out += struct.pack("<I", 0x06000000 | (rids or {})[arg[0]])
         elif op in ("call", "callvirt", "newobj"):
             out += struct.pack("<I", 0x0A000000 | (arg[0] + 1))
     return bytes(out)
@@ -130,6 +134,8 @@ def build(va: int, spec: dict[str, Any]) -> tuple[bytes, int, int, int, int, int
     meth_rows: list[tuple[int, int, int, int, int]] = []              # (il index or -1, implflags, flags, name, sig)
     types = [{"ns": "", "name": "<Module>", "methods": []}] + list(spec.get("types") or [])
     entry = 0
+    rids = {f"{t['name']}::{m['name']}": i for i, (t, m) in
+            enumerate(((t, m) for t in types for m in t.get("methods") or []), 1)}
     for t in types:
         first = len(meth_rows) + 1
         for m in t.get("methods") or []:
@@ -141,7 +147,7 @@ def build(va: int, spec: dict[str, Any]) -> tuple[bytes, int, int, int, int, int
                 mi = [r[0] for r in spec["_modrefs"]].index(dll)
                 rows[0x1C].append(struct.pack("<HHHH", 0x0100, len(meth_rows) << 1 | 1, st.str(ep), mi + 1))
             else:
-                il_blobs.append(_ops(m["ops"], us) if m.get("ops") else (m.get("il") or b"\x2a"))
+                il_blobs.append(_ops(m["ops"], us, rids) if m.get("ops") else (m.get("il") or b"\x2a"))
                 meth_rows.append((len(il_blobs) - 1, 0, 0x0096, st.str(m["name"]), sig_void))
                 if m.get("entry"):
                     entry = 0x06000000 | len(meth_rows)

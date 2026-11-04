@@ -5847,6 +5847,11 @@ function dnObject(o, i) {
       <td class="mono">${e((x.sha256 || "").slice(0, 16))}</td><td>${x.costura ? '<span class="badge badge-muted">Costura (deflated)</span> ' : ""}${x.stored_path ? fileActions(x.stored_path) : ""}</td></tr>`).join("");
   const strs = (r.strings || []).map((x) => `<div class="mono">${e(x)}</div>`).join("");
   const cil = r.cil || {};
+  const dec = (cil.decrypted || []).map((d) => `<tr><td class="mono"><b>${e(d.output)}</b></td><td class="mono cx-small">${e(d.input)}</td>
+      <td class="mono cx-small">${e(d.decryptor)}<br><span class="hint-line">from ${e(d.caller)}</span></td><td class="cx-small">${e(d.how)}</td></tr>`).join("");
+  const decHtml = dec ? `<h4 class="formats-title">Decrypted statically (${(cil.decrypted || []).length})</h4><p class="hint-line">Decryptor methods recognised from their CIL
+      (xor, Base64, Rijndael / AES, MD5 of a key…) and re-implemented in Python over the literals their callers pass. Nothing of the assembly runs.</p>
+      <div class="cx-scroll"><table class="cases"><thead><tr><th>Plain text</th><th>Encrypted</th><th>Decryptor</th><th>How</th></tr></thead><tbody>${dec}</tbody></table></div>` : "";
   const mi = (cil.interesting || []).map((m) => `<tr><td class="mono"><b>${e(m.method)}</b><div class="hint-line">${m.size} bytes of IL</div></td>
       <td>${cxCats(m.categories)}</td><td class="mono cx-small">${(m.calls || []).map(e).join("<br>")}</td>
       <td class="mono cx-small">${(m.strings || []).map(e).join("<br>")}</td></tr>`).join("");
@@ -5866,7 +5871,7 @@ function dnObject(o, i) {
     { id: "cil", label: `Methods of interest (${(cil.interesting || []).length})`, html: cilHtml },
     { id: "apis", label: `P/Invoke & APIs (${(r.pinvoke || []).length + (r.apis || []).length})`, html: apiHtml.trim() || '<p class="hint-line">No P/Invoke and no notable framework API.</p>' },
     { id: "resources", label: `Resources (${(r.resources || []).length})`, html: res ? `<table class="cases"><thead><tr><th>Name</th><th>Size</th><th>Entropy</th><th>First bytes</th><th>SHA-256</th><th></th></tr></thead><tbody>${res}</tbody></table><p class="hint-line">Every resource is also analysed as a nested child (Nested panel); <span class="mono">.resources</span> files are opened and each binary entry becomes the child.</p>${entries}` : '<p class="hint-line">No managed resources.</p>' },
-    { id: "strings", label: `Strings (${(r.strings || []).length})`, html: strs ? `<p class="hint-line">User strings (#US heap): the literals the code uses.</p><div class="cx-scroll cx-small">${strs}</div>` : '<p class="hint-line">No user strings (encrypted by an obfuscator?).</p>' },
+    { id: "strings", label: `Strings (${(r.strings || []).length}${(cil.decrypted || []).length ? ` + ${cil.decrypted.length} decrypted` : ""})`, html: strs || decHtml ? `${decHtml}<p class="hint-line">User strings (#US heap): the literals the code uses.</p><div class="cx-scroll cx-small">${strs}</div>` : '<p class="hint-line">No user strings (encrypted by an obfuscator?).</p>' },
   ]);
 }
 
