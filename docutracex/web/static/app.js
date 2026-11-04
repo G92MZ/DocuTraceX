@@ -5914,7 +5914,8 @@ function dnObject(o, i) {
       <table class="cases"><thead><tr><th>Entry</th><th>Type</th><th>Size</th><th>Value</th></tr></thead><tbody>${x.entries.map((en) =>
         `<tr><td class="mono">${e(en.name)}</td><td class="mono">${e(en.type)}</td><td>${en.size ?? ""}</td><td class="mono">${
           en.value !== undefined ? e(String(en.value).slice(0, 300)) : ""}${en.pe ? ' <span class="badge badge-bad">PE</span>' : ""}${
-          en.carved ? ` <span class="badge badge-muted">carved ${e(en.carved)}</span>` : ""}${en.stored_path ? fileActions(en.stored_path) : ""}</td></tr>`).join("")}</tbody></table>`).join("");
+          en.carved ? ` <span class="badge badge-muted">carved ${e(en.carved)}</span>` : ""}${
+          en.stego ? ` <span class="badge badge-bad" title="${e(en.stego.how)}">hidden ${e(en.stego.type)} in pixels</span>${en.stego.stored_path ? fileActions(en.stego.stored_path) : ""}` : ""}${en.stored_path ? fileActions(en.stored_path) : ""}</td></tr>`).join("")}</tbody></table>`).join("");
   return innerTabs(g, [
     { id: "summary", label: "Summary", html: summary },
     { id: "types", label: `Types & methods (${types.length})`, html: typesHtml || '<p class="hint-line">No types.</p>' },

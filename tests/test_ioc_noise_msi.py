@@ -60,3 +60,15 @@ def test_msi_certificate_metadata_paths_skipped():
         "c2": {"timings": [{"name": "5060393f45d86e4be342d7067f6c154b"}],
                "configs": [{"tools": {"1768": {"tool": "1768.py"}}}]}})
     assert src == []
+
+
+def test_floss_constants_namespaces_and_versions():
+    """AgentTesla loader f0b04a57…: FLOSS GUIDs / constants, .NET namespaces, assembly versions."""
+    src = ioc.sources_from_modules({"msi": {"items": [{
+        "lief": {"authenticode": {"status_message": "f0b04a570f75d42e89c370b5083ce05bc452e997f028eddf8a283bec93f9a828"}},
+        "floss_strings": ["00004cd8f87345eb8f21fe1231a4f430",
+                          "03dceb56b5842c722de2821da9906cd70ab73267eab1a3947bfd894d19372bc7",
+                          "3system.resources.tools", "system.net", "c.sc.ki", "16.10.0.0", "2.0.2.0",
+                          "myapplication.app", "smtp.billing-portal.example 203.0.113.47"]}]}})
+    v = {i["value"] for i in ioc.extract(src)["iocs"]}
+    assert v == {"smtp.billing-portal.example", "203.0.113.47"}

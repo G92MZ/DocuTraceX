@@ -277,6 +277,7 @@ _REFERENCE_HOSTS = {
     "beopen.com", "www.beopen.com", "pythonlabs.com", "www.pythonlabs.com", "cwi.nl", "www.cwi.nl",
     "cnri.reston.va.us", "www.cnri.reston.va.us", "hdl.handle.net", "opensource.org", "www.opensource.org",
     "apache.org", "www.apache.org", "xkcd.com", "crl.microsoft.com",
+    "myapplication.app",                       # Visual Studio's default manifest identity
 }
 _REFERENCE_EMAILS = {"jseward@acm.org", "jseward@bzip.org", "nadeem.vawda@gmail.com", "jloup@gzip.org",
                      "madler@alumni.caltech.edu"}
@@ -595,7 +596,7 @@ def _scan_text(
             continue
 
         before = text[max(0, match.start() - 14):match.start()]
-        if _VERSION_BEFORE.search(before) or re.search(r"\d\.$", before) or (
+        if value.endswith(".0") or _VERSION_BEFORE.search(before) or re.search(r"\d\.$", before) or (
             text[match.end():match.end() + 1] == "."
             and text[match.end() + 1:match.end() + 2].isdigit()
         ):
@@ -615,6 +616,7 @@ def _scan_text(
             )
 
     tool_output = bool(_TOOL_OUTPUT_LOC.search(location or ""))
+    floss = "floss" in (location or "")
     # hex-encoded data split in lines (a hash list has no 0000 / PK runs)
     blobs = [(m.start(), m.end()) for m in _HEX_BLOB.finditer(text) if _HEX_DATA.search(m.group(0))]
     for match in _HASH_RE.finditer(text):
@@ -622,7 +624,8 @@ def _scan_text(
             continue
         # a line of a hex blob (hex dump / hex-encoded data split in lines), or
         # the head of a WIN_CERTIFICATE (dwLength, revision 0x200, PKCS#7)
-        if (any(a <= match.start() < b for a, b in blobs)
+        if (floss                                    # GUIDs / constants of the binary, not hashes of anything
+                or any(a <= match.start() < b for a, b in blobs)
                 or re.match(r"(?i)[0-9a-f]{8}000202003082", match.group(0))):
             continue
         if tool_output and _DIGEST_LABEL.search(text[max(0, match.start() - 24):match.start()]):
@@ -728,6 +731,8 @@ def _scan_text(
             or _is_reference_host(domain)
             or (len(labels := domain.split(".")) == 2 and labels[1] in _MEMBER_TLDS)
             or labels[0] in _CODE_OBJECTS
+            or re.match(r"\d?(?:system|microsoft|mscorlib)$", labels[0])     # .NET namespaces (System.Net…)
+            or (floss and all(len(x) <= 2 for x in labels[:-1]))             # c.sc.ki: FLOSS junk
             or text[match.start() - 1:match.start()] == "]"            # [MsiProperty].NET
             # bundled code: a bare host is only one written as a string literal
             or (code_text and text[match.start() - 1:match.start()] not in ("\"", "'", "`", "/", "@"))
@@ -856,7 +861,7 @@ _MODULE_SKIP_PATHS = {
         r"|mitigations|dll_characteristics|overlay/head)(?:[/\[].*)?"
         # certificate bookkeeping (serials, thumbprints, CA issuer / policy OIDs)
         r"|(?:signature|lief/authenticode|lief/signatures)/.*(?:serial_number|serial|thumbprint"
-        r"|certificate_policies(?:\[\d+\])?|issuer)"
+        r"|certificate_policies(?:\[\d+\])?|issuer)|lief/authenticode/status_message"
         r"|extraction/entries\[\d+\]/(?:name|path|stored_path))$"),
     # the C2 extractors' own bookkeeping (step names, which tool ran)
     "c2": re.compile(r"^(?:timings(?:[/\[].*)?|configs\[\d+\]/tools/[^/]+/tool)$"),

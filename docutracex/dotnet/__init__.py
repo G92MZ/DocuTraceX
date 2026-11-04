@@ -261,6 +261,12 @@ def _findings(item: dict[str, Any]) -> list[dict[str, Any]]:
             o["evidence"] = "; ".join(f"{m['method']} → {', '.join(c for c in m['calls'] if '::Load' in c)}"
                                       for m in loaders[:4])
     for x in r.get("resources") or []:
+        for e in x.get("entries") or []:
+            if e.get("stego"):
+                out.append({"rule": "dotnet:bitmap_payload", "severity": "high", "tool": "dotnet", "location": loc,
+                            "detail": f"{e['stego']['type'].upper()} hidden in the pixels of the Bitmap {x['name']} › {e['name']}"
+                                      f" ({e['stego']['size']} bytes) — steganographic loader",
+                            "evidence": e["stego"]["how"], "attack": "T1027.003"})
         if x.get("decrypted"):
             out.append({"rule": "dotnet:resource_decrypted", "severity": "high" if x["decrypted"]["type"] == "exe" else "medium",
                         "tool": "dotnet", "location": loc,
@@ -403,6 +409,20 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
                         blob = e.pop("_data", None)
                         if e.get("type") == "string" and e.get("value"):
                             res_strings.append((f"{x['name']} › {e['name']}", e["value"]))
+                        if blob and (e.get("carved") == "png" or "Bitmap" in str(e.get("type"))):
+                            from .stego import extract as stego_extract
+                            keys = [k for k in (r.get("strings") or []) if 4 <= len(k) <= 64]
+                            keys += [a for m in meths for a in m.get("_arrays") or []]
+                            got = stego_extract(blob, keys)
+                            if got:
+                                how, payload, kind = got
+                                e["stego"] = {"how": how, "size": len(payload), "type": kind}
+                                sub = {"name": f"{x['name']}.{e['name']}.pixels.{kind}"}
+                                child = _resource_child(root, sha, t["label"], sub, payload)
+                                if child:
+                                    child["recipe"] = ["dotnet-resource", x["name"], e["name"], "bitmap pixels: " + how]
+                                    e["stego"]["stored_path"] = sub.get("stored_path", "")
+                                    res.setdefault("_children", []).append(child)
                         if blob:
                             e["pe"] = blob[:2] == b"MZ"
                             ext = e.get("carved") or ("exe" if e["pe"] else "bin")
