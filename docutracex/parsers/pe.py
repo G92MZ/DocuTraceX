@@ -360,7 +360,7 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
             item["floss"] = {"status": "skipped", "detail": skip_why}
             item["capa"] = {"status": "skipped", "detail": skip_why}
         else:
-            floss = _run_floss(path)
+            floss, capa = tools_for(path)
             floss_strings = floss.pop("strings", [])
             item["floss"] = floss
             if floss_strings:
@@ -376,7 +376,6 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
                     f"{counts.get('tight', 0)} tight",
                     loc))
 
-            capa = _run_capa(path)
             item["capa"] = capa
             # Only capabilities that matter for triage become findings (low+);
             # the full list (incl. "info" ones) is shown in the Binary tab.
@@ -488,6 +487,114 @@ def _run_tool(name: str, exe: Path | None, args: list[str], path: Path,
                    detail=f"{name} exited {r['rc']}" + (f": {err}" if err else ""))
         return rec, ""
     return rec, r["out"]
+
+
+# --- FLOSS + capa scheduling -----------------------------------------------------
+# Both tools analyse the whole binary on their own (vivisect), so on one PE they
+# run at the same time, and the PEs of a nested batch are started ahead
+# (``prefetch``) on a small pool while the rest of the scan goes on: when the
+# PE triage reaches its tools the results are usually ready. The pool size is
+# bounded (each binary = 2 tool processes; vivisect is memory-hungry):
+# DOCUTRACEX_TOOLS_PARALLEL binaries at once (default 2, never above CPUs - 1).
+import threading as _threading  # noqa: E402
+from concurrent.futures import Future, ThreadPoolExecutor  # noqa: E402
+
+_pool: ThreadPoolExecutor | None = None
+_pending: dict[str, Future] = {}
+_lock = _threading.Lock()
+PREFETCH_MAX = 64
+
+
+def _tools_workers() -> int:
+    from ..objects import workers
+    try:
+        cap = int(_os.environ.get("DOCUTRACEX_TOOLS_PARALLEL", "2"))
+    except ValueError:
+        cap = 2
+    return workers(cap, cap)
+
+
+def _both(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    """FLOSS and capa on one binary, concurrently (two processes)."""
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        ff, cf = ex.submit(_run_floss, path), ex.submit(_run_capa, path)
+        return ff.result(), cf.result()
+
+
+def _sha(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _worth_prefetch(path: Path) -> bool:
+    """A PE whose tools will most likely run: not PyInstaller, not obviously
+    packed (an executable section near entropy 8), not huge. A wrong guess only
+    costs a background run; the triage still decides."""
+    try:
+        if path.stat().st_size > 64 * 1024 * 1024 or _is_pyinstaller(path):
+            return False
+        import pefile
+        pe = pefile.PE(str(path), fast_load=True)
+        try:
+            if getattr(pe, "OPTIONAL_HEADER", None) is None:
+                return False
+            for sec in pe.sections:
+                if sec.Characteristics & 0x20000000 and sec.SizeOfRawData > 4096 and sec.get_entropy() > 7.3:
+                    return False
+            return True
+        finally:
+            pe.close()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def prefetch(paths: list[Path]) -> int:
+    """Start FLOSS + capa in the background for the PEs of a batch that is about
+    to be scanned. Returns how many were queued."""
+    from ..config import settings
+    if settings.floss_executable() is None and settings.capa_executable() is None:
+        return 0
+    global _pool
+    n = 0
+    for p in paths:
+        try:
+            with Path(p).open("rb") as fh:
+                if fh.read(2) != b"MZ":
+                    continue
+        except OSError:
+            continue
+        if not _worth_prefetch(Path(p)):
+            continue
+        sha = _sha(Path(p))
+        with _lock:
+            if not sha or sha in _pending or len(_pending) >= PREFETCH_MAX:
+                continue
+            if _pool is None:
+                _pool = ThreadPoolExecutor(max_workers=_tools_workers(), thread_name_prefix="floss-capa")
+            _pending[sha] = _pool.submit(_both, Path(p))
+            n += 1
+    return n
+
+
+def tools_for(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    """FLOSS + capa records of one PE: the prefetched run if there is one
+    (waiting for it), else both now, concurrently."""
+    sha = _sha(path)
+    with _lock:
+        fut = _pending.pop(sha, None) if sha else None
+    if fut is not None:
+        try:
+            floss, capa = fut.result()
+            floss = dict(floss)
+            if "strings" in floss:
+                floss["strings"] = list(floss["strings"])
+            floss["prefetched"] = capa["prefetched"] = True
+            return floss, dict(capa)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("prefetched FLOSS/capa failed on %s: %s", path.name, exc)
+    return _both(path)
 
 
 def _run_floss(path: Path) -> dict[str, Any]:

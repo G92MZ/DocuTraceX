@@ -49,7 +49,9 @@ def _iter_targets(original_path: Path, extracted_dir: Path):
                 yield (rel, p)
 
 
-def analyze(original_path: Path, extracted_dir: Path) -> dict[str, Any]:
+def analyze(original_path: Path, extracted_dir: Path, only: set[str] | None = None) -> dict[str, Any]:
+    """``only`` = object ids to scan (``original`` / path relative to the case
+    folder); None = every object. Objects are scanned in parallel."""
     from .. import yara_engine
 
     result: dict[str, Any] = {
@@ -75,14 +77,24 @@ def analyze(original_path: Path, extracted_dir: Path) -> dict[str, Any]:
                if src.get("status", "ok") == "ok"}
     rules_info: dict[str, dict[str, str]] = {}
     total_matches = 0
+    import time as _time
+    from concurrent.futures import ThreadPoolExecutor
+
+    from ..objects import workers
     from ..progress import ObjectProgress
-    targets = list(_iter_targets(original_path, extracted_dir))
+    targets = [(rel, p) for rel, p in _iter_targets(original_path, extracted_dir)
+               if only is None or rel in only]
     prog = ObjectProgress(len(targets))
-    for rel, path in targets:
-        prog.start(rel)
-        matches = yara_engine.scan_path(compiled, path, set())
+
+    def scan(t: tuple[str, Path]) -> tuple[str, Path, list[dict[str, Any]]]:
+        t0 = _time.perf_counter()
+        ms = yara_engine.scan_path(compiled, t[1], set())       # libyara releases the GIL: real parallelism
+        prog.record(t[0], _time.perf_counter() - t0, len(ms), ", ".join(sorted({m["rule"] for m in ms}))[:200])
+        return t[0], t[1], ms
+    with ThreadPoolExecutor(max_workers=workers(len(targets), 6)) as ex:
+        scanned = list(ex.map(scan, targets))
+    for rel, path, matches in scanned:
         result["files_scanned"] += 1
-        prog.done(len(matches), ", ".join(sorted({m["rule"] for m in matches}))[:200] if matches else "")
         if not matches:
             continue
         total_matches += len(matches)

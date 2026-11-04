@@ -490,6 +490,20 @@ async def hex_extract_delete(analysis_id: str, index: int) -> dict:
     return {"extracts": items, "task": task.public()}
 
 
+@router.get("/{analysis_id}/objects")
+def case_objects(analysis_id: str) -> dict:
+    """Every object of a case YARA / ML / C2 can scan (the original and all that
+    was extracted), with the id a run's ``objects`` selection uses."""
+    from ..objects import case_objects as _objs
+    from ..storage import CasePaths
+    try:
+        manifest = case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    paths = CasePaths(analysis_id)
+    return {"objects": _objs(paths, paths.root / manifest["original"]["stored_path"])}
+
+
 @router.post("/{analysis_id}/rerun")
 async def rerun_case(analysis_id: str, payload: dict = Body(default={})) -> dict:
     """Queue a re-analysis of a case: the whole case, or one module in isolation
@@ -501,6 +515,13 @@ async def rerun_case(analysis_id: str, payload: dict = Body(default={})) -> dict
     except CaseError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     module = (payload or {}).get("module")
+    objs = (payload or {}).get("objects")
+    if module in ("yara", "ml", "c2"):
+        from ..objects import save_selection
+        from ..storage import CasePaths
+        if objs is not None and (not isinstance(objs, list) or not all(isinstance(x, str) for x in objs)):
+            raise HTTPException(status_code=400, detail="objects must be a list of object ids")
+        save_selection(CasePaths(analysis_id), module, objs if objs else None)
     task = manager.submit(
         "rerun_module" if module else "rerun", analysis_id,
         manifest["original"]["filename"], target=module or "full",
