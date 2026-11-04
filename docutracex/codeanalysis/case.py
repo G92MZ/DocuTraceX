@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -154,6 +155,11 @@ def analyze_native_case(root: Path, original: Path, nested_tree: list[dict[str, 
             continue
         done += 1
         item["code"] = analyze_object(root, p, sha, "native", None)
+        if item["code"].get("status") in ("ok", "partial"):
+            try:
+                res.setdefault("_children", []).extend(enrich(root, p, data, sha, "native", item))
+            except Exception as exc:  # noqa: BLE001
+                log.warning("resources / strings step failed on %s: %s", item["label"], exc)
         res["objects"].append(item)
     if not res["objects"]:
         res["status"] = "empty"
@@ -186,8 +192,11 @@ def overview(full: dict[str, Any]) -> dict[str, Any]:
         x["callees"] = len([c for c in f.get("calls") or [] if c in by_addr]) or len(f.get("callee_names") or [])
         x["strings"] = len(f.get("strings") or [])
         light.append(x)
-    return {"summary": full.get("summary") or {}, "functions": light, "strings": full.get("strings") or [],
-            "apis": full.get("apis") or []}
+    strings = [dict(x, source=x.get("source") or "code") for x in full.get("strings") or []]
+    strings += full.get("floss") or []
+    return {"summary": full.get("summary") or {}, "functions": light, "strings": strings,
+            "apis": full.get("apis") or [], "resources": full.get("resources") or {},
+            "dependencies": full.get("dependencies")}
 
 
 def function_view(full: dict[str, Any], addr: int) -> dict[str, Any] | None:
@@ -339,3 +348,147 @@ def graph(full: dict[str, Any], max_paths: int = 25) -> dict[str, Any]:
             break
     return {"nodes": nodes, "edges": edges, "roots": roots, "paths": paths,
             "unresolved": sum(f.get("indirect_calls", 0) for f in fns)}
+
+
+# --- phase 6: FLOSS strings per function, embedded resources, IOCs ---------------
+
+def _paths(root: Path):
+    from ..storage import CasePaths
+    return CasePaths(root.name, cases_dir=root.parent)
+
+
+def floss_located(root: Path, stored_path: str, original: bool) -> list[dict[str, Any]]:
+    """FLOSS decoded / stack / tight strings (with their function) of one object,
+    from the binary module of the case (original) or of its nested view."""
+    from ..storage import read_json
+    try:
+        paths = _paths(root)
+    except Exception:  # noqa: BLE001
+        return []
+    mods: dict[str, Any] = {}
+    if original:
+        mods = {"msi": read_json(paths.subresult("msi")) or {}}
+    else:
+        def find(nodes: list[dict[str, Any]]) -> dict[str, Any] | None:
+            for n in nodes or []:
+                if n.get("stored_path") == stored_path:
+                    return n
+                hit = find(n.get("children") or [])
+                if hit:
+                    return hit
+            return None
+        node = find((read_json(paths.subresult("nested")) or {}).get("tree") or [])
+        if node and node.get("view_id"):
+            from ..nested import view_path
+            mods = (read_json(view_path(paths, node["view_id"])) or {}).get("modules") or {}
+    for it in (mods.get("msi") or {}).get("items") or []:
+        loc = (it.get("floss") or {}).get("located")
+        if loc:
+            return loc
+    return []
+
+
+def attach_floss(full: dict[str, Any], located: list[dict[str, Any]]) -> int:
+    """Put FLOSS strings on the function that builds / decodes them."""
+    fns = sorted(full.get("functions") or [], key=lambda f: f["addr"])
+    starts = [f["addr"] for f in fns]
+    import bisect
+    n = 0
+    out = []
+    for s in located:
+        fva = s.get("function") or s.get("routine")
+        fn = None
+        if isinstance(fva, int) and fns:
+            i = bisect.bisect_right(starts, fva) - 1
+            if i >= 0 and fva < fns[i]["addr"] + max(fns[i].get("size") or 1, 1):
+                fn = fns[i]
+        rec = {"value": s["string"], "source": f"FLOSS {s.get('kind', '')}", "function": fn["name"] if fn else "",
+               "addr": fva}
+        out.append(rec)
+        if fn is not None:
+            fn.setdefault("floss", []).append({"value": s["string"], "kind": s.get("kind", "")})
+            n += 1
+    full["floss"] = out[:5000]
+    return n
+
+
+RES_DIR = "code_resources"
+MAX_CHILDREN = 60
+
+
+def enrich(root: Path, path: Path, data: bytes, sha256: str, mode: str, item: dict[str, Any], *,
+           names: list[dict[str, Any]] | None = None, buildinfo: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Phase 6 on one analysed object: FLOSS strings per function, embedded
+    resources (go:embed, certificates / keys, compressed data) written under
+    ``extracted/code_resources/`` for the nested analysis, the declared vs
+    recovered Go dependencies and the code strings as IOC sources. Returns the
+    nested children to analyse ({path, filename, origin, recipe, source})."""
+    from ..golang import binfmt
+    from . import resources
+    full = load(root, sha256, mode)
+    if full is None:
+        return []
+    label = item.get("label") or path.name
+    try:
+        n = attach_floss(full, floss_located(root, item.get("stored_path") or "", bool(item.get("original"))))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("FLOSS linking failed on %s: %s", label, exc)
+        n = 0
+    try:
+        binf = binfmt.parse(data)
+        res = resources.scan(data, binf, mode)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("resource scan failed on %s: %s", label, exc)
+        res = {"embed": [], "certificates": [], "compressed": []}
+    out_dir = root / "extracted" / RES_DIR / sha256[:12]
+    children: list[dict[str, Any]] = []
+
+    def keep(raw: bytes, name: str, origin: str, recipe: list[str]) -> str:
+        safe = re.sub(r"[^\w.\-]+", "_", name).strip("._")[:80] or "blob"
+        fn = f"{hashlib.sha256(raw).hexdigest()[:8]}_{safe}"
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / fn).write_bytes(raw)
+        except OSError:
+            return ""
+        rel = (out_dir / fn).relative_to(root).as_posix()
+        if len(children) < MAX_CHILDREN:
+            children.append({"path": str(out_dir / fn), "filename": fn, "origin": origin, "recipe": recipe,
+                             "source": "code-resources"})
+        return rel
+    for fs in res["embed"]:
+        for f in fs["files"]:
+            raw = f.pop("data", b"")
+            if raw and not f["dir"]:
+                f["stored_path"] = keep(raw, f["name"].rsplit("/", 1)[-1], f"go:embed {f['name']} in {label}",
+                                        ["go-embed", f["name"]])
+    for c in res["compressed"]:
+        raw = c.pop("data", b"")
+        if raw and c["decompressed_size"] >= 1024:
+            c["stored_path"] = keep(raw, f"{c['type']}_{c['offset']:x}.bin",
+                                    f"{c['type']} stream at 0x{c['offset']:x} in {label}", ["decompress", c["type"]])
+    full["resources"] = res
+    summary = {"floss_linked": n, "floss": len(full.get("floss") or []),
+               "embed_files": sum(len(fs["files"]) for fs in res["embed"]),
+               "certificates": sum(1 for c in res["certificates"] if not c.get("private")),
+               "private_keys": sum(1 for c in res["certificates"] if c.get("private")),
+               "compressed": len(res["compressed"])}
+    if mode == "go":
+        from . import resources as _r
+        fnames = [x["name"] for x in names or []]
+        full["dependencies"] = _r.go_dependencies(buildinfo, fnames)
+        summary["deps_without_code"] = len(full["dependencies"]["without_code"])
+        summary["undeclared_packages"] = len(full["dependencies"]["undeclared"])
+    result_file(root, sha256, mode).write_text(json.dumps(full), encoding="utf-8")
+    item.setdefault("code", {})["resources"] = summary
+    # strings the code uses (and FLOSS recovered) → the IOC extractor, with their function
+    src = []
+    for s in (full.get("strings") or [])[:3000]:
+        src.append({"location": f"{label} › {s.get('function') or ''}", "text": s.get("value") or ""})
+    for s in (full.get("floss") or [])[:3000]:
+        src.append({"location": f"{label} › {s.get('function') or 'FLOSS'} ({s.get('source')})", "text": s["value"]})
+    for c in res["certificates"]:
+        if c.get("subject"):
+            src.append({"location": f"{label} › certificate @0x{c['offset']:x}", "text": f"{c['subject']} {c['issuer']}"})
+    item["ioc_sources"] = [x for x in src if x["text"].strip()]
+    return children

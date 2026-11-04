@@ -168,3 +168,68 @@ def test_diagnostics_has_rizin_check() -> None:
 
     c = next(x for x in run_checks()["checks"] if x["name"] == "Rizin + rz-ghidra (code analysis)")
     assert c["status"] == "ok" or c["retry"] == "rizin"
+
+
+# --- phase 6: resources, FLOSS per function, dependencies, IOCs ---------------------
+
+def test_go_embed_certificates_and_compressed_data() -> None:
+    from docutracex.codeanalysis import resources
+    from docutracex.golang import binfmt
+    data = CODE["go/sample_go_code.exe"]
+    res = resources.scan(data, binfmt.parse(data), "go")
+    files = {f["name"]: f for fs in res["embed"] for f in fs["files"]}
+    assert set(files) == set(ms.CODE_EMBED)
+    assert files["assets/config.json"]["data"] == ms.CODE_EMBED["assets/config.json"]
+    assert data[files["assets/config.json"]["offset"]:].startswith(b'{"c2"')
+    cert = res["certificates"][0]
+    assert cert["type"] == "pem" and "CN=cdn-update.example.net" in cert["subject"] and cert["self_signed"]
+    assert [c["type"] for c in res["compressed"]] == ["gzip"] and b"INV-2026-0413" in res["compressed"][0]["data"]
+    # nothing in the native sample, and random bytes do not make an embed.FS
+    plain = CODE["code/sample_code_loader.exe"]
+    assert resources.scan(plain, binfmt.parse(plain), "go") == {"embed": [], "certificates": [], "compressed": []}
+
+
+def test_go_dependencies_declared_vs_code() -> None:
+    from docutracex.codeanalysis import resources
+    bi = {"path": "example.com/agent", "deps": [{"path": "github.com/kbinani/screenshot"}, {"path": "golang.org/x/sys"}]}
+    names = ["main.main", "example.com/agent/net.(*C).Send", "golang.org/x/sys/windows.VirtualAlloc",
+             "github.com/evil/copied.Run", "runtime.main", "net/http.(*Client).Do"]
+    d = resources.go_dependencies(bi, names)
+    assert d["with_code"] == ["golang.org/x/sys"] and d["without_code"] == ["github.com/kbinani/screenshot"]
+    assert d["undeclared"] == [("github.com/evil/copied", 1)]
+    assert resources.go_package("github.com/a/b/pkg.(*T).M") == "github.com/a/b/pkg"
+
+
+def test_floss_strings_land_on_their_function() -> None:
+    full = {"functions": [{"addr": 0x1000, "size": 0x40, "name": "main.decode"},
+                          {"addr": 0x2000, "size": 0x10, "name": "main.other"}]}
+    n = code_case.attach_floss(full, [{"kind": "stack", "string": "cmd.exe /c whoami", "function": 0x1010},
+                                      {"kind": "decoded", "string": "orphan", "function": 0x9000}])
+    assert n == 1 and full["functions"][0]["floss"] == [{"value": "cmd.exe /c whoami", "kind": "stack"}]
+    assert {s["function"] for s in full["floss"]} == {"main.decode", ""}
+
+
+@needs_rizin
+def test_case_pipeline_resources_and_iocs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from docutracex import analyze, cases
+    from docutracex.config import settings
+    from docutracex.storage import CasePaths, read_json
+
+    monkeypatch.setattr(settings, "cases_dir", tmp_path)
+    monkeypatch.setattr(settings, "goresym_executable", lambda: None)
+    m = cases.create_case(io.BytesIO(CODE["go/sample_go_code.exe"]), "factura.exe", cases_dir=tmp_path)
+    analyze.analyze_case(tmp_path / m["analysis_id"])
+    paths = CasePaths(m["analysis_id"], cases_dir=tmp_path)
+    g = read_json(paths.subresult("golang"))
+    assert "_children" not in g
+    o = g["objects"][0]
+    assert o["code"]["resources"]["embed_files"] == 2 and o["code"]["resources"]["certificates"] == 1
+    tree = read_json(paths.subresult("nested"))["tree"]
+    kids = {n["decrypted_from"]: n for n in tree}
+    assert "go:embed assets/config.json in factura.exe" in kids
+    assert all(n.get("source") == "code-resources" for n in tree)
+    iocs = {i["value"] for i in read_json(paths.subresult("iocs"))["iocs"]}
+    assert {URL, "203.0.113.47", "cdn-update.example.net"} <= iocs
+    full = code_case.load(paths.root, o["sha256"], "go")
+    assert full["dependencies"]["without_code"] == ["github.com/kbinani/screenshot", "golang.org/x/sys"]
+    assert all("data" not in f for fs in full["resources"]["embed"] for f in fs["files"])

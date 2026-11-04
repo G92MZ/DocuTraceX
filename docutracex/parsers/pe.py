@@ -533,6 +533,18 @@ def _run_floss(path: Path) -> dict[str, Any]:
         counts[key.split("_")[0]] = len(vals)
         strings.extend(vals)
     rec["counts"] = counts
+    # decoded / stack / tight strings with the function that builds or decodes
+    # them, so the code analysis can show them next to that function
+    located = []
+    for key in ("decoded_strings", "stack_strings", "tight_strings"):
+        for s in block.get(key) or []:
+            if isinstance(s, dict) and isinstance(s.get("string"), str) and s["string"].strip():
+                fn = s.get("function") if isinstance(s.get("function"), int) else s.get("decoding_routine")
+                located.append({"kind": key.split("_")[0], "string": s["string"][:500],
+                                "function": fn if isinstance(fn, int) else None,
+                                "routine": s.get("decoding_routine") if isinstance(s.get("decoding_routine"), int) else None})
+    if located:
+        rec["located"] = located[:5000]
     rec["version"] = str((data.get("metadata") or {}).get("version") or "")
     # FIX: detail now reflects all four categories including static
     rec["detail"] = (f"{len(strings)} string(s): {counts.get('static', 0)} static, "
