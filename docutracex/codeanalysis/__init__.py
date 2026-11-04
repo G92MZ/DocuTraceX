@@ -33,7 +33,7 @@ from . import priority, rz
 
 log = get_logger(__name__)
 
-ENGINE_VERSION = "1"
+ENGINE_VERSION = "2"
 
 
 def _env_int(name: str, default: int) -> int:

@@ -848,3 +848,5 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 .cx-cap-body { padding: 6px 12px 10px; }
 .cx-cap-fn { padding: 6px 0; border-bottom: 1px solid #1b2330; }
 .cx-cap-ev { margin: 4px 0 0 14px; font-size: 12px; line-height: 1.7; }
+.cg-edge.cg-if { stroke: #e5c07b; stroke-dasharray: 2 3; }
+.cg-key.cg-if { border-top: 2px dotted #e5c07b; }

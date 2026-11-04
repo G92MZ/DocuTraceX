@@ -91,6 +91,7 @@ def build(goresym_raw: dict[str, Any] | None, names: list[dict[str, Any]], main_
         t["user"] = pkg in user_pkgs
         rec = t["reconstructed"]
         t["fields"] = len(re.findall(r"^[ \t]+\w[\w, ]*[ \t]+\S", rec, re.MULTILINE)) if t["kind"] == "Struct" else 0
+    _implementations(types)
     ordered = sorted(types.values(), key=lambda t: (not t["user"], t["package"], t["name"]))[:MAX_TYPES]
     files = [f for f in raw.get("Files") or [] if isinstance(f, str)]
     user_files = [f for f in files if not _STD_FILE.search(f.replace("\\", "/")) and "/pkg/mod/" not in f.replace("\\", "/")]
@@ -104,6 +105,34 @@ def build(goresym_raw: dict[str, Any] | None, names: list[dict[str, Any]], main_
                         "with_methods": sum(1 for t in ordered if t["methods"]), "user_kinds": kinds,
                         "files": len(files), "user_files": len(user_files),
                         "goresym": bool(raw.get("Types") or raw.get("Interfaces"))}}
+
+
+_IFACE_METHOD = re.compile(r"^\s*([A-Za-z_]\w*)\(", re.MULTILINE)
+
+
+def _implementations(types: dict[str, dict[str, Any]]) -> None:
+    """Go's structural typing: a type implements an interface when its method
+    set covers the interface's methods (pointer receivers included)."""
+    ifaces = {}
+    for t in types.values():
+        if t["kind"] == "Interface" and t["reconstructed"]:
+            body = t["reconstructed"].split("{", 1)[-1]
+            ms = set(_IFACE_METHOD.findall(body.replace("{", "\n")))
+            if ms:
+                ifaces[t["name"]] = ms
+    for t in types.values():
+        t.setdefault("implements", [])
+        if t["kind"] == "Interface":
+            t.setdefault("implemented_by", [])
+    for t in types.values():
+        have = {m["method"] for m in t.get("methods") or []}
+        if not have or t["kind"] == "Interface":
+            continue
+        for iname, need in ifaces.items():
+            if need <= have and (t["user"] or types[iname]["user"]):
+                t["implements"].append(iname)
+                if len(types[iname]["implemented_by"]) < 50:
+                    types[iname]["implemented_by"].append(t["name"])
 
 
 def types_file(root: Path, sha256: str) -> Path:
