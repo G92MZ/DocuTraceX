@@ -163,7 +163,8 @@ def analyze_native_case(root: Path, original: Path, nested_tree: list[dict[str, 
 # --- views for the API ----------------------------------------------------------
 
 _LIGHT = ("addr", "name", "size", "blocks", "complexity", "loops", "score", "rank", "categories", "reasons",
-          "user", "named", "decompiled", "decompile_note", "instructions", "xor_ops")
+          "user", "named", "decompiled", "decompile_note", "instructions", "xor_ops", "traits",
+          "indirect_calls")
 
 
 def load(root: Path, sha256: str, mode: str) -> dict[str, Any] | None:
@@ -201,6 +202,7 @@ def function_view(full: dict[str, Any], addr: int) -> dict[str, Any] | None:
     known = [{"addr": a, "name": by_addr[a]["name"]} for a in f.get("calls") or [] if a in by_addr]
     out["callees"] = known
     out["callee_names"] = f.get("callee_names") or []
+    out["spawns"] = [{"addr": a, "name": by_addr[a]["name"] if a in by_addr else f"{a:#x}"} for a in f.get("spawns") or []]
     out["decompiled"] = (full.get("decompiled") or {}).get(str(addr))
     out["ops"] = (full.get("disasm") or {}).get(str(addr))
     out.pop("calls", None)
@@ -238,3 +240,102 @@ def decompile_on_demand(root: Path, path: Path, sha256: str, mode: str, addr: in
         full.setdefault("disasm", {})[str(addr)] = r["ops"]
     result_file(root, sha256, mode).write_text(json.dumps(full), encoding="utf-8")
     return r
+
+
+def _go_names_for(path: Path, mode: str) -> list[dict[str, Any]] | None:
+    if mode != "go":
+        return None
+    from ..golang import detect
+    data = path.read_bytes()
+    return go_names(data, detect.identify(data))
+
+
+def cfg_on_demand(root: Path, path: Path, sha256: str, mode: str, addr: int) -> dict[str, Any]:
+    """CFG of one function, computed once and kept in the result file."""
+    from . import cfg_one
+    full = load(root, sha256, mode)
+    if full is None:
+        raise FileNotFoundError("no code analysis for this object")
+    cached = (full.get("cfg") or {}).get(str(addr))
+    if cached:
+        return cached
+    r = cfg_one(path, addr, mode=mode, names=_go_names_for(path, mode), lock_path=lock_path(root))
+    if r.get("status") == "ok":
+        full.setdefault("cfg", {})[str(addr)] = r
+        result_file(root, sha256, mode).write_text(json.dumps(full), encoding="utf-8")
+    return r
+
+
+SENSITIVE = ("network", "exec", "process", "persistence", "crypto")
+
+
+def graph(full: dict[str, Any], max_paths: int = 25) -> dict[str, Any]:
+    """The program call graph: analysed functions as nodes, direct calls and
+    goroutine launches as edges, the calls into sensitive library code as leaf
+    nodes, the roots (entry / init / uncalled program code) and the shortest
+    path from a root to every sensitive function."""
+    from collections import deque
+
+    from .priority import CATEGORIES
+    fns = full.get("functions") or []
+    mode = (full.get("summary") or {}).get("mode", "native")
+    by = {f["addr"]: f for f in fns}
+    nodes = [{"id": f["addr"], "name": f["name"], "score": f.get("score", 0), "categories": f.get("categories") or [],
+              "traits": f.get("traits") or [], "user": f.get("user", True), "indirect": f.get("indirect_calls", 0)}
+             for f in fns]
+    edges = []
+    ext: dict[str, dict[str, Any]] = {}
+    for f in fns:
+        for c in f.get("calls") or []:
+            if c in by and c != f["addr"]:
+                edges.append({"from": f["addr"], "to": c, "kind": "call"})
+        for c in f.get("spawns") or []:
+            if c in by:
+                edges.append({"from": f["addr"], "to": c, "kind": "goroutine"})
+        known = {by[c]["name"] for c in f.get("calls") or [] if c in by}
+        for n in f.get("callee_names") or []:
+            if n in known:
+                continue
+            low = n.lower()
+            cats = [k for k, c in CATEGORIES.items()
+                    if (mode == "go" and n.startswith(c.get("go", ()))) or
+                    (low.startswith("imp.") and any(a in low for a in c.get("api", ())))]
+            if cats:
+                key = "ext:" + n
+                ext.setdefault(key, {"id": key, "name": n, "score": 0, "categories": cats, "traits": ["library"],
+                                     "user": False, "external": True})
+                edges.append({"from": f["addr"], "to": key, "kind": "call"})
+    nodes += list(ext.values())
+    callers: dict[Any, set] = {}
+    for e in edges:
+        callers.setdefault(e["to"], set()).add(e["from"])
+    roots = [f["addr"] for f in fns if {"entry", "init"} & set(f.get("traits") or [])]
+    roots += [f["addr"] for f in fns if f.get("user") and f["addr"] not in callers and f["addr"] not in roots]
+    adj: dict[Any, list] = {}
+    for e in edges:
+        adj.setdefault(e["from"], []).append(e["to"])
+    prev: dict[Any, Any] = {r: None for r in roots}
+    q = deque(roots)
+    while q:
+        u = q.popleft()
+        for v in adj.get(u, []):
+            if v not in prev:
+                prev[v] = u
+                q.append(v)
+    targets = [n for n in nodes if set(n["categories"]) & set(SENSITIVE)]
+    targets.sort(key=lambda n: (not n.get("external", False), -n["score"]))
+    paths = []
+    for t in targets:
+        if t["id"] not in prev:
+            paths.append({"target": t["id"], "path": None, "note": "not reached from an entry point (indirect call, "
+                                                                    "callback or interface method?)"})
+        else:
+            p, cur = [], t["id"]
+            while cur is not None:
+                p.append(cur)
+                cur = prev[cur]
+            paths.append({"target": t["id"], "path": p[::-1]})
+        if len(paths) >= max_paths:
+            break
+    return {"nodes": nodes, "edges": edges, "roots": roots, "paths": paths,
+            "unresolved": sum(f.get("indirect_calls", 0) for f in fns)}
