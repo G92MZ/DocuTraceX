@@ -2336,6 +2336,11 @@ def go_code_exe() -> bytes:
         b"\x48\x83\xc4\x28\xc3", b"\xcc" * 3,
         # main.main.func2: a Garble-style literal closure (stack bytes + rolling key → slicebytetostring)
         ("label", "garblelit"), *_garble_literal(), ("rel32", "sbts", b"\xe8"), b"\x48\x83\xc4\x68\xc3", b"\xcc" * 3,
+        # main.useConfig: a call through an interface (itab → fun[0] = main.(*Config).load)
+        ("label", "useconfig"),
+        b"\x48\x83\xec\x28", ("rip", "itab", b"\x48\x8d\x05"),           # lea rax, [go:itab.*main.Config,main.Loader]
+        b"\x48\x8b\x48\x18\xff\xd1",                                    # mov rcx, [rax+0x18] ; call rcx
+        b"\x48\x83\xc4\x28\xc3", b"\xcc" * 3,
         ("label", "sbts"), b"\xc3", b"\xcc" * 15,
         ("label", "openkey"), b"\xc3", b"\xcc" * 15,
         ("label", "setvalue"), b"\xc3", b"\xcc" * 15,
@@ -2359,7 +2364,8 @@ def go_code_exe() -> bytes:
              ("main.openConfig", meta["openconfig"], meta["persist"] - meta["openconfig"]),
              ("main.persist", meta["persist"], meta["runcmd"] - meta["persist"]),
              ("main.runCmd", meta["runcmd"], meta["garblelit"] - meta["runcmd"]),
-             ("main.main.func2", meta["garblelit"], meta["sbts"] - meta["garblelit"]),
+             ("main.main.func2", meta["garblelit"], meta["useconfig"] - meta["garblelit"]),
+             ("main.useConfig", meta["useconfig"], meta["sbts"] - meta["useconfig"]),
              ("runtime.slicebytetostring", meta["sbts"], meta["openkey"] - meta["sbts"]),
              ("golang.org/x/sys/windows/registry.OpenKey", meta["openkey"], meta["setvalue"] - meta["openkey"]),
              ("golang.org/x/sys/windows/registry.Key.SetStringValue", meta["setvalue"], meta["execcmd"] - meta["setvalue"]),
@@ -2373,11 +2379,11 @@ def go_code_exe() -> bytes:
     text_va = base + 0x1000
     pcln = _go_pclntab_funcs(funcs, extra, text_va)
 
-    def build(c: bytes, md: bytes, emb: bytes) -> bytes:
+    def build(c: bytes, md: bytes, emb: bytes, itab: bytes = b"\x00" * 32) -> bytes:
         # the URL is a Go string: bytes with no NUL, referenced by pointer + length
         return bk.pe(bits=64, gui=False, imports={"kernel32.dll": ["VirtualAlloc", "ExitProcess"]}, code=c,
                      sections=[(".rdata", pcln + CODE_URL.encode() + blob.encode("latin-1") + b"\x00" * 8
-                                + CODE_GCM_KEY + CODE_GCM_NONCE + CODE_SEALED + CODE_RUN_KEY + CODE_CMDLINE
+                                + CODE_GCM_KEY + CODE_GCM_NONCE + CODE_SEALED + CODE_RUN_KEY + CODE_CMDLINE + b"ITAB" + itab
                                 + _aes_sbox() + _sha256_k(), 0x40000040),
                                (".data", _go_buildinfo("go1.22.5", "windows") + md, 0xC0000040),
                                (".embed", emb, 0x40000040)],
@@ -2390,11 +2396,14 @@ def go_code_exe() -> bytes:
     for k, v in (("gcmkey", CODE_GCM_KEY), ("gcmnonce", CODE_GCM_NONCE), ("sealed", CODE_SEALED),
                  ("runkey", CODE_RUN_KEY), ("cmdline", CODE_CMDLINE)):
         rvas[k] = bf.off_to_va(first.find(v)) - base
+    rvas["itab"] = bf.off_to_va(first.find(b"ITAB" + b"\x00" * 32) + 4) - base
+    itab = _st.pack("<QQII", base + rvas["runkey"], base + rvas["cmdline"], 0x5CA1AB1E, 0) + \
+        _st.pack("<Q", text_va + meta["cfgload"])               # {inter, _type, hash, _, fun[0]}
     linked = _x64_link(code, meta, text_va - base, rvas)
     off = first.find(_st.pack("<I", 0xFFFFFFF1) + b"\x00\x00")
     va = bf.off_to_va(off) or 0
     emb_va = bf.section(".embed").va
-    return build(linked, _st.pack("<4Q", va, va + 72, len(funcs), len(funcs)), _go_embed_section(emb_va))
+    return build(linked, _st.pack("<4Q", va, va + 72, len(funcs), len(funcs)), _go_embed_section(emb_va), itab)
 
 
 # A throw-away self-signed certificate (its key was never kept) for cdn-update.example.net.

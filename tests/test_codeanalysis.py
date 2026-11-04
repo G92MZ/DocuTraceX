@@ -422,3 +422,74 @@ def test_garble_strings_reach_strings_and_iocs(tmp_path: Path, monkeypatch: pyte
     ov = code_case.overview(code_case.load(paths.root, o["sha256"], "go"))
     assert any(s["source"] == "Garble (emulated)" and s["function"] == "main.main.func2" for s in ov["strings"])
     assert ms.CODE_GARBLE_SECRET.decode() in {i["value"] for i in read_json(paths.subresult("iocs"))["iocs"]}
+
+
+# --- cache across cases, interface calls ------------------------------------------------
+
+@needs_rizin
+def test_code_analysis_cache_across_cases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from docutracex import analyze, cases
+    from docutracex import codeanalysis as ca_mod
+    from docutracex.config import settings
+    from docutracex.storage import CasePaths, read_json
+
+    monkeypatch.setattr(settings, "cases_dir", tmp_path)
+    monkeypatch.setattr(settings, "goresym_executable", lambda: None)
+    data = CODE["code/sample_code_loader.exe"]
+    m1 = cases.create_case(io.BytesIO(data), "a.exe", cases_dir=tmp_path)
+    analyze.analyze_case(tmp_path / m1["analysis_id"])
+    assert list((tmp_path / code_case.CACHE_DIR).glob("*.native.*.json"))
+    monkeypatch.setattr(ca_mod, "analyze", lambda *a, **k: pytest.fail("Rizin must not run again"))
+    m2 = cases.create_case(io.BytesIO(data), "b.exe", cases_dir=tmp_path)
+    analyze.analyze_case(tmp_path / m2["analysis_id"])
+    c = read_json(CasePaths(m2["analysis_id"], cases_dir=tmp_path).subresult("code"))["objects"][0]["code"]
+    assert c["status"] == "ok" and c["cached"] is True and c["resources"]["decrypted"] == 1   # enrichment still per case
+    monkeypatch.setenv("DOCUTRACEX_CODE_CACHE", "0")
+    assert code_case._cache_get(tmp_path / m2["analysis_id"], c["sha256"], "native") is None
+
+
+@needs_rizin
+def test_interface_call_resolved_from_its_itab(tmp_path: Path) -> None:
+    from docutracex.codeanalysis import _Reader
+    data = CODE["go/sample_go_code.exe"]
+    p = tmp_path / "agent.exe"
+    p.write_bytes(data)
+    names = code_case.go_names(data, detect.identify(data))
+    out = tmp_path / "go.json"
+    ca.analyze(p, mode="go", names=names, out_file=out, lock_path=tmp_path / "lock")
+    full = json.loads(out.read_text())
+    full["interface_calls"] = code_case.itab_calls(full, _Reader(data), names)
+    by = {f["name"]: f for f in full["functions"]}
+    assert full["interface_calls"] == [{"from": by["main.useConfig"]["addr"], "itab": full["interface_calls"][0]["itab"],
+                                        "targets": [by["main.(*Config).load"]["addr"]], "methods": ["main.(*Config).load"]}]
+    g = code_case.graph(full)
+    assert {"from": by["main.useConfig"]["addr"], "to": by["main.(*Config).load"]["addr"], "kind": "interface"} in g["edges"]
+    fv = code_case.function_view(full, by["main.useConfig"]["addr"])
+    assert fv["interface_targets"][0]["name"] == "main.(*Config).load"
+
+
+def test_types_implementations() -> None:
+    from docutracex.golang import types as go_types
+    raw = {"Interfaces": [{"VA": 1, "Str": "main.Loader", "Kind": "Interface", "Reconstructed": "type main.Loader interface {load() error\n}"},
+                          {"VA": 2, "Str": "fmt.Stringer", "Kind": "Interface", "Reconstructed": "type fmt.Stringer interface {String() string\n}"}],
+           "Types": [{"VA": 3, "Str": "main.Config", "Kind": "Struct", "Reconstructed": "type main.Config struct {\n    C2 string\n}"}]}
+    names = [{"name": "main.(*Config).load", "start": 0x10, "user": True}, {"name": "main.Config.String", "start": 0x20, "user": True}]
+    by = {t["name"]: t for t in go_types.build(raw, names)["types"]}
+    assert sorted(by["main.Config"]["implements"]) == ["fmt.Stringer", "main.Loader"]
+    assert by["main.Loader"]["implemented_by"] == ["main.Config"]
+
+
+def test_notable_modules_embed_kinds_and_crypto_paths() -> None:
+    from docutracex.codeanalysis import resources
+    from docutracex.golang import binfmt
+    assert resources.notable(["github.com/kbinani/screenshot", "github.com/foo/bar"]) == \
+        [{"module": "github.com/kbinani/screenshot", "why": "screen capture"}]
+    data = CODE["go/sample_go_code.exe"]
+    kinds = {f["name"]: f["kind"] for fs in resources.go_embed(data, binfmt.parse(data)) for f in fs["files"]}
+    assert kinds == {"assets/config.json": "configuration", "assets/readme.txt": "data"}
+    assert resources._embed_kind("x/run.ps1", b"IEX") == "script" and resources._embed_kind("p.tmpl", b"") == "template"
+    full = {"summary": {"mode": "go"}, "functions": [{"addr": 1, "name": "main.main", "traits": ["entry"], "calls": [2]},
+                                                     {"addr": 2, "name": "main.seal", "calls": []}],
+            "crypto": {"functions": [{"name": "main.seal"}], "plaintexts": []}}
+    g = code_case.graph(full)
+    assert any(p["target"] == 2 and p["path"] == [1, 2] for p in g["paths"])
