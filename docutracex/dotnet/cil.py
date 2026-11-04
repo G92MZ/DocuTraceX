@@ -32,6 +32,9 @@ _INTEREST = (
     ("System.Runtime.InteropServices.Marshal::GetDelegateForFunctionPointer", "injection", 4),
     ("System.Resources.ResourceManager::GetObject", "loader", 2),
     ("System.Reflection.Assembly::GetManifestResourceStream", "loader", 3),
+    ("System.Drawing.Bitmap::GetPixel", "stego", 4), ("System.Drawing.Bitmap::LockBits", "stego", 3),
+    ("System.Drawing.Color::get_R", "stego", 1), ("System.Drawing.Color::get_G", "stego", 1),
+    ("System.Drawing.Color::get_B", "stego", 1), ("System.Drawing.Color::ToArgb", "stego", 1),
     ("System.Threading.Thread::Sleep", "evasion", 1), ("System.Diagnostics.Debugger::IsAttached", "evasion", 2),
 )
 
@@ -190,6 +193,17 @@ def disassemble(pe: Any) -> dict[str, Any]:
                         "calls": calls[:MAX_CALLS], "strings": strings[:40], "categories": sorted(cats), "score": score,
                         "_ops": ops, "_sites": sites, "_all_strings": strings, "_arrays": arrays,
                         "arrays": [f"byte[{len(a)}] {a[:16].hex()}" for a in arrays[:10]]})
+    # own methods a loader calls (the decoder behind Assembly.Load) are worth reading too
+    own = set(owners.values())
+    by_name = {m["method"]: m for m in methods}
+    for m in list(methods):
+        if "loader" in m["categories"]:
+            for c in m["calls"]:
+                callee = by_name.get(c) if c in own else None
+                if callee is not None and callee is not m:
+                    callee["score"] += 3
+                    if "called by a loader" not in callee["categories"]:
+                        callee["categories"] = sorted(callee["categories"] + ["called by a loader"])
     internal = [{k: m.pop(k) for k in ("_ops", "_sites", "_all_strings", "_arrays")} | {"method": m["method"], "rid": m["rid"],
                  "calls": m["calls"]} for m in methods]
     interesting = sorted((m for m in methods if m["score"] > 0), key=lambda m: -m["score"])[:MAX_INTERESTING]

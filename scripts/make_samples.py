@@ -2553,6 +2553,45 @@ def dotnet_stealer_exe() -> bytes:
                                                              "FileDescription": "Invoice Mail Sync"})
 
 
+def dotnet_bitmap_loader_exe() -> bytes:
+    """InvoiceGallery.exe: the steganographic loader of many AgentTesla / Formbook
+    campaigns. A Bitmap resource hides the next stage in its pixels (read column by
+    column, R/G/B bytes, XOR with a 16-digit key literal); ``Gallery::Decode`` calls
+    ``GetPixel`` / ``Color.get_R|G|B`` / ``xor`` and ``Main`` hands the result to
+    ``Assembly.Load``. The hidden stage is an inert PE stub (a ``ret``). Static only."""
+    import io as _io
+    import binkit as bk
+    import dnkit
+    from PIL import Image
+    key = b"4417290360015521"
+    stage = bk.pe(bits=32, gui=False)
+    enc = bytes(c ^ key[i % len(key)] for i, c in enumerate(stage))
+    w = 32
+    h = -(-len(enc) // (3 * w))
+    enc += b"\x00" * (3 * w * h - len(enc))
+    # pixel (x, y) holds bytes [3*(x*h + y) …]: column-major, the order of for x { for y { GetPixel(x, y) } }
+    cols = Image.frombytes("RGB", (h, w), enc)               # row x of this image = column x of the bitmap
+    img = cols.transpose(Image.Transpose.TRANSPOSE)
+    png = _io.BytesIO()
+    img.save(png, format="PNG")
+    spec = {"assembly": "InvoiceGallery", "version": (3, 0, 1, 0),
+            "refs": [("mscorlib", (4, 0, 0, 0)), ("System.Drawing", (4, 0, 0, 0))],
+            "typerefs": [(1, "System.Drawing", "Bitmap"), (1, "System.Drawing", "Color"), (0, "System.Reflection", "Assembly"),
+                         (0, "System.Resources", "ResourceManager")],
+            "memberrefs": [(0, "GetPixel"), (1, "get_R"), (1, "get_G"), (1, "get_B"), (2, "Load"), (3, "GetObject")],
+            "types": [{"ns": "InvoiceGallery", "name": "Program", "methods": [
+                {"name": "Main", "entry": True, "ops": [("ldstr", "Gallery"), ("callvirt", 5), ("calldef", "Gallery::Decode"),
+                                                        ("call", 4), ("pop",), ("ret",)]}]},
+                      {"ns": "InvoiceGallery", "name": "Gallery", "methods": [
+                          {"name": "Decode", "ops": [("ldarg.0",), ("callvirt", 0), ("call", 1), ("call", 2), ("call", 3),
+                                                     ("ldstr", key.decode()), ("xor",), ("ret",)]}]}],
+            "resources": [("InvoiceGallery.Properties.Resources.resources", dnkit.resources([
+                ("Gallery", ("object", "System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0", png.getvalue()))]))],
+            "user_strings": ["Invoice Gallery", "Select an invoice scan"]}
+    return bk.pe(bits=32, gui=True, dotnet_md=spec, version={"CompanyName": "Invoice Sync Example",
+                                                             "FileDescription": "Invoice Gallery"})
+
+
 def _deflate(b: bytes) -> bytes:
     import zlib
     c = zlib.compressobj(9, zlib.DEFLATED, -15)
@@ -2561,7 +2600,8 @@ def _deflate(b: bytes) -> bytes:
 
 def dotnet_samples() -> dict[str, bytes]:
     return {"dotnet/sample_dotnet_loader.exe": dotnet_loader_exe(),
-            "dotnet/sample_dotnet_stealer.exe": dotnet_stealer_exe()}
+            "dotnet/sample_dotnet_stealer.exe": dotnet_stealer_exe(),
+            "dotnet/sample_dotnet_bitmap_loader.exe": dotnet_bitmap_loader_exe()}
 
 
 def code_samples() -> dict[str, bytes]:
