@@ -760,3 +760,33 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 .tk-com { color: #6b7d8f; font-style: italic; }
 .da-off { color: var(--text-dim); } .da-bytes { color: #4f5d6e; }
 .da-call { color: var(--accent); } .da-jmp { color: #e5c07b; } .da-ret { color: #e8795a; }
+
+/* Call graph / CFG */
+.cg-wrap { overflow: auto; max-height: 70vh; border: 1px solid var(--panel-border); border-radius: 6px; background: #0b0e12; padding: 4px; }
+.cg-svg { display: block; font-family: "Cascadia Code", Consolas, monospace; }
+.cg-node rect { fill: #151c26; stroke: #33425a; stroke-width: 1; }
+.cg-node { cursor: pointer; }
+.cg-node:hover rect { stroke: var(--accent); }
+.cg-node.is-center rect { stroke: var(--accent); stroke-width: 2; fill: #172131; }
+.cg-node.is-ext rect { fill: #10151c; stroke-dasharray: 4 3; }
+.cg-node.cat-bad rect { stroke: #e8795a; }
+.cg-node.cat-warn rect { stroke: #e5c07b; }
+.cg-name { fill: var(--text); font-size: 11px; }
+.cg-tags { fill: var(--text-dim); font-size: 10px; }
+.cg-edge { fill: none; stroke: #4a5a70; stroke-width: 1.3; }
+.cg-edge.cg-go { stroke: #c792ea; stroke-dasharray: 5 3; }
+.cg-arrowhead { fill: #6b7d8f; }
+.cfg-block rect { fill: #121922; stroke: #33425a; }
+.cfg-op { fill: #c9d4e0; font-size: 10.5px; }
+.cg-edge.cfg-jump { stroke: #5fd38b; }
+.cg-edge.cfg-fail { stroke: #e8795a; }
+.cg-edge.cfg-switch { stroke: #c792ea; }
+.cg-edge.cfg-back { stroke-dasharray: 4 3; }
+.cg-path { padding: 3px 0; border-bottom: 1px solid #1b2330; }
+.cg-legend { margin: 0 0 6px; }
+.cg-key { display: inline-block; width: 22px; height: 0; border-top: 2px solid #4a5a70; vertical-align: middle; margin: 0 4px 0 10px; }
+.cg-key.cg-go { border-top: 2px dashed #c792ea; }
+.cg-key.is-ext { border-top: 2px dashed #33425a; }
+.cg-key.cfg-jump { border-top-color: #5fd38b; } .cg-key.cfg-fail { border-top-color: #e8795a; }
+.cg-key.cfg-always { border-top-color: #4a5a70; }
+.badge.cg-trait { background: rgba(199, 146, 234, 0.14); color: #d7b4f0; }

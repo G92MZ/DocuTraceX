@@ -96,11 +96,25 @@ def test_go_engine_restores_names(tmp_path: Path) -> None:
     assert s["status"] == "ok" and s["top"][0]["name"] == "main.beacon"
     full = json.loads(out.read_text())
     by = {f["name"]: f for f in full["functions"]}
-    assert by["main.main"]["callee_names"] == ["main.decryptConfig", "main.beacon"]
+    assert by["main.main"]["callee_names"] == ["main.decryptConfig", "runtime.newproc", "runtime.deferreturn"]
+    assert {"entry", "goroutine", "defer"} <= set(by["main.main"]["traits"])
+    assert by["main.main"]["spawns"] == [by["main.main.func1"]["addr"]]          # go func1()
+    assert "closure" in by["main.main.func1"]["traits"]
     assert by["main.beacon"]["strings"][0]["value"] == URL                # Go string: pointer + length
     assert "net/http.(*Client).Do" in full["decompiled"][str(by["main.beacon"]["addr"])]["code"]
     one = ca.decompile_one(p, by["main.decryptConfig"]["addr"], mode="go", names=names, lock_path=tmp_path / "lock")
     assert one["status"] == "ok" and "0x5a" in one["code"] and one["ops"]
+
+    g = code_case.graph(full)
+    kinds = {(e["from"], e["to"]): e["kind"] for e in g["edges"]}
+    assert kinds[(by["main.main"]["addr"], by["main.main.func1"]["addr"])] == "goroutine"
+    assert g["roots"] == [by["main.main"]["addr"]]
+    path = next(p["path"] for p in g["paths"] if p["target"] == "ext:net/http.(*Client).Do")
+    assert path == [by["main.main"]["addr"], by["main.main.func1"]["addr"], by["main.beacon"]["addr"],
+                    "ext:net/http.(*Client).Do"]
+    cfg = ca.cfg_one(p, by["main.decryptConfig"]["addr"], mode="go", names=names, lock_path=tmp_path / "lock")
+    assert cfg["status"] == "ok" and len(cfg["blocks"]) == 3 and cfg["loops"] == 1
+    assert {e["kind"] for e in cfg["edges"]} >= {"jump", "fail"}
 
 
 @needs_rizin
@@ -128,9 +142,14 @@ def test_case_pipeline_go_and_native(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert ov["functions"][0]["name"] == "main.beacon" and ov["strings"][0]["value"] == URL
     addr = ov["functions"][0]["addr"]
     fv = client.get(f"/api/cases/{cid}/code/{c['sha256']}/go/fn/{addr}").json()
-    assert fv["decompiled"]["status"] == "ok" and fv["callers"][0]["name"] == "main.main" and fv["ops"]
+    assert fv["decompiled"]["status"] == "ok" and fv["callers"][0]["name"] == "main.main.func1" and fv["ops"]
     dv = client.post(f"/api/cases/{cid}/code/{c['sha256']}/go/fn/{addr}/decompile").json()
     assert dv["decompiled"]["on_demand"] is True
+    g = client.get(f"/api/cases/{cid}/code/{c['sha256']}/go/graph").json()
+    assert any(e["kind"] == "goroutine" for e in g["edges"]) and g["paths"]
+    cf = client.get(f"/api/cases/{cid}/code/{c['sha256']}/go/fn/{addr}/cfg").json()
+    assert cf["status"] == "ok" and cf["blocks"]
+    assert client.get(f"/api/cases/{cid}/code/{c['sha256']}/go/fn/{addr}/cfg").json() == cf     # cached
     assert client.get(f"/api/cases/{cid}/code/{'0' * 64}/go").status_code == 404
     assert client.get(f"/api/cases/{cid}/code/xyz/go").status_code == 400
 

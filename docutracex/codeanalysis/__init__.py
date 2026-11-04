@@ -50,11 +50,14 @@ DECOMPILE_N = _env_int("DOCUTRACEX_CODE_DECOMPILE", 100)
 INVENTORY_MAX = _env_int("DOCUTRACEX_CODE_FUNCTIONS", 4000)
 DISASM_KEEP = 300                 # functions whose instructions are stored
 OPS_KEEP = 1500                   # instructions kept per function
+MAX_BLOCKS = 400                  # CFG view
+BLOCK_OPS = 40
 DECOMPILE_MAX_SIZE = _env_int("DOCUTRACEX_CODE_DECOMPILE_MAX_BYTES", 24000)   # bigger: on demand only
 DECOMPILE_MAX_SIZE = _env_int("DOCUTRACEX_CODE_DECOMPILE_MAX_BYTES", 24000)   # bigger: on demand only
 BATCH = 250
 DEC_BATCH = 10
 _FLAG_BAD = re.compile(r"[^A-Za-z0-9_.]")
+_CALL_TYPES = ("call", "ucall", "icall", "ircall", "rcall", "jmp", "ujmp", "ijmp", "irjmp")
 _REG = re.compile(r"^(?:[re]?[abcd]x|[re]?[sd]il?|[re]?[sb]p|r\d{1,2}[dwb]?|[xw]\d{1,2}|lr|pc|ip|eip|rip|e?ax)$")
 _CALLEE = re.compile(r"^(?:call|jmp|bl|blx|b)\s+(?:qword |dword )?(?:\[)?([A-Za-z_][\w.@$?]*)")
 
@@ -66,6 +69,36 @@ def available() -> bool:
 
 def _flag(name: str, prefix: str) -> str:
     return prefix + _FLAG_BAD.sub("_", name)[:200]
+
+
+_CLOSURE = re.compile(r"\.func\d+(\.\d+)*$|\.gowrap\d+$")
+
+
+def _traits(f: dict[str, Any], mode: str) -> list[str]:
+    """Go / program-structure markers of a function (call graph decorations)."""
+    names = f.get("callee_names") or []
+    name = f.get("name") or ""
+    out = []
+    if name in ("main.main", "main", "entry0", "WinMain", "wWinMain", "DllMain", "_start") or name.startswith("entry"):
+        out.append("entry")
+    if name.endswith((".init", ".init.0")) or re.search(r"\.init\.\d+$", name):
+        out.append("init")
+    if mode == "go":
+        if _CLOSURE.search(name):
+            out.append("closure")
+        if any("runtime.newproc" in n for n in names):
+            out.append("goroutine")
+        if any(n.startswith(("runtime.deferproc", "runtime.deferreturn")) for n in names):
+            out.append("defer")
+        if any(n in ("runtime.gopanic", "runtime.gorecover") for n in names):
+            out.append("panic/recover")
+        if any(n.startswith("reflect.") for n in names):
+            out.append("reflection")
+        if any(n.startswith("runtime.") and ("itab" in n or "assertE2I" in n or "typeAssert" in n) for n in names):
+            out.append("interface")
+    if f.get("indirect_calls"):
+        out.append("indirect calls")
+    return out
 
 
 def _readable(flag: str) -> str:
@@ -222,11 +255,20 @@ def analyze(path: Path, *, mode: str, names: list[dict[str, Any]] | None, out_fi
                 pdf = rz.as_json(r["outputs"].get(f"d:{a}")) or {}
                 ops = pdf.get("ops") or []
                 callees = []
+                indirect = 0
+                spawns: list[int] = []
+                last_fn_ptr = None
                 for op in ops:
+                    t = op.get("type")
                     m = _CALLEE.match(op.get("disasm") or "")
-                    if m and op.get("type") in ("call", "ucall", "icall", "ircall", "rcall", "jmp", "ujmp", "ijmp",
-                                                "irjmp") and not _REG.match(m.group(1)):
+                    if t == "lea" and op.get("ptr") in names_by_addr:
+                        last_fn_ptr = op["ptr"]                   # a function value (closure / goroutine body)
+                    if m and t in _CALL_TYPES and not _REG.match(m.group(1)):
                         callees.append(m.group(1))
+                        if "newproc" in m.group(1) and last_fn_ptr is not None:
+                            spawns.append(last_fn_ptr)            # go f(): the body handed to runtime.newproc
+                    elif t in _CALL_TYPES and t != "jmp" and not op.get("jump"):
+                        indirect += 1                             # target in a register / memory: unresolved
                 strs, xor = _strings_and_xor(ops, reader, mode)
                 back = sum(1 for op in ops if op.get("type") == "cjmp" and isinstance(op.get("jump"), int)
                            and a <= op["jump"] < (op.get("offset") or 0))       # backward branches = loops
@@ -237,6 +279,7 @@ def analyze(path: Path, *, mode: str, names: list[dict[str, Any]] | None, out_fi
                     "calls": sorted({c["to"] for c in info.get("callrefs") or [] if c.get("type") == "CALL"}),
                     "callee_names": [c for c in dict.fromkeys(callees) if c != _flag(n["name"], "go.")][:200],
                     "strings": strs[:100], "xor_ops": xor, "instructions": len(ops),
+                    "indirect_calls": indirect, "spawns": sorted(set(spawns)),
                 }
                 disasm[a] = ops
             if r.get("killed") and "memory" in (r.get("killed") or ""):
@@ -252,6 +295,8 @@ def analyze(path: Path, *, mode: str, names: list[dict[str, Any]] | None, out_fi
             for c in f["calls"]:
                 if c in functions:
                     functions[c].setdefault("callers", []).append(f["addr"])
+        for f in functions.values():
+            f["traits"] = _traits(f, mode)
         # 3. priority
         for f in functions.values():
             f["score"], f["reasons"], f["categories"] = priority.score(
@@ -383,3 +428,42 @@ def decompile_one(path: Path, addr: int, *, mode: str, names: list[dict[str, Any
         return {"status": "ok", "code": _pretty(g["code"], g.get("annotations") or [], names_by_addr), "ops": ops}
     return {"status": "failed", "ops": ops,
             "detail": (r.get("killed") or r.get("stderr") or r.get("error") or "rz-ghidra could not decompile it")[-300:]}
+
+
+def cfg_one(path: Path, addr: int, *, mode: str, names: list[dict[str, Any]] | None,
+            lock_path: Path) -> dict[str, Any]:
+    """Control-flow graph of one function: basic blocks (with their
+    instructions) and the jump / fall-through edges between them."""
+    if not available():
+        return {"status": "unavailable"}
+    prelude = ["f- reloc.*"] if mode == "go" else ["aa"]
+    for n in names or []:
+        prelude.append(f"f {_flag(n['name'], 'go.')} {max(1, n['end'] - n['start'])} @ {n['start']:#x}")
+    cmds = ([("af", f"af @ {addr:#x}")] if mode == "go" else []) + [("b", f"afbj @ {addr:#x}"),
+                                                                    ("d", f"pdfj @ {addr:#x}")]
+    with rz.exclusive(lock_path, wait_s=600):
+        r = rz.run(path, cmds, timeout=300, mem_mb=MEM_MB, prelude=prelude)
+    bbs = rz.as_json(r["outputs"].get("b")) or []
+    pdf = rz.as_json(r["outputs"].get("d")) or {}
+    ops = (pdf.get("ops") or []) if isinstance(pdf, dict) else []
+    if not isinstance(bbs, list) or not bbs:
+        return {"status": "failed", "detail": (r.get("killed") or r.get("stderr") or "no basic blocks")[-300:]}
+    blocks = []
+    for b in bbs[:MAX_BLOCKS]:
+        start, size = b.get("addr"), b.get("size") or 0
+        bops = [o for o in ops if start <= (o.get("offset") or -1) < start + size]
+        blocks.append({"addr": start, "size": size, "jump": b.get("jump"), "fail": b.get("fail"),
+                       "switch": [c.get("jump") for c in (b.get("switch_op") or {}).get("cases") or []][:64],
+                       "ninstr": b.get("ninstr") or len(bops), "ops": _trim_ops(bops)[:BLOCK_OPS]})
+    edges = []
+    have = {b["addr"] for b in blocks}
+    for b in blocks:
+        if b["jump"] in have:
+            edges.append({"from": b["addr"], "to": b["jump"], "kind": "jump" if b["fail"] is not None else "always"})
+        if b["fail"] in have:
+            edges.append({"from": b["addr"], "to": b["fail"], "kind": "fail"})
+        for c in b["switch"]:
+            if c in have:
+                edges.append({"from": b["addr"], "to": c, "kind": "switch"})
+    return {"status": "ok", "blocks": blocks, "edges": edges, "truncated": len(bbs) > MAX_BLOCKS,
+            "loops": sum(1 for e in edges if e["to"] <= e["from"])}
