@@ -396,3 +396,19 @@ Every other binary / PDF of the sample set is scored too. For example:
 
 Inside archives (`sample_dropper_bundle.zip`, the ISO, the CAB…) each embedded
 binary/PDF gets its own row. Results are **not findings until marked**.
+
+
+**Extras on every scored object:**
+- **Similar objects in your other cases** — the trees of the model route both files
+  to the same leaves (share of trees). Analyse `make_samples.dotnet_stealer_exe()`
+  in one case and `make_samples.dotnet_bitmap_loader_exe(make_samples.dotnet_stealer_exe())`
+  in another: the hidden stage shows *100 % like … (case …) · same file*; the
+  `.NET` loader sample shows its siblings (same builder, other literals) as close
+  but not the same file. The index lives in `<cases>/.ml_index/`.
+- **Unusual for the model** — when ≥ 5 % of the 200 features the model relies on
+  most are unlike both malware and goodware of EMBER2024 (absent where > 97 % have
+  them, present where < 1 % do, beyond both 99th percentiles), the score is flagged
+  as less reliable. Real PEs measured 0–1 %; the inert `.NET` stubs of the samples ~7 %
+  (they are flagged — as they should be).
+- **Highest score of the case** at the top of the tab, and whether it comes from a
+  stage (the loader often looks innocent; the hidden stage does not).
