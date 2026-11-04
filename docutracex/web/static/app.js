@@ -5844,7 +5844,7 @@ function dnObject(o, i) {
     ${apis ? `<h4 class="formats-title">Framework APIs referenced</h4><table class="cases"><thead><tr><th>Type</th><th>Behaviour</th><th>Members used</th></tr></thead><tbody>${apis}</tbody></table>` : ""}`;
   const res = (r.resources || []).map((x) => `<tr><td class="mono">${e(x.name)}</td><td>${x.size}</td>
       <td>${x.entropy >= 7.5 ? `<span class="badge badge-warn">${x.entropy}</span>` : x.entropy}</td><td class="mono">${e(x.head)}</td>
-      <td class="mono">${e((x.sha256 || "").slice(0, 16))}</td><td>${x.costura ? '<span class="badge badge-muted">Costura (deflated)</span> ' : ""}${x.stored_path ? fileActions(x.stored_path) : ""}</td></tr>`).join("");
+      <td class="mono">${e((x.sha256 || "").slice(0, 16))}</td><td>${x.costura ? '<span class="badge badge-muted">Costura (deflated)</span> ' : ""}${x.decrypted ? `<span class="badge badge-bad" title="${e(x.decrypted.how)}">decrypted → ${e(x.decrypted.type)}</span> ${x.decrypted.stored_path ? fileActions(x.decrypted.stored_path) : ""} ` : ""}${x.stored_path ? fileActions(x.stored_path) : ""}</td></tr>`).join("");
   const strs = (r.strings || []).map((x) => `<div class="mono">${e(x)}</div>`).join("");
   const cil = r.cil || {};
   const dec = (cil.decrypted || []).map((d) => `<tr><td class="mono"><b>${e(d.output)}</b></td><td class="mono cx-small">${e(d.input)}</td>
@@ -5854,7 +5854,7 @@ function dnObject(o, i) {
       <div class="cx-scroll"><table class="cases"><thead><tr><th>Plain text</th><th>Encrypted</th><th>Decryptor</th><th>How</th></tr></thead><tbody>${dec}</tbody></table></div>` : "";
   const mi = (cil.interesting || []).map((m) => `<tr><td class="mono"><b>${e(m.method)}</b><div class="hint-line">${m.size} bytes of IL</div></td>
       <td>${cxCats(m.categories)}</td><td class="mono cx-small">${(m.calls || []).map(e).join("<br>")}</td>
-      <td class="mono cx-small">${(m.strings || []).map(e).join("<br>")}</td></tr>`).join("");
+      <td class="mono cx-small">${(m.strings || []).map(e).join("<br>")}${(m.arrays || []).map((x) => `<div class="hint-line">${e(x)}</div>`).join("")}</td></tr>`).join("");
   const cilHtml = cil.error ? `<p class="hint-line">⚠ ${e(cil.error)}</p>`
     : `<p class="hint-line">CIL of ${cil.methods || 0} method bodies decoded statically (dncil)${cil.errors ? `, ${cil.errors} unreadable` : ""}.
        Methods sorted by what they call: loaders, network, crypto, persistence… with the literals each one loads (<span class="mono">ldstr</span>).</p>

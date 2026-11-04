@@ -218,6 +218,7 @@ def parse(data: bytes) -> dict[str, Any]:
             c = disassemble(pe)
             out["_cil_strings"] = c.pop("_strings")
             meths = c.pop("_methods")
+            out["_cil_methods"] = meths
             try:
                 from .strdec import decrypt
                 c["decrypted"] = decrypt(meths)
@@ -259,6 +260,12 @@ def _findings(item: dict[str, Any]) -> list[dict[str, Any]]:
         if o["rule"] == "dotnet:assembly_load" and loaders:
             o["evidence"] = "; ".join(f"{m['method']} → {', '.join(c for c in m['calls'] if '::Load' in c)}"
                                       for m in loaders[:4])
+    for x in r.get("resources") or []:
+        if x.get("decrypted"):
+            out.append({"rule": "dotnet:resource_decrypted", "severity": "high" if x["decrypted"]["type"] == "exe" else "medium",
+                        "tool": "dotnet", "location": loc,
+                        "detail": f"encrypted resource {x['name']} decrypted statically → {x['decrypted']['type']} "
+                                  f"({x['decrypted']['size']} bytes)", "evidence": x["decrypted"]["how"], "attack": "T1140"})
     dec = cil.get("decrypted") or []
     if dec:
         out.append({"rule": "dotnet:strings_decrypted", "severity": "medium", "tool": "dotnet", "location": loc,
@@ -310,6 +317,35 @@ def _resource_child(root: Path, sha: str, label: str, x: dict[str, Any], raw: by
 
 from .resources import is_resources, parse as parse_resources  # noqa: E402
 
+_STATIC: dict[str, list[str]] = {}
+
+
+def static_strings(data: bytes) -> list[str]:
+    """Strings of an assembly that are not plain in its #US heap: the ones
+    decrypted statically from the CIL and the string entries of its
+    .resources (cached per sample: the C2 extractors ask for every object)."""
+    key = hashlib.sha256(data).hexdigest()
+    if key in _STATIC:
+        return _STATIC[key]
+    out: list[str] = []
+    if available():
+        from ..codeanalysis.case import is_dotnet
+        if is_dotnet(data):
+            try:
+                r = parse(data)
+            except Exception:  # noqa: BLE001
+                r = {}
+            out += [d["output"] for d in (r.get("cil") or {}).get("decrypted") or []]
+            for x in r.get("resources") or []:
+                raw = x.get("_data") or b""
+                if is_resources(raw):
+                    out += [e["value"] for e in parse_resources(raw).get("entries") or [] if e.get("type") == "string"
+                            and e.get("value")]
+    if len(_STATIC) > 64:
+        _STATIC.clear()
+    _STATIC[key] = list(dict.fromkeys(out))
+    return _STATIC[key]
+
 
 def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) -> dict[str, Any]:
     from .. import golang
@@ -344,8 +380,21 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
             log.warning(".NET metadata failed on %s: %s", p.name, exc)
             r = {"error": f"metadata parser: {exc}"[:300]}
         res_strings: list[tuple[str, str]] = []
+        meths = r.pop("_cil_methods", None) or []
         for x in r.get("resources") or []:
             raw = x.pop("_data", b"")
+            if meths and x.get("entropy", 0) >= 7.0 and not is_resources(raw) and not x["name"].lower().startswith("costura."):
+                from .strdec import decrypt_blob
+                got = decrypt_blob(raw, meths)
+                if got:
+                    how, plain, ext = got
+                    x["decrypted"] = {"how": how, "size": len(plain), "type": ext}
+                    sub = {"name": f"{x['name']}.decrypted.{ext}"}
+                    child = _resource_child(root, sha, t["label"], sub, plain)
+                    if child:
+                        child["recipe"] = ["dotnet-resource", x["name"], "decrypt: " + how.split(" (")[0]]
+                        x["decrypted"]["stored_path"] = sub.get("stored_path", "")
+                        res.setdefault("_children", []).append(child)
             if is_resources(raw):
                 rs = parse_resources(raw)
                 if not rs.get("error"):

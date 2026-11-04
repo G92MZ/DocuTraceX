@@ -26,7 +26,7 @@ def test_metadata_of_the_sample() -> None:
     assert all(p["injection"] for p in r["pinvoke"])
     apis = {a["type"]: a for a in r["apis"]}
     assert apis["System.Net.WebClient"]["members"] == [".ctor", "DownloadData"]
-    assert apis["System.Reflection.Assembly"]["members"] == ["Load"]
+    assert apis["System.Reflection.Assembly"]["members"] == ["GetManifestResourceStream", "Load"]
     assert {"Microsoft.Win32.RegistryKey", "System.Security.Cryptography.RijndaelManaged"} <= set(apis)
     assert [o["name"] for o in r["obfuscators"]] == ["ConfuserEx"]
     res = r["resources"][0]
@@ -76,6 +76,9 @@ def test_case_pipeline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert any("resources › UpdateHost" in x for x in locs)
     assert "dotnet:strings_decrypted" in {f["rule"] for f in d["findings"]}
     assert any(x.endswith("decrypted › InvoiceViewer.Program::Configure") for x in locs)
+    assert stored["InvoiceViewer.Resources.stage2.bin"]["decrypted"]["type"] == "exe"
+    assert "dotnet:resource_decrypted" in {f["rule"] for f in d["findings"]}
+    assert any(k.endswith("stage2.bin.decrypted.exe") for k in kids)
     iocs = {i["value"] for i in read_json(paths.subresult("iocs"))["iocs"]}
     assert {ms.CODE_URL, "203.0.113.47"} <= iocs
     # a native binary gets no .NET result
@@ -103,7 +106,7 @@ def test_static_string_decryption() -> None:
     from docutracex.dotnet import strdec
     r = dotnet.parse(ms.dotnet_loader_exe())
     got = {d["output"]: d for d in r["cil"]["decrypted"]}
-    assert got["smtp.billing-portal.example"]["how"].startswith("AES-128") and "MD5" in got["smtp.billing-portal.example"]["how"]
+    assert got["smtp.billing-portal.example"]["how"].startswith("Base64 + AES-128") and "MD5" in got["smtp.billing-portal.example"]["how"]
     assert got["203.0.113.47:587"]["decryptor"] == "InvoiceViewer.StringCipher::Unmask"
     # single-byte XOR with no key, and garbage is never reported
     import base64
@@ -114,3 +117,20 @@ def test_static_string_decryption() -> None:
               "_all_strings": []}]
     outs = [d["output"] for d in strdec.decrypt(meths)]
     assert outs == ["https://cdn-update.example.net/a"]
+
+
+def test_static_arrays_encrypted_resource_and_c2(tmp_path: Path) -> None:
+    from docutracex import c2
+    r = dotnet.parse(ms.dotnet_loader_exe())
+    got = {d["output"]: d for d in r["cil"]["decrypted"]}
+    assert got[ms.CODE_URL + "/gate"]["how"] == 'byte[] + XOR key "inv"'
+    assert got[ms.CODE_URL + "/gate"]["input"].startswith("byte[48] ")
+    from docutracex.dotnet.strdec import decrypt_blob
+    stage = next(x for x in r["resources"] if x["name"].endswith("stage2.bin"))
+    how, plain, ext = decrypt_blob(stage["_data"], r["_cil_methods"])
+    assert ext == "exe" and plain.startswith(b"MZinert") and "CBC iv=0" in how and "OpenStage" in how
+    cfgs = c2.scan_object(tmp_path / "s.exe", ms.dotnet_stealer_exe())
+    assert [c["family"] for c in cfgs] == ["AgentTesla-like stealer"]
+    assert cfgs[0]["c2"] == ["smtp.billing-portal.example"]
+    assert "accounts@billing-portal.example" in cfgs[0]["decrypted_statically"]
+    assert "decrypted statically" in cfgs[0]["method"]
