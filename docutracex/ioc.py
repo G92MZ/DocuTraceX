@@ -771,7 +771,7 @@ def _email_sources(
 # netcheck: our own network enrichment (RDAP abuse contacts, DNS, the pages we
 # visited) describes infrastructure, it is not content of the sample. file /
 # unlock / findings / iocs: metadata and derived views the app computes.
-_SKIP_MODULES = {"yara", "ml", "golang", "code", "netcheck", "file", "unlock", "findings", "iocs", "summary"}
+_SKIP_MODULES = {"yara", "ml", "golang", "code", "dotnet", "netcheck", "file", "unlock", "findings", "iocs", "summary"}
 # Per-module paths that hold names/metadata, not content (archive member
 # names like "visor.py" or "notas.one" are not domains).
 _MODULE_SKIP_PATHS = {
@@ -801,7 +801,7 @@ def sources_from_modules(
     sources: list[dict[str, Any]] = []
 
     for name, data in modules.items():
-        if name in ("golang", "code") and isinstance(data, dict):
+        if name in ("golang", "code", "dotnet") and isinstance(data, dict):
             # only the strings the analysed code uses (and FLOSS / certificates),
             # never the Go metadata (module paths such as github.com/... are not IOCs)
             for obj in data.get("objects") or []:

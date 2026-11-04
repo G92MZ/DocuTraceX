@@ -1,0 +1,160 @@
+"""Inert .NET assemblies for the samples: a well-formed CLR metadata root with
+the tables the .NET analysis reads (Module, TypeRef, TypeDef, MethodDef,
+MemberRef, CustomAttribute, ModuleRef, ImplMap, Assembly, AssemblyRef,
+ManifestResource) and the #Strings / #US / #GUID / #Blob heaps. Method bodies
+are tiny IL (``ret`` unless given); nothing in them does anything.
+
+Used through ``binkit.pe(dotnet_md=...)``: ``build(va, spec)`` returns
+(bytes, clr header size, metadata rva, resources rva, resources size, entry token).
+"""
+
+from __future__ import annotations
+
+import struct
+from typing import Any
+
+
+def _al(n: int, a: int) -> int:
+    return (n + a - 1) // a * a
+
+
+class _Heap:
+    def __init__(self, first: bytes = b"\x00"):
+        self.b = bytearray(first)
+        self.idx: dict[Any, int] = {}
+
+    def str(self, s: str) -> int:
+        if not s:
+            return 0
+        if s not in self.idx:
+            self.idx[s] = len(self.b)
+            self.b += s.encode() + b"\x00"
+        return self.idx[s]
+
+    def blob(self, data: bytes) -> int:
+        if not data:
+            return 0
+        key = ("b", data)
+        if key not in self.idx:
+            self.idx[key] = len(self.b)
+            n = len(data)
+            self.b += (bytes([n]) if n < 0x80 else struct.pack(">H", 0x8000 | n)) + data
+        return self.idx[key]
+
+    def us(self, s: str) -> int:
+        key = ("u", s)
+        if key not in self.idx:
+            self.idx[key] = len(self.b)
+            raw = s.encode("utf-16-le")
+            raw += b"\x01" if any(ord(c) > 0x7E or ord(c) < 0x20 for c in s) else b"\x00"
+            n = len(raw)
+            self.b += (bytes([n]) if n < 0x80 else struct.pack(">H", 0x8000 | n)) + raw
+        return self.idx[key]
+
+
+def build(va: int, spec: dict[str, Any]) -> tuple[bytes, int, int, int, int, int]:
+    """spec: {assembly, version, refs: [(name, version)], typerefs: [(scope_ref_index|None, ns, name)],
+    types: [{ns, name, methods: [{name, il?, pinvoke?: (dll, entry)}]}], memberrefs: [(typeref_idx, name)],
+    attributes: [(parent: "module"|"assembly", memberref_idx)], resources: [(name, bytes)], user_strings: [...]}"""
+    st, us, bl = _Heap(), _Heap(), _Heap()
+    guid = bytes(range(0x30, 0x40))
+    sig_void = bl.blob(b"\x00\x00\x01")                               # default, 0 params, void
+    sig_ctor = bl.blob(b"\x20\x00\x01")                               # instance void .ctor()
+    for s in spec.get("user_strings") or []:
+        us.us(s)
+    rows: dict[int, list[bytes]] = {t: [] for t in (0x00, 0x01, 0x02, 0x06, 0x0A, 0x0C, 0x1A, 0x1C, 0x20, 0x23, 0x28)}
+    rows[0x00].append(struct.pack("<HHHHH", 0, st.str(spec["assembly"] + ".exe"), 1, 0, 0))
+    refs = spec.get("refs") or [("mscorlib", (4, 0, 0, 0))]
+    for name, ver in refs:
+        rows[0x23].append(struct.pack("<HHHHIHHHH", *ver, 0, 0, st.str(name), 0, 0))
+    for scope, ns, name in spec.get("typerefs") or []:
+        rs = ((scope + 1) << 2 | 2) if scope is not None else 0       # ResolutionScope → AssemblyRef
+        rows[0x01].append(struct.pack("<HHH", rs, st.str(name), st.str(ns)))
+    for tr, name in spec.get("memberrefs") or []:
+        rows[0x0A].append(struct.pack("<HHH", (tr + 1) << 3 | 1, st.str(name), sig_ctor))   # MemberRefParent → TypeRef
+    # TypeDefs: <Module> first, then the program's types; methods numbered in order
+    il_blobs: list[bytes] = []
+    meth_rows: list[tuple[int, int, int, int, int]] = []              # (il index or -1, implflags, flags, name, sig)
+    types = [{"ns": "", "name": "<Module>", "methods": []}] + list(spec.get("types") or [])
+    entry = 0
+    for t in types:
+        first = len(meth_rows) + 1
+        for m in t.get("methods") or []:
+            if m.get("pinvoke"):
+                meth_rows.append((-1, 0x0080, 0x2096, st.str(m["name"]), sig_void))   # static pinvokeimpl public
+                dll, ep = m["pinvoke"]
+                if dll not in [r[0] for r in spec.setdefault("_modrefs", [])]:
+                    spec["_modrefs"].append((dll,))
+                mi = [r[0] for r in spec["_modrefs"]].index(dll)
+                rows[0x1C].append(struct.pack("<HHHH", 0x0100, len(meth_rows) << 1 | 1, st.str(ep), mi + 1))
+            else:
+                il_blobs.append(m.get("il") or b"\x2a")
+                meth_rows.append((len(il_blobs) - 1, 0, 0x0096, st.str(m["name"]), sig_void))
+                if m.get("entry"):
+                    entry = 0x06000000 | len(meth_rows)
+        flags = 0x00100001 if t["name"] != "<Module>" else 0
+        rows[0x02].append((flags, st.str(t["name"]), st.str(t["ns"]), first))      # finished below
+    for (dll,) in spec.get("_modrefs") or []:
+        rows[0x1A].append(struct.pack("<H", st.str(dll)))
+    for parent, mr in spec.get("attributes") or []:
+        hca = (1 << 5 | 7) if parent == "module" else (1 << 5 | 14)   # HasCustomAttribute → Module / Assembly
+        rows[0x0C].append(struct.pack("<HHH", hca, (mr + 1) << 3 | 3, bl.blob(b"\x01\x00\x00\x00")))
+    major, minor, build_, rev = spec.get("version", (1, 0, 0, 0))
+    rows[0x20].append(struct.pack("<IHHHHIHHH", 0x8004, major, minor, build_, rev, 0, 0, st.str(spec["assembly"]), 0))
+    res_blob = bytearray()
+    for name, data in spec.get("resources") or []:
+        rows[0x28].append(struct.pack("<IIHH", len(res_blob), 1, st.str(name), 0))   # public, embedded
+        res_blob += struct.pack("<I", len(data)) + data
+        while len(res_blob) % 8:
+            res_blob.append(0)
+    # IL bodies (tiny headers) after the COR20 header
+    out = bytearray(b"\x00" * 72)
+    while len(out) % 4:
+        out.append(0)
+    il_rva = []
+    for il in il_blobs:
+        assert len(il) < 64
+        il_rva.append(va + len(out))
+        out += bytes([0x02 | (len(il) << 2)]) + il
+        while len(out) % 4:
+            out.append(0)
+    rows[0x06] = [struct.pack("<IHHHHH", il_rva[i] if i >= 0 else 0, impl, fl, nm, sg, 1)
+                  for i, impl, fl, nm, sg in meth_rows]
+    n_methods = len(meth_rows)
+    tdefs = []
+    for k, (flags, nm, ns, first) in enumerate(rows[0x02]):
+        nxt = rows[0x02][k + 1][3] if k + 1 < len(rows[0x02]) else n_methods + 1
+        first = min(first, nxt)
+        tdefs.append(struct.pack("<IHHHHH", flags, nm, ns, 0, 1, first))
+    rows[0x02] = tdefs
+    valid = sum(1 << t for t, r in rows.items() if r)
+    tables = struct.pack("<IBBBBQQ", 0, 2, 0, 0, 1, valid, 0x16003301FA00)
+    tables += b"".join(struct.pack("<I", len(rows[t])) for t in sorted(rows) if rows[t])
+    for t in sorted(rows):
+        tables += b"".join(rows[t])
+    while len(tables) % 4:
+        tables += b"\x00"
+    for h in (st, us, bl):
+        while len(h.b) % 4:
+            h.b.append(0)
+    version = b"v4.0.30319\x00\x00"
+    streams = [(b"#~", tables), (b"#Strings", bytes(st.b)), (b"#US", bytes(us.b)), (b"#GUID", guid), (b"#Blob", bytes(bl.b))]
+    hdr_len = 16 + len(version) + 4 + sum(8 + _al(len(n) + 1, 4) for n, _ in streams)
+    root = bytearray(b"BSJB" + struct.pack("<HHII", 1, 1, 0, len(version)) + version + struct.pack("<HH", 0, len(streams)))
+    off = hdr_len
+    for name, data in streams:
+        root += struct.pack("<II", off, len(data)) + name + b"\x00" * (_al(len(name) + 1, 4) - len(name))
+        off += len(data)
+    for _, data in streams:
+        root += data
+    md_rva = va + len(out)
+    out += root
+    res_rva = res_size = 0
+    if res_blob:
+        while len(out) % 8:
+            out.append(0)
+        res_rva, res_size = va + len(out), len(res_blob)
+        out += res_blob
+    struct.pack_into("<IHH" + "I" * 16, out, 0, 72, 2, 5, md_rva, len(root), 1, entry,     # COR20 = 72 bytes
+                     res_rva, res_size, *([0] * 10))
+    return bytes(out), 72, md_rva, res_rva, res_size, entry

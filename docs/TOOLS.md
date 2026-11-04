@@ -16,6 +16,7 @@ The **Diagnostics** tab shows which ones are available; a **Retry** button on a 
 | Email | extract-msg, dkimpy |
 | Didier Stevens Suite | oledump (+ plugins), zipdump, pdfid, pdf-parser, emldump, rtfdump, decode-vbe, 1768 (Cobalt Strike configurations) |
 | Shortcuts | LnkParse3 |
+| .NET | dnfile and dncil (MIT) — CLR metadata and CIL |
 | Go | GoReSym (Mandiant, MIT) — contrast for the own Go parser; Unicorn (GPL-2) — emulates only Garble's string-decoding closures, in a separate process |
 | Code analysis | Rizin (LGPL-3.0) with rz-ghidra (LGPL-3.0, embedding the Ghidra decompiler, Apache-2.0), taken from the Cutter release bundle (GPL-3.0) — functions, pseudocode and disassembly of Go and native binaries. On Windows the Microsoft Visual C++ runtime DLLs that ship inside that same bundle (`vc_redist.x64.exe`) are unpacked next to `rizin.exe` (app-local, as Microsoft's redistribution terms allow), so nothing is installed system-wide |
 | Binaries | pefile, LIEF, debloat, FLOSS, capa, UPX, AutoIt-Ripper, innoextract, 7-Zip, nuitka-extractor, evbunpack, Detect It Easy |
