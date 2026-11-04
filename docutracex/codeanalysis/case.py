@@ -199,7 +199,12 @@ def overview(full: dict[str, Any]) -> dict[str, Any]:
         light.append(x)
     strings = [dict(x, source=x.get("source") or "code") for x in full.get("strings") or []]
     strings += full.get("floss") or []
+    for pt in (full.get("crypto") or {}).get("plaintexts") or []:
+        if pt.get("text"):
+            strings.append({"value": pt["text"][:500], "function": pt["function"], "source": "decrypted",
+                            "addr": pt.get("data_va")})
     return {"summary": full.get("summary") or {}, "functions": light, "strings": strings,
+            "crypto": full.get("crypto") or {},
             "apis": full.get("apis") or [], "resources": full.get("resources") or {},
             "dependencies": full.get("dependencies")}
 
@@ -473,11 +478,28 @@ def enrich(root: Path, path: Path, data: bytes, sha256: str, mode: str, item: di
             c["stored_path"] = keep(raw, f"{c['type']}_{c['offset']:x}.bin",
                                     f"{c['type']} stream at 0x{c['offset']:x} in {label}", ["decompress", c["type"]])
     full["resources"] = res
+    # phase 8: algorithms, crypto functions, key material, static decryption
+    try:
+        from . import _Reader
+        from . import crypto as _crypto
+        cr = _crypto.analyze(full, data, binf, _Reader(data), names, mode)
+        for pt in cr["plaintexts"]:
+            raw = pt["plaintext"]
+            if len(raw) >= 1024 or raw[:2] == b"MZ" or raw[:4] == b"\x7fELF":
+                pt["stored_path"] = keep(raw, f"decrypted_{pt['data_va']:x}.bin",
+                                         f"{pt['method']} in {pt['function']} ({label})", ["crypto", pt["method"]])
+        full["crypto"] = _crypto.jsonable(cr)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("crypto step failed on %s: %s", label, exc)
+        full["crypto"] = {"algorithms": [], "constants": [], "functions": [], "keys": [], "plaintexts": [],
+                          "not_recoverable": [], "error": str(exc)[:300]}
     summary = {"floss_linked": n, "floss": len(full.get("floss") or []),
                "embed_files": sum(len(fs["files"]) for fs in res["embed"]),
                "certificates": sum(1 for c in res["certificates"] if not c.get("private")),
                "private_keys": sum(1 for c in res["certificates"] if c.get("private")),
-               "compressed": len(res["compressed"])}
+               "compressed": len(res["compressed"]),
+               "crypto_algorithms": len(full["crypto"]["algorithms"]), "crypto_functions": len(full["crypto"]["functions"]),
+               "keys": len(full["crypto"]["keys"]), "decrypted": len(full["crypto"]["plaintexts"])}
     if mode == "go":
         from . import resources as _r
         fnames = [x["name"] for x in names or []]
@@ -492,6 +514,9 @@ def enrich(root: Path, path: Path, data: bytes, sha256: str, mode: str, item: di
         src.append({"location": f"{label} › {s.get('function') or ''}", "text": s.get("value") or ""})
     for s in (full.get("floss") or [])[:3000]:
         src.append({"location": f"{label} › {s.get('function') or 'FLOSS'} ({s.get('source')})", "text": s["value"]})
+    for pt in full["crypto"]["plaintexts"]:
+        if pt.get("text"):
+            src.append({"location": f"{label} › {pt['function']} (decrypted: {pt['method']})", "text": pt["text"]})
     for c in res["certificates"]:
         if c.get("subject"):
             src.append({"location": f"{label} › certificate @0x{c['offset']:x}", "text": f"{c['subject']} {c['issuer']}"})
