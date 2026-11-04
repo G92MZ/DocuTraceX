@@ -152,7 +152,7 @@ def test_bitmap_pixel_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     assert ent["type"] == "System.Drawing.Bitmap" and ent["stego"]["type"] == "exe"
     import binkit as bk
     assert ent["stego"]["size"] == len(bk.pe(bits=32, gui=False))      # trimmed to the end of the last section
-    assert ent["stego"]["how"] == 'pixels by columns, RGB: XOR key "4417290360015521"'
+    assert ent["stego"]["how"] == 'pixels by columns, RGB bytes: XOR key "4417290360015521"'
     assert "dotnet:bitmap_payload" in {f["rule"] for f in d["findings"]}
     top = o["cil"]["interesting"][0]
     assert top["method"] == "InvoiceGallery.Gallery::Decode" and "called by a loader" in top["categories"]
