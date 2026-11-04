@@ -1156,48 +1156,58 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001
             log.warning("Nested analysis of code resources failed for %s: %s", paths.root.name, exc)
 
-    # YARA runs on every analysed object (the original, everything extracted,
-    # nested children, decrypted/decoded stages) whenever rules are loaded. Its
-    # hits are NOT findings until the analyst marks them (YARA tab): they are
-    # left out of the counts here and filtered in marks.case_findings().
-    from .parsers import yara_scan
-    yres = run("yara: loaded rules over every analysed object (original, extracted, nested, stages)",
-               lambda: yara_scan.analyze(original, paths.extracted_dir))
-    if yres.get("rule_count"):
-        yres["triage_only"] = True
-        write_subresult(paths, "yara", yres)
-        if "yara" not in ran:
-            ran.append("yara")
-    else:
-        prev_yara = read_json(paths.subresult("yara"))
-        if prev_yara and prev_yara.get("rule_count") and "yara" not in ran:
-            ran.append("yara")
-    # Machine Learning (EMBER2024 LightGBM) on every PE / PDF / ELF object of the
-    # case (original + nested, unpacked / debloated included). Like YARA: shown in
-    # its own tab, a finding only once the analyst marks it.
-    try:
-        from .ml import ember_ml
-        nested_tree = (read_json(paths.subresult("nested")) or {}).get("tree") or []
-        if ember_ml.targets(paths.root, original, nested_tree):
-            mres = run("ml: EMBER2024 LightGBM classifier on every PE / PDF / ELF object",
-                       lambda: ember_ml.analyze_case(paths.root, original, nested_tree))
-            write_subresult(paths, "ml", mres)
-            if "ml" not in ran:
-                ran.append("ml")
-    except Exception as exc:  # noqa: BLE001  (an optional layer never fails the case)
-        log.warning("ML classification skipped for %s: %s", paths.root.name, exc)
-    # C2 / implant configurations (Cobalt Strike, Metasploit, Remcos, AsyncRAT /
-    # DcRAT / Quasar) over every object of the case, statically. Findings + IOCs.
-    try:
-        from . import c2 as c2_mod
-        cres = run("c2: implant configurations (Cobalt Strike, Metasploit, Remcos, AsyncRAT/Quasar)",
-                   lambda: c2_mod.analyze(original, paths.extracted_dir))
-        write_subresult(paths, "c2", cres)
-        if "c2" not in ran:
-            ran.append("c2")
-        findings_total += len(cres.get("findings") or [])
-    except Exception as exc:  # noqa: BLE001
-        log.warning("C2 configuration extraction skipped for %s: %s", paths.root.name, exc)
+    # YARA, Machine Learning and C2 are on demand: their tabs have a Run button
+    # that re-runs that module alone over every object of the case. A full
+    # analysis keeps their previous results; DOCUTRACEX_AUTO_MODULES=yara,ml,c2
+    # turns any of them back on automatically.
+    auto = auto_modules()
+    for mod in ON_DEMAND:
+        prev = read_json(paths.subresult(mod)) if mod not in auto else None
+        if prev is not None and mod not in ran:
+            ran.append(mod)
+            if mod == "c2":
+                findings_total += len(prev.get("findings") or [])
+    if "yara" in auto:
+        from .parsers import yara_scan
+        yres = run("yara: loaded rules over every analysed object (original, extracted, nested, stages)",
+                   lambda: yara_scan.analyze(original, paths.extracted_dir))
+        if yres.get("rule_count"):
+            yres["triage_only"] = True
+            write_subresult(paths, "yara", yres)
+            if "yara" not in ran:
+                ran.append("yara")
+        else:
+            prev_yara = read_json(paths.subresult("yara"))
+            if prev_yara and prev_yara.get("rule_count") and "yara" not in ran:
+                ran.append("yara")
+    if "ml" in auto:
+        # Machine Learning (EMBER2024 LightGBM) on every PE / PDF / ELF object of the
+        # case (original + nested, unpacked / debloated included). Like YARA: shown in
+        # its own tab, a finding only once the analyst marks it.
+        try:
+            from .ml import ember_ml
+            nested_tree = (read_json(paths.subresult("nested")) or {}).get("tree") or []
+            if ember_ml.targets(paths.root, original, nested_tree):
+                mres = run("ml: EMBER2024 LightGBM classifier on every PE / PDF / ELF object",
+                           lambda: ember_ml.analyze_case(paths.root, original, nested_tree))
+                write_subresult(paths, "ml", mres)
+                if "ml" not in ran:
+                    ran.append("ml")
+        except Exception as exc:  # noqa: BLE001  (an optional layer never fails the case)
+            log.warning("ML classification skipped for %s: %s", paths.root.name, exc)
+    if "c2" in auto:
+        # C2 / implant configurations (Cobalt Strike, Metasploit, Remcos, AsyncRAT /
+        # DcRAT / Quasar) over every object of the case, statically. Findings + IOCs.
+        try:
+            from . import c2 as c2_mod
+            cres = run("c2: implant configurations (Cobalt Strike, Metasploit, Remcos, AsyncRAT/Quasar)",
+                       lambda: c2_mod.analyze(original, paths.extracted_dir))
+            write_subresult(paths, "c2", cres)
+            if "c2" not in ran:
+                ran.append("c2")
+            findings_total += len(cres.get("findings") or [])
+        except Exception as exc:  # noqa: BLE001
+            log.warning("C2 configuration extraction skipped for %s: %s", paths.root.name, exc)
     # Network checks (on demand, Checks tab) are evidence too: kept as well.
     prev_net = read_json(paths.subresult("netcheck"))
     if prev_net and prev_net.get("checks"):
@@ -1277,6 +1287,15 @@ def _go_shas(paths: CasePaths) -> set[str]:
 def _code_targets(paths: CasePaths, original: Path, tree: list[dict[str, Any]]) -> bool:
     from . import golang
     return bool(golang.targets(paths.root, original, tree))
+
+
+ON_DEMAND = ("yara", "ml", "c2")
+
+
+def auto_modules() -> set[str]:
+    """On-demand modules that should still run in every full analysis."""
+    raw = os.environ.get("DOCUTRACEX_AUTO_MODULES", "")
+    return {m.strip().lower() for m in raw.split(",") if m.strip().lower() in ON_DEMAND}
 
 
 # Modules that can be re-run in isolation over an existing case.
