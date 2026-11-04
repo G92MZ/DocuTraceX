@@ -54,6 +54,8 @@ tools = [
     # in docutracex/ml; sklearn's FeatureHasher replaced by mmh3). signify is pinned: 0.8+ changed the API the features use.
     "lightgbm>=4.5",
     "mmh3>=4.0",
+    # Go: Garble string recovery — emulates only the decoding closures, in a separate process (GPL-2)
+    "unicorn>=2.0",
     "signify==0.7.1",
     # Encrypted Office detection + default-password decryption (evasion check).
     "msoffcrypto-tool>=5.1",
