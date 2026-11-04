@@ -529,8 +529,11 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
     # attachment, resource…) becomes its child — only a well-formed file is kept.
     if depth < MAX_DEPTH and stego_is_image(data):
         try:
-            got = stego_child(data, name, work / "stego" / node["sha256"][:12])
-            if got:
+            got = stego_child(data, name, work / "stego" / node["sha256"][:12],
+                              skip=ctx.get("_pending_shas") or set())
+            if got and got.get("duplicate"):
+                node["stego"] = {k: got[k] for k in ("how", "kind", "size")} | {"same_as_sibling": True}
+            elif got:
                 kids.append((Path(got["path"]), got["filename"]))
                 origins[got["path"]] = got["origin"]
                 recipes[got["path"]] = got["recipe"]
@@ -603,14 +606,18 @@ def stego_is_image(data: bytes) -> bool:
     return stego.is_image(data)
 
 
-def stego_child(data: bytes, name: str, out_dir: Path, keys: list[Any] | None = None) -> dict[str, Any] | None:
+def stego_child(data: bytes, name: str, out_dir: Path, keys: list[Any] | None = None,
+                skip: set[str] | None = None) -> dict[str, Any] | None:
     """Decode an image and write the file hidden in its pixels, if any:
-    {path, filename, origin, recipe, how, kind, size, finding}."""
+    {path, filename, origin, recipe, how, kind, size, finding}; ``duplicate``
+    when that file (by SHA-256) is in ``skip`` (already a child of the case)."""
     from . import stego
     got = stego.extract(data, keys)
     if not got:
         return None
     how, payload, kind = got
+    if skip and hashlib.sha256(payload).hexdigest() in skip:
+        return {"duplicate": True, "how": how, "kind": kind, "size": len(payload)}
     out_dir.mkdir(parents=True, exist_ok=True)
     fname = f"{Path(name).stem or 'image'}.pixels.{kind}"
     out = out_dir / fname
@@ -729,6 +736,14 @@ def scan_children(items: list[dict[str, Any]], paths: CasePaths,
     unlock_ctx = dict(unlock_ctx or {})
     unlock_ctx["_budget"] = [MAX_NODES]          # one node budget for the whole scan
     todo = items[:MAX_CHILDREN]
+    pend: set[str] = set()                      # files queued in this scan: a hidden payload equal to one is not re-added
+    for it in todo:
+        try:
+            if Path(it["path"]).stat().st_size <= 64 * 1024 * 1024:
+                pend.add(hashlib.sha256(Path(it["path"]).read_bytes()).hexdigest())
+        except (OSError, KeyError):
+            continue
+    unlock_ctx["_pending_shas"] = pend
     tracer = _Tracer(len(todo))
     unlock_ctx["_tracer"] = tracer
     for i, it in enumerate(todo):
@@ -746,6 +761,10 @@ def scan_children(items: list[dict[str, Any]], paths: CasePaths,
                 child["recipe"] = it.get("recipe") or []
                 if it.get("source"):
                     child["source"] = it["source"]
+            if it.get("finding"):                      # why this child exists (hidden payload…)
+                f = dict(it["finding"])
+                f.setdefault("location", f"nested:{child.get('filename', '')}")
+                child.setdefault("findings", []).insert(0, f)
             result["tree"].append(child)
     flat: list[dict[str, Any]] = []
     _flatten(result["tree"], flat)

@@ -2553,7 +2553,7 @@ def dotnet_stealer_exe() -> bytes:
                                                              "FileDescription": "Invoice Mail Sync"})
 
 
-def dotnet_bitmap_loader_exe() -> bytes:
+def dotnet_bitmap_loader_exe(stage: bytes | None = None) -> bytes:
     """InvoiceGallery.exe: the steganographic loader of many AgentTesla / Formbook
     campaigns. A Bitmap resource hides the next stage in its pixels (read column by
     column, R/G/B bytes, XOR with a 16-digit key literal); ``Gallery::Decode`` calls
@@ -2564,7 +2564,7 @@ def dotnet_bitmap_loader_exe() -> bytes:
     import dnkit
     from PIL import Image
     key = b"4417290360015521"
-    stage = bk.pe(bits=32, gui=False)
+    stage = stage or bk.pe(bits=32, gui=False)
     enc = bytes(c ^ key[i % len(key)] for i, c in enumerate(stage))
     w = 32
     h = -(-len(enc) // (3 * w))
@@ -2621,6 +2621,35 @@ def stego_png() -> bytes:
     return out.getvalue()
 
 
+def stego_appended_png() -> bytes:
+    """logo_factura.png: a real (tiny) logo with an inert PE appended after IEND,
+    XOR-ed with 0x5c — the "image + payload" trick of many droppers."""
+    import io as _io
+    import binkit as bk
+    from PIL import Image
+    out = _io.BytesIO()
+    Image.new("RGB", (48, 24), (30, 60, 114)).save(out, format="PNG")
+    return out.getvalue() + bytes(b ^ 0x5C for b in bk.pe(bits=32, gui=False))
+
+
+def stego_rcdata_exe() -> bytes:
+    """InvoiceUpdater.exe: native PE whose RT_RCDATA "CFG" holds a Base64-encoded
+    inert PE stub and whose RT_BITMAP-like RCDATA "LOGO" is a BMP with an ELF in its
+    pixels. Nothing in it runs anything."""
+    import base64 as _b64
+    import io as _io
+    import binkit as bk
+    from PIL import Image
+    elf = bk.elf(strings=["inert invoice helper (text, not code)"])
+    w = 32
+    h = -(-len(elf) // (3 * w))
+    img = Image.frombytes("RGB", (w, h), elf + b"\x00" * (3 * w * h - len(elf)))
+    bmp = _io.BytesIO()
+    img.save(bmp, format="BMP")
+    return bk.pe(bits=32, gui=True, rcdata=[("CFG", _b64.b64encode(bk.pe(bits=32, gui=False))), ("LOGO", bmp.getvalue())],
+                 version={"CompanyName": "Invoice Sync Example", "FileDescription": "Invoice Updater"})
+
+
 def stego_zip() -> bytes:
     """fotos_factura.zip: a PNG with an ELF hidden in its pixels (LSB) and a plain note."""
     import io as _io
@@ -2642,7 +2671,9 @@ def dotnet_samples() -> dict[str, bytes]:
     return {"dotnet/sample_dotnet_loader.exe": dotnet_loader_exe(),
             "dotnet/sample_dotnet_stealer.exe": dotnet_stealer_exe(),
             "dotnet/sample_dotnet_bitmap_loader.exe": dotnet_bitmap_loader_exe(),
-            "stego/sample_stego_invoice.zip": stego_zip()}
+            "stego/sample_stego_invoice.zip": stego_zip(),
+            "stego/sample_logo_appended.png": stego_appended_png(),
+            "stego/sample_rcdata_loader.exe": stego_rcdata_exe()}
 
 
 def code_samples() -> dict[str, bytes]:

@@ -12,6 +12,7 @@ after all parsers (not here yet).
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 from datetime import datetime, timezone
@@ -407,6 +408,40 @@ def _substeps(res: Any) -> list[dict[str, Any]]:
         out.append({k: t[k] for k in ("name", "chain", "depth", "kind", "duration_s", "own_s",
                                       "slowest_tool", "slowest_tool_s", "findings", "children",
                                       "status", "detail") if k in t})
+    return out
+
+
+STAGE_ROUNDS = 4
+
+
+def _next_stage(paths: CasePaths, original: Path, run, ran: list[str]) -> list[dict[str, Any]]:  # noqa: ANN001
+    """After a nested scan: .NET objects not analysed yet (stage 2 of a loader…)
+    are analysed, and their managed resources plus the payloads hidden in the new
+    images / resources become the next batch of children."""
+    from . import dotnet, hidden
+    tree = (read_json(paths.subresult("nested")) or {}).get("tree") or []
+    known, _done = hidden._nested_shas(tree)
+    out: list[dict[str, Any]] = []
+    try:
+        prev = read_json(paths.subresult("dotnet")) or {}
+        analysed = {o.get("sha256") for o in prev.get("objects") or []}
+        dres = dotnet.analyze_case(paths.root, original, tree)
+        if {o.get("sha256") for o in dres.get("objects") or []} - analysed:
+            for ch in dres.pop("_children", None) or []:
+                try:
+                    if hashlib.sha256(Path(ch["path"]).read_bytes()).hexdigest() not in known:
+                        out.append(ch)
+                except OSError:
+                    continue
+            write_subresult(paths, "dotnet", dres)
+            if "dotnet" not in ran:
+                ran.append("dotnet")
+    except Exception as exc:  # noqa: BLE001
+        log.warning(".NET analysis of new stages skipped for %s: %s", paths.root.name, exc)
+    try:
+        out += hidden.sweep(paths, original, tree, out)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("hidden-payload sweep of new stages skipped for %s: %s", paths.root.name, exc)
     return out
 
 
@@ -1076,32 +1111,6 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                 findings_total += merged.get("counts", {}).get("findings", 0) - (
                     prev.get("counts", {}).get("findings", 0) if had else 0)
 
-    # The case's own file is an image: a payload hidden in its pixels is analysed
-    # as a child (the children of other images are handled by the nested scan).
-    try:
-        head = original.read_bytes()[:16]
-        from . import nested as _nested
-        if _nested.stego_is_image(head):
-            sg = _nested.stego_child(original.read_bytes(), original.name, paths.extracted_dir / "stego")
-            if sg:
-                prev = read_json(paths.subresult("nested"))
-                had = bool(prev and prev.get("tree"))
-                sres = run("stego: file hidden in the image's pixels → nested analysis",
-                           lambda: _nested.scan_children([{"path": sg["path"], "filename": sg["filename"],
-                                                           "origin": sg["origin"], "recipe": sg["recipe"],
-                                                           "source": "stego"}], paths, unlock_ctx={"user": user_pw}))
-                if sres.get("tree"):
-                    f0 = dict(sg["finding"], location=f"nested:{sg['filename']}", evidence=sg["how"])
-                    sres["tree"][0].setdefault("findings", []).insert(0, f0)
-                    merged = _nested.merge(prev, sres)
-                    write_subresult(paths, "nested", merged)
-                    if "nested" not in ran:
-                        ran.append("nested")
-                    findings_total += merged.get("counts", {}).get("findings", 0) - (
-                        prev.get("counts", {}).get("findings", 0) if had else 0)
-    except Exception as exc:  # noqa: BLE001  (never fails the case)
-        log.warning("stego on the original failed for %s: %s", paths.root.name, exc)
-
     # Byte ranges the analyst extracted in the Hex tab (raw or through a decode
     # recipe): re-created from their spec on every run, analysed as children.
     from . import hexview
@@ -1181,11 +1190,27 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         log.warning("Code analysis skipped for %s: %s", paths.root.name, exc)
 
-    # Files recovered from the code (go:embed, compressed streams) → nested analysis.
-    if code_children:
+    # Files hidden in the case's images (pixels / appended data) and in the
+    # native resources of its PEs, with the case's strings as keys → nested.
+    try:
+        from . import hidden
+        code_children += hidden.sweep(paths, original, (read_json(paths.subresult("nested")) or {}).get("tree") or [],
+                                      code_children)
+    except Exception as exc:  # noqa: BLE001  (never fails the case)
+        log.warning("hidden-payload sweep skipped for %s: %s", paths.root.name, exc)
+
+    # Files recovered from the code (go:embed, compressed streams), managed
+    # resources and hidden payloads → nested analysis. A stage can carry the next
+    # one (a .NET loader whose Bitmap hides stage 2, which decrypts stage 3…): the
+    # new .NET objects are analysed and their files / hidden payloads queued again,
+    # a few rounds at most.
+    for stage_round in range(STAGE_ROUNDS):
+        if not code_children:
+            break
         try:
             from . import nested
-            kres = run(f"code resources: {len(code_children)} embedded / compressed file(s) → nested analysis",
+            label = "code resources" if stage_round == 0 else f"stage {stage_round + 1}"
+            kres = run(f"{label}: {len(code_children)} embedded / hidden / extracted file(s) → nested analysis",
                        lambda: nested.scan_children(code_children, paths, unlock_ctx={"user": user_pw}))
             if kres.get("tree"):
                 prev = read_json(paths.subresult("nested"))
@@ -1198,6 +1223,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                     prev.get("counts", {}).get("findings", 0) if had else 0)
         except Exception as exc:  # noqa: BLE001
             log.warning("Nested analysis of code resources failed for %s: %s", paths.root.name, exc)
+            break
+        code_children = _next_stage(paths, original, run, ran)
 
     # YARA, Machine Learning and C2 are on demand: their tabs have a Run button
     # that re-runs that module alone over every object of the case. A full

@@ -253,6 +253,16 @@ RAR, gzip, PDF, OLE, shebang / PowerShell script), cut to its real size.
 | Sample | What it shows |
 | --- | --- |
 | `stego/sample_stego_invoice.zip` | `factura_scan.png` (noise-like picture) hides an inert ELF in the low bit of R, G, B (*LSB1 RGB, MSB first*): **Nested** → the PNG has the child `factura_scan.pixels.elf` and the finding *ELF hidden in the pixels of the image* (high, T1027.003); the ELF's string `cdn-update.example.net` reaches the IOCs. `leeme.txt` is plain. |
+| `stego/sample_logo_appended.png` | a real 48×24 logo with an inert PE **appended after `IEND`**, XOR-ed with `0x5c`: child `…hidden.exe` (*appended after the image end (offset …): XOR 0x5c*). Same check after a JPEG `FFD9`, a GIF trailer or a BMP's declared size. |
+| `stego/sample_rcdata_loader.exe` | native PE (no .NET): `RT_RCDATA/CFG` holds a **Base64**-encoded inert PE and `RT_RCDATA/LOGO` is a BMP with an inert ELF in its pixels → two children, `…RT_RCDATA_CFG.exe` and `…RT_RCDATA_LOGO.elf`, finding *hidden in the resource …* (`RT_BITMAP` is rebuilt as a BMP file first). |
+
+The sweep also looks at **every image the case extracted** even when it is not a
+child (Office media, PDF / OneNote images…), with the **strings of the whole case
+as keys** (.NET literals, strings decrypted statically, .resources values), and a
+**stage loop** analyses each new stage: a .NET stage hidden in a Bitmap is analysed
+as .NET and its own resources / hidden files are queued again (up to 4 rounds) — e.g.
+`make_samples.dotnet_bitmap_loader_exe(make_samples.dotnet_stealer_exe())` ends with
+the stealer's SMTP settings decrypted.
 
 ## .NET assemblies (Components → .NET)
 
