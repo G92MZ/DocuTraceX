@@ -289,7 +289,15 @@ usually ready when the PE triage reaches them. `DOCUTRACEX_TOOLS_PARALLEL`
 binaries at once (default 2 — each one is two vivisect processes, memory-hungry;
 never above CPUs − 1). Obviously packed PEs (an executable section near entropy 8),
 PyInstaller bundles and files over 64 MB are not started ahead (the triage decides
-whether their tools run at all). `sample_bloated_invoice.exe`, `sample_pyinstaller.exe`
+whether their tools run at all). Also:
+- **cache by SHA-256 across cases** (`<cases>/.tools_cache/`, keyed by the tool build
+  and its options): re-analysing a case, or meeting the same DLL in another case, is instant;
+- **libraries signed by a trusted publisher** (valid Authenticode — Microsoft, Python
+  Software Foundation, Oracle, Google, Qt…: `python311.dll`, `vcruntime`, Qt…) are not
+  analysed (`DOCUTRACEX_TOOLS_SKIP_TRUSTED=0` analyses them); a broken or untrusted
+  signature never qualifies, so a side-loaded fake `vcruntime140.dll` still is;
+- **large files** (> 8 MB, `DOCUTRACEX_FLOSS_LARGE_MB`): FLOSS without *tight strings*
+  (the slowest part), decoded and stack strings kept. `sample_bloated_invoice.exe`, `sample_pyinstaller.exe`
 and the MSI / archive samples exercise it.
 
 ## Reports → Markdown (raw, for an LLM)
