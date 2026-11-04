@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import io
 import json
 import sys
@@ -381,3 +382,43 @@ def test_capabilities_in_the_pipeline(tmp_path: Path, monkeypatch: pytest.Monkey
     assert by["http_c2"]["functions"][0]["name"] == "main.beacon"
     rules = {f["rule"] for f in g["findings"]}
     assert {"code:cap:cmd_exec", "code:cap:run_key"} <= rules
+
+
+# --- phase 7: Garble literals ----------------------------------------------------------
+
+@pytest.mark.skipif(importlib.util.find_spec("unicorn") is None, reason="unicorn not installed")
+def test_garble_literal_emulated_in_a_separate_process() -> None:
+    from docutracex.codeanalysis import garble
+    from docutracex.golang import binfmt
+    data = CODE["go/sample_go_code.exe"]
+    names = code_case.go_names(data, detect.identify(data))
+    by = {n["name"]: n for n in names}
+    lit = by["main.main.func2"]
+    full = {"functions": [{"addr": lit["start"], "name": lit["name"], "size": lit["end"] - lit["start"],
+                           "callee_names": ["runtime.slicebytetostring"]},
+                          {"addr": by["main.persist"]["start"], "name": "main.persist", "size": 32,
+                           "callee_names": ["golang.org/x/sys/windows/registry.OpenKey", "runtime.slicebytetostring"]}]}
+    assert [f["name"] for f in garble.candidates(full)] == ["main.main.func2"]     # real functions are not emulated
+    r = garble.recover(full, data, binfmt.parse(data), names, "go")
+    assert r["status"] == "ok" and r["strings"][0]["value"] == ms.CODE_GARBLE_SECRET.decode()
+    assert r["strings"][0]["status"] == "reconstructed" and "emulation" in r["strings"][0]["method"]
+    assert garble.recover(full, data, binfmt.parse(data), names, "native")["status"] == "skipped"
+
+
+@needs_rizin
+@pytest.mark.skipif(importlib.util.find_spec("unicorn") is None, reason="unicorn not installed")
+def test_garble_strings_reach_strings_and_iocs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from docutracex import analyze, cases
+    from docutracex.config import settings
+    from docutracex.storage import CasePaths, read_json
+
+    monkeypatch.setattr(settings, "cases_dir", tmp_path)
+    monkeypatch.setattr(settings, "goresym_executable", lambda: None)
+    m = cases.create_case(io.BytesIO(CODE["go/sample_go_code.exe"]), "factura.exe", cases_dir=tmp_path)
+    analyze.analyze_case(tmp_path / m["analysis_id"])
+    paths = CasePaths(m["analysis_id"], cases_dir=tmp_path)
+    o = read_json(paths.subresult("golang"))["objects"][0]
+    assert o["code"]["resources"]["garble_strings"] == 1
+    ov = code_case.overview(code_case.load(paths.root, o["sha256"], "go"))
+    assert any(s["source"] == "Garble (emulated)" and s["function"] == "main.main.func2" for s in ov["strings"])
+    assert ms.CODE_GARBLE_SECRET.decode() in {i["value"] for i in read_json(paths.subresult("iocs"))["iocs"]}

@@ -5276,6 +5276,7 @@ function cxSummaryBox(c, sha, mode) {
       ["Functions", e(`${c.functions_analyzed || 0} analysed${c.functions_total ? ` of ${c.functions_total}` : ""}`)],
       ["Decompiled", e(`${c.decompiled || 0} (priority order)`)], ["Strings", e(c.strings || 0)],
       ["Imported APIs", c.apis ? e(c.apis) : ""],
+      ["Garble strings", (c.resources || {}).garble_strings ? e(`${c.resources.garble_strings} rebuilt by emulating their decoding closures (Strings tab)`) : ""],
       ["Time", e(`${c.elapsed_s || 0} s${c.extended ? " (extended past the budget while still producing)" : ""} · budget ${lim.budget_min || "?"}–${lim.max_min || "?"} min · ${lim.mem_mb || "?"} MB`)]])}
     ${(c.warnings || []).map((w) => `<div class="hint-line">⚠ ${e(w)}</div>`).join("")}
     ${top ? `<h4 class="formats-title">Look here first</h4><table class="cases"><thead><tr><th>Score</th><th>Function</th><th>Behaviour</th></tr></thead><tbody>${top}</tbody></table>` : ""}`;

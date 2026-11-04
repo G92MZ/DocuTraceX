@@ -2100,6 +2100,31 @@ CODE_GCM_NONCE = bytes.fromhex("5ac1e3f7092b4d6e8f1a3c5e")
 CODE_CONFIG = b'{"c2": "https://cdn-update.example.net/invoice/sync", "backup": "203.0.113.47:8443", "id": "INV-2026-0413"}'
 
 
+CODE_GARBLE_SECRET = b"C:\\ProgramData\\InvoiceSync\\agent.exe"
+CODE_GARBLE_SEED, CODE_GARBLE_STEP = 0x5C, 0x2B
+
+
+def _garble_literal() -> list:
+    """x86-64 for a closure like Garble's -literals output: the encoded bytes are
+    stored on the stack, decoded in place with a key that changes every byte,
+    and the buffer is handed to runtime.slicebytetostring (rbx = ptr, rcx = len)."""
+    import struct as _st
+    secret, n = CODE_GARBLE_SECRET, len(CODE_GARBLE_SECRET)
+    assert n < 0x60
+    enc, k = bytearray(), CODE_GARBLE_SEED
+    for b in secret:
+        enc.append(b ^ k)
+        k = (k + CODE_GARBLE_STEP) & 0xFF
+    code = bytearray(b"\x48\x83\xec\x68")                                 # sub rsp, 0x68
+    for i, b in enumerate(enc):
+        code += bytes([0xC6, 0x44, 0x24, i, b])                              # mov byte [rsp+i], enc[i]
+    code += b"\x31\xc0" + bytes([0xB2, CODE_GARBLE_SEED])                    # xor eax,eax ; mov dl, seed
+    code += b"\x30\x14\x04" + bytes([0x80, 0xC2, CODE_GARBLE_STEP])           # loop: xor [rsp+rax],dl ; add dl, step
+    code += b"\x48\xff\xc0\x48\x83\xf8" + bytes([n]) + b"\x72\xf1"          # inc rax ; cmp rax, n ; jb loop
+    code += b"\x48\x89\xe3\xb9" + _st.pack("<I", n) + b"\x31\xc0"            # mov rbx,rsp ; mov ecx,n ; xor eax,eax
+    return [bytes(code)]
+
+
 def _sealed() -> bytes:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     return AESGCM(CODE_GCM_KEY).encrypt(CODE_GCM_NONCE, CODE_CONFIG, None)
@@ -2309,6 +2334,9 @@ def go_code_exe() -> bytes:
         ("rip", "cmdline", b"\x48\x8d\x05"), b"\xbb" + _st.pack("<I", len(CODE_CMDLINE)),
         ("rel32", "execcmd", b"\xe8"), ("rel32", "cmdoutput", b"\xe8"),
         b"\x48\x83\xc4\x28\xc3", b"\xcc" * 3,
+        # main.main.func2: a Garble-style literal closure (stack bytes + rolling key → slicebytetostring)
+        ("label", "garblelit"), *_garble_literal(), ("rel32", "sbts", b"\xe8"), b"\x48\x83\xc4\x68\xc3", b"\xcc" * 3,
+        ("label", "sbts"), b"\xc3", b"\xcc" * 15,
         ("label", "openkey"), b"\xc3", b"\xcc" * 15,
         ("label", "setvalue"), b"\xc3", b"\xcc" * 15,
         ("label", "execcmd"), b"\xc3", b"\xcc" * 15,
@@ -2330,7 +2358,9 @@ def go_code_exe() -> bytes:
              ("main.(*Config).load", meta["cfgload"], meta["openconfig"] - meta["cfgload"]),
              ("main.openConfig", meta["openconfig"], meta["persist"] - meta["openconfig"]),
              ("main.persist", meta["persist"], meta["runcmd"] - meta["persist"]),
-             ("main.runCmd", meta["runcmd"], meta["openkey"] - meta["runcmd"]),
+             ("main.runCmd", meta["runcmd"], meta["garblelit"] - meta["runcmd"]),
+             ("main.main.func2", meta["garblelit"], meta["sbts"] - meta["garblelit"]),
+             ("runtime.slicebytetostring", meta["sbts"], meta["openkey"] - meta["sbts"]),
              ("golang.org/x/sys/windows/registry.OpenKey", meta["openkey"], meta["setvalue"] - meta["openkey"]),
              ("golang.org/x/sys/windows/registry.Key.SetStringValue", meta["setvalue"], meta["execcmd"] - meta["setvalue"]),
              ("os/exec.Command", meta["execcmd"], meta["cmdoutput"] - meta["execcmd"]),

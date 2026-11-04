@@ -16,7 +16,7 @@ The **Diagnostics** tab shows which ones are available; a **Retry** button on a 
 | Email | extract-msg, dkimpy |
 | Didier Stevens Suite | oledump (+ plugins), zipdump, pdfid, pdf-parser, emldump, rtfdump, decode-vbe, 1768 (Cobalt Strike configurations) |
 | Shortcuts | LnkParse3 |
-| Go | GoReSym (Mandiant, MIT) — contrast for the own Go parser |
+| Go | GoReSym (Mandiant, MIT) — contrast for the own Go parser; Unicorn (GPL-2) — emulates only Garble's string-decoding closures, in a separate process |
 | Code analysis | Rizin (LGPL-3.0) with rz-ghidra (LGPL-3.0, embedding the Ghidra decompiler, Apache-2.0), taken from the Cutter release bundle (GPL-3.0) — functions, pseudocode and disassembly of Go and native binaries. On Windows the Microsoft Visual C++ runtime DLLs that ship inside that same bundle (`vc_redist.x64.exe`) are unpacked next to `rizin.exe` (app-local, as Microsoft's redistribution terms allow), so nothing is installed system-wide |
 | Binaries | pefile, LIEF, debloat, FLOSS, capa, UPX, AutoIt-Ripper, innoextract, 7-Zip, nuitka-extractor, evbunpack, Detect It Easy |
 | Python / Java | pycdc, CFR |
@@ -30,7 +30,7 @@ The **Diagnostics** tab shows which ones are available; a **Retry** button on a 
 ## Licences
 
 DocuTraceX is Apache-2.0 and ships no GPL code. GPL/LGPL tools (pcodedmp,
-peepdf-3, py7zr, box-ps and pycdc — GPL-3.0 —, UPX, 7-Zip, Rizin / rz-ghidra) are installed into
+peepdf-3, py7zr, box-ps and pycdc — GPL-3.0 —, UPX, 7-Zip, Rizin / rz-ghidra, Unicorn) are installed into
 the portable at provisioning time or picked up from `tools/`, and invoked as
 separate processes, never shipped in this repository. PowerShell Core, Node and
 webcrack are MIT. webcrack pulls `isolated-vm`, which ships prebuilt binaries
