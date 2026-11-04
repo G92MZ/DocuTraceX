@@ -107,3 +107,67 @@ def test_any_image_child_of_a_case(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert img["stego"]["kind"] == "elf"
     assert any(f["rule"] == "stego:payload" for f in img["findings"])
     assert [c["filename"] for c in img["children"]] == ["factura_scan.pixels.elf"]
+
+
+def test_data_appended_after_the_image() -> None:
+    from PIL import Image as _I
+    for fmt in ("PNG", "JPEG", "GIF", "BMP"):
+        b = io.BytesIO()
+        _I.new("RGB", (40, 20), (200, 10, 10)).save(b, format=fmt)
+        got = stego.extract(b.getvalue() + b"\x00" * 7 + bytes(x ^ 0x5C for x in PE))
+        assert got and got[2] == "exe" and "appended after the image end" in got[0] and got[1] == PE, fmt
+    assert stego.trailing(ms.stego_appended_png())[1] == PE
+
+
+def test_sweep_resources_images_and_case_keys(tmp_path: Path) -> None:
+    """PE resources (Base64 PE in RCDATA, ELF in the pixels of a BMP resource) and an
+    extracted image XOR-ed with a key that only a .NET object of the case knows."""
+    import json
+    from docutracex import hidden
+    from docutracex.storage import CasePaths
+    paths = CasePaths("c1", cases_dir=tmp_path)
+    paths.extracted_dir.mkdir(parents=True)
+    (paths.root / "results").mkdir(parents=True, exist_ok=True)
+    key = "InvoiceSync#2024"
+    paths.subresult("dotnet").write_text(json.dumps({"objects": [{"result": {"strings": [key]}}]}))
+    img = _img(bytes(b ^ key.encode()[i % len(key)] for i, b in enumerate(ELF)))
+    (paths.extracted_dir / "media").mkdir()
+    (paths.extracted_dir / "media" / "image1.png").write_bytes(img)
+    original = tmp_path / "InvoiceUpdater.exe"
+    original.write_bytes(ms.stego_rcdata_exe())
+    got = {it["filename"]: it for it in hidden.sweep(paths, original, [])}
+    names = sorted(got)
+    assert any(n.endswith("RT_RCDATA_CFG.exe") for n in names) and any(n.endswith("RT_RCDATA_LOGO.elf") for n in names)
+    assert any(n == "image1.hidden.elf" for n in names)
+    assert 'XOR key "InvoiceSync#2024"' in got["image1.hidden.elf"]["origin"]
+    cfg = next(v for k, v in got.items() if k.endswith("CFG.exe"))
+    assert "Base64" in cfg["origin"] and cfg["finding"]["severity"] == "high"
+    assert Path(cfg["path"]).read_bytes() == PE
+    # nothing for an image / PE without anything hidden
+    (paths.extracted_dir / "media" / "image1.png").write_bytes(_img(b"just a logo" * 50))
+    plain = tmp_path / "plain.exe"
+    plain.write_bytes(PE)
+    import shutil
+    shutil.rmtree(paths.extracted_dir / hidden.DIRNAME, ignore_errors=True)
+    assert hidden.sweep(paths, plain, []) == []
+
+
+def test_stage_chain_loader_to_stealer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stage 1 (.NET loader) hides stage 2 (.NET stealer, encrypted settings) in a Bitmap:
+    the stage loop analyses stage 2 as .NET and its C2 settings come out."""
+    from docutracex import analyze, cases
+    from docutracex.config import settings
+    from docutracex.storage import CasePaths, read_json
+    monkeypatch.setattr(settings, "cases_dir", tmp_path)
+    m = cases.create_case(io.BytesIO(ms.dotnet_bitmap_loader_exe(ms.dotnet_stealer_exe())), "gallery.exe",
+                          cases_dir=tmp_path)
+    analyze.analyze_case(tmp_path / m["analysis_id"])
+    paths = CasePaths(m["analysis_id"], cases_dir=tmp_path)
+    dn = read_json(paths.subresult("dotnet"))
+    names = {(o.get("result") or {}).get("assembly", {}).get("name") for o in dn["objects"]}
+    assert {"InvoiceGallery", "InvoiceMailSync"} <= names
+    stealer = next(o for o in dn["objects"] if (o.get("result") or {}).get("assembly", {}).get("name") == "InvoiceMailSync")
+    assert "smtp.billing-portal.example" in {d["output"] for d in stealer["result"]["cil"]["decrypted"]}
+    c2 = read_json(paths.subresult("c2"))
+    if c2 is not None:                                   # C2 runs when enabled (tests: auto)
+        assert any("smtp.billing-portal.example" in (c.get("c2") or []) for c in c2["configs"])

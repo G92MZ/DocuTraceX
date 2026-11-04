@@ -237,8 +237,93 @@ def is_image(data: bytes) -> bool:
     return data.startswith(IMAGE_MAGIC) and (not data.startswith(b"RIFF") or data[8:12] == b"WEBP")
 
 
+# --- data after the end of the image -----------------------------------------------
+def image_end(b: bytes) -> int | None:
+    """Offset where the image itself ends (PNG IEND, JPEG EOI after the scan,
+    GIF trailer, BMP declared size), or None when unknown."""
+    try:
+        if b.startswith(b"\x89PNG\r\n\x1a\n"):
+            i = 8
+            while i + 12 <= len(b):
+                n, t = struct.unpack_from(">I4s", b, i)
+                i += 12 + n
+                if t == b"IEND":
+                    return i
+            return None
+        if b.startswith(b"BM"):
+            n = struct.unpack_from("<I", b, 2)[0]
+            return n if 54 <= n <= len(b) else None
+        if b.startswith(b"\xff\xd8"):
+            i = 2
+            while i + 4 <= len(b):
+                if b[i] != 0xFF:
+                    return None
+                m = b[i + 1]
+                if m == 0xD9:
+                    return i + 2
+                if m == 0xDA:                                   # entropy-coded data: next marker that is not RSTn / stuffing
+                    j = i + 2 + struct.unpack_from(">H", b, i + 2)[0]
+                    while j + 1 < len(b):
+                        if b[j] == 0xFF and b[j + 1] not in (0x00, *range(0xD0, 0xD8), 0xFF):
+                            break
+                        j += 1
+                    i = j
+                    continue
+                if 0xD0 <= m <= 0xD7 or m == 0x01:
+                    i += 2
+                    continue
+                i += 2 + struct.unpack_from(">H", b, i + 2)[0]
+            return None
+        if b.startswith((b"GIF87a", b"GIF89a")):
+            i = 13
+            flags = b[10]
+            if flags & 0x80:
+                i += 3 * (2 << (flags & 7))
+            while i < len(b):
+                c = b[i]
+                if c == 0x3B:
+                    return i + 1
+                if c == 0x21:                                   # extension: label + sub-blocks
+                    i += 2
+                elif c == 0x2C:                                 # image descriptor (+ local table) + LZW min size
+                    f = b[i + 9]
+                    i += 10 + (3 * (2 << (f & 7)) if f & 0x80 else 0) + 1
+                else:
+                    return None
+                while i < len(b) and b[i]:
+                    i += 1 + b[i]
+                i += 1
+            return None
+    except (struct.error, IndexError):
+        return None
+    return None
+
+
+def trailing(image: bytes, strings: list[Any] | None = None) -> tuple[str, bytes, str] | None:
+    """A file appended after the end of the image (directly, after some padding,
+    or encoded the same ways as the pixel streams)."""
+    end = image_end(image)
+    if end is None or len(image) - end < 64:
+        return None
+    tail = image[end:]
+    keys = _keys(list(strings or []))
+    pad = len(tail[:4096]) - len(tail[:4096].lstrip(b"\x00\xff")) if tail[:1] in (b"\x00", b"\xff") else 0
+    starts = sorted({0, pad} | {i for mg in _MAGICS for i in [tail.find(mg, 1, 4096)] if i > 0})
+    for off in starts:
+        for how, out in _decodings(tail[off:], keys):
+            got = identify(out)
+            if got:
+                kind, n = got
+                return f"appended after the image end (offset {end + off:#x}): {how}", out[:n], kind
+    return None
+
+
 def extract(image: bytes, strings: list[Any] | None = None) -> tuple[str, bytes, str] | None:
-    """(how, payload, kind) of the first file hidden in the image, or None."""
+    """(how, payload, kind) of the first file hidden in the image — appended
+    after its end, or in its pixels — or None."""
+    got = trailing(image, strings)
+    if got:
+        return got
     try:
         from PIL import Image
         img = Image.open(io.BytesIO(image))
