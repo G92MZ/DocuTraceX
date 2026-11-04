@@ -1113,12 +1113,108 @@ def rizin_executable() -> Path | None:
 
 def _rizin_ok() -> bool:
     exe = rizin_executable()
-    return exe is not None and any(RIZIN_DIR.glob("**/core_ghidra.*"))
+    if exe is None or not any(RIZIN_DIR.glob("**/core_ghidra.*")):
+        return False
+    if sys.platform.startswith("win"):
+        # present but unable to start (no VC++ runtime): reinstall, which puts the runtime next to it
+        try:
+            r = subprocess.run([str(exe), "-v"], capture_output=True, timeout=60, check=False,
+                               stdin=subprocess.DEVNULL)
+            return r.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            return False
+    return True
 
 
 def _copy_tree(src: Path, dst: Path) -> None:
     if src.is_dir():
         shutil.copytree(src, dst, dirs_exist_ok=True, symlinks=True)
+
+
+VCRUNTIME_DLLS = ("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll",
+                  "concrt140.dll")
+
+
+def cab_files(blob: bytes) -> dict[str, bytes]:
+    """Files of a Microsoft Cabinet (MSZIP or stored folders), pure Python.
+    Enough for the Visual C++ redistributable; LZX / Quantum folders are skipped."""
+    import struct
+    import zlib
+    if blob[:4] != b"MSCF":
+        return {}
+    _size, coff_files = struct.unpack_from("<I4xI", blob, 8)
+    n_folders, n_files, flags = struct.unpack_from("<HHH", blob, 26)
+    pos = 36
+    cb_folder_res = cb_data_res = 0
+    if flags & 4:
+        cb_hdr_res, cb_folder_res, cb_data_res = struct.unpack_from("<HBB", blob, pos)
+        pos += 4 + cb_hdr_res
+    for bit in (1, 2):                                    # previous / next cabinet names
+        if flags & bit:
+            for _ in range(2):
+                pos = blob.index(b"\x00", pos) + 1
+    folders = []
+    for _ in range(n_folders):
+        start, n_data, comp = struct.unpack_from("<IHH", blob, pos)
+        folders.append((start, n_data, comp & 0x0F))
+        pos += 8 + cb_folder_res
+    data: list[bytes | None] = []
+    for start, n_data, comp in folders:
+        if comp not in (0, 1):
+            data.append(None)
+            continue
+        out, p, hist = bytearray(), start, b""
+        for _ in range(n_data):
+            _csum, cb, _ucb = struct.unpack_from("<IHH", blob, p)
+            p += 8 + cb_data_res
+            chunk = blob[p:p + cb]
+            p += cb
+            if comp == 0:
+                piece = chunk
+            else:                                        # MSZIP: "CK" + deflate, the previous 32 KB as history
+                if chunk[:2] != b"CK":
+                    raise ValueError("bad MSZIP block")
+                d = zlib.decompressobj(-15, zdict=hist) if hist else zlib.decompressobj(-15)
+                piece = d.decompress(chunk[2:]) + d.flush()
+                hist = piece[-32768:]
+            out += piece
+        data.append(bytes(out))
+    files: dict[str, bytes] = {}
+    pos = coff_files
+    for _ in range(n_files):
+        cb, off, ifold = struct.unpack_from("<IIH", blob, pos)
+        end = blob.index(b"\x00", pos + 16)
+        name = blob[pos + 16:end].decode("utf-8", "replace")
+        pos = end + 1
+        if ifold < len(data) and data[ifold] is not None:
+            files[name] = data[ifold][off:off + cb]
+    return files
+
+
+def vcruntime_app_local(redist: bytes, dest: Path) -> int:
+    """Unpack the x64 VC++ runtime DLLs from Microsoft's vc_redist.x64.exe
+    (WiX bundle: an attached cabinet of payloads, one of them the cabinet of
+    the runtime files) into ``dest``. Nothing is run. Returns the DLLs written."""
+    import re
+    import struct
+    n = 0
+    try:
+        for m in re.finditer(rb"MSCF\x00\x00\x00\x00", redist):
+            size = struct.unpack_from("<I", redist, m.start() + 8)[0]
+            for payload in cab_files(redist[m.start():m.start() + size]).values():
+                if payload[:4] != b"MSCF":
+                    continue
+                inner = cab_files(payload)
+                for want in VCRUNTIME_DLLS:
+                    body = inner.get(want + "_amd64")
+                    if body and body[:2] == b"MZ":
+                        (dest / want).write_bytes(body)
+                        n += 1
+                if n:
+                    return n
+    except (ValueError, struct.error, OSError) as exc:
+        print(f"[!] Visual C++ runtime: {exc}")
+    return n
 
 
 def install_rizin() -> bool:
@@ -1163,6 +1259,13 @@ def install_rizin() -> bool:
                     out.parent.mkdir(parents=True, exist_ok=True)
                     with z.open(m) as src, out.open("wb") as dst:
                         shutil.copyfileobj(src, dst)
+                # the Visual C++ runtime next to rizin.exe (app-local): nothing to install system-wide
+                redist = next((m for m in z.namelist() if m.lower().endswith("/vc_redist.x64.exe")), None)
+                if redist:
+                    n = vcruntime_app_local(z.read(redist), RIZIN_DIR)
+                    print(f"[+] Visual C++ runtime: {n} DLL(s) placed next to rizin.exe (no system install needed)"
+                          if n else "[=] Visual C++ runtime: could not be unpacked; install the VC++ 2015-2022 x64 "
+                                    "redistributable if Rizin does not start")
         elif plat == "linux":
             with tempfile.TemporaryDirectory() as td:
                 app = Path(td) / "cutter.AppImage"
