@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -316,15 +317,135 @@ def decompile_on_demand(root: Path, path: Path, sha256: str, mode: str, addr: in
         data = path.read_bytes()
         names = go_names(data, detect.identify(data))
     r = decompile_one(path, addr, mode=mode, names=names, lock_path=lock_path(root))
-    if r.get("status") == "ok":
-        full.setdefault("decompiled", {})[str(addr)] = {"code": r["code"], "status": "ok", "on_demand": True}
-        for f in full.get("functions") or []:
-            if f["addr"] == addr:
-                f["decompiled"] = True
-    if r.get("ops") and str(addr) not in (full.get("disasm") or {}):
-        full.setdefault("disasm", {})[str(addr)] = r["ops"]
-    result_file(root, sha256, mode).write_text(json.dumps(full), encoding="utf-8")
+    if r.get("status") == "ok" or r.get("ops"):
+        _merge(root, sha256, mode, {addr: r if r.get("status") == "ok" else {"ops": r["ops"]}})
     return r
+
+
+# --- "Decompile all" in the background ----------------------------------------------
+# One job per binary: chunks of functions decompiled in one Rizin session each,
+# saved after every chunk (the Code view shows them as they land). The state is
+# kept in memory and in <sha>.<mode>.batch.json, so the UI can be left and
+# re-opened; a single on-demand decompile still interleaves between chunks.
+import threading as _threading  # noqa: E402
+
+BATCH_CHUNK = 5
+BATCH_MAX = 400
+_jobs: dict[str, dict[str, Any]] = {}
+_jobs_lock = _threading.Lock()
+_write_lock = _threading.Lock()
+
+
+def _batch_file(root: Path, sha256: str, mode: str) -> Path:
+    return result_file(root, sha256, mode).with_suffix(".batch.json")
+
+
+def batch_targets(full: dict[str, Any], which: str) -> list[int]:
+    """Functions without pseudocode: ``large`` = the ones the automatic pass
+    left for on demand (too large / pass stopped), ``all`` = every program
+    function still without pseudocode, by priority."""
+    fns = [f for f in full.get("functions") or [] if f.get("user") and not f.get("decompiled")]
+    if which == "large":
+        fns = [f for f in fns if f.get("decompile_note")]
+    fns.sort(key=lambda f: (f.get("rank") or 10 ** 6))
+    return [f["addr"] for f in fns][:BATCH_MAX]
+
+
+def batch_status(root: Path, sha256: str, mode: str) -> dict[str, Any]:
+    key = str(_batch_file(root, sha256, mode))
+    with _jobs_lock:
+        job = _jobs.get(key)
+        if job:
+            return {k: v for k, v in job.items() if not k.startswith("_")}
+    try:
+        st = json.loads(_batch_file(root, sha256, mode).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"state": "idle"}
+    if st.get("state") in ("running", "cancelling"):
+        st["state"] = "interrupted"          # the app restarted under it
+    return st
+
+
+def _save_batch(root: Path, sha256: str, mode: str, job: dict[str, Any]) -> None:
+    try:
+        _batch_file(root, sha256, mode).write_text(
+            json.dumps({k: v for k, v in job.items() if not k.startswith("_")}), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _merge(root: Path, sha256: str, mode: str, results: dict[int, dict[str, Any]]) -> None:
+    with _write_lock:
+        full = load(root, sha256, mode)
+        if full is None:
+            return
+        for addr, r in results.items():
+            if r.get("status") == "ok":
+                full.setdefault("decompiled", {})[str(addr)] = {"code": r["code"], "status": "ok", "on_demand": True}
+                for f in full.get("functions") or []:
+                    if f["addr"] == addr:
+                        f["decompiled"] = True
+            elif r.get("status") == "failed":
+                full.setdefault("decompiled", {}).setdefault(str(addr), {"status": "failed", "detail": r.get("detail", "")})
+            if r.get("ops") and str(addr) not in (full.get("disasm") or {}):
+                full.setdefault("disasm", {})[str(addr)] = r["ops"]
+        result_file(root, sha256, mode).write_text(json.dumps(full), encoding="utf-8")
+
+
+def start_batch(root: Path, path: Path, sha256: str, mode: str, which: str = "large") -> dict[str, Any]:
+    from . import decompile_many
+    full = load(root, sha256, mode)
+    if full is None:
+        raise FileNotFoundError("no code analysis for this object")
+    key = str(_batch_file(root, sha256, mode))
+    with _jobs_lock:
+        cur = _jobs.get(key)
+        if cur and cur["state"] in ("running", "cancelling"):
+            return {k: v for k, v in cur.items() if not k.startswith("_")}
+        todo = batch_targets(full, which)
+        job: dict[str, Any] = {"state": "running" if todo else "completed", "which": which, "total": len(todo),
+                               "done": 0, "ok": 0, "failed": 0, "current": None, "started": time.time(),
+                               "finished": None if todo else time.time(), "error": None, "_cancel": False}
+        _jobs[key] = job
+    _save_batch(root, sha256, mode, job)
+    if not todo:
+        return {k: v for k, v in job.items() if not k.startswith("_")}
+
+    def run() -> None:
+        try:
+            names = _go_names_for(path, mode)
+            for i in range(0, len(todo), BATCH_CHUNK):
+                if job["_cancel"]:
+                    job["state"] = "cancelled"
+                    break
+                chunk = todo[i:i + BATCH_CHUNK]
+                job["current"] = [hex(a) for a in chunk]
+                res = decompile_many(path, chunk, mode=mode, names=names, lock_path=lock_path(root))
+                _merge(root, sha256, mode, res)
+                job["done"] += len(chunk)
+                job["ok"] += sum(1 for r in res.values() if r.get("status") == "ok")
+                job["failed"] += sum(1 for r in res.values() if r.get("status") != "ok")
+                _save_batch(root, sha256, mode, job)
+            else:
+                job["state"] = "completed"
+        except Exception as exc:  # noqa: BLE001  (a failed batch never takes the app down)
+            log.warning("decompile-all failed on %s: %s", sha256[:12], exc)
+            job["state"], job["error"] = "failed", str(exc)[:300]
+        job["current"], job["finished"] = None, time.time()
+        _save_batch(root, sha256, mode, job)
+
+    _threading.Thread(target=run, name=f"decompile-all-{sha256[:8]}", daemon=True).start()
+    return {k: v for k, v in job.items() if not k.startswith("_")}
+
+
+def cancel_batch(root: Path, sha256: str, mode: str) -> dict[str, Any]:
+    key = str(_batch_file(root, sha256, mode))
+    with _jobs_lock:
+        job = _jobs.get(key)
+        if job and job["state"] == "running":
+            job["_cancel"] = True
+            job["state"] = "cancelling"
+    return batch_status(root, sha256, mode)
 
 
 def _go_names_for(path: Path, mode: str) -> list[dict[str, Any]] | None:

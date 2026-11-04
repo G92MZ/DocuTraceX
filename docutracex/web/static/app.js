@@ -5336,7 +5336,7 @@ function cxFunctions(k, d) {
       <input type="search" class="cx-q" placeholder="Filter by name or address" value="${escapeHtml(flt.q)}">
       <select class="cx-cat"><option value="">all behaviours</option>${cats.map((c) => `<option${c === flt.cat ? " selected" : ""}>${escapeHtml(c)}</option>`).join("")}</select>
       <label class="hint-line"><input type="checkbox" class="cx-user"${flt.user ? " checked" : ""}> program code only</label>
-    </div><div class="cx-fnlist">${cxFnRows(d, flt)}</div>`;
+    </div><div class="cx-batch"></div><div class="cx-fnlist">${cxFnRows(d, flt)}</div>`;
 }
 
 function cxHighlightC(code) {
@@ -5469,6 +5469,50 @@ function cxWireOpen(scope, caseId, sha, mode, group) {
     cxOpen(caseId, sha, mode, group, b.getAttribute("data-cx-open"))));
 }
 
+// "Decompile all" runs on the server in the background: the tab can be left and
+// re-opened (the job keeps going, its state is polled while this list is shown).
+async function cxBatch(el, caseId, sha, mode, onProgress) {
+  const box = el.querySelector(".cx-batch");
+  if (!box) return;
+  const url = `/api/cases/${encodeURIComponent(caseId)}/code/${sha}/${mode}/decompile-all`;
+  let lastDone = -1;
+  const draw = (st) => {
+    const p = st.pending || {}, running = st.state === "running" || st.state === "cancelling";
+    const pct = st.total ? Math.round(100 * (st.done || 0) / st.total) : 0;
+    box.innerHTML = running
+      ? `<div class="hint-line"><span class="spin">●</span> Decompiling in the background: <b>${st.done || 0} / ${st.total}</b>
+          (${st.ok || 0} ok${st.failed ? `, ${st.failed} failed` : ""})${st.current ? ` · now ${escapeHtml(st.current.join(", "))}` : ""}
+          — you can leave this tab. <button class="btn btn-small cx-bcancel"${st.state === "cancelling" ? " disabled" : ""}>${st.state === "cancelling" ? "Stopping…" : "Stop"}</button></div>
+         <div class="cx-bprog"><div style="width:${pct}%"></div></div>`
+      : `<div class="hint-line">${p.large ? `<button class="btn btn-small cx-ball" data-which="large">Decompile the ${p.large} large function(s)</button> ` : ""}${
+          p.all ? `<button class="btn btn-small cx-ball" data-which="all">Decompile all ${p.all} without pseudocode</button> ` : ""}${
+          !p.large && !p.all ? "Every program function has pseudocode." : "Runs in the background (one Rizin session per 5 functions); results appear as they land."}${
+          st.state === "completed" && st.total ? ` · last run: ${st.ok} decompiled${st.failed ? `, ${st.failed} failed` : ""}` : ""}${
+          st.state === "cancelled" ? " · last run stopped" : ""}${st.state === "interrupted" ? " · last run interrupted (app restarted)" : ""}${
+          st.state === "failed" ? ` · last run failed: ${escapeHtml(st.error || "")}` : ""}</div>`;
+    box.querySelectorAll(".cx-ball").forEach((b) => b.addEventListener("click", async () => {
+      b.disabled = true;
+      const r = await fetch(`${url}?which=${b.getAttribute("data-which")}`, { method: "POST" });
+      const j = await r.json();
+      if (!r.ok) { box.innerHTML = `<p class="bad-text">${escapeHtml(j.detail || String(r.status))}</p>`; return; }
+      poll();
+    }));
+    const c = box.querySelector(".cx-bcancel");
+    if (c) c.addEventListener("click", async () => { c.disabled = true; await fetch(url, { method: "DELETE" }); });
+  };
+  const poll = async () => {
+    if (!box.isConnected) return;
+    let st;
+    try { st = await (await fetch(url)).json(); } catch (_) { return; }
+    if (!box.isConnected) return;
+    if ((st.done || 0) !== lastDone && lastDone >= 0) await onProgress();
+    lastDone = st.done || 0;
+    draw(st);
+    if (st.state === "running" || st.state === "cancelling") setTimeout(poll, 4000);
+  };
+  poll();
+}
+
 async function cxRender(el, caseId) {
   const sha = el.getAttribute("data-cx-sha"), mode = el.getAttribute("data-cx-mode");
   const part = el.getAttribute("data-cx-part"), group = el.getAttribute("data-cx-group");
@@ -5486,6 +5530,12 @@ async function cxRender(el, caseId) {
     el.querySelector(".cx-cat").addEventListener("change", (ev) => { flt.cat = ev.target.value; redraw(); });
     el.querySelector(".cx-user").addEventListener("change", (ev) => { flt.user = ev.target.checked; redraw(); });
     cxWireOpen(el, caseId, sha, mode, group);
+    cxBatch(el, caseId, sha, mode, async () => {          // reload the list when the background job lands functions
+      delete _cx.data[k];
+      Object.keys(_cx.fn).filter((x) => x.startsWith(k + "|")).forEach((x) => delete _cx.fn[x]);
+      d = await cxLoad(caseId, sha, mode);
+      if (el.isConnected) redraw();
+    });
   } else if (part === "code") {
     el.innerHTML = cxCode(k, d);
     el.querySelector(".cx-pick").addEventListener("change", (ev) => { _cx.sel[k] = Number(ev.target.value); cxRenderFn(el, caseId, sha, mode, Number(ev.target.value)); });
