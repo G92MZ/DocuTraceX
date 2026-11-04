@@ -1431,6 +1431,24 @@ def refresh_derived(paths: CasePaths, module: str) -> dict[str, Any]:
     return {"iocs": ioc_total, "findings": findings_total}
 
 
+def _yara_oid(f: dict[str, Any], original: Path) -> str:
+    loc = str(f.get("location", "")).removeprefix("yara:")
+    return "original" if loc == "original" else loc
+
+
+def _c2_oid(f: dict[str, Any], original: Path) -> str:
+    loc = str(f.get("location", ""))
+    return "original" if loc == original.name else loc
+
+
+def _recount(res: dict[str, Any], key: str) -> None:
+    res.setdefault("counts", {})["findings"] = len(res.get("findings") or [])
+    if key == "configs":
+        res["counts"]["configs"] = len(res.get("configs") or [])
+    if res.get("findings") and res.get("status") == "ok":
+        res["status"] = "ok_with_findings"
+
+
 def run_module(case_root: Path, module: str) -> dict[str, Any]:
     """Re-run ONE parser/tool module over an existing case, then recompute the
     derived IOC + findings. Isolated: other modules' results are left as-is."""
@@ -1518,12 +1536,27 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
         from .parsers import pdf_tools
         res = pdf_tools.analyze(original, read_json(paths.subresult("pdf")) or {})
     elif module == "yara":
+        from .objects import merge_partial, take_selection
         from .parsers import yara_scan
-        res = yara_scan.analyze(original, ed)
+        only = take_selection(paths, "yara")
+        res = merge_partial(read_json(paths.subresult("yara")), yara_scan.analyze(original, ed, only), only,
+                            {"scanned": lambda e: e.get("stored_path") or "original",
+                             "findings": lambda f: _yara_oid(f, original)})
+        _recount(res, "findings")
     elif module == "ml":
         from .ml import ember_ml
-        res = ember_ml.analyze_case(paths.root, original,
-                                    (read_json(paths.subresult("nested")) or {}).get("tree") or [])
+        from .objects import merge_partial, take_selection
+        only = take_selection(paths, "ml")
+        res = merge_partial(read_json(paths.subresult("ml")),
+                            ember_ml.analyze_case(paths.root, original,
+                                                  (read_json(paths.subresult("nested")) or {}).get("tree") or [], only),
+                            only, {"items": lambda e: e.get("stored_path") or "original"})
+        if only:
+            res["findings"] = [f for f in (ember_ml.finding_for(x) for x in res["items"]) if f]
+            res["items"].sort(key=lambda x: -(x.get("score") if x.get("score") is not None else -1))
+            res["status"] = "ok" if res["items"] else res.get("status")
+            res.setdefault("counts", {}).update(objects=len(res["items"]),
+                                                scored=sum(1 for x in res["items"] if x.get("status") == "ok"))
     elif module == "golang":
         from . import golang
         res = golang.analyze_case(paths.root, original,
@@ -1538,7 +1571,12 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
                                             _go_shas(paths))
     elif module == "c2":
         from . import c2 as c2_mod
-        res = c2_mod.analyze(original, ed)
+        from .objects import merge_partial, take_selection
+        only = take_selection(paths, "c2")
+        res = merge_partial(read_json(paths.subresult("c2")), c2_mod.analyze(original, ed, only), only,
+                            {"configs": lambda c: c.get("stored_path") or "original",
+                             "findings": lambda f: _c2_oid(f, original)})
+        _recount(res, "configs")
     elif module == "ole":
         from .parsers import ole_legacy
         res = ole_legacy.analyze(original, ed)
