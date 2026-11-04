@@ -5160,7 +5160,7 @@ function cxResources(d) {
   const sz = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n >= 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`);
   const emb = (r.embed || []).map((fs) => `<h4 class="formats-title">go:embed file system <span class="hint-line">@${cxHex(fs.fs_va)} · ${fs.files.length} entr${fs.files.length === 1 ? "y" : "ies"}</span></h4>
     <table class="cases"><thead><tr><th>Name</th><th>Size</th><th>SHA-256</th><th></th></tr></thead><tbody>${fs.files.map((f) => `<tr>
-      <td class="mono">${e(f.name)}</td><td>${f.dir ? "dir" : sz(f.size)}</td><td class="mono">${e((f.sha256 || "").slice(0, 16))}</td>
+      <td class="mono">${e(f.name)} ${f.kind && f.kind !== "data" ? `<span class="badge badge-${f.kind === "executable" || f.kind === "script" ? "warn" : "muted"}">${e(f.kind)}</span>` : ""}</td><td>${f.dir ? "dir" : sz(f.size)}</td><td class="mono">${e((f.sha256 || "").slice(0, 16))}</td>
       <td>${f.stored_path ? fileActions(f.stored_path) : ""}</td></tr>`).join("")}</tbody></table>`).join("");
   const certs = (r.certificates || []).map((c) => `<tr><td>${c.private ? '<span class="badge badge-bad">private key</span>' : `<span class="badge badge-muted">${e(c.type.toUpperCase())}</span>`} ${e(c.label)}</td>
       <td class="mono">${e(c.subject || "")}${c.issuer && c.issuer !== c.subject ? `<div class="hint-line">issuer ${e(c.issuer)}</div>` : c.self_signed ? '<div class="hint-line">self-signed</div>' : ""}</td>
@@ -5260,6 +5260,7 @@ function cxDepsCheck(d) {
     <table class="cases"><tbody>
       <tr><th>Declared, with code</th><td>${(x.with_code || []).map((m) => `<div class="mono">${e(m)} <span class="hint-line">${per[m] || 0} function(s)</span></div>`).join("") || "—"}</td></tr>
       <tr><th>Declared, no code found</th><td>${(x.without_code || []).map((m) => `<div class="mono">${e(m)}</div>`).join("") || "—"}</td></tr>
+      <tr><th>Worth a look</th><td>${(x.notable || []).map((m) => `<div class="mono">${e(m.module)} <span class="hint-line">${e(m.why)}</span></div>`).join("") || "—"}</td></tr>
       <tr><th>Code from undeclared packages</th><td>${(x.undeclared || []).map(([m, n]) => `<div class="mono">${e(m)} <span class="hint-line">${n} function(s)</span></div>`).join("") || "—"}</td></tr>
     </tbody></table>`;
 }
@@ -5272,7 +5273,7 @@ function cxSummaryBox(c, sha, mode) {
   const top = (c.top || []).map((f) => `<tr><td>${f.score}</td>
       <td><button type="button" class="cx-link" data-cx-open="${f.addr}" data-cx-sha="${e(sha)}" data-cx-mode="${e(mode)}">${e(f.name)}</button></td>
       <td>${cxCats(f.categories)}</td></tr>`).join("");
-  return `${goKv([["Code analysis", `<span class="badge badge-${c.status === "ok" ? "ok" : "warn"}">${e(c.status)}</span> ${e(c.engine || "")} ${c.rizin ? "· " + e(c.rizin) : ""}`],
+  return `${goKv([["Code analysis", `<span class="badge badge-${c.status === "ok" ? "ok" : "warn"}">${e(c.status)}</span> ${e(c.engine || "")} ${c.rizin ? "· " + e(c.rizin) : ""}${c.cached ? ' <span class="badge badge-muted" title="the same binary was analysed in another case: its result was reused">cached</span>' : ""}`],
       ["Functions", e(`${c.functions_analyzed || 0} analysed${c.functions_total ? ` of ${c.functions_total}` : ""}`)],
       ["Decompiled", e(`${c.decompiled || 0} (priority order)`)], ["Strings", e(c.strings || 0)],
       ["Imported APIs", c.apis ? e(c.apis) : ""],
@@ -5376,7 +5377,8 @@ function cxFnView(k, d, f) {
         · complexity ${f.complexity ?? "?"}${f.loops ? ` · ${f.loops} loop(s)` : ""}${f.xor_ops ? ` · ${f.xor_ops} XOR` : ""} · score ${f.score || 0} (#${f.rank || "?"})</span></div>
       <div>${cxCats(f.categories)} ${cxTraits(f.traits)} ${(f.reasons || []).map((r) => `<span class="hint-line">· ${e(r)}</span>`).join(" ")}</div>
       ${(f.spawns || []).length ? `<div class="hint-line">launches goroutine(s): ${f.spawns.map((x) => `<button type="button" class="cx-link" data-cx-open="${x.addr}">${e(x.name)}</button>`).join(" ")}</div>` : ""}
-      ${f.indirect_calls ? `<div class="hint-line">${f.indirect_calls} indirect call(s) whose target is computed at run time: not resolved statically</div>` : ""}
+      ${(f.interface_targets || []).length ? `<div class="hint-line">interface call(s) resolved from the itab it loads: ${f.interface_targets.map((x) => `<button type="button" class="cx-link" data-cx-open="${x.addr}">${e(x.name)}</button>`).join(" ")}</div>` : ""}
+      ${f.indirect_calls ? `<div class="hint-line">${f.indirect_calls} indirect call(s) whose target is computed at run time${(f.interface_targets || []).length ? " (see the interface targets above)" : ": not resolved statically"}</div>` : ""}
     </div>
     <div class="cx-split">
       <div><h4 class="formats-title">Pseudocode <span class="hint-line">rz-ghidra${dec.on_demand ? " · on demand" : ""}</span></h4>${pseudo}</div>
@@ -5581,7 +5583,7 @@ function cgEgoSvg(g, center, depth) {
     const x1 = a.x + W, y1 = a.y + H / 2, x2 = b.x, y2 = b.y + H / 2;
     if (x2 < x1) return;
     const mx = (x1 + x2) / 2;
-    edges += `<path class="cg-edge${e.kind === "goroutine" ? " cg-go" : ""}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" marker-end="url(#cg-arrow)"/>`;
+    edges += `<path class="cg-edge${e.kind === "goroutine" ? " cg-go" : e.kind === "interface" ? " cg-if" : ""}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" marker-end="url(#cg-arrow)"/>`;
   });
   let boxes = "";
   pos.forEach((p, id) => {
@@ -5687,7 +5689,7 @@ async function cgRender(el, caseId, sha, mode, group) {
   el.innerHTML = `<div class="cx-toolbar"><select class="cg-pick">${opts}</select>
       <label class="hint-line">depth <select class="cg-depth">${[1, 2, 3].map((d) => `<option${d === depth ? " selected" : ""}>${d}</option>`).join("")}</select></label>
       <span class="hint-line">${g.nodes.length} nodes · ${g.edges.length} edges · ${g.unresolved} unresolved indirect call(s) — click a box to centre it, double-click to open it in Code</span></div>
-    <div class="cg-legend hint-line"><span class="cg-key"></span> call <span class="cg-key cg-go"></span> goroutine (go f())
+    <div class="cg-legend hint-line"><span class="cg-key"></span> call <span class="cg-key cg-go"></span> goroutine (go f()) <span class="cg-key cg-if"></span> interface call (resolved from its itab)
       <span class="cg-key is-ext"></span> library / API · callers on the left, callees on the right</div>
     <div class="cg-wrap">${cgEgoSvg(g, center, depth)}</div>
     <h4 class="formats-title">Paths from the entry points to sensitive code</h4><div class="cx-scroll cx-small">${cgPaths(g)}</div>
@@ -5747,7 +5749,9 @@ function gtDetail(t, code) {
   return `<div class="cx-split">
     <div><h4 class="formats-title">Definition <span class="hint-line">${t.va ? "type descriptor @" + cxHex(t.va) : "from method names only"}</span></h4>
       ${t.reconstructed ? `<pre class="cx-code">${cxHighlightC(t.reconstructed)}</pre>` : '<p class="hint-line">No reconstruction (GoReSym did not see this type).</p>'}</div>
-    <div><h4 class="formats-title">Methods (${(t.methods || []).length})</h4>${ms ? `<div class="cx-scroll cx-small">${ms}</div>` : '<p class="hint-line">None in the function table.</p>'}</div></div>`;
+    <div><h4 class="formats-title">Methods (${(t.methods || []).length})</h4>${ms ? `<div class="cx-scroll cx-small">${ms}</div>` : '<p class="hint-line">None in the function table.</p>'}
+      ${(t.implements || []).length ? `<h4 class="formats-title">Implements</h4><div class="mono">${t.implements.map(escapeHtml).join("<br>")}</div>` : ""}
+      ${(t.implemented_by || []).length ? `<h4 class="formats-title">Implemented by</h4><div class="mono">${t.implemented_by.map(escapeHtml).join("<br>")}</div>` : ""}</div></div>`;
 }
 
 async function gtRender(el, caseId) {

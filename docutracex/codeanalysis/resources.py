@@ -66,6 +66,7 @@ def go_embed(data: bytes, binf) -> list[dict[str, Any]]:
                     break
                 h = arr[k * ent + 4 * ps:k * ent + 4 * ps + 16]
                 files.append({"name": name.decode("utf-8", "replace"), "size": dlen, "dir": name.endswith(b"/"),
+                              "kind": _embed_kind(name.decode("utf-8", "replace"), body or b""),
                               "offset": binf.va_to_off(dptr) if dlen else None, "hash": h.hex(),
                               "sha256": hashlib.sha256(body).hexdigest() if dlen else "", "data": body})
             names = [f["name"] for f in files]
@@ -75,6 +76,25 @@ def go_embed(data: bytes, binf) -> list[dict[str, Any]]:
             seen.add(ptr)
             out.append({"fs_va": ptr, "slice_offset": s.offset + i, "files": files})
     return out
+
+
+_SCRIPT_EXT = (".ps1", ".psm1", ".bat", ".cmd", ".vbs", ".js", ".jse", ".sh", ".py", ".hta", ".wsf", ".lua")
+_TEMPLATE_EXT = (".tmpl", ".tpl", ".gohtml", ".html", ".htm", ".txt.tmpl")
+
+
+def _embed_kind(name: str, body: bytes) -> str:
+    low = name.lower()
+    if body[:2] == b"MZ" or body[:4] == b"\x7fELF":
+        return "executable"
+    if low.endswith(_SCRIPT_EXT) or body[:2] == b"#!":
+        return "script"
+    if low.endswith(_TEMPLATE_EXT) or b"{{" in body[:4096]:
+        return "template"
+    if low.endswith((".json", ".yaml", ".yml", ".toml", ".ini", ".conf", ".cfg", ".xml")):
+        return "configuration"
+    if low.endswith((".pem", ".crt", ".key", ".der", ".p12", ".pfx")):
+        return "certificate / key"
+    return "data"
 
 
 def _embed_order(names: list[str]) -> list[str]:
@@ -183,6 +203,37 @@ def compressed(data: bytes, skip: list[tuple[int, int]] | None = None) -> list[d
     return out
 
 
+NOTABLE_MODULES: list[tuple[str, str]] = [
+    ("github.com/gorilla/websocket", "WebSocket channel"), ("nhooyr.io/websocket", "WebSocket channel"),
+    ("github.com/miekg/dns", "DNS client / server (DNS C2?)"), ("github.com/hashicorp/yamux", "connection multiplexing"),
+    ("github.com/armon/go-socks5", "SOCKS5 proxy"), ("golang.org/x/net/proxy", "proxy client"),
+    ("github.com/libp2p/", "peer-to-peer networking"), ("golang.org/x/crypto/ssh", "SSH client / server"),
+    ("github.com/gliderlabs/ssh", "SSH server"), ("github.com/kbinani/screenshot", "screen capture"),
+    ("github.com/atotto/clipboard", "clipboard access"), ("golang.design/x/clipboard", "clipboard access"),
+    ("github.com/shirou/gopsutil", "process / system enumeration"), ("github.com/StackExchange/wmi", "WMI queries"),
+    ("github.com/yusufpapurcu/wmi", "WMI queries"), ("github.com/go-ole/go-ole", "COM / WMI automation"),
+    ("github.com/kardianos/service", "runs as a service (persistence)"), ("github.com/mattn/go-sqlite3", "SQLite (browser data?)"),
+    ("modernc.org/sqlite", "SQLite (browser data?)"), ("golang.org/x/sys/windows/registry", "Windows registry"),
+    ("github.com/Binject/", "binary injection / shellcode tooling"), ("github.com/C-Sto/BananaPhone", "direct syscalls"),
+    ("github.com/Ne0nd0g/", "Merlin C2 framework"), ("github.com/bishopfox/sliver", "Sliver C2 framework"),
+    ("github.com/MythicAgents/", "Mythic agent"), ("github.com/BurntSushi/xgb", "X11 access"),
+    ("github.com/go-vgo/robotgo", "keyboard / mouse / screen automation"), ("github.com/moutend/go-hook", "keyboard / mouse hooks"),
+    ("golang.org/x/crypto", "extra cryptography"), ("filippo.io/age", "file encryption (age)"),
+    ("github.com/tidwall/gjson", "JSON parsing (config?)"), ("github.com/go-resty/resty", "HTTP client"),
+    ("github.com/valyala/fasthttp", "HTTP client / server"), ("github.com/elazarl/goproxy", "HTTP proxy"),
+]
+
+
+def notable(module_paths: list[str]) -> list[dict[str, str]]:
+    out = []
+    for m in module_paths:
+        for pre, label in NOTABLE_MODULES:
+            if m == pre.rstrip("/") or m.startswith(pre):
+                out.append({"module": m, "why": label})
+                break
+    return out
+
+
 def go_package(name: str) -> str:
     """'github.com/a/b/pkg.(*T).M' → 'github.com/a/b/pkg'."""
     n = name.split("[", 1)[0]
@@ -215,7 +266,8 @@ def go_dependencies(buildinfo: dict[str, Any] | None, function_names: list[str])
             used[o] = used.get(o, 0) + c
         elif p != "main" and "." in p.split("/")[0]:
             undeclared[p] = c
-    return {"declared": len(deps), "with_code": sorted(m for m in deps if m in used),
+    return {"declared": len(deps), "notable": notable(sorted(set(deps) | set(undeclared))),
+            "with_code": sorted(m for m in deps if m in used),
             "without_code": sorted(m for m in deps if m not in used),
             "undeclared": sorted(undeclared.items(), key=lambda x: -x[1])[:100],
             "functions_per_module": dict(sorted(used.items(), key=lambda x: -x[1]))}

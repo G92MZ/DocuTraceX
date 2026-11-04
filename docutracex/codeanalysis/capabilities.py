@@ -146,7 +146,9 @@ def analyze(full: dict[str, Any], graph: dict[str, Any], capa: dict[str, Any] | 
             continue
         # the function itself plus the analysed functions it calls directly (thin wrappers)
         callees = [n for n in f.get("callee_names") or []]
-        for c in f.get("calls") or []:
+        via = list(f.get("calls") or []) + [t for ic in full.get("interface_calls") or [] if ic["from"] == f["addr"]
+                                            for t in ic["targets"]]
+        for c in via:
             if c in by and by[c].get("user", True):
                 callees += by[c].get("callee_names") or []
         names = list(dict.fromkeys(callees))

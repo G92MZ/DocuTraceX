@@ -74,4 +74,5 @@ when possible, skipped cleanly when absent.
 | `DOCUTRACEX_RIZIN` | an existing `rizin` (with the rz-ghidra plugin) for the code analysis |
 | `DOCUTRACEX_CODE_AUTO` | `0` turns the automatic code analysis off (default on) |
 | `DOCUTRACEX_CODE_BUDGET_MIN`, `DOCUTRACEX_CODE_MAX_MIN`, `DOCUTRACEX_CODE_MEM_MB` | code analysis limits per binary: budget (30 min), hard limit while still producing (40 min), memory (3072 MB) |
+| `DOCUTRACEX_CODE_CACHE`, `DOCUTRACEX_CODE_CACHE_MB` | reuse the code analysis of a binary already analysed in another case (on; `0` turns it off) and the cache size (2048 MB, oldest out first; under the cases folder, `.code-cache/`) |
 | `DOCUTRACEX_CODE_OBJECTS`, `DOCUTRACEX_CODE_DECOMPILE` | binaries analysed per case (3) and functions decompiled automatically per binary (100; the rest on demand) |
