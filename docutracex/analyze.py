@@ -1135,6 +1135,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                 write_subresult(paths, "code", cres)
                 if "code" not in ran:
                     ran.append("code")
+                findings_total += len(cres.get("findings") or [])
     except Exception as exc:  # noqa: BLE001
         log.warning("Code analysis skipped for %s: %s", paths.root.name, exc)
 
