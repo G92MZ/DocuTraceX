@@ -572,6 +572,7 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
             node.setdefault("code_error", f"view: {exc}")
 
     if depth < MAX_DEPTH:
+        _prefetch_tools([c for c, _ in kids[:MAX_CHILDREN]])
         for i, (cpath, cname) in enumerate(kids[:MAX_CHILDREN]):
             if ctx["_budget"][0] <= 0:      # node cap for the whole tree reached
                 node["truncated_children"] = len(kids[:MAX_CHILDREN]) - i
@@ -599,6 +600,16 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
 
 
 VIEWS_DIR = "nested_views"
+
+
+def _prefetch_tools(files: list[Path]) -> None:
+    """FLOSS + capa of the PEs about to be scanned start now, a few at a time,
+    while the other children are processed (see ``parsers.pe.prefetch``)."""
+    try:
+        from .parsers import pe as pe_mod
+        pe_mod.prefetch(files)
+    except Exception as exc:  # noqa: BLE001  (an optimisation only)
+        log.debug("FLOSS/capa prefetch skipped: %s", exc)
 
 
 def stego_is_image(data: bytes) -> bool:
@@ -744,6 +755,7 @@ def scan_children(items: list[dict[str, Any]], paths: CasePaths,
         except (OSError, KeyError):
             continue
     unlock_ctx["_pending_shas"] = pend
+    _prefetch_tools([Path(it["path"]) for it in todo if it.get("path")])
     tracer = _Tracer(len(todo))
     unlock_ctx["_tracer"] = tracer
     for i, it in enumerate(todo):

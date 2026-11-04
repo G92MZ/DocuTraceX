@@ -65,6 +65,20 @@ class ObjectProgress:
         except Exception:  # noqa: BLE001
             pass
 
+    def record(self, label: str, seconds: float, findings: int = 0, detail: str = "", status: str = "") -> None:
+        """An object finished by a parallel worker (no start / done pairing)."""
+        try:
+            self.n += 1
+            self.records.append({"name": label, "chain": label, "depth": 1, "kind": "",
+                                 "duration_s": round(seconds, 2), "findings": int(findings),
+                                 "detail": str(detail)[:200],
+                                 "status": status or ("ok_with_findings" if findings else "ok")})
+            pos = f"{self.noun} {self.n}/{self.total}" if self.total else f"{self.noun} {self.n}"
+            where = label if len(label) <= 70 else "…" + label[-69:]
+            self._report(f"{pos} done · {where}")
+        except Exception:  # noqa: BLE001
+            pass
+
     def timings(self) -> list[dict[str, Any]]:
         """Objects with results or slower than SLOW_S, slowest first (MAX_KEPT)."""
         if self._cur is not None:

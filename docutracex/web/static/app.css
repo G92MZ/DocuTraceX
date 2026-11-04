@@ -855,3 +855,11 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 .cx-batch { margin: 6px 0 8px; }
 .cx-bprog { height: 6px; border-radius: 3px; background: var(--border, #2a3442); overflow: hidden; margin-top: 4px; max-width: 480px; }
 .cx-bprog > div { height: 100%; background: var(--accent); transition: width .4s; }
+
+/* YARA / ML / C2: objects to scan */
+.obj-picker { margin: 6px 0 10px; }
+.obj-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; }
+.obj-tools .obj-q { min-width: 220px; }
+.obj-rows { max-height: 320px; overflow: auto; border: 1px solid var(--border, #2a3442); border-radius: 6px; padding: 4px 8px; }
+.obj-row { display: flex; gap: 8px; align-items: center; padding: 2px 0; }
+.obj-row .mono { word-break: break-all; }

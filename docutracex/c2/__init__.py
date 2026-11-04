@@ -102,26 +102,62 @@ def _finding(cfg: dict[str, Any]) -> dict[str, Any]:
             "severity": sev, "detail": detail, "location": cfg.get("object", ""), "evidence": evidence}
 
 
-def analyze(original: Path, extracted_dir: Path) -> dict[str, Any]:
+def _scan_worker(path_s: str) -> tuple[list[dict[str, Any]], float, str]:
+    """One object in a worker process: (configs, seconds, error)."""
+    import time as _time
+    t0 = _time.perf_counter()
+    p = Path(path_s)
+    try:
+        return scan_object(p, p.read_bytes()), _time.perf_counter() - t0, ""
+    except Exception as exc:  # noqa: BLE001
+        return [], _time.perf_counter() - t0, str(exc)[:200]
+
+
+def _scan_all(todo: list[tuple[str, Path, str]], prog: Any) -> list[list[dict[str, Any]]]:
+    """Configs of every object, in order; several worker processes when it pays
+    (the extractors are pure Python: threads would share one CPU)."""
+    from ..objects import workers
+    n = workers(len(todo), 4)
+    if n > 1 and len(todo) >= 4:
+        try:
+            from concurrent.futures import ProcessPoolExecutor
+            out: list[list[dict[str, Any]]] = []
+            with ProcessPoolExecutor(max_workers=n) as ex:
+                for (label, _p, _s), (found, secs, err) in zip(todo, ex.map(_scan_worker, [str(t[1]) for t in todo])):
+                    prog.record(label, secs, len(found), err or ", ".join(c["family"] for c in found)[:200])
+                    out.append(found)
+            return out
+        except Exception as exc:  # noqa: BLE001  (no process pool here: one by one)
+            log.warning("c2: parallel scan unavailable (%s), scanning sequentially", exc)
+    out = []
+    for label, path, _s in todo:
+        found, secs, err = _scan_worker(str(path))
+        prog.record(label, secs, len(found), err or ", ".join(c["family"] for c in found)[:200])
+        out.append(found)
+    return out
+
+
+def analyze(original: Path, extracted_dir: Path, only: set[str] | None = None) -> dict[str, Any]:
+    """``only`` = object ids (``original`` / path relative to the case folder)."""
     from ..findings import finding_id
 
     result: dict[str, Any] = {"module": "c2", "objects_scanned": 0, "configs": [], "findings": [],
                               "families": list(FAMILIES), "status": "ok"}
     seen: dict[tuple[str, str], dict[str, Any]] = {}
     from ..progress import ObjectProgress
-    targets = list(_targets(original, extracted_dir))
-    prog = ObjectProgress(len(targets))
-    for label, path, stored in targets:
+    todo = []
+    for label, path, stored in _targets(original, extracted_dir):
+        if only is not None and (stored or "original") not in only:
+            continue
         try:
             if path.stat().st_size > MAX_SIZE:
                 continue
-            data = path.read_bytes()
         except OSError:
             continue
+        todo.append((label, path, stored))
+    prog = ObjectProgress(len(todo))
+    for (label, path, stored), found in zip(todo, _scan_all(todo, prog)):
         result["objects_scanned"] += 1
-        prog.start(label)
-        found = scan_object(path, data)
-        prog.done(len(found), ", ".join(c["family"] for c in found)[:200])
         for cfg in found:
             key = (cfg["family"], ",".join(sorted(cfg.get("c2") or [])))
             if key in seen and cfg.get("c2"):   # the same config carried by several objects

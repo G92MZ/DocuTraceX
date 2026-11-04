@@ -280,6 +280,32 @@ tiny inert IL (`ldstr` / `call` / `ret`) that is only disassembled, never run.
 | `dotnet/sample_dotnet_stealer.exe` | `InvoiceMailSync` 1.4.0.0, an AgentTesla-like stealer: credential paths plain (Chrome *Login Data*, Firefox *logins.json*), exfiltration settings AES-256-CBC encrypted (key SHA-256("MailSync#Builder")) and decrypted by `Settings::Dec`. **.NET → Strings → Decrypted statically**: `smtp.billing-portal.example`, `accounts@billing-portal.example`, `587`. **C2 / Beacons**: *AgentTesla-like stealer*, SMTP `smtp.billing-portal.example:587`, account `accounts@billing-portal.example` — method says *settings decrypted statically by the .NET analysis*. |
 | `dotnet/sample_dotnet_bitmap_loader.exe` | `InvoiceGallery` 3.0.1.0, the **steganographic Bitmap loader** of many AgentTesla / Formbook campaigns: the `.resources` entry `Gallery` is a serialized `System.Drawing.Bitmap` (an uncompressed **BMP** carved inside the entry's own bounds), followed by an innocent PNG `Logo` that must not be mistaken for it (the real loader b81e4c09… is built the same way). Its pixels, read column by column (R, G, B) and XOR-ed with the literal `4417290360015521`, are an inert PE stub (trimmed to the end of its last section). **Resources**: *hidden exe in pixels* → nested child `…Gallery.pixels.exe`; finding *PE hidden in the pixels of the Bitmap* (high, T1027.003). **Methods of interest**: `Gallery::Decode` first (*stego* — `GetPixel`, `Color.get_R/G/B`, `xor` — and *called by a loader*), then `Program::Main` (`ResourceManager.GetObject` → `Decode` → `Assembly.Load`). |
 
+## FLOSS and capa: speed
+
+On each PE, FLOSS and capa run **at the same time** (two processes), and the PEs
+of a nested batch (an MSI's kits, an archive's binaries, unpacked files…) are
+**started ahead** on a small pool while the scan goes on, so their results are
+usually ready when the PE triage reaches them. `DOCUTRACEX_TOOLS_PARALLEL`
+binaries at once (default 2 — each one is two vivisect processes, memory-hungry;
+never above CPUs − 1). Obviously packed PEs (an executable section near entropy 8),
+PyInstaller bundles and files over 64 MB are not started ahead (the triage decides
+whether their tools run at all). `sample_bloated_invoice.exe`, `sample_pyinstaller.exe`
+and the MSI / archive samples exercise it.
+
+## YARA, Machine Learning and C2: choosing the objects
+
+The three tabs have **Objects to scan** under the case selector: every object of
+the case (the original and everything extracted, unpacked, decrypted or carved —
+named by its nested chain) with a checkbox, a filter, *All / None / Only the shown
+ones* and one button per type (PE, image…). A run covers the ticked objects only
+and **keeps the previous results of the others**; nothing ticked → nothing runs,
+all ticked → the whole case, as before. Objects are scanned **in parallel**
+(YARA in threads, C2 in worker processes, ML in a few scoring processes; up to
+CPUs − 1, `DOCUTRACEX_SCAN_WORKERS` overrides). Try it on
+`make_samples.dotnet_bitmap_loader_exe(make_samples.dotnet_stealer_exe())`: tick
+only `…Gallery.pixels.exe` in C2 → *AgentTesla-like stealer*, SMTP
+`smtp.billing-portal.example`; then only the original → the stealer's config stays.
+
 ## C2 / Beacons tab
 
 The **`c2/`** folder of `samples.zip` has one sample per implant family the tab
