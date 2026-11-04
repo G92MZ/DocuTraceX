@@ -2595,6 +2595,43 @@ def dotnet_bitmap_loader_exe() -> bytes:
                                                              "FileDescription": "Invoice Gallery"})
 
 
+def stego_png() -> bytes:
+    """An invoice "scan" whose pixels hide an inert ELF in the low bit of R, G, B
+    (LSB steganography, rows, MSB first). The picture itself is noise-like."""
+    import io as _io
+    import random as _random
+    import binkit as bk
+    from PIL import Image
+    data = bk.elf(strings=["inert invoice helper (text, not code)", "cdn-update.example.net"])
+    bits = "".join(f"{b:08b}" for b in data)
+    w = 128
+    h = -(-(-(-len(bits) // 3)) // w)
+    rnd = _random.Random(413)
+    px = []
+    for i in range(w * h):
+        p = []
+        for c in range(3):
+            j = 3 * i + c
+            p.append((rnd.randrange(256) & 0xFE) | (int(bits[j]) if j < len(bits) else 0))
+        px.append(tuple(p))
+    im = Image.new("RGB", (w, h))
+    im.putdata(px)
+    out = _io.BytesIO()
+    im.save(out, format="PNG")
+    return out.getvalue()
+
+
+def stego_zip() -> bytes:
+    """fotos_factura.zip: a PNG with an ELF hidden in its pixels (LSB) and a plain note."""
+    import io as _io
+    import zipfile as _zf
+    buf = _io.BytesIO()
+    with _zf.ZipFile(buf, "w", _zf.ZIP_DEFLATED) as z:
+        z.writestr("factura_scan.png", stego_png())
+        z.writestr("leeme.txt", "Factura 2024-0613: ver escaneo adjunto.\r\n")
+    return buf.getvalue()
+
+
 def _deflate(b: bytes) -> bytes:
     import zlib
     c = zlib.compressobj(9, zlib.DEFLATED, -15)
@@ -2604,7 +2641,8 @@ def _deflate(b: bytes) -> bytes:
 def dotnet_samples() -> dict[str, bytes]:
     return {"dotnet/sample_dotnet_loader.exe": dotnet_loader_exe(),
             "dotnet/sample_dotnet_stealer.exe": dotnet_stealer_exe(),
-            "dotnet/sample_dotnet_bitmap_loader.exe": dotnet_bitmap_loader_exe()}
+            "dotnet/sample_dotnet_bitmap_loader.exe": dotnet_bitmap_loader_exe(),
+            "stego/sample_stego_invoice.zip": stego_zip()}
 
 
 def code_samples() -> dict[str, bytes]:

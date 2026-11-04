@@ -1076,6 +1076,32 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                 findings_total += merged.get("counts", {}).get("findings", 0) - (
                     prev.get("counts", {}).get("findings", 0) if had else 0)
 
+    # The case's own file is an image: a payload hidden in its pixels is analysed
+    # as a child (the children of other images are handled by the nested scan).
+    try:
+        head = original.read_bytes()[:16]
+        from . import nested as _nested
+        if _nested.stego_is_image(head):
+            sg = _nested.stego_child(original.read_bytes(), original.name, paths.extracted_dir / "stego")
+            if sg:
+                prev = read_json(paths.subresult("nested"))
+                had = bool(prev and prev.get("tree"))
+                sres = run("stego: file hidden in the image's pixels → nested analysis",
+                           lambda: _nested.scan_children([{"path": sg["path"], "filename": sg["filename"],
+                                                           "origin": sg["origin"], "recipe": sg["recipe"],
+                                                           "source": "stego"}], paths, unlock_ctx={"user": user_pw}))
+                if sres.get("tree"):
+                    f0 = dict(sg["finding"], location=f"nested:{sg['filename']}", evidence=sg["how"])
+                    sres["tree"][0].setdefault("findings", []).insert(0, f0)
+                    merged = _nested.merge(prev, sres)
+                    write_subresult(paths, "nested", merged)
+                    if "nested" not in ran:
+                        ran.append("nested")
+                    findings_total += merged.get("counts", {}).get("findings", 0) - (
+                        prev.get("counts", {}).get("findings", 0) if had else 0)
+    except Exception as exc:  # noqa: BLE001  (never fails the case)
+        log.warning("stego on the original failed for %s: %s", paths.root.name, exc)
+
     # Byte ranges the analyst extracted in the Hex tab (raw or through a decode
     # recipe): re-created from their spec on every run, analysed as children.
     from . import hexview
