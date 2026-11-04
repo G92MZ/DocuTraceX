@@ -5104,6 +5104,7 @@ function goObjectTabs(o, i) {
     { id: "strings", label: c.strings ? `Strings (${c.strings})` : "Strings", html: cxSlot(c, sha, "go", "strings", g) },
     { id: "graph", label: "Call graph", html: cxSlot(c, sha, "go", "graph", g) },
     { id: "resources", label: cxResLabel(c), html: cxSlot(c, sha, "go", "resources", g) },
+    { id: "crypto", label: cxCryptoLabel(c), html: cxSlot(c, sha, "go", "crypto", g) },
     { id: "types", label: o.types ? `Types (${o.types.user_types})` : "Types",
       html: o.types ? `<div class="gt" data-gt-sha="${escapeHtml(sha)}" data-gt-group="${escapeHtml(g)}" data-gt-code="${cxOk(c) ? 1 : 0}"><p class="hint-line">Loading…</p></div>`
                     : '<p class="hint-line">No type information (GoReSym not provisioned or it refused the file, and no methods in the function table).</p>' },
@@ -5171,6 +5172,48 @@ function cxResources(d) {
     ${emb}
     ${certs ? `<h4 class="formats-title">Certificates and keys</h4><table class="cases"><thead><tr><th>Type</th><th>Subject</th><th>Validity</th><th>Offset</th></tr></thead><tbody>${certs}</tbody></table>` : ""}
     ${comp ? `<h4 class="formats-title">Compressed data</h4><table class="cases"><thead><tr><th>Format</th><th>Offset</th><th>Size</th><th>First bytes</th><th></th></tr></thead><tbody>${comp}</tbody></table>` : ""}`;
+}
+
+function cxCryptoLabel(c) {
+  const r = (c && c.resources) || {};
+  return r.decrypted ? `Crypto (${r.decrypted} decrypted)` : r.crypto_algorithms ? `Crypto (${r.crypto_algorithms})` : "Crypto";
+}
+
+const CX_STATUS = { recovered: "ok", reconstructed: "bad", inferred: "warn", "not recoverable": "muted" };
+const cxStatus = (s) => `<span class="badge badge-${CX_STATUS[s] || "muted"}" title="${escapeHtml({
+  recovered: "read directly from the file", reconstructed: "computed statically from data in the file",
+  inferred: "deduced from the evidence", "not recoverable": "the data needed is not in the file" }[s] || "")}">${escapeHtml(s)}</span>`;
+
+function cxCrypto(d) {
+  const c = d.crypto || {};
+  const e = (x) => escapeHtml(String(x ?? ""));
+  const byName = Object.fromEntries((d.functions || []).map((f) => [f.name, f.addr]));
+  const fn = (n) => (byName[n] != null ? `<button type="button" class="cx-link" data-cx-open="${byName[n]}">${e(n)}</button>` : `<span class="mono">${e(n)}</span>`);
+  if (c.error) return `<p class="bad-text">Crypto analysis failed: ${e(c.error)}</p>`;
+  const algos = (c.algorithms || []).map((a) => `<tr><td><b>${e(a.algorithm)}</b></td><td>${(a.evidence || []).map((x) =>
+      `<span class="badge badge-muted" title="${e(x.detail)}">${e(x.kind)}</span> <span class="hint-line">${e(x.detail)}</span>`).join("<br>")}</td></tr>`).join("");
+  const plains = (c.plaintexts || []).map((p) => `<div class="cx-plain">
+      <div>${cxStatus(p.status)} <b>${e(p.method)}</b> in ${fn(p.function)} <span class="hint-line">data @${cxHex(p.data_va)} · ${p.size} bytes${
+        p.key_va ? ` · key @${cxHex(p.key_va)}` : ""}${p.nonce_va ? ` · nonce @${cxHex(p.nonce_va)}` : ""}</span>
+        ${p.stored_path ? fileActions(p.stored_path) : ""}</div>
+      <pre class="cx-code">${p.text ? e(p.text) : e((p.hex || "").replace(/(..)/g, "$1 ").slice(0, 3000))}</pre></div>`).join("");
+  const keys = (c.keys || []).map((k) => `<tr><td>${fn(k.function)}</td><td>${e(k.label)}</td><td class="mono">${e(k.hex)}</td>
+      <td>${k.entropy}</td><td class="mono">${cxHex(k.va)}</td><td>${cxStatus(k.status)}</td></tr>`).join("");
+  const funcs = (c.functions || []).map((f) => `<tr><td>${fn(f.name)}</td><td>${(f.algorithms || []).map(e).join(", ")}</td>
+      <td>${(f.roles || []).map((r) => `<span class="badge badge-muted">${e(r)}</span>`).join(" ")}</td>
+      <td class="mono">${(f.calls || []).slice(0, 4).map(e).join("<br>")}</td></tr>`).join("");
+  const notes = (c.not_recoverable || []).map((n) => `<div>${cxStatus(n.status)} ${fn(n.function)} <span class="hint-line">— ${e(n.detail)}</span></div>`).join("");
+  const consts = (c.constants || []).map((k) => `<tr><td>${e(k.algorithm)}</td><td class="mono">${e(k.constant)}</td>
+      <td class="mono">${cxHex(k.offset)}</td><td class="mono">${cxHex(k.va)}</td></tr>`).join("");
+  if (!algos && !plains && !keys && !funcs) return '<p class="hint-line">No cryptography found (no known constants, crypto packages or APIs, key material or decoding loops).</p>';
+  return `<p class="hint-line">Static only: algorithms come from constants, Go packages and imports; decryption re-implements the algorithm on bytes read from the file (nothing of the sample runs).
+      ${cxStatus("recovered")} read from the file · ${cxStatus("reconstructed")} computed statically · ${cxStatus("inferred")} deduced · ${cxStatus("not recoverable")} data missing.</p>
+    ${plains ? `<h4 class="formats-title">Decrypted data</h4>${plains}` : ""}
+    ${algos ? `<h4 class="formats-title">Algorithms</h4><table class="cases"><thead><tr><th>Algorithm</th><th>Evidence</th></tr></thead><tbody>${algos}</tbody></table>` : ""}
+    ${funcs ? `<h4 class="formats-title">Functions using cryptography</h4><table class="cases"><thead><tr><th>Function</th><th>Algorithms</th><th>Role</th><th>Calls</th></tr></thead><tbody>${funcs}</tbody></table>` : ""}
+    ${keys ? `<h4 class="formats-title">Key material</h4><table class="cases"><thead><tr><th>Used by</th><th>Looks like</th><th>Bytes</th><th>Entropy</th><th>Address</th><th></th></tr></thead><tbody>${keys}</tbody></table>` : ""}
+    ${notes ? `<h4 class="formats-title">Not recoverable</h4>${notes}` : ""}
+    ${consts ? `<details class="disclose"><summary>Constants (${(c.constants || []).length})</summary><table class="cases"><thead><tr><th>Algorithm</th><th>Constant</th><th>Offset</th><th>Address</th></tr></thead><tbody>${consts}</tbody></table></details>` : ""}`;
 }
 
 function cxDepsCheck(d) {
@@ -5421,6 +5464,10 @@ async function cxRender(el, caseId) {
     cxWireOpen(el, caseId, sha, mode, group);
   } else if (part === "resources") {
     el.innerHTML = cxResources(d);
+    wireFileActions(el, caseId);
+  } else if (part === "crypto") {
+    el.innerHTML = cxCrypto(d);
+    cxWireOpen(el, caseId, sha, mode, group);
     wireFileActions(el, caseId);
   } else if (part === "depscheck") {
     el.innerHTML = cxDepsCheck(d);
@@ -5740,6 +5787,7 @@ function paneCode(cm) {
       { id: "apis", label: `APIs (${c.apis || 0})`, html: cxSlot(c, o.sha256, "native", "apis", g) },
       { id: "graph", label: "Call graph", html: cxSlot(c, o.sha256, "native", "graph", g) },
       { id: "resources", label: cxResLabel(c), html: cxSlot(c, o.sha256, "native", "resources", g) },
+      { id: "crypto", label: cxCryptoLabel(c), html: cxSlot(c, o.sha256, "native", "crypto", g) },
     ])}`;
   };
   const body = !objs.length ? '<p class="hint-line">No native object could be analysed.</p>'

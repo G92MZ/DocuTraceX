@@ -85,9 +85,10 @@ def score(fn: dict[str, Any], callee_names: list[str], strings: list[str], mode:
         reasons.append(f"uses URL / IP strings: {urls[0][:80]}")
         if "network" not in cats:
             cats.append("network")
-    if fn.get("loops") and fn.get("xor_ops", 0) >= 2:
+    if fn.get("loops") and (fn.get("xor_ops", 0) >= 2 or fn.get("xor_keys")):
         pts += 15
-        reasons.append(f"loop with {fn['xor_ops']} XOR instructions (decoding?)")
+        key = f", key 0x{fn['xor_keys'][0]:x}" if fn.get("xor_keys") else ""
+        reasons.append(f"loop with {fn.get('xor_ops', 0)} XOR instruction(s){key} (decoding?)")
         if "transform" not in cats:
             cats.append("transform")
     name = fn.get("name", "")

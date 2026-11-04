@@ -842,3 +842,5 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 .cg-key.cfg-jump { border-top-color: #5fd38b; } .cg-key.cfg-fail { border-top-color: #e8795a; }
 .cg-key.cfg-always { border-top-color: #4a5a70; }
 .badge.cg-trait { background: rgba(199, 146, 234, 0.14); color: #d7b4f0; }
+.cx-plain { margin: 6px 0 10px; }
+.cx-plain .cx-code { max-height: 220px; white-space: pre-wrap; word-break: break-all; margin-top: 6px; }
