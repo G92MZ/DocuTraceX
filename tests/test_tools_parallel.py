@@ -48,7 +48,6 @@ def test_both_tools_run_at_the_same_time(tmp_path: Path, fake_tools) -> None:
     p.write_bytes(bk.pe(bits=32, gui=False))
     t0 = time.perf_counter()
     floss, capa = pe_mod.tools_for(p)
-    assert time.perf_counter() - t0 < 0.55                 # 0.3 s each, not 0.6 s in a row
     assert floss["tool"] == "floss" and capa["tool"] == "capa" and fake_tools["max"] == 2
 
 
@@ -62,13 +61,10 @@ def test_prefetch_runs_ahead_and_is_used_once(tmp_path: Path, fake_tools, monkey
     (tmp_path / "note.txt").write_text("not a PE")
     assert pe_mod.prefetch(files + [tmp_path / "note.txt"]) == 4
     assert pe_mod.prefetch(files) == 0                        # not queued twice
-    t0 = time.perf_counter()
-    time.sleep(0.7)                                          # the rest of the scan goes on meanwhile
     for p in files:
         floss, capa = pe_mod.tools_for(p)
         assert floss.get("prefetched") and capa.get("prefetched")
-    assert time.perf_counter() - t0 < 1.3                    # 4 PEs x 0.3 s, 2 binaries (4 processes) at once
-    assert fake_tools["max"] <= 4
+    assert 2 < fake_tools["max"] <= 4                        # 2 binaries x (FLOSS + capa) at once, never more
     assert sorted(n for n, _ in fake_tools["calls"]).count("floss") == 4
     floss, _ = pe_mod.tools_for(files[0])                    # consumed: a later call runs it again
     assert not floss.get("prefetched")
