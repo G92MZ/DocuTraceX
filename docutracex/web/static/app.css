@@ -850,3 +850,8 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 .cx-cap-ev { margin: 4px 0 0 14px; font-size: 12px; line-height: 1.7; }
 .cg-edge.cg-if { stroke: #e5c07b; stroke-dasharray: 2 3; }
 .cg-key.cg-if { border-top: 2px dotted #e5c07b; }
+
+/* Code view: background "decompile all" */
+.cx-batch { margin: 6px 0 8px; }
+.cx-bprog { height: 6px; border-radius: 3px; background: var(--border, #2a3442); overflow: hidden; margin-top: 4px; max-width: 480px; }
+.cx-bprog > div { height: 100%; background: var(--accent); transition: width .4s; }
