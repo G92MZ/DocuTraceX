@@ -2573,7 +2573,9 @@ def dotnet_bitmap_loader_exe() -> bytes:
     cols = Image.frombytes("RGB", (h, w), enc)               # row x of this image = column x of the bitmap
     img = cols.transpose(Image.Transpose.TRANSPOSE)
     png = _io.BytesIO()
-    img.save(png, format="PNG")
+    img.save(png, format="BMP")                              # as the real loaders: an uncompressed BMP…
+    decoy = _io.BytesIO()
+    Image.new("RGB", (64, 64), (30, 60, 114)).save(decoy, format="PNG")   # …followed by an innocent PNG
     spec = {"assembly": "InvoiceGallery", "version": (3, 0, 1, 0),
             "refs": [("mscorlib", (4, 0, 0, 0)), ("System.Drawing", (4, 0, 0, 0))],
             "typerefs": [(1, "System.Drawing", "Bitmap"), (1, "System.Drawing", "Color"), (0, "System.Reflection", "Assembly"),
@@ -2586,7 +2588,8 @@ def dotnet_bitmap_loader_exe() -> bytes:
                           {"name": "Decode", "ops": [("ldarg.0",), ("callvirt", 0), ("call", 1), ("call", 2), ("call", 3),
                                                      ("ldstr", key.decode()), ("xor",), ("ret",)]}]}],
             "resources": [("InvoiceGallery.Properties.Resources.resources", dnkit.resources([
-                ("Gallery", ("object", "System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0", png.getvalue()))]))],
+                ("Gallery", ("object", "System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0", png.getvalue())),
+                ("Logo", ("object", "System.Drawing.Bitmap, System.Drawing, Version=4.0.0.0", decoy.getvalue()))]))],
             "user_strings": ["Invoice Gallery", "Select an invoice scan"]}
     return bk.pe(bits=32, gui=True, dotnet_md=spec, version={"CompanyName": "Invoice Sync Example",
                                                              "FileDescription": "Invoice Gallery"})

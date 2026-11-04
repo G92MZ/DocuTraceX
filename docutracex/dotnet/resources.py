@@ -16,7 +16,8 @@ _NAMES = {0: "null", 1: "string", 2: "bool", 3: "char", 4: "byte", 5: "sbyte", 6
           9: "uint32", 10: "int64", 11: "uint64", 12: "single", 13: "double", 14: "decimal", 15: "DateTime",
           16: "TimeSpan", 0x20: "byte[]", 0x21: "Stream"}
 # file signatures carved out of serialized objects (Bitmap / Icon / custom types)
-_CARVE = ((b"\x89PNG\r\n\x1a\n", "png"), (b"MZ", "exe"), (b"PK\x03\x04", "zip"), (b"BM", "bmp"))
+_CARVE = ((b"\x89PNG\r\n\x1a\n", "png"), (b"MZ", "exe"), (b"PK\x03\x04", "zip"), (b"BM", "bmp"),
+          (b"\xff\xd8\xff", "jpg"), (b"GIF8", "gif"))
 
 
 def is_resources(raw: bytes) -> bool:
@@ -54,12 +55,30 @@ class _R:
         return self.take(self.u7()).decode("utf-8", "replace")
 
 
+def _bmp_ok(blob: bytes, i: int) -> bool:
+    if len(blob) - i < 64:
+        return False
+    size, dib = struct.unpack_from("<I", blob, i + 2)[0], struct.unpack_from("<I", blob, i + 14)[0]
+    return dib in (12, 40, 52, 56, 108, 124) and 54 <= size <= len(blob) - i + 16
+
+
 def _carve(blob: bytes) -> tuple[bytes, str] | None:
+    """The first file signature inside a serialized object (BinaryFormatter keeps
+    a Bitmap / Icon as its encoded bytes): the earliest one wins."""
+    best = None
     for sig, ext in _CARVE:
         i = blob.find(sig)
-        if i >= 0 and (ext != "bmp" or len(blob) - i > 64):
-            return blob[i:], ext
-    return None
+        while i >= 0 and ext == "bmp" and not _bmp_ok(blob, i):
+            i = blob.find(sig, i + 1)
+        if i >= 0 and (best is None or i < best[0]):
+            best = (i, ext)
+    if best is None:
+        return None
+    i, ext = best
+    out = blob[i:]
+    if ext == "bmp":
+        out = out[:struct.unpack_from("<I", out, 2)[0]]
+    return out, ext
 
 
 def parse(raw: bytes) -> dict[str, Any]:
@@ -84,18 +103,22 @@ def parse(raw: bytes) -> dict[str, Any]:
         positions = [r.i32() for _ in range(n)]
         data_off = r.i32()
         names_off = r.o
-        entries = []
+        heads = []
         for pos in positions[:MAX_ENTRIES]:
             nr = _R(raw, names_off + pos)
             name = nr.take(nr.u7()).decode("utf-16-le", "replace")
-            doff = nr.i32()
-            entries.append(_entry(raw, data_off + doff, name, version, types))
+            heads.append((name, data_off + nr.i32()))
+        starts = sorted({o for _, o in heads} | {len(raw)})
+        entries = []
+        for name, off in heads:                   # each entry ends where the next one starts
+            end = next((s for s in starts if s > off), len(raw))
+            entries.append(_entry(raw, off, name, version, types, end))
         return {"version": version, "types": types, "count": n, "entries": entries}
     except (ValueError, struct.error, IndexError) as exc:
         return {"error": f".resources parser: {exc}"[:200]}
 
 
-def _entry(raw: bytes, off: int, name: str, version: int, types: list[str]) -> dict[str, Any]:
+def _entry(raw: bytes, off: int, name: str, version: int, types: list[str], end: int | None = None) -> dict[str, Any]:
     r = _R(raw, off)
     e: dict[str, Any] = {"name": name}
     try:
@@ -115,8 +138,7 @@ def _entry(raw: bytes, off: int, name: str, version: int, types: list[str]) -> d
         else:                                     # serialized user type (BinaryFormatter)
             idx = code - 0x40
             tname = types[idx] if 0 <= idx < len(types) else f"type#{idx}"
-            end = len(raw)
-            blob = raw[r.o:min(end, r.o + 64 * 1024 * 1024)]
+            blob = raw[r.o:min(end or len(raw), r.o + 64 * 1024 * 1024)]
             e.update(type=tname.split(",")[0], size=len(blob))
             got = _carve(blob)
             if got:

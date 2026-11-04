@@ -146,8 +146,12 @@ def test_bitmap_pixel_payload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     paths = CasePaths(m["analysis_id"], cases_dir=tmp_path)
     d = read_json(paths.subresult("dotnet"))
     o = d["objects"][0]["result"]
-    ent = o["resources"][0]["entries"][0]
+    ent, logo = o["resources"][0]["entries"]
+    # each entry is carved inside its own bounds: the BMP of Gallery, not the PNG of the next entry
+    assert (ent["carved"], logo["carved"]) == ("bmp", "png") and "stego" not in logo
     assert ent["type"] == "System.Drawing.Bitmap" and ent["stego"]["type"] == "exe"
+    import binkit as bk
+    assert ent["stego"]["size"] == len(bk.pe(bits=32, gui=False))      # trimmed to the end of the last section
     assert ent["stego"]["how"] == 'pixels by columns, RGB: XOR key "4417290360015521"'
     assert "dotnet:bitmap_payload" in {f["rule"] for f in d["findings"]}
     top = o["cil"]["interesting"][0]

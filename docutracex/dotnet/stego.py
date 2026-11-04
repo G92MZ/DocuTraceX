@@ -23,6 +23,21 @@ def _pe_ok(b: bytes) -> bool:
     return 0x40 <= off < min(len(b) - 4, 0x10000) and b[off:off + 4] == b"PE\x00\x00"
 
 
+def _pe_size(b: bytes) -> int:
+    """End of the last section (headers + raw data): where the PE really ends."""
+    try:
+        off = struct.unpack_from("<I", b, 0x3C)[0]
+        nsec, opt = struct.unpack_from("<H", b, off + 6)[0], struct.unpack_from("<H", b, off + 20)[0]
+        end = 0
+        for i in range(min(nsec, 96)):
+            sh = off + 24 + opt + 40 * i
+            raw_size, raw_ptr = struct.unpack_from("<II", b, sh + 16)
+            end = max(end, raw_ptr + raw_size)
+        return end if 0 < end <= len(b) else len(b)
+    except struct.error:
+        return len(b)
+
+
 def _kind(b: bytes) -> str | None:
     if _pe_ok(b):
         return "exe"
@@ -115,5 +130,5 @@ def extract(png: bytes, strings: list[Any]) -> tuple[str, bytes, str] | None:
         for how, out in _tries(s, keys):
             kind = _kind(out)
             if kind:
-                return f"pixels by {order}: {how}", out, kind
+                return f"pixels by {order}: {how}", out[:_pe_size(out)] if kind == "exe" else out, kind
     return None
