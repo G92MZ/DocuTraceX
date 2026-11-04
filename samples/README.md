@@ -218,6 +218,20 @@ reports *no valid pclntab found* — the Go tab shows that next to the own parse
 result. Any real Go program (`go build`) is identified the same way, and GoReSym
 agrees on it.
 
+## Code analysis (Go → Functions / Code, and the Code tab)
+
+Two binaries with a few **real x86-64 functions** (hand-encoded, never run) so
+the code analysis has something to show: `main` → a XOR loop that decodes a
+buffer in place → a function that hands the invoice C2 URL
+(`https://cdn-update.example.net/invoice/sync`) to an HTTP call. Built by
+`code_samples()` in `scripts/make_samples.py`. Needs Rizin + rz-ghidra
+(Diagnostics → Retry *rizin*).
+
+| Sample | What it shows |
+| --- | --- |
+| `go/sample_go_code.exe` | Go PE whose pclntab really maps `main.main`, `main.decryptConfig`, `main.beacon` and `net/http.(*Client).Do`: the names come back in Functions / Code and in the pseudocode; `main.beacon` ranks first (*communications* + URL, read as a Go string: pointer + length), `main.decryptConfig` is flagged as a XOR loop; callers / callees link them |
+| `code/sample_code_loader.exe` | native PE32+ (not Go): Components → **Code** — 3 functions, the one calling `InternetOpenA` / `InternetOpenUrlA` with the URL first, the XOR loop second; APIs lists the wininet imports with the function that calls them |
+
 ## C2 / Beacons tab
 
 The **`c2/`** folder of `samples.zip` has one sample per implant family the tab

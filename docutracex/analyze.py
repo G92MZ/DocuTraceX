@@ -1120,6 +1120,21 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         log.warning("Go identification skipped for %s: %s", paths.root.name, exc)
 
+    # Code analysis (Rizin + rz-ghidra) of native PE / ELF / Mach-O objects that
+    # are not Go (those are done by the Go module) and not .NET. Never fails the case.
+    try:
+        from .codeanalysis import case as code_case
+        nested_code = (read_json(paths.subresult("nested")) or {}).get("tree") or []
+        if code_case.enabled() and _code_targets(paths, original, nested_code):
+            cres = run("code: functions, priority and decompilation of native binaries (Rizin + rz-ghidra)",
+                       lambda: code_case.analyze_native_case(paths.root, original, nested_code, _go_shas(paths)))
+            if cres.get("objects"):
+                write_subresult(paths, "code", cres)
+                if "code" not in ran:
+                    ran.append("code")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Code analysis skipped for %s: %s", paths.root.name, exc)
+
     # YARA runs on every analysed object (the original, everything extracted,
     # nested children, decrypted/decoded stages) whenever rules are loaded. Its
     # hits are NOT findings until the analyst marks them (YARA tab): they are
@@ -1232,11 +1247,22 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     return {"modules_run": ran, "state": state, "counts": overall_counts}
 
 
+def _go_shas(paths: CasePaths) -> set[str]:
+    g = read_json(paths.subresult("golang")) or {}
+    return {o.get("sha256") or "" for o in g.get("objects") or []
+            if (o.get("result") or {}).get("state") in ("Confirmed", "Likely")}
+
+
+def _code_targets(paths: CasePaths, original: Path, tree: list[dict[str, Any]]) -> bool:
+    from . import golang
+    return bool(golang.targets(paths.root, original, tree))
+
+
 # Modules that can be re-run in isolation over an existing case.
 _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto",
                "xlmdeobf", "officemalscanner", "didier", "email", "pdf", "yara", "ole",
                "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules", "javascript", "rtf",
-               "powershell", "vbscript", "batch", "shortcut", "msi", "python", "java", "onenote", "ml", "c2", "golang")
+               "powershell", "vbscript", "batch", "shortcut", "msi", "python", "java", "onenote", "ml", "c2", "golang", "code")
 # Modules whose findings feed the consolidated view (includes derived ones).
 _COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file", "pyinstaller")
 
@@ -1392,6 +1418,11 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
         from . import golang
         res = golang.analyze_case(paths.root, original,
                                   (read_json(paths.subresult("nested")) or {}).get("tree") or [])
+    elif module == "code":
+        from .codeanalysis import case as code_case
+        res = code_case.analyze_native_case(paths.root, original,
+                                            (read_json(paths.subresult("nested")) or {}).get("tree") or [],
+                                            _go_shas(paths))
     elif module == "c2":
         from . import c2 as c2_mod
         res = c2_mod.analyze(original, ed)

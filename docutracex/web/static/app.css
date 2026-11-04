@@ -731,3 +731,32 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 
 .c2-kv th { width: 160px; white-space: nowrap; }
 .c2-kv td .mono, .c2-kv td.mono { word-break: break-all; }
+
+/* Code analysis explorer (Go subtabs / Code tab) */
+.cx-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.cx-cols3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 10px; }
+.cx-split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+@media (max-width: 1100px) { .cx-cols, .cx-split, .cx-cols3 { grid-template-columns: minmax(0, 1fr); } }
+.cx-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0 8px; }
+.cx-toolbar input[type="search"], .cx-toolbar select {
+  background: var(--bg); color: var(--text); border: 1px solid var(--panel-border); border-radius: 6px; padding: 5px 8px; font-size: 13px; }
+.cx-toolbar input[type="search"] { min-width: 260px; }
+.cx-toolbar .cx-pick { max-width: min(720px, 100%); font-family: "Cascadia Code", Consolas, monospace; }
+.cx-scroll { max-height: 62vh; overflow: auto; border: 1px solid var(--panel-border); border-radius: 6px; }
+.cx-scroll table.cases th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
+.cx-small { max-height: 240px; padding: 6px 8px; font-size: 12px; }
+.cx-row { cursor: pointer; }
+.cx-row:hover td { background: #161e29; }
+.cx-name { color: var(--text) !important; max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cx-link { background: none; border: none; padding: 0; color: var(--accent); cursor: pointer; text-align: left;
+  font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; word-break: break-all; }
+.cx-link:hover { text-decoration: underline; }
+.cx-fnhead { padding: 8px 10px; margin-bottom: 8px; border: 1px solid var(--panel-border); border-radius: 6px; background: var(--panel); }
+.cx-title { color: var(--text) !important; font-size: 14px; font-weight: 600; word-break: break-all; }
+.cx-code { margin: 0; background: #0b0e12; border: 1px solid var(--panel-border); border-radius: 6px; padding: 10px 12px;
+  max-height: 64vh; overflow: auto; white-space: pre; font-family: "Cascadia Code", Consolas, monospace; font-size: 12px;
+  line-height: 1.45; color: var(--text); tab-size: 4; }
+.tk-kw { color: #c792ea; } .tk-ty { color: #82aaff; } .tk-str { color: #c3e88d; } .tk-num { color: #f78c6c; }
+.tk-com { color: #6b7d8f; font-style: italic; }
+.da-off { color: var(--text-dim); } .da-bytes { color: #4f5d6e; }
+.da-call { color: var(--accent); } .da-jmp { color: #e5c07b; } .da-ret { color: #e8795a; }
