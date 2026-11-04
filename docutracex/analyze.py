@@ -1103,6 +1103,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001  (presentation only; never fail the case)
         log.warning("Could not surface nested code for %s: %s", paths.root.name, exc)
 
+    code_children: list[dict[str, Any]] = []      # files the code analysis recovers (go:embed, streams)
     # Go Malware Intelligence — identification of every PE / ELF / Mach-O object
     # of the case (original + nested, after unpacking), before YARA / ML / C2 so
     # they can use it. Own parser + GoReSym contrast; never fails the case.
@@ -1112,6 +1113,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         if golang.targets(paths.root, original, nested_go):
             gres = run("go: identification of every PE / ELF / Mach-O object (BuildInfo, pclntab, GoReSym)",
                        lambda: golang.analyze_case(paths.root, original, nested_go))
+            code_children += gres.pop("_children", None) or []
             if gres.get("objects"):
                 write_subresult(paths, "golang", gres)
                 if "golang" not in ran:
@@ -1128,12 +1130,31 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         if code_case.enabled() and _code_targets(paths, original, nested_code):
             cres = run("code: functions, priority and decompilation of native binaries (Rizin + rz-ghidra)",
                        lambda: code_case.analyze_native_case(paths.root, original, nested_code, _go_shas(paths)))
+            code_children += cres.pop("_children", None) or []
             if cres.get("objects"):
                 write_subresult(paths, "code", cres)
                 if "code" not in ran:
                     ran.append("code")
     except Exception as exc:  # noqa: BLE001
         log.warning("Code analysis skipped for %s: %s", paths.root.name, exc)
+
+    # Files recovered from the code (go:embed, compressed streams) → nested analysis.
+    if code_children:
+        try:
+            from . import nested
+            kres = run(f"code resources: {len(code_children)} embedded / compressed file(s) → nested analysis",
+                       lambda: nested.scan_children(code_children, paths, unlock_ctx={"user": user_pw}))
+            if kres.get("tree"):
+                prev = read_json(paths.subresult("nested"))
+                had = bool(prev and prev.get("tree"))
+                merged = nested.merge(prev, kres)
+                write_subresult(paths, "nested", merged)
+                if "nested" not in ran:
+                    ran.append("nested")
+                findings_total += merged.get("counts", {}).get("findings", 0) - (
+                    prev.get("counts", {}).get("findings", 0) if had else 0)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Nested analysis of code resources failed for %s: %s", paths.root.name, exc)
 
     # YARA runs on every analysed object (the original, everything extracted,
     # nested children, decrypted/decoded stages) whenever rules are loaded. Its
@@ -1451,6 +1472,8 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
     if res is None:
         raise ValueError(f"Module {module!r} not applicable to this case")
     written = res.get("module", module)
+    if isinstance(res, dict):
+        res.pop("_children", None)          # embedded files are re-scanned on a full re-run
     write_subresult(paths, written, res)
 
     ioc_total, findings_total = _recompute_derived(paths)
