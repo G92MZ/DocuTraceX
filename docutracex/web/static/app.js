@@ -4745,7 +4745,7 @@ function renderMailintel(m) {
   if (!box) return;
   const rows = (m.feeds || []).map((f) => `<tr><td>${escapeHtml(f.label)}</td><td>${f.count ? f.count.toLocaleString() : "—"}</td>
     <td>${escapeHtml(f.updated || "not downloaded")}${f.route ? `<div class="hint-line">via ${escapeHtml(f.route)}</div>` : ""}${
-      f.last_error ? `<div class="bad-text hint-line">${escapeHtml(f.last_error)}</div>` : ""}</td>
+      f.last_error ? `<div class="${f.needs_key && !f.count ? "" : "bad-text "}hint-line">${escapeHtml(f.last_error)}</div>` : ""}</td>
     <td class="mono"><a href="${escapeHtml(f.url || "#")}" target="_blank" rel="noopener noreferrer">${escapeHtml(f.source)}</a></td><td>${escapeHtml(f.license)}</td></tr>`).join("");
   box.innerHTML = table(["List", "Entries", "Updated", "Source", "Licence"], rows)
     + `<div class="hint-line">Built in (always on): ${(m.builtin || {}).freemail || 0} big webmail providers; abused TLDs ${escapeHtml(((m.builtin || {}).abused_tlds || []).map((t) => "." + t).join(" "))}.
@@ -4758,7 +4758,25 @@ function renderMailintel(m) {
 
 async function loadMailintel() {
   try { renderMailintel(await (await fetch("/api/settings/mailintel")).json()); } catch (_) { /* optional */ }
+  try {
+    const a = await (await fetch("/api/settings/abusech")).json();
+    document.getElementById("abusech-key").placeholder = a.configured ? `set (${a.hint})` : "not set";
+  } catch (_) { /* optional */ }
 }
+
+document.getElementById("abusech-save").addEventListener("click", async () => {
+  const inp = document.getElementById("abusech-key"), msg = document.getElementById("abusech-msg");
+  msg.className = "status"; msg.textContent = "Saving…";
+  try {
+    const r = await fetch("/api/settings/abusech", { method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ auth_key: inp.value.trim() }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    inp.value = ""; inp.placeholder = j.configured ? `set (${j.hint})` : "not set";
+    msg.textContent = j.configured ? "Saved — downloading URLhaus…" : "Removed.";
+    if (j.configured) document.getElementById("mailintel-refresh").click();
+  } catch (err) { msg.className = "status bad-text"; msg.textContent = String(err.message || err); }
+});
 
 async function loadEmailOrg() {
   try {

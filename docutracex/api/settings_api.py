@@ -124,6 +124,21 @@ async def mailintel_refresh() -> dict:
     return await asyncio.to_thread(mailintel.refresh, appsettings.proxy_url())
 
 
+@router.get("/abusech")
+async def abusech_get() -> dict:
+    """Whether an abuse.ch Auth-Key is set (never returned in full)."""
+    return appsettings.public_abusech()
+
+
+@router.put("/abusech")
+async def abusech_put(body: dict = Body(...)) -> dict:
+    """Store the free abuse.ch Auth-Key used to download the URLhaus export ("" removes it)."""
+    try:
+        return appsettings.set_abusech_key(str(body.get("auth_key") or ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/email")
 async def email_settings_get() -> dict:
     return appsettings.email_settings()

@@ -159,3 +159,26 @@ def set_email_settings(own_domains: list[str], brands: list[str]) -> dict[str, l
     data["email"] = {"own_domains": list(own_domains or [])[:200], "brands": list(brands or [])[:200]}
     save(data)
     return email_settings()
+
+
+def abusech_key() -> str:
+    """abuse.ch Auth-Key (free, auth.abuse.ch) for the URLhaus export; env
+    ``DOCUTRACEX_ABUSECH_KEY`` wins. Kept locally, never shown back in full."""
+    import os
+    return (os.environ.get("DOCUTRACEX_ABUSECH_KEY") or str((load().get("abusech") or {}).get("auth_key") or "")).strip()
+
+
+def set_abusech_key(key: str) -> dict[str, Any]:
+    key = str(key or "").strip()
+    if key and (len(key) > 200 or not all(c.isalnum() or c in "-_" for c in key)):
+        raise ValueError("the Auth-Key is letters, digits, '-' and '_' only")
+    data = load()
+    data["abusech"] = {"auth_key": key}
+    save(data)
+    return public_abusech()
+
+
+def public_abusech() -> dict[str, Any]:
+    k = abusech_key()
+    return {"configured": bool(k), "hint": ("…" + k[-4:]) if len(k) >= 8 else ("set" if k else "")}
+
