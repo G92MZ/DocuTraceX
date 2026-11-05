@@ -112,17 +112,33 @@ def read_json(path: Path) -> Any:
         raise StorageError(f"Could not read {path}: {exc}") from exc
 
 
+def _json_text(data: Any) -> str:
+    """JSON as UTF-8-safe text. Strings decoded from samples can hold lone
+    surrogates (undecodable bytes kept as \\udcXX): those are written as JSON
+    escapes, so the file stays valid UTF-8 and reads back to the same string."""
+    text = json.dumps(data, ensure_ascii=False, indent=2)
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        text = text.encode("utf-8", "backslashreplace").decode("utf-8")
+    return text
+
+
 def write_json(path: Path, data: Any) -> None:
     """Atomic write: serialise to a temp file in the same dir, then replace."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    text = _json_text(data)
+    tmp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
             "w", encoding="utf-8", dir=path.parent, delete=False, suffix=".tmp"
         ) as tmp:
-            json.dump(data, tmp, ensure_ascii=False, indent=2)
             tmp_path = Path(tmp.name)
+            tmp.write(text)
         tmp_path.replace(path)
     except OSError as exc:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
         raise StorageError(f"Could not write {path}: {exc}") from exc
 
 
