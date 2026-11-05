@@ -54,15 +54,43 @@ def test_routes_order() -> None:
     assert [r[0] for r in mailintel._routes("http://192.0.2.1:3128")] == ["direct / system proxy", "Settings proxy"]
 
 
-def test_urlhaus_needs_key_is_not_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_urlhaus_without_key_uses_the_mirror(monkeypatch: pytest.MonkeyPatch) -> None:
     from docutracex import appsettings
-    calls: list[str] = []
+    seen: list[str] = []
+
+    class _O:
+        def open(self, req, timeout=None):  # noqa: ANN001
+            seen.append(req.full_url)
+            return io.BytesIO(("# Updated: 2026-11-05\n" + "\n".join(f"0.0.0.0 h{i}.example" for i in range(15))).encode())
+
     monkeypatch.setattr(appsettings, "abusech_key", lambda: "")
-    monkeypatch.setattr(mailintel, "_routes", lambda proxy: [("direct / system proxy", _Opener("direct", calls, False))])
-    st = mailintel.refresh(None)
-    u = next(x for x in st["feeds"] if x["id"] == "urlhaus_hosts")
-    assert "Auth-Key" in u["last_error"] and u["needs_key"] and st["error"] is None
-    assert len(calls) == len(mailintel.FEEDS) - 1          # URLhaus was not even requested
+    monkeypatch.setattr(mailintel, "_routes", lambda proxy: [("direct / system proxy", _O())])
+    n, route = mailintel._download("urlhaus_hosts", None, 5)
+    assert n == 15 and route == "direct / system proxy · mirror curbengh.github.io"
+    assert seen == ["https://curbengh.github.io/malware-filter/urlhaus-filter-hosts-online.txt"]
+
+
+def test_blocked_export_falls_back_and_says_who_blocked(monkeypatch: pytest.MonkeyPatch) -> None:
+    from email.message import Message
+
+    from docutracex import appsettings
+    hdrs = Message()
+    hdrs["Server"] = "Zscaler/6.2"
+
+    class _O:
+        def open(self, req, timeout=None):  # noqa: ANN001
+            if "abuse.ch" in req.full_url:
+                raise urllib.error.HTTPError(req.full_url, 403, "Forbidden", hdrs,
+                                             io.BytesIO(b"<html><title>Website blocked</title></html>"))
+            raise urllib.error.URLError(socket.timeout("timed out"))
+
+    monkeypatch.setattr(appsettings, "abusech_key", lambda: "secretKEY0123456789abcdefXYZ")
+    monkeypatch.setattr(mailintel, "_routes", lambda proxy: [("direct / system proxy", _O())])
+    with pytest.raises(ConnectionError) as ei:
+        mailintel._download("urlhaus_hosts", None, 5)
+    msg = str(ei.value)
+    assert 'abuse.ch export: HTTP 403 — "Website blocked", server: Zscaler/6.2 (a proxy / firewall blocked it)' in msg
+    assert "mirror curbengh.github.io: timed out" in msg and "secretKEY" not in msg
 
 
 def test_urlhaus_csv_export_with_key(monkeypatch: pytest.MonkeyPatch) -> None:
