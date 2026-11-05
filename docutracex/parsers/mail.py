@@ -117,6 +117,23 @@ def _domain(addr: str) -> str:
     return addr.rsplit("@", 1)[1].lower() if "@" in addr else ""
 
 
+# Bounce (envelope) domains of email service providers: a Return-Path on them is
+# how bulk mail works, not a spoof.
+_ESP_BOUNCE = ("sendgrid.net", "mcsv.net", "rsgsv.net", "mcdlv.net", "mailchimpapp.net", "mandrillapp.com",
+               "amazonses.com", "mailgun.org", "mailgun.net", "sparkpostmail.com", "bounces.google.com",
+               "hubspotemail.net", "bnc3.mailjet.com", "mailjet.com", "sendibt2.com", "sendinblue.com", "brevo.com",
+               "exacttarget.com", "bounce.e.salesforce.com", "pmbounces.net", "postmarkapp.com", "createsend.com",
+               "cmail19.com", "cmail20.com", "klaviyomail.com", "mktomail.com", "en25.com", "messagegears.net",
+               "emarsys.net", "sailthru.com", "customeriomail.com", "zendesk.com", "freshdesk.com", "outbound.protection.outlook.com")
+
+
+def _reg(host: str) -> str:
+    parts = (host or "").lower().strip(".").split(".")
+    if len(parts) >= 3 and len(parts[-1]) == 2 and parts[-2] in ("co", "com", "org", "net", "gob", "gov", "ac", "edu"):
+        return ".".join(parts[-3:])
+    return ".".join(parts[-2:])
+
+
 def _first_addr(value: str | None) -> tuple[str, str]:
     """Return (display_name, email) for the first address in a header value."""
     if not value:
@@ -171,8 +188,14 @@ def _analyze_message(msg: Message, result: dict[str, Any]) -> None:
     }
 
     if from_addr and return_path and _domain(from_addr) != _domain(return_path):
-        result["findings"].append(_finding("from_returnpath_mismatch", "medium",
-            f"From domain ({_domain(from_addr)}) != Return-Path domain ({_domain(return_path)})"))
+        fd, rd = _domain(from_addr), _domain(return_path)
+        same_org = _reg(fd) == _reg(rd)                     # bounce.corp.example for corp.example
+        esp_bounce = rd.endswith(_ESP_BOUNCE)
+        if not same_org:
+            result["findings"].append(_finding(
+                "from_returnpath_mismatch", "info" if esp_bounce else "medium",
+                f"From domain ({fd}) != Return-Path domain ({rd})"
+                + (" — the bounce domain of an email service provider (normal for newsletters)" if esp_bounce else "")))
     if from_addr and reply_to and _domain(from_addr) != _domain(reply_to):
         result["findings"].append(_finding("replyto_mismatch", "low",
             f"Reply-To domain ({_domain(reply_to)}) != From domain ({_domain(from_addr)})"))
@@ -393,6 +416,9 @@ def _html_link_mismatch(html: str, result: dict[str, Any]) -> None:
             if chain:                          # not the mail gateway's wrapper
                 href = chain[-1][1]
             href_host = re.search(r"https?://([\w.-]+)", href)
+            from .. import mailintel
+            if href_host and mailintel.tracker(href_host.group(1)):
+                continue                       # an email service provider's click tracker (newsletters)
             if href_host and shown.group(1).lower() != href_host.group(1).lower():
                 result["findings"].append(_finding("url_display_mismatch", "medium",
                     f"Link text shows {shown.group(1)} but points to {href_host.group(1)}", "body"))

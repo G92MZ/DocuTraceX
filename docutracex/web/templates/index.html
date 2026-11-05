@@ -360,6 +360,21 @@
         <div class="hint-line"><span id="tlds-line"></span>
           <button id="tlds-refresh" class="btn btn-ghost btn-sm" type="button">Refresh now</button>
           <span id="tlds-msg" class="status"></span></div>
+        <h3 class="formats-title">Email reputation lists</h3>
+        <div class="hint-line">Free webmail, disposable domains, phishing domains / IPs and malware hosts the email rules compare
+          senders, Reply-To and links with (only locally: nothing is sent). Refreshed on start when older than a day.
+          <button id="mailintel-refresh" class="btn btn-ghost btn-sm" type="button">Refresh now</button>
+          <span id="mailintel-msg" class="status"></span></div>
+        <div id="mailintel-table"></div>
+        <h3 class="formats-title">Email rules: your organisation</h3>
+        <div class="hint-line">Your own domains (spoofing and look-alikes of them weigh the most) and extra brands to protect
+          besides the built-in ones — one per line. Your own rules go in <span class="mono">config/rules/email/*.yml</span>.</div>
+        <div class="email-org">
+          <label>Own domains<textarea id="email-own" rows="4" placeholder="corp.example&#10;corp-group.example"></textarea></label>
+          <label>Brands<textarea id="email-brands" rows="4" placeholder="corpname"></textarea></label>
+        </div>
+        <div class="hint-line"><button id="email-save" class="btn btn-ghost btn-sm" type="button">Save</button>
+          <span id="email-msg" class="status"></span></div>
       </section>
     </div>
 
