@@ -42,6 +42,11 @@ def _run(path: Path, all_xor: bool) -> dict[str, Any]:
         log.warning("dissect.cobaltstrike failed on %s: %s", path.name, exc)
         return {"status": "error", "error": str(exc)}
     try:
+        from . import cobalt as _cobalt
+        _cobalt._record(TOOL, ["all_xor" if all_xor else "default_xor"], r.stdout or "", r.stderr or "", r.returncode)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
         return json.loads((r.stdout or "").strip().splitlines()[-1])
     except Exception:  # noqa: BLE001
         log.warning("dissect.cobaltstrike: unreadable output on %s (rc=%s): %s",

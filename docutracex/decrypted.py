@@ -293,8 +293,58 @@ def _already_in(text: str, analysed: str) -> bool:
     return sum(1 for ln in lines if ln in analysed) * 2 >= len(lines)
 
 
+# Shellcode written as numbers — the "payload generator" formats of Cobalt
+# Strike / Metasploit / msfvenom: C / Python ``"\\xfc\\xe8…"``, C# / PowerShell
+# ``0xfc,0xe8,…``, VBA ``Array(-4,-24,…)`` (signed, with ``_`` continuations).
+_ESC_RUN = re.compile(r"(?:\\x[0-9A-Fa-f]{2}){8,}")
+_HEX_LIST = re.compile(r"(?:0x[0-9A-Fa-f]{1,2}\s*,\s*(?:_?\s*\r?\n\s*)?){31,}0x[0-9A-Fa-f]{1,2}")
+_DEC_LIST = re.compile(r"(?:-?\d{1,3}\s*,\s*(?:_\s*\r?\n\s*)?){63,}-?\d{1,3}")
+_ESC_GLUE = 24          # quotes / concatenation between two "\x.." runs of one array
+
+
+def payload_child(raw: bytes, how: str, origin: str, keys: dict[str, list[bytes]] | None = None,
+                  recipe: list[str] | None = None) -> dict[str, Any] | None:
+    """``classify``, except that shellcode stays the exact bytes (never text)."""
+    from .parsers.ps_deobf import _is_binary_payload
+    if _is_binary_payload(raw) and not _magic_ext(raw):
+        return {"how": how, "ext": ".bin", "data": raw, "recipe": list(recipe or []) + ["shellcode"],
+                "origin": f"{origin} → shellcode ({len(raw)} bytes)"}
+    return classify(raw, how, origin, keys=keys, recipe=recipe)
+
+
+def byte_arrays(code: str, binary_only: bool = False) -> list[tuple[str, bytes]]:
+    """Byte strings written as numbers in source code. ``binary_only``: keep
+    only what is a payload (shellcode / PE) — for code where number lists are
+    common (VBA, JS char codes are decoded elsewhere)."""
+    from .parsers.ps_deobf import _is_binary_payload
+    out: list[tuple[str, bytes]] = []
+    runs = list(_ESC_RUN.finditer(code))
+    i = 0
+    while i < len(runs):                       # "\xfc\xe8" "\x89…" glued across lines / concatenation
+        start, end, j = runs[i].start(), runs[i].end(), i
+        while j + 1 < len(runs) and runs[j + 1].start() - end <= _ESC_GLUE \
+                and not re.search(r"[;{}]", code[end:runs[j + 1].start()]):
+            j += 1
+            end = runs[j].end()
+        blob = bytes(int(h, 16) for h in re.findall(r"\\x([0-9A-Fa-f]{2})", code[start:end]))
+        if len(blob) >= 32:
+            out.append(("escaped bytes", blob))
+        i = j + 1
+    for m in _HEX_LIST.finditer(code):
+        out.append(("hex array", bytes(int(h, 16) for h in re.findall(r"0x([0-9A-Fa-f]{1,2})", m.group(0)))))
+    for m in _DEC_LIST.finditer(code):
+        vals = [int(v) for v in re.findall(r"-?\d+", m.group(0))]
+        if all(-128 <= v <= 255 for v in vals):
+            out.append(("number array", bytes(v & 0xFF for v in vals)))
+    if binary_only:
+        out = [(k, b) for k, b in out if _is_binary_payload(b) or _magic_ext(b)]
+    else:   # decimal lists are everywhere (tables, char codes): only as payloads
+        out = [(k, b) for k, b in out if k != "number array" or _is_binary_payload(b) or _magic_ext(b)]
+    return out
+
+
 def _decode_literals(code: str) -> list[tuple[str, bytes]]:
-    found: list[tuple[str, bytes]] = []
+    found: list[tuple[str, bytes]] = byte_arrays(code)
     for m in _B64_LIT.finditer(code):
         lit = m.group(1)
         if len(set(lit)) < 16:                 # "AAAA…", padding runs: not data
@@ -400,19 +450,23 @@ def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[s
                         raw = base64.b64decode(st["data_b64"])
                     except (ValueError, TypeError):
                         continue
-                    from .parsers.ps_deobf import _is_binary_payload
-                    origin = f"{key} {loc}: {' → '.join(recipe)}"
-                    if _is_binary_payload(raw) and not _magic_ext(raw):      # shellcode: bytes as they are
-                        p = {"how": f"{key}-stage", "ext": ".bin", "data": raw, "recipe": recipe + ["shellcode"],
-                             "origin": f"{origin} → shellcode ({len(raw)} bytes)"}
-                    else:
-                        p = classify(raw, f"{key}-stage", origin, recipe=recipe)
+                    p = payload_child(raw, f"{key}-stage", f"{key} {loc}: {' → '.join(recipe)}", recipe=recipe)
                     if p:
                         out.append(p)
                     continue
                 if worth_text_child(text, ext if len(text.strip()) >= 8 else None):
                     out.append({"how": f"{key}-stage", "origin": f"{key} {loc}: {' → '.join(recipe)}",
                                 "text": text, "ext": ext, "recipe": recipe})
+
+    # VBA macros carry shellcode as Array(-4, -24, …) / hex strings (Office
+    # payloads of Cobalt Strike / Metasploit): each one becomes a binary child
+    for mkey in ("oletools", "ole"):
+        olevba = (((mods.get(mkey) or {}).get("tools") or {}).get("olevba") or {})
+        code = olevba.get("_full_code") or "\n".join(m.get("code") or "" for m in olevba.get("modules") or [])
+        for kind, raw in byte_arrays(code, binary_only=True)[:PER_SCRIPT] if code else []:
+            p = payload_child(raw, f"vba-{kind}", f"VBA macro: {kind}", recipe=["vba", kind])
+            if p:
+                out.append(p)
 
     # Every encoded literal in the recovered code (base64 / hex, gzip/zlib in
     # them) is decoded and becomes a child, whatever comes out — unless the
@@ -439,8 +493,7 @@ def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[s
                 if n >= PER_SCRIPT or raw in seen_lits:
                     continue
                 seen_lits.add(raw)
-                p = classify(raw, f"{key}-{kind}", f"{key} {loc}: {kind} literal",
-                             keys=keys, recipe=[kind])
+                p = payload_child(raw, f"{key}-{kind}", f"{key} {loc}: {kind} literal", keys=keys, recipe=[kind])
                 if not p:
                     continue
                 if resolved and not (p.get("ext") and p["ext"] != ".bin"):
