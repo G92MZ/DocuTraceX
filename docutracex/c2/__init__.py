@@ -86,7 +86,7 @@ def scan_object(path: Path, data: bytes) -> list[dict[str, Any]]:
                 cfg["method"] = (f"{cfg.get('method', '')}".replace("plain .NET strings", ".NET strings")
                                  + " · settings decrypted statically by the .NET analysis")
     # A Cobalt Strike stager also matches the generic block_api shape: keep CS.
-    if any(r["family"] == "Cobalt Strike" for r in out):
+    if any(r["family"] == "Cobalt Strike" and r.get("kind") != "indicators" for r in out):
         out = [r for r in out if not r["family"].startswith("Metasploit")]
     return out
 
@@ -160,6 +160,11 @@ def analyze(original: Path, extracted_dir: Path, only: set[str] | None = None) -
         result["objects_scanned"] += 1
         for cfg in found:
             key = (cfg["family"], ",".join(sorted(cfg.get("c2") or [])))
+            if cfg.get("kind") == "indicators":           # the same traces in a script and its decoded copies
+                key = (cfg["family"], "indicators:" + "|".join(cfg.get("indicators") or []))
+                if key in seen:
+                    seen[key].setdefault("also_in", []).append(label)
+                    continue
             if key in seen and cfg.get("c2"):   # the same config carried by several objects
                 seen[key].setdefault("also_in", []).append(label)
                 continue
@@ -170,6 +175,13 @@ def analyze(original: Path, extracted_dir: Path, only: set[str] | None = None) -
             cfg["finding_id"] = finding_id(f["tool"], f["rule"], f["location"], f["detail"])
             result["configs"].append(cfg)
             result["findings"].append(f)
+    # a family whose configuration was recovered does not also need its bare traces
+    with_cfg = {c["family"] for c in result["configs"] if c.get("kind") != "indicators" and c.get("c2")}
+    drop = {c.get("finding_id") for c in result["configs"] if c.get("kind") == "indicators" and c["family"] in with_cfg}
+    if drop:
+        result["configs"] = [c for c in result["configs"] if c.get("finding_id") not in drop]
+        result["findings"] = [f for f in result["findings"]
+                              if finding_id(f["tool"], f["rule"], f["location"], f["detail"]) not in drop]
     result["timings"] = prog.timings()
     result["counts"] = {"configs": len(result["configs"]), "findings": len(result["findings"])}
     if result["findings"]:
