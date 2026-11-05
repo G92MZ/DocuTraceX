@@ -888,8 +888,7 @@ function paneFindings(findings, ids, ctx) {
   const node = (n, chain) => {
     if (!subtreeCount(n, chain)) return "";       // files with nothing found below them stay in Nested
     const kids = (n.children || []).map((c) => node(c, `${chain} › ${c.filename}`)).join("");
-    const extra = (n.decrypted_from ? (n.source === "code-resources" ? `<span class="badge badge-warn">📦 embedded resource</span>`
-                                          : `<span class="badge badge-warn">🔓 decrypted stage</span>`) : "")
+    const extra = (n.decrypted_from ? originBadge(n) : "")
       + (n.view_id ? `<button class="btn btn-sm nested-open" type="button" data-open-view="${escapeHtml(n.view_id)}" title="Open this file's own analysis (its tabs)">Open analysis ↗</button>` : "");
     return card(n.filename, n.kind, byChain[chain] || [], kids, false, extra);
   };
@@ -2479,6 +2478,16 @@ function panePyinstaller(pim) {
     ${rows}${netFindingsList(pim.findings || [])}${table}`;
 }
 
+// Where a recovered child comes from (its batch kind).
+function originBadge(n) {
+  const t = escapeHtml(n.decrypted_from || "");
+  if (n.source === "code-resources") return `<span class="badge badge-warn" title="Recovered from the binary: ${t}">📦 embedded resource</span>`;
+  if (n.source === "unpacked") return `<span class="badge badge-muted" title="${t}">📦 extracted (installer / unpacker)</span>`;
+  if (n.source === "hidden") return `<span class="badge badge-warn" title="${t}">🕵 hidden payload</span>`;
+  if (n.source === "hex") return `<span class="badge badge-muted" title="${t}">✂ hex selection</span>`;
+  return `<span class="badge badge-warn" title="Recovered by decrypting/decoding: ${t}">🔓 decrypted stage</span>`;
+}
+
 function nestedNode(n) {
   const fcount = (n.findings || []).length;
   const worst = (n.findings || []).some((f) => f.severity === "high") ? "bad"
@@ -2506,14 +2515,13 @@ function nestedNode(n) {
       ? (n.entropy != null
         ? `<span class="badge badge-${n.entropy >= 7.5 ? "warn" : "muted"}" title="Shannon entropy of the bytes (8 = random: encrypted or compressed)">opaque data · entropy ${n.entropy}${n.entropy >= 7.5 ? " (encrypted/compressed?)" : ""}</span>`
         : '<span class="badge badge-muted">not analyzable</span>')
-      : '<span class="badge badge-ok">clean</span>');
+      : (n.listed_only ? "" : '<span class="badge badge-ok">clean</span>'));
   let html = `<div class="nested-card nested-${worst}">
     <div class="nested-row">
       <b class="mono nested-name">${escapeHtml(n.filename)}</b>
       <span class="badge badge-muted">${escapeHtml(n.kind)}</span>
-      ${n.decrypted_from ? (n.source === "code-resources"
-        ? `<span class="badge badge-warn" title="Recovered from the binary: ${escapeHtml(n.decrypted_from)}">📦 embedded resource</span>`
-        : `<span class="badge badge-warn" title="Recovered by decrypting/decoding: ${escapeHtml(n.decrypted_from)}">🔓 decrypted stage</span>`) : ""}
+      ${n.decrypted_from ? originBadge(n) : ""}
+      ${n.listed_only ? `<span class="badge badge-muted" title="${escapeHtml(n.note || "")}">listed · not analysed in depth</span>` : ""}
       ${lock}${pwc}
       ${fcount ? "" : fList}
       ${open}${codeLinks}
@@ -2528,6 +2536,10 @@ function nestedNode(n) {
   if (fcount) html += fList;
   if ((n.children || []).length) {
     html += `<div class="nested-children">` + n.children.map(nestedNode).join("") + `</div>`;
+  }
+  if (n.listed_children || n.truncated_children) {
+    html += `<div class="nested-origin hint-line">${n.listed_children ? `${n.listed_children} file(s) listed without deep analysis` : ""}${
+      n.truncated_children ? ` · ${n.truncated_children} more not listed (${escapeHtml(n.truncated_reason || "limit")})` : ""}</div>`;
   }
   html += `</div>`;
   return html;
