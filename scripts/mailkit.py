@@ -111,7 +111,8 @@ def build_email(*, from_: str, to: str, subject: str, html: str, text: str,
                 received: list[str], auth_results: str | None = None, reply_to: str | None = None,
                 return_path: str | None = None, x_mailer: str | None = None, message_id: str | None = None,
                 date: str | None = None, attachments: list[tuple[str, str, bytes]] | None = None,
-                dkim_domain: str | None = None, tamper_after_signing: tuple[str, str] | None = None) -> bytes:
+                dkim_domain: str | None = None, tamper_after_signing: tuple[str, str] | None = None,
+                extra_headers: list[tuple[str, str]] | None = None) -> bytes:
     msg = EmailMessage()
     for r in received:
         msg["Received"] = r
@@ -129,6 +130,8 @@ def build_email(*, from_: str, to: str, subject: str, html: str, text: str,
     msg["Message-ID"] = message_id or "<20261014101500.4F2A1B@mail.corp.example>"
     if x_mailer:
         msg["X-Mailer"] = x_mailer
+    for k, v in extra_headers or []:
+        msg[k] = v
     msg["MIME-Version"] = "1.0"
     msg.set_content(text)
     msg.add_alternative(html, subtype="html")

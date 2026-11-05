@@ -39,6 +39,9 @@ DEFAULTS: dict[str, Any] = {
         # UI; env ``DOCUTRACEX_MAX_CONCURRENCY`` sets the initial default.
         "concurrency": max(1, min(8, int(os.environ.get("DOCUTRACEX_MAX_CONCURRENCY", "1")))),
     },
+    # Email rules: the organisation's own domains (spoofing / look-alikes of
+    # them weigh most) and extra brands to protect, besides the built-in ones.
+    "email": {"own_domains": [], "brands": []},
 }
 
 MIN_CONCURRENCY, MAX_CONCURRENCY = 1, 8
@@ -143,3 +146,16 @@ def public_network() -> dict[str, Any]:
     p = dict(net["proxy"])
     p["password_set"] = bool(p.pop("password", ""))
     return {"proxy": p, "risk_accepted": net["risk_accepted"], "proxy_active": proxy_url(net) is not None}
+
+
+def email_settings() -> dict[str, list[str]]:
+    e = load().get("email") or {}
+    clean = lambda xs: sorted({str(x).strip().lower().lstrip("@").rstrip(".") for x in xs or [] if str(x).strip()})  # noqa: E731
+    return {"own_domains": clean(e.get("own_domains")), "brands": clean(e.get("brands"))}
+
+
+def set_email_settings(own_domains: list[str], brands: list[str]) -> dict[str, list[str]]:
+    data = load()
+    data["email"] = {"own_domains": list(own_domains or [])[:200], "brands": list(brands or [])[:200]}
+    save(data)
+    return email_settings()

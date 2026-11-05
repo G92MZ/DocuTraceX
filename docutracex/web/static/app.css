@@ -875,3 +875,7 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 
 .intel-cell { white-space: nowrap; }
 .intel-link { padding: 1px 6px; margin-right: 3px; font-size: 11px; text-decoration: none; }
+
+.email-org { display: flex; gap: 12px; flex-wrap: wrap; margin: 6px 0; }
+.email-org label { display: flex; flex-direction: column; gap: 4px; flex: 1 1 240px; font-size: 13px; }
+.email-org textarea { font-family: var(--mono, monospace); font-size: 12px; background: #0b0e12; border: 1px solid var(--panel-border); border-radius: 6px; color: var(--text); padding: 6px 8px; }
