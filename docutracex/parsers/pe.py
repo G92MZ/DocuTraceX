@@ -627,8 +627,16 @@ def tight_on_functions(path: Path, addrs: list[int]) -> dict[str, Any]:
     addrs = sorted(set(int(a) for a in addrs))[:PRIORITY_TIGHT_MAX]
     if not addrs:
         return {"status": "skipped", "detail": "no priority function"}
-    extra = ["--only", "tight", "--functions", *(hex(a) for a in addrs)]
-    rec = _cached(path, "floss_tight", settings.floss_executable(), extra, lambda: _run_floss(path, extra))
+    hexes = [hex(a) for a in addrs]
+
+    def run() -> dict[str, Any]:
+        # FLOSS releases call the filter --functions; newer builds --analyze-functions
+        r = _run_floss(path, ["--only", "tight", "--functions", *hexes])
+        if r.get("status") == "error" and "unrecognized arguments" in str(r.get("detail") or ""):
+            r = _run_floss(path, ["--only", "tight", "--analyze-functions", *hexes])
+        return r
+    extra = ["--only", "tight", "--functions", *hexes]
+    rec = _cached(path, "floss_tight", settings.floss_executable(), extra, run)
     rec.pop("strings", None)
     rec["functions"] = len(addrs)
     return rec
