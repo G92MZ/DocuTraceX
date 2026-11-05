@@ -7,7 +7,8 @@ day, and from Settings → *Email reputation lists*). Only permissive licences:
   ~200 mail.com vanity domains (accountant.com, engineer.com, usa.com…);
 * **disposable** — disposable-email-domains (CC0);
 * **phishing domains / IPs** — Phishing-Database/Phishing.Database (MIT);
-* **malware hosts** — URLhaus by abuse.ch (CC0; the export needs a free abuse.ch Auth-Key).
+* **malware hosts** — URLhaus by abuse.ch (CC0): its export with a free abuse.ch Auth-Key,
+  else malware-filter's mirror of the online hosts (CC0).
 
 Built-in fallbacks keep the rules working offline: a short list of the big free
 webmail providers, commonly abused TLDs (Spamhaus / Interisle public reports on
@@ -49,7 +50,12 @@ FEEDS: dict[str, dict[str, Any]] = {
     # free Auth-Key (auth.abuse.ch) — Settings → Email reputation lists.
     "urlhaus_hosts": {"label": "Malware distribution hosts (URLhaus)", "license": "CC0-1.0", "kind": "domains",
                       "url": "https://urlhaus-api.abuse.ch/v2/files/exports/{key}/recent.csv",
-                      "page": "https://urlhaus.abuse.ch/api/", "source": "urlhaus.abuse.ch", "needs_key": "abusech"},
+                      "page": "https://urlhaus.abuse.ch/api/", "source": "urlhaus.abuse.ch", "needs_key": "abusech",
+                      # Without a key (or when abuse.ch is blocked): malware-filter's mirror of the
+                      # URLhaus online hosts (filters CC0, code MIT), on GitHub / GitLab / Cloudflare Pages.
+                      "mirrors": ["https://curbengh.github.io/malware-filter/urlhaus-filter-hosts-online.txt",
+                                  "https://malware-filter.gitlab.io/malware-filter/urlhaus-filter-hosts-online.txt",
+                                  "https://malware-filter.pages.dev/urlhaus-filter-hosts-online.txt"]},
 }
 
 # --- built-in lists -----------------------------------------------------------------
@@ -266,6 +272,32 @@ def status() -> dict[str, Any]:
             "builtin": {"freemail": len(FREEMAIL_BUILTIN), "abused_tlds": sorted(ABUSED_TLDS)}}
 
 
+_BLOCKERS = ("zscaler", "bluecoat", "symantec", "forti", "palo alto", "pan-os", "sophos", "netskope", "squid",
+             "mcafee", "skyhigh", "websense", "forcepoint", "checkpoint", "check point", "barracuda", "cisco",
+             "umbrella", "kaspersky", "eset", "bitdefender", "watchguard", "access denied", "blocked", "bloquead")
+
+
+def _who_answered(exc: Any) -> str:
+    """Who sent an HTTP error: the site, or a proxy / firewall block page in between
+    (its Server header or page title says so)."""
+    import re
+    try:
+        server = (exc.headers.get("Server") or exc.headers.get("Via") or "") if exc.headers else ""
+        body = exc.read(8192).decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001
+        server, body = "", ""
+    m = re.search(r"<title[^>]*>(.*?)</title>", body, re.I | re.S)
+    said = (m.group(1) if m else body if len(body) < 200 and "<" not in body else "")
+    said = re.sub(r"\s+", " ", said).strip()[:90]
+    said = re.sub(r"[A-Za-z0-9_-]{24,}", "…", said)          # never echo a key back
+    blocked = any(b in f"{server} {said}".lower() for b in _BLOCKERS)
+    bits = [f'"{said}"'] if said else []
+    if server:
+        bits.append(f"server: {server[:40]}")
+    out = f" — {', '.join(bits)}" if bits else ""
+    return out + (" (a proxy / firewall blocked it)" if blocked else "")
+
+
 def _short(exc: BaseException) -> str:
     """A one-line reason (Windows' WinError 10060 essay → "timed out")."""
     import socket
@@ -274,7 +306,7 @@ def _short(exc: BaseException) -> str:
     if isinstance(reason, (socket.timeout, TimeoutError)) or "10060" in str(reason) or "timed out" in str(reason):
         return "timed out (no route to the site: firewall / proxy?)"
     if isinstance(exc, urllib.error.HTTPError):
-        return f"HTTP {exc.code}"
+        return f"HTTP {exc.code}" + _who_answered(exc)
     if "10061" in str(reason) or "refused" in str(reason).lower():
         return "connection refused"
     if "getaddrinfo" in str(reason) or "Name or service" in str(reason) or "11001" in str(reason):
@@ -335,14 +367,22 @@ class NeedsKey(Exception):
     """The feed needs an API key that is not configured (not a network failure)."""
 
 
-def _feed_url(f: dict[str, Any]) -> str:
+def _sources(f: dict[str, Any]) -> list[tuple[str, str]]:
+    """(label, url) in order: the feed itself (keyed when it needs a key and one is
+    set), then its mirrors. Labels never contain the key."""
+    out: list[tuple[str, str]] = []
     if f.get("needs_key") == "abusech":
         from . import appsettings
         key = appsettings.abusech_key()
-        if not key:
-            raise NeedsKey("needs a free abuse.ch Auth-Key (auth.abuse.ch): set it below this table")
-        return f["url"].format(key=key)
-    return f["url"]
+        if key:
+            out.append(("abuse.ch export", f["url"].format(key=key)))
+    else:
+        out.append(("", f["url"]))
+    from urllib.parse import urlsplit
+    out += [(f"mirror {urlsplit(u).hostname}", u) for u in f.get("mirrors") or []]
+    if not out:
+        raise NeedsKey("needs a free abuse.ch Auth-Key (auth.abuse.ch): set it below this table")
+    return out
 
 
 def _body(raw: bytes) -> str:
@@ -355,31 +395,37 @@ def _body(raw: bytes) -> str:
     return raw.decode("utf-8", "replace")
 
 
+def _fetch(name: str, url: str, opener: Any, timeout: int) -> set[str]:
+    req = urllib.request.Request(url, headers={"User-Agent": "DocuTraceX"})
+    with opener.open(req, timeout=timeout) as r:
+        vals = parse(name, _body(r.read(64 * 1024 * 1024)))
+    if len(vals) < 10:
+        raise ValueError("list looks empty")
+    return vals
+
+
 def _download(name: str, proxy: str | None, timeout: int) -> tuple[int, str]:
+    """Each source (the feed, then its mirrors) by each route (direct, then the
+    Settings proxy); the first that gives a plausible list wins."""
     f = FEEDS[name]
-    url = _feed_url(f)
     errors = []
-    for label, opener in _routes(proxy):
-        req = urllib.request.Request(url, headers={"User-Agent": "DocuTraceX"})
-        try:
-            with opener.open(req, timeout=timeout) as r:
-                text = _body(r.read(64 * 1024 * 1024))
-        except Exception as exc:  # noqa: BLE001  (the reason never carries the URL: it may hold the key)
-            reason = _short(exc)
-            if f.get("needs_key") and reason in ("HTTP 401", "HTTP 403"):
-                reason += " (Auth-Key not accepted?)"
-            errors.append(f"{label}: {reason}")
-            continue
-        vals = parse(name, text)
-        if len(vals) < 10:
-            errors.append(f"{label}: list looks empty")
-            continue
-        p = _file(name)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix(".tmp")
-        tmp.write_text("\n".join(sorted(vals)) + "\n", encoding="utf-8")
-        tmp.replace(p)
-        return len(vals), label
+    for src, url in _sources(f):
+        for route, opener in _routes(proxy):
+            label = f"{route} · {src}" if src else route
+            try:
+                vals = _fetch(name, url, opener, timeout)
+            except Exception as exc:  # noqa: BLE001  (the reason never carries the URL: it may hold the key)
+                reason = str(exc) if isinstance(exc, ValueError) else _short(exc)
+                if src == "abuse.ch export" and reason.startswith(("HTTP 401", "HTTP 403")) and "blocked" not in reason:
+                    reason += " (Auth-Key not accepted, or blocked on the way?)"
+                errors.append(f"{label}: {reason}")
+                continue
+            p = _file(name)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp = p.with_suffix(".tmp")
+            tmp.write_text("\n".join(sorted(vals)) + "\n", encoding="utf-8")
+            tmp.replace(p)
+            return len(vals), label
     raise ConnectionError("; ".join(errors) or "no route")
 
 
