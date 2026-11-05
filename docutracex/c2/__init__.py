@@ -47,30 +47,67 @@ def _targets(original: Path, extracted_dir: Path):
 
 def scan_object(path: Path, data: bytes) -> list[dict[str, Any]]:
     """Every configuration found in one object (normally zero or one)."""
+    return scan_object_detailed(path, data)[0]
+
+
+def _applicable(name: str, data: bytes) -> bool:
+    from . import cobalt, metasploit, remcos
+    if name == "cobalt":
+        return cobalt.applicable(data)
+    if name == "remcos":
+        return remcos.prefilter(data)
+    if name == "metasploit":
+        return metasploit.prefilter(data)
+    if name == "dotnet":
+        from . import dotnet_rats
+        return dotnet_rats.prefilter(data)
+    return True                       # string-based extractors read any object
+
+
+def scan_object_detailed(path: Path, data: bytes) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(configurations, runs): every registered extractor runs on the object and
+    says what happened (``registry.STATUSES``), with its RAW output."""
+    import time as _time
+
     from . import cobalt, dotnet_more, dotnet_rats, metasploit, remcos, stealers
+    from .registry import EXTRACTORS, status_of
 
     out: list[dict[str, Any]] = []
-    for name, fn in (("cobalt", lambda: cobalt.extract(path, data)),
-                     ("remcos", lambda: remcos.extract(data) if remcos.prefilter(data) else None),
-                     ("dotnet", lambda: dotnet_rats.extract(data)),
-                     ("metasploit", lambda: metasploit.extract(data) if metasploit.prefilter(data) else None)):
-        try:
-            res = fn()
-        except Exception as exc:  # noqa: BLE001  (one extractor never breaks the scan)
-            log.warning("c2 extractor %s failed on %s: %s", name, path.name, exc)
-            continue
-        if res:
-            out.append(res)
+    runs: list[dict[str, Any]] = []
+
+    def run(name: str, fn) -> list[dict[str, Any]]:  # noqa: ANN001
+        t0 = _time.perf_counter()
+        applicable = _applicable(name, data)
+        found: list[dict[str, Any]] = []
+        err = ""
+        if applicable:
+            try:
+                res = fn()
+                found = [r for r in (res if isinstance(res, list) else [res]) if r]
+            except Exception as exc:  # noqa: BLE001  (one extractor never breaks the scan)
+                log.warning("c2 extractor %s failed on %s: %s", name, path.name, exc)
+                err = f"{type(exc).__name__}: {exc}"[:300]
+        raw: Any
+        if name == "cobalt":
+            raw = [{"tools": c.pop("_raw", []), "indicators": c.get("indicators") or []} for c in found]
+        else:
+            raw = [{k: v for k, v in c.items() if not k.startswith("_")} for c in found]
+        for c in found:
+            c["extractor"] = name
+            c["extractor_version"] = EXTRACTORS.get(name, {}).get("version", "")
+        runs.append({"extractor": name, "version": EXTRACTORS.get(name, {}).get("version", ""),
+                     "status": status_of(found, applicable, err), "seconds": round(_time.perf_counter() - t0, 3),
+                     "error": err, "raw": raw})
+        return found
+
+    out += run("cobalt", lambda: cobalt.extract(path, data))
+    out += run("remcos", lambda: remcos.extract(data))
+    out += run("dotnet", lambda: dotnet_rats.extract(data))
+    out += run("metasploit", lambda: metasploit.extract(data))
     if not any(r.get("kind") == "RAT" for r in out):
-        try:
-            out += dotnet_more.extract_all(data)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("c2 extractor dotnet_more failed on %s: %s", path.name, exc)
+        out += run("dotnet_more", lambda: dotnet_more.extract_all(data))
     if not any(r.get("kind") in ("RAT", "stealer") and r.get("c2") for r in out):
-        try:
-            out += stealers.extract_all(data)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("c2 extractor stealers failed on %s: %s", path.name, exc)
+        out += run("stealers", lambda: stealers.extract_all(data))
     # settings the .NET analysis decrypted statically (CIL decryptors, .resources)
     if out and data[:2] == b"MZ" and b"BSJB" in data:
         try:
@@ -88,7 +125,7 @@ def scan_object(path: Path, data: bytes) -> list[dict[str, Any]]:
     # A Cobalt Strike stager also matches the generic block_api shape: keep CS.
     if any(r["family"] == "Cobalt Strike" and r.get("kind") != "indicators" for r in out):
         out = [r for r in out if not r["family"].startswith("Metasploit")]
-    return out
+    return out, runs
 
 
 def _finding(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -102,47 +139,73 @@ def _finding(cfg: dict[str, Any]) -> dict[str, Any]:
             "severity": sev, "detail": detail, "location": cfg.get("object", ""), "evidence": evidence}
 
 
-def _scan_worker(path_s: str) -> tuple[list[dict[str, Any]], float, str]:
-    """One object in a worker process: (configs, seconds, error)."""
+def _scan_worker(path_s: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], float, str]:
+    """One object in a worker process: (configs, extractor runs, seconds, error)."""
     import time as _time
     t0 = _time.perf_counter()
     p = Path(path_s)
     try:
-        return scan_object(p, p.read_bytes()), _time.perf_counter() - t0, ""
+        cfgs, runs = scan_object_detailed(p, p.read_bytes())
+        return cfgs, runs, _time.perf_counter() - t0, ""
     except Exception as exc:  # noqa: BLE001
-        return [], _time.perf_counter() - t0, str(exc)[:200]
+        return [], [], _time.perf_counter() - t0, str(exc)[:200]
 
 
-def _scan_all(todo: list[tuple[str, Path, str]], prog: Any) -> list[list[dict[str, Any]]]:
-    """Configs of every object, in order; several worker processes when it pays
-    (the extractors are pure Python: threads would share one CPU)."""
+def _scan_all(todo: list[tuple[str, Path, str]], prog: Any) -> list[tuple[list[dict[str, Any]], list[dict[str, Any]]]]:
+    """(configs, runs) of every object, in order; several worker processes when it
+    pays (the extractors are pure Python: threads would share one CPU)."""
     from ..objects import workers
     n = workers(len(todo), 4)
     if n > 1 and len(todo) >= 4:
         try:
             from concurrent.futures import ProcessPoolExecutor
-            out: list[list[dict[str, Any]]] = []
+            out: list[tuple[list[dict[str, Any]], list[dict[str, Any]]]] = []
             with ProcessPoolExecutor(max_workers=n) as ex:
-                for (label, _p, _s), (found, secs, err) in zip(todo, ex.map(_scan_worker, [str(t[1]) for t in todo])):
+                for (label, _p, _s), (found, runs, secs, err) in zip(todo, ex.map(_scan_worker, [str(t[1]) for t in todo])):
                     prog.record(label, secs, len(found), err or ", ".join(c["family"] for c in found)[:200])
-                    out.append(found)
+                    out.append((found, runs))
             return out
         except Exception as exc:  # noqa: BLE001  (no process pool here: one by one)
             log.warning("c2: parallel scan unavailable (%s), scanning sequentially", exc)
     out = []
     for label, path, _s in todo:
-        found, secs, err = _scan_worker(str(path))
+        found, runs, secs, err = _scan_worker(str(path))
         prog.record(label, secs, len(found), err or ", ".join(c["family"] for c in found)[:200])
-        out.append(found)
+        out.append((found, runs))
     return out
+
+
+RUNS_DIR = "c2_runs"
+
+
+def _case_root(extracted_dir: Path) -> Path | None:
+    root = extracted_dir.parent
+    return root if (root / "case.json").is_file() else None
+
+
+def runs_history(case_root: Path) -> list[str]:
+    d = case_root / "results" / RUNS_DIR
+    return sorted(p.name for p in d.iterdir() if p.is_dir()) if d.is_dir() else []
 
 
 def analyze(original: Path, extracted_dir: Path, only: set[str] | None = None) -> dict[str, Any]:
     """``only`` = object ids (``original`` / path relative to the case folder)."""
     from ..findings import finding_id
 
+    import hashlib
+    import json
+    import secrets
+    import time as _time
+
+    from .normalize import normalize
+    from .registry import descriptors
+
+    run_id = f"{_time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"
+    case_root = _case_root(extracted_dir)
+    run_dir = case_root / "results" / RUNS_DIR / run_id if case_root else None
     result: dict[str, Any] = {"module": "c2", "objects_scanned": 0, "configs": [], "findings": [],
-                              "families": list(FAMILIES), "status": "ok"}
+                              "families": list(FAMILIES), "status": "ok", "run_id": run_id,
+                              "registry": descriptors(), "extractor_status": {}}
     seen: dict[tuple[str, str], dict[str, Any]] = {}
     from ..progress import ObjectProgress
     todo = []
@@ -156,9 +219,29 @@ def analyze(original: Path, extracted_dir: Path, only: set[str] | None = None) -
             continue
         todo.append((label, path, stored))
     prog = ObjectProgress(len(todo))
-    for (label, path, stored), found in zip(todo, _scan_all(todo, prog)):
+    for idx, ((label, path, stored), (found, runs)) in enumerate(zip(todo, _scan_all(todo, prog))):
         result["objects_scanned"] += 1
+        raw_ref = f"{RUNS_DIR}/{run_id}/{idx:04d}.json"
+        for r in runs:
+            st = result["extractor_status"].setdefault(r["extractor"], {})
+            st[r["status"]] = st.get(r["status"], 0) + 1
+        if run_dir is not None:          # RAW: written once per run, never overwritten
+            try:
+                run_dir.mkdir(parents=True, exist_ok=True)
+                try:
+                    sha = hashlib.sha256(path.read_bytes()).hexdigest()
+                except OSError:
+                    sha = ""
+                (run_dir / f"{idx:04d}.json").write_text(json.dumps(
+                    {"run_id": run_id, "object": label, "stored_path": stored, "sha256": sha,
+                     "extractors": runs}, default=str), encoding="utf-8")
+            except OSError as exc:
+                log.warning("c2: RAW record not written for %s: %s", label, exc)
         for cfg in found:
+            cfg["run_id"] = run_id
+            cfg["raw_ref"] = raw_ref if run_dir is not None else ""
+            cfg["normalized"] = normalize(cfg, cfg.get("extractor", ""), cfg.get("extractor_version", ""),
+                                          run_id, cfg["raw_ref"])
             key = (cfg["family"], ",".join(sorted(cfg.get("c2") or [])))
             if cfg.get("kind") == "indicators":           # the same traces in a script and its decoded copies
                 key = (cfg["family"], "indicators:" + "|".join(cfg.get("indicators") or []))
@@ -182,8 +265,73 @@ def analyze(original: Path, extracted_dir: Path, only: set[str] | None = None) -
         result["configs"] = [c for c in result["configs"] if c.get("finding_id") not in drop]
         result["findings"] = [f for f in result["findings"]
                               if finding_id(f["tool"], f["rule"], f["location"], f["detail"]) not in drop]
+    if case_root is not None:
+        try:
+            from .correlate import relate_and_index
+            relate_and_index(case_root.parent, case_root.name, result["configs"], partial=only is not None)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("c2: cross-case correlation skipped: %s", exc)
+        result["runs"] = runs_history(case_root)
     result["timings"] = prog.timings()
     result["counts"] = {"configs": len(result["configs"]), "findings": len(result["findings"])}
     if result["findings"]:
         result["status"] = "ok_with_findings"
     return result
+
+
+def reinterpret(case_root: Path, run_id: str | None = None) -> dict[str, Any]:
+    """Re-read a run's RAW records with the current parsers and normalizer —
+    no extractor is run again, the RAW stays as it is. The new interpretation
+    is written next to the run (``reinterpreted-<time>.json``, earlier ones
+    kept) and replaces the configurations' parsed values in the C2 result."""
+    import json
+    import time as _time
+
+    from ..storage import CasePaths, read_json, write_subresult
+    from . import cobalt
+    from .normalize import normalize
+    from .registry import EXTRACTORS
+
+    paths = CasePaths(case_root.name, cases_dir=case_root.parent)
+    res = read_json(paths.subresult("c2")) or {}
+    run_id = run_id or res.get("run_id") or ""
+    run_dir = case_root / "results" / RUNS_DIR / run_id
+    if not run_id or not run_dir.is_dir():
+        raise FileNotFoundError(f"no RAW record for run {run_id!r}")
+    by_ref: dict[str, dict[str, Any]] = {}
+    for f in sorted(run_dir.glob("[0-9]*.json")):
+        try:
+            by_ref[f"{RUNS_DIR}/{run_id}/{f.name}"] = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+    changed, out = 0, []
+    for cfg in res.get("configs") or []:
+        rec = by_ref.get(cfg.get("raw_ref") or "")
+        if rec is None:
+            continue
+        ext = cfg.get("extractor") or ""
+        new = None
+        if ext == "cobalt":
+            runs = [r for r in rec.get("extractors") or [] if r["extractor"] == "cobalt"]
+            for raw in (runs[0].get("raw") or []) if runs else []:
+                got = cobalt.reinterpret(raw.get("tools") or [], raw.get("indicators") or [])
+                if got and got.get("family") == cfg.get("family"):
+                    new = got
+                    break
+        if new is not None:
+            keep = {k: cfg[k] for k in ("object", "stored_path", "finding_id", "also_in", "run_id", "raw_ref",
+                                       "related", "extractor") if k in cfg}
+            cfg.clear()
+            cfg.update(new, **keep)
+        cfg["extractor_version"] = EXTRACTORS.get(ext, {}).get("version", cfg.get("extractor_version", ""))
+        before = json.dumps(cfg.get("normalized"), sort_keys=True, default=str)
+        cfg["normalized"] = normalize(cfg, ext, cfg["extractor_version"], run_id, cfg.get("raw_ref", ""))
+        changed += before != json.dumps(cfg["normalized"], sort_keys=True, default=str)
+        out.append({"object": cfg.get("object"), "family": cfg.get("family"), "normalized": cfg["normalized"]})
+    stamp = _time.strftime("%Y%m%d-%H%M%S")
+    (run_dir / f"reinterpreted-{stamp}.json").write_text(json.dumps(
+        {"run_id": run_id, "at": stamp, "extractor_versions": {k: v["version"] for k, v in EXTRACTORS.items()},
+         "configs": out}, default=str), encoding="utf-8")
+    res.setdefault("interpretations", []).append({"at": stamp, "run_id": run_id, "changed": changed})
+    write_subresult(paths, "c2", res)
+    return {"run_id": run_id, "configs": len(out), "changed": changed, "at": stamp}

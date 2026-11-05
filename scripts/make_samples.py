@@ -1831,6 +1831,21 @@ def cs_stager_shellcode() -> bytes:
             + b" -- end of inert fragments --\x00")
 
 
+def cs_stager_vba() -> bytes:
+    """Cobalt Strike's VBA payload format: the stager as ``Array(-4, -24, …)``
+    (signed bytes, ``_`` continuations), as pasted into a macro. Inert: the
+    numbers are the stager *shapes* of ``cs_stager_shellcode`` and nothing
+    calls them (no CreateThread / VirtualAlloc declarations)."""
+    sc = cs_stager_shellcode()
+    nums = [str(b - 256 if b > 127 else b) for b in sc]
+    lines = [",".join(nums[i:i + 24]) for i in range(0, len(nums), 24)]
+    body = ", _\n    ".join(lines)
+    return ("' invoice-2024-0613 viewer helper (inert DocuTraceX sample)\n"
+            "Dim myArray\n"
+            f"myArray = Array({body})\n"
+            "' nothing below runs: the array is never written to memory\n").encode()
+
+
 def cs_beacon_ps1() -> bytes:
     """Stageless PowerShell beacon (base64 + gzip → template → base64 + XOR 35 →
     'shellcode' carrying the config block). Inert."""
@@ -2777,6 +2792,7 @@ def c2_samples() -> dict[str, bytes]:
             "c2/sample_cs_smb_beacon.bin": cs_beacon_blob("smb"),
             "c2/sample_cs_beacon.ps1": cs_beacon_ps1(),
             "c2/sample_cs_stager.ps1": cs_stager_ps1(),
+            "c2/sample_cs_stager_array.vbs": cs_stager_vba(),
             "c2/sample_msf_https_stager.bin": msf_https_stager_blob(),
             "c2/sample_remcos.exe": remcos_exe(),
             "c2/sample_asyncrat.exe": asyncrat_exe(),

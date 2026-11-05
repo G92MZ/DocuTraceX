@@ -5180,6 +5180,16 @@ async function loadMlView(caseId) {
           { id: "results", label: "Results", html: '<p class="hint-line">Machine Learning runs on demand: press <b>Run Machine Learning</b> to score every PE, .NET, PDF, ELF and APK object of this case.</p>' },
           { id: "help", label: "Help", html: mlHelp({}) }]);
     wireInnerTabs(body);
+    body.querySelectorAll(".c2-rel").forEach((a) => a.addEventListener("click", (ev) => {
+      ev.preventDefault(); _c2Case = a.getAttribute("data-case"); loadC2View(_c2Case); }));
+    const ri = body.querySelector(".c2-reint");
+    if (ri) ri.addEventListener("click", async () => {
+      ri.disabled = true;
+      const r = await fetch(`/api/cases/${encodeURIComponent(id)}/c2/reinterpret`, { method: "POST" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { ri.insertAdjacentHTML("afterend", ` <span class="bad-text">${escapeHtml(j.detail || String(r.status))}</span>`); return; }
+      loadC2View(id);
+    });
     wireMarks(body, id, (fid, mark) => { findings.forEach((f) => { if (f.id === fid) f.mark = mark; }); });
     wireMlFamily(body, id);
     wireFileActions(body, id);                       // "Hex ⤷" on the explained features
@@ -6226,6 +6236,16 @@ function paneC2(c2, findings, caseId) {
         ${t.summary ? `<table class="cases c2-kv"><tbody>${kv(t.summary)}</tbody></table>` : ""}
         ${t.profile ? `<details class="disclose"><summary>Malleable C2 profile (rebuilt)</summary><pre class="mono c2-pre">${escapeHtml(t.profile)}</pre></details>` : ""}</details>`;
     }).join("");
+    const rel = (c.related || []).length ? `<div class="hint-line"><b>Seen in other cases:</b> ${c.related.map((r) =>
+      `<span class="badge ${r.strength === "strong" ? "badge-bad" : "badge-warn"}">${escapeHtml(r.match)}</span> <a href="#" class="c2-rel" data-case="${escapeHtml(r.case)}">${escapeHtml(r.case)}</a> <span class="mono">${escapeHtml(r.object || "")}</span>`).join(" · ")}</div>` : "";
+    const stCls = { extracted: "badge-ok", decrypted: "badge-ok", inferred: "badge-muted", conflicting: "badge-warn" };
+    const norm = (c.normalized || []).length ? `<details class="disclose"><summary>Normalized fields (${c.normalized.length}) — status, source, confidence</summary>
+      <table class="cases c2-kv"><thead><tr><th>Field</th><th>Value</th><th>Type</th><th>Status</th><th>Read by</th><th>Confidence</th></tr></thead><tbody>${
+      c.normalized.map((n) => `<tr><th>${escapeHtml(n.name)}</th><td class="mono">${escapeHtml(String(n.value))}</td><td>${escapeHtml(n.type)}</td>
+        <td><span class="badge ${stCls[n.status] || "badge-muted"}">${escapeHtml(n.status)}</span></td><td>${escapeHtml(n.extractor)} ${escapeHtml(n.extractor_version || "")}</td>
+        <td>${escapeHtml(n.confidence)}</td></tr>`).join("")}</tbody></table></details>` : "";
+    const rawLink = c.raw_ref && caseId ? (() => { const [, run, file] = c.raw_ref.split("/");
+      return ` · <a href="/api/cases/${encodeURIComponent(caseId)}/c2/runs/${encodeURIComponent(run)}/${encodeURIComponent(file)}" target="_blank">RAW (run ${escapeHtml(run)})</a>`; })() : "";
     const status = c.status ? `<span class="badge ${c.kind === "indicators" ? "badge-muted" : c.status.startsWith("partial") ? "badge-warn" : "badge-ok"}">${escapeHtml(c.status)}</span>` : "";
     return `<details class="disclose ml-item c2-card"${i < 3 ? " open" : ""}>
       <summary>
@@ -6234,13 +6254,15 @@ function paneC2(c2, findings, caseId) {
         ${(s.C2 || s.Hosts || []).length ? `<span class="hint-line mono">${escapeHtml((s.C2 || s.Hosts).slice(0, 3).join(", "))}</span>` : ""}
       </summary>
       <div style="padding:8px 10px">
-        <div class="hint-line">Read with: ${escapeHtml(c.method || "")} · confidence ${escapeHtml(c.confidence || "")}
+        ${rel}
+        <div class="hint-line">Read with: ${escapeHtml(c.method || "")} · confidence ${escapeHtml(c.confidence || "")}${rawLink}
           ${c.also_in ? ` · also in ${escapeHtml(c.also_in.join(", "))}` : ""}
           ${c.stored_path ? fileActions(c.stored_path) : ""}</div>
         ${c.note ? `<div class="hint-line">${escapeHtml(c.note)}</div>` : ""}
         <table class="cases c2-kv"><tbody>${rows}</tbody></table>
         ${secs}
         ${c.public_key ? `<details class="disclose"><summary>RSA public key (the team server's)</summary><pre class="mono c2-pre">${escapeHtml(c.public_key)}</pre></details>` : ""}
+        ${norm}
         ${tools ? `<details class="disclose"><summary>Per tool (${Object.keys(c.tools).length})${c.agreement ? ` · ${escapeHtml(c.agreement)}` : ""}</summary>${tools}</details>` : ""}
         ${all ? `<details class="disclose"><summary>Full configuration (${Object.keys(c.fields).length} fields)</summary>
           <table class="cases c2-kv"><tbody>${all}</tbody></table></details>` : ""}
@@ -6249,8 +6271,27 @@ function paneC2(c2, findings, caseId) {
     </details>`;
   }).join("");
   const empty = `<p class="hint-line">No implant configuration found in this case.</p>`;
+  const labels = { extracted: "extracted", partial: "partial", indicators: "indicators", not_found: "not found",
+                   not_applicable: "not applicable", unsupported_format: "unsupported", error: "error" };
+  const exStatus = c2.extractor_status || {};
+  const exRows = (c2.registry || []).map((x) => {
+    const st = exStatus[x.id] || {};
+    return `<tr><td><b>${escapeHtml(x.name)}</b> <span class="hint-line">v${escapeHtml(x.version)}</span><div class="hint-line">${escapeHtml((x.formats || []).join(", "))}</div></td>
+      <td>${escapeHtml((x.fields || []).join(", "))}${x.limits ? `<div class="hint-line">${escapeHtml(x.limits)}</div>` : ""}</td>
+      <td>${Object.entries(st).map(([k, n]) => `<span class="badge ${k === "extracted" ? "badge-bad" : k === "error" ? "badge-warn" : "badge-muted"}">${escapeHtml(labels[k] || k)} ${n}</span>`).join(" ")}</td></tr>`;
+  }).join("");
+  const interp = (c2.interpretations || []).slice(-5).map((i) => `${escapeHtml(i.at)} (${i.changed} changed)`).join(", ");
+  const extractors = `<div class="ml-pane"><p class="hint-line">Every registered extractor runs on every object and says what happened.
+      Run <span class="mono">${escapeHtml(c2.run_id || "—")}</span>${(c2.runs || []).length > 1 ? ` · earlier runs kept: ${(c2.runs || []).length - 1}` : ""}.
+      Its RAW output (what each tool printed) is stored per object and never overwritten.</p>
+    ${c2.registry ? `<table class="cases"><thead><tr><th>Extractor</th><th>Recovers</th><th>This run (objects)</th></tr></thead><tbody>${exRows}</tbody></table>` :
+      '<p class="hint-line">Re-run the C2 search to see the extractors\' statuses.</p>'}
+    ${caseId && c2.run_id ? `<p class="hint-line"><button class="btn btn-ghost btn-sm c2-reint" type="button">Re-interpret the RAW</button>
+      re-reads the stored RAW with the current parsers (nothing is run again; the RAW is untouched; earlier interpretations are kept).
+      ${interp ? `Done: ${interp}.` : ""}</p>` : ""}</div>`;
   return innerTabs("c2", [
     { id: "results", label: `Results (${cfgs.length})`, html: `<div class="ml-pane">${head}${cfgs.length ? cards : empty}</div>` },
+    { id: "extractors", label: "Extractors", html: extractors },
     { id: "help", label: "Help", html: c2Help(c2) },
   ]);
 }

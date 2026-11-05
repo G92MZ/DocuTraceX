@@ -317,6 +317,44 @@ async def case_c2_csv(analysis_id: str):
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
+@router.get("/{analysis_id}/c2/runs/{run_id}/{name}")
+async def case_c2_raw(analysis_id: str, run_id: str, name: str):
+    """One RAW record of a C2 run (every extractor's untouched output for one
+    object), or a re-interpretation written next to it."""
+    import re as _re
+
+    from fastapi.responses import FileResponse
+
+    from ..c2 import RUNS_DIR
+
+    try:
+        case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if not _re.fullmatch(r"[\w-]{1,64}", run_id) or not _re.fullmatch(r"[\w.-]{1,80}\.json", name):
+        raise HTTPException(status_code=400, detail="bad run or record name")
+    f = settings.cases_dir / analysis_id / "results" / RUNS_DIR / run_id / name
+    if not f.is_file():
+        raise HTTPException(status_code=404, detail="no such RAW record")
+    return FileResponse(f, media_type="application/json", filename=f"c2_{run_id}_{name}")
+
+
+@router.post("/{analysis_id}/c2/reinterpret")
+async def case_c2_reinterpret(analysis_id: str, run: str | None = None) -> dict:
+    """Re-read a C2 run's RAW records with the current parsers (nothing is run
+    again; the RAW is untouched; the earlier interpretation is kept)."""
+    from .. import c2 as c2_mod
+
+    try:
+        case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    try:
+        return c2_mod.reinterpret(settings.cases_dir / analysis_id, run)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @router.get("/{analysis_id}/marks")
 async def get_marks(analysis_id: str) -> dict:
     """Return the case's findings each enriched with its mark, plus counts."""
