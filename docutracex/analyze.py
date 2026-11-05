@@ -1287,6 +1287,15 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 
     overall_counts["findings"] = findings_total
 
+    # Email verdict: the declarative rules that need the whole case (what the
+    # attachments / links turned into), then the score → verdict.
+    if "mailrules" in ran:
+        try:
+            from .parsers import mail_rules as _mr
+            run("mailrules: verdict over the whole case", lambda: _mr.case_stage(paths.root))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("email verdict skipped for %s: %s", paths.root.name, exc)
+
     # Common IOC extraction: a single phase AFTER all parsers, over their outputs.
     if ran:
         from . import ioc
@@ -1529,6 +1538,9 @@ def run_module(case_root: Path, module: str) -> dict[str, Any]:
         # gmzpt
         from .parsers import mail_rules
         res = mail_rules.analyze(original, declared_ext, read_json(paths.subresult("email")) or {}, paths.root)
+        write_subresult(paths, "mailrules", res)
+        mail_rules.case_stage(paths.root)
+        res = read_json(paths.subresult("mailrules")) or res
     elif module == "pdf":
         from .parsers import pdf as pdf_parser
         res = pdf_parser.analyze(original, ed)

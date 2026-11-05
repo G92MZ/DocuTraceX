@@ -110,6 +110,35 @@ async def refresh_tlds() -> dict:
         raise HTTPException(status_code=502, detail=f"Could not download the IANA list: {exc}") from exc
 
 
+@router.get("/mailintel")
+async def mailintel_status() -> dict:
+    """Email reputation lists (free webmail, disposable, phishing, URLhaus): state."""
+    from .. import mailintel
+    return mailintel.status()
+
+
+@router.post("/mailintel/refresh")
+async def mailintel_refresh() -> dict:
+    """Download the email reputation lists again (through the HTTP proxy if one is set)."""
+    from .. import mailintel
+    return await asyncio.to_thread(mailintel.refresh, appsettings.proxy_url())
+
+
+@router.get("/email")
+async def email_settings_get() -> dict:
+    return appsettings.email_settings()
+
+
+@router.put("/email")
+async def email_settings_put(body: dict = Body(...)) -> dict:
+    """Own domains and extra brands for the email rules (one per entry)."""
+    def norm(v):  # noqa: ANN001
+        if isinstance(v, str):
+            v = v.splitlines()
+        return [str(x).strip() for x in v or [] if str(x).strip()]
+    return appsettings.set_email_settings(norm(body.get("own_domains")), norm(body.get("brands")))
+
+
 @router.get("/ml/family")
 async def ml_family_status() -> dict:
     """Optional EMBER2024 family model (Machine Learning tab): download state."""
