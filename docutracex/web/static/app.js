@@ -506,6 +506,7 @@ const IOC_TYPE_LABEL = {
   user_agent: "User agent",
 };
 // Group order and plural labels in the IOCs tab.
+const INTEL_TYPES = ["ipv4", "ipv6", "domain", "url", "hash_like"];
 const IOC_GROUPS = [
   ["ipv4", "IPv4"], ["ipv6", "IPv6"], ["domain", "Domains"], ["url", "URLs"],
   ["email", "Emails"], ["user_agent", "User agents"], ["filepath", "File paths"],
@@ -1040,6 +1041,30 @@ function wirePivots(root) {
 }
 
 // k: MH22fELbKP
+// One-click lookups in public services (opened in the browser: the indicator
+// leaves the app only when the analyst clicks).
+function intelLinks(type, value) {
+  const e = encodeURIComponent(value);
+  const a = (href, label, title) => `<a class="btn btn-ghost btn-sm intel-link" href="${href}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(title)}">${label}</a>`;
+  const vt = (kind) => a(`https://www.virustotal.com/gui/${kind}/${kind === "url" ? encodeURIComponent(btoaUrl(value)) : e}`, "VT", "VirusTotal");
+  if (type === "ipv4" || type === "ipv6")
+    return vt("ip-address") + a(`https://www.abuseipdb.com/check/${e}`, "AbuseIPDB", "AbuseIPDB")
+      + a(`https://urlscan.io/search/#page.ip:${e}`, "urlscan", "urlscan.io");
+  if (type === "domain")
+    return vt("domain") + a(`https://urlscan.io/search/#domain:${e}`, "urlscan", "urlscan.io");
+  if (type === "url")
+    return vt("url") + a(`https://urlscan.io/search/#page.url:${encodeURIComponent(JSON.stringify(value))}`, "urlscan", "urlscan.io");
+  if (type === "hash_like" && /^(?:[a-f0-9]{32}|[a-f0-9]{40}|[a-f0-9]{64})$/i.test(value))
+    return vt("file");
+  return "";
+}
+
+// VirusTotal's URL id: base64url of the URL, without padding.
+function btoaUrl(s) {
+  try { return btoa(unescape(encodeURIComponent(s))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
+  catch (_) { return s; }
+}
+
 function paneIocs(iocs, net) {
   if (!iocs || !iocs.iocs || !iocs.iocs.length) return `<p class="hint-line">No IOCs.</p>`;
   const checked = {};
@@ -1061,6 +1086,7 @@ function paneIocs(iocs, net) {
       <td>${addMarkCell("ioc", `${IOC_TYPE_LABEL[i.type] || i.type}: ${i.value}`, "iocs",
         (i.occurrences || []).slice(0, 5).map((o) => `${o.module}/${o.location}: ${o.context || ""}`).join("\n"))}</td>
       ${kind ? `<td>${netCell}</td>` : ""}
+      ${INTEL_TYPES.includes(i.type) ? `<td class="intel-cell">${intelLinks(i.type, i.value)}</td>` : ""}
     </tr>`;
   };
   // group by type, known types first in a fixed order, then any new type
@@ -1076,7 +1102,7 @@ function paneIocs(iocs, net) {
     `<button type="button" class="ioc-chip" data-ioc-chip="${escapeHtml(t)}">${escapeHtml(l)} <b data-ioc-count="${escapeHtml(t)}">${byType[t].length}</b></button>`).join("");
   const groups = order.map(([t, l]) => `<details class="ioc-group" data-ioc-group="${escapeHtml(t)}" open>
       <summary><b>${escapeHtml(l)}</b> <span class="muted">· <span data-ioc-gcount="${escapeHtml(t)}">${byType[t].length}</span></span></summary>
-      ${table(["Value", "Count", "Provenance", "Mark"].concat(netKindOf(t) ? ["Network"] : []), byType[t].map(row).join(""))}
+      ${table(["Value", "Count", "Provenance", "Mark"].concat(netKindOf(t) ? ["Network"] : []).concat(INTEL_TYPES.includes(t) ? ["Look up"] : []), byType[t].map(row).join(""))}
     </details>`).join("");
   const allBtn = safe.length ? `<button class="btn btn-ghost btn-sm" type="button" data-net-all='${escapeHtml(JSON.stringify(safe))}' title="Domains: DNS, RDAP, certificates and a visit to the website (screenshot, page). IPs: owner, ASN, Tor. Through the proxy.">Check all domains &amp; IPs</button>` : "";
   return `<div class="ioc-pane">
