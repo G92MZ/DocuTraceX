@@ -194,6 +194,8 @@ def test_case_stage_payload(tmp_path: Path) -> None:
 @pytest.mark.parametrize("fn, verdict, must", [
     ("bec_freemail_eml", "phishing", {"bec_bank_details_change", "freemail_business_request", "mailto_freemail_in_body"}),
     ("toad_eml", "phishing", {"callback_phishing"}),
+    ("phish_kit_links_eml", "phishing", {"link_recipient_in_url", "link_phishing_kit_path",
+                                         "link_unfilled_placeholder", "link_credential_harvest_pattern"}),
     ("newsletter_eml", "clean", {"legit_esp_newsletter"}),
     ("lure_attachments_eml", "malicious", {"password_protected_attachment", "svg_active_content",
                                            "calendar_invite_links", "fake_reply_thread"}),
@@ -206,3 +208,28 @@ def test_samples(tmp_path: Path, fn: str, verdict: str, must: set) -> None:
     email = mail.analyze(p, ".eml", tmp_path / "extracted")
     res = mail_rules.analyze(p, ".eml", email, tmp_path)
     assert res["verdict"]["verdict"] == verdict and must <= _ids(res)
+
+
+def test_phish_url_patterns_and_legit_links() -> None:
+    from docutracex import mailengine as me
+    r = "lauralc@corp.example"
+    links = ["https://shop-k.example/kalvan/scaverserverriorukuse-seceriwertorismailserv99/he-opas.html?email=" + r,
+             "https://p.example/x/servesyncerrorcertwerts/he-opas.html?email=[[-Email-",
+             "https://p2.example/login#" + __import__("base64").b64encode(r.encode()).decode(),
+             "https://news.example/unsubscribe?email=" + r,            # newsletter opt-out: legit
+             "https://sender.example/portal/account?email=" + r,        # the sender's own site
+             "https://news.example/products/office-chairs",
+             "http://paypal.example@evil.example/x", "https://xn--pypal-4ve.example/"]
+    f = me._phish_url_patterns(links, [r], "sender.example")
+    assert f["recipient_in_url"] == [links[0], links[2]]
+    assert f["kit_path"] == links[:2] and f["placeholder"] == [links[1]]
+    assert f["userinfo"] == [links[6]] and f["punycode"] == [links[7]]
+
+
+def test_report_phish_button_is_infrastructure() -> None:
+    from docutracex import ioc, urlwrap
+    u = "https://us-phishalarm-ewt.proofpoint.com/EWT/v1/BvtVhh717i4!WfzB-ABkywa3$"
+    assert urlwrap.is_opaque_infrastructure(u)
+    assert not urlwrap.is_opaque_infrastructure("https://urldefense.com/v3/__https://evil.example/__;!!x$")
+    got = ioc.extract([{"module": "email", "location": "email/body_html_link", "text": u}])["iocs"]
+    assert not got

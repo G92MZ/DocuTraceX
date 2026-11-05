@@ -36,7 +36,7 @@ import zipfile
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .logging_config import get_logger
 
@@ -97,6 +97,75 @@ def rules() -> dict[str, Any]:
 
 
 # --- facts ----------------------------------------------------------------------------
+# --- typical phishing-kit URLs -------------------------------------------------
+# Stems kits glue into their paths (".../servesyncerrorcertwerts/he-opas.html").
+_LURE_STEMS = ("secure", "verif", "account", "login", "logon", "signin", "webmail", "mailserv", "mailbox",
+               "office", "o365", "owa", "outlook", "sharepoint", "onedrive", "docusign", "adobe", "wetransfer",
+               "dropbox", "update", "auth", "valid", "confirm", "cert", "sync", "error", "unlock", "suspend",
+               "recover", "passw", "wallet", "billing", "invoice", "payment", "factura", "banco", "support",
+               "alert", "notice", "secur", "portal", "server", "upgrade", "quota", "storage", "expire", "renew")
+# Merge tags a campaign tool failed to fill in ([[-Email-], {{email}}, %EMAIL%, *|EMAIL|*, ##email##).
+_PLACEHOLDER = re.compile(r"(?i)\[\[-?\s*(?:e-?mail|user|name|domain)\b|\{\{\s*(?:e-?mail|user|name|domain)\w*\s*\}\}|"
+                          r"%(?:e-?mail|user|name|domain)%|\*\|(?:e-?mail|user|fname|name)\|\*|##(?:e-?mail|user)##|"
+                          r"\$\{?(?:e-?mail|recipient)\}?\b|\[(?:e-?mail|recipient)\]")
+_EMAIL_IN = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_EMAIL_PARAMS = {"email", "e", "mail", "em", "user", "username", "login", "u", "id", "uid", "usr", "acct", "account",
+                 "address", "recipient", "rcpt", "to", "target", "victim", "userid", "loginid"}
+_LEGIT_PERSONAL = re.compile(r"(?i)unsub|opt-?out|preferen|manage|subscri|newsletter|confirm-?subscription|"
+                             r"/baja|darse-de-baja|abmelden|desinscri")
+
+
+def _recipient_forms(addr: str) -> set[str]:
+    import base64
+    from urllib.parse import quote
+    forms = {addr, quote(addr, safe=""), quote(addr, safe="@")}
+    for enc in (base64.b64encode, base64.urlsafe_b64encode):
+        forms.add(enc(addr.encode()).decode().rstrip("="))
+    return {f.lower() for f in forms if f}
+
+
+def _phish_url_patterns(links: list[str], recipients: list[str], sdom: str) -> dict[str, list[str]]:
+    """Facts on the links' shape: recipient pre-filled in the URL, kit-style
+    paths, unfilled campaign merge tags, user-info and punycode tricks."""
+    from . import mailintel, urlwrap
+    forms = {f for r in recipients for f in _recipient_forms(r)}
+    rcpt, kitp, holes, userinfo, puny = [], [], [], [], []
+    for u in links:
+        try:
+            p = urlparse(u)
+            host = (p.hostname or "").lower()
+        except ValueError:
+            continue
+        low = unquote(u).lower()
+        if _PLACEHOLDER.search(unquote(u)):
+            holes.append(u)
+        if p.username or ("@" in (p.netloc or "") and not p.netloc.startswith("@")):
+            userinfo.append(u)
+        if any(lbl.startswith("xn--") for lbl in host.split(".")):
+            puny.append(u)
+        legit = (mailintel.tracker(host) or urlwrap.is_gateway_host(host)
+                 or (sdom and _registrable(host) == _registrable(sdom))
+                 or _LEGIT_PERSONAL.search(p.path + "?" + p.query))
+        if not legit:
+            tail = (p.path + "?" + p.query + "#" + p.fragment).lower()
+            params = parse_qs(p.query) | parse_qs(p.fragment)
+            if (any(f in tail or f in low for f in forms)
+                    or any(k.lower() in _EMAIL_PARAMS and any(_EMAIL_IN.fullmatch(unquote(v).strip()) for v in vs)
+                           for k, vs in params.items())
+                    or _EMAIL_IN.fullmatch(unquote(p.fragment).strip("/!#= "))):
+                rcpt.append(u)
+            segs = [x for x in unquote(p.path).lower().split("/") if x]
+            stems = {st for x in segs for st in _LURE_STEMS if st in x}
+            long_glued = any(len(x) >= 25 and re.fullmatch(r"[a-z0-9-]+", x)
+                             and sum(st in x for st in _LURE_STEMS) >= 2 for x in segs)
+            wp = re.search(r"/wp-(?:content|includes|admin)/", p.path.lower()) and (
+                re.search(r"\.(?:html?|php)$", p.path.lower()) and stems)
+            if long_glued or len(stems) >= 3 or wp:
+                kitp.append(u)
+    return {"recipient_in_url": rcpt[:10], "kit_path": kitp[:10], "placeholder": holes[:10],
+            "userinfo": userinfo[:10], "punycode": puny[:10]}
+
+
 def _dom(addr: str) -> str:
     return addr.rsplit("@", 1)[-1].lower().strip(">").strip() if addr and "@" in addr else ""
 
@@ -260,6 +329,8 @@ def facts(email: dict[str, Any], mailrules: dict[str, Any], case_root: Path | No
     html = email.get("html_source_sample") or ""
     links = []
     for u in list(email.get("html_links") or []) + re.findall(r"https?://[^\s<>\"')\]]+", body):
+        if urlwrap.is_opaque_infrastructure(u):     # a report-phish button, an opaque gateway token
+            continue
         dest = urlwrap.original(u)[0]
         if dest not in links:
             links.append(dest)
@@ -295,6 +366,8 @@ def facts(email: dict[str, Any], mailrules: dict[str, Any], case_root: Path | No
                 if th and _registrable(th) != _registrable(p.hostname or ""):
                     redirects.append(f"{p.hostname} → {th}")
                     break
+    recipients = [a.lower() for a in (addrs.get("to") or []) + (addrs.get("cc") or []) if "@" in a]
+    kit = _phish_url_patterns(links, recipients, sdom)
     mailtos = sorted({m.group(1).lower() for m in _MAILTO.finditer(html + "\n" + body)})
     text_all = f"{subject}\n{body}"
     pw = _PASSWORD.search(body)
@@ -340,7 +413,8 @@ def facts(email: dict[str, Any], mailrules: dict[str, Any], case_root: Path | No
                               if mailintel.hosting_service(h) and _registrable(h) != _registrable(sdom)][:10],
                   "download": [u for u in links if urlparse(u).path.lower().endswith(_DOWNLOAD_EXT)][:10],
                   "ip": [h for h in hosts if is_ip(h)][:10], "redirects": redirects[:10],
-                  "own_lookalike": next((x for x in (own_lookalike(h, own) for h in hosts) if x), "")},
+                  "own_lookalike": next((x for x in (own_lookalike(h, own) for h in hosts) if x), ""),
+                  **kit},
         "attachments": att,
         "invisible": {"subject": "subject" if _INVISIBLE.search(subject) else "",
                       "display": "sender name" if _INVISIBLE.search(display) else ""},
