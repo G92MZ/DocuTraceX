@@ -489,6 +489,19 @@ def gateway_links_eml() -> bytes:
         message_id=f"<remesa-{INVOICE}@mail.{SUPPLIER_DOMAIN}>")
 
 
+def many_files_zip(n: int = 80) -> bytes:
+    """An installer-style kit with more files than the per-file deep-analysis
+    limit (60): every one must still show in Nested — the first 60 analysed, the
+    rest listed (name, type, size, SHA-256). Inert text files."""
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for i in range(n):
+            z.writestr(f"kit/lib/module_{i:03d}.txt", f"invoice viewer component {i} (inert DocuTraceX sample)\n")
+    return buf.getvalue()
+
+
 _RULES_RCV = [f"from mail.relay.example (mail.relay.example [203.0.113.20]) by mx01.{VICTIM_DOMAIN} with ESMTPS; "
               "Tue, 13 Oct 2026 17:12:04 +0000"]
 
@@ -2917,6 +2930,7 @@ def build_all() -> dict[str, bytes]:
         "sample.rtf": rtf_doc(), "sample.pdf": pdf_doc(),
         "sample.eml": eml_doc(), "sample.emlx": emlx_doc(), "sample.msg": msg_doc(),
         "mail/sample_gateway_links.eml": gateway_links_eml(),
+        "nested/sample_many_files.zip": many_files_zip(),
         "mail/sample_bec_freemail.eml": bec_freemail_eml(), "mail/sample_toad.eml": toad_eml(),
         "mail/sample_newsletter.eml": newsletter_eml(), "mail/sample_lure_attachments.eml": lure_attachments_eml(),
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
