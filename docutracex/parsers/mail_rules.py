@@ -91,16 +91,16 @@ def _decode_links(links: list[str], res: dict[str, Any]) -> list[str]:
     for u in links:
         chain = urlwrap.unwrap_all(u)
         if chain:
-            res["decoded_urls"].append({"wrapped": u, "services": [c[0] for c in chain],
-                                        "original": chain[-1][1]})
+            dest, services, exact = urlwrap.original(u)
+            if not exact and services and services[-1].startswith("Mimecast"):
+                dest = urlparse(dest).hostname or dest          # only the domain is known
+            res["decoded_urls"].append({"wrapped": u, "services": services, "original": dest, "exact": exact})
             finals.append(chain[-1][1])
         else:
             finals.append(u)
-    if res["decoded_urls"]:
-        res["findings"].append(_finding(
-            "gateway_rewritten_links", "info",
-            f"{len(res['decoded_urls'])} link(s) rewritten by a mail security gateway, decoded to the original",
-            "body", "\n".join(f"{d['original']}  ⟵  {', '.join(d['services'])}" for d in res["decoded_urls"][:10])))
+    # rewritten links are the recipient's own gateways at work: legitimate, so
+    # no finding — the decoded destination is kept (``decoded_urls``) and every
+    # rule below judges that destination, never the wrapper
     return finals
 
 

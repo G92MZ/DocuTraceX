@@ -136,3 +136,49 @@ def test_link_mismatch_uses_the_real_destination(tmp_path: Path) -> None:
     _p, em = _eml(tmp_path, html=html)
     mism = [f for f in em["findings"] if f["rule"] == "url_display_mismatch"]
     assert mism and "evil.example.com" in mism[0]["detail"]
+
+
+# --- gateways: legitimate, decoded, never a finding nor an IOC --------------------------
+
+DEST = "https://billing-portal.example/inv/2026-0613?id=7"
+
+
+@pytest.mark.parametrize("wrap", [mk.cisco, mk.sophos, mk.egress, mk.avanan, mk.trellix, mk.symantec, mk.libraesva,
+                                  mk.edgepilot, mk.barracuda, mk.teams_safelinks, mk.awstrack, mk.safelinks,
+                                  mk.proofpoint_v3])
+def test_every_gateway_decodes(wrap) -> None:
+    dest, services, exact = urlwrap.original(wrap(DEST))
+    assert dest == DEST and services and exact
+    assert urlwrap.is_gateway_host(__import__("urllib.parse").parse.urlparse(wrap(DEST)).hostname) \
+        or wrap is mk.awstrack
+
+
+def test_six_gateways_in_a_row() -> None:
+    chain = mk.libraesva(mk.egress(mk.cisco(mk.sophos(mk.edgepilot(mk.barracuda(DEST))))))
+    dest, services, exact = urlwrap.original(chain)
+    assert dest == DEST and len(services) == 6 and services[0].startswith("Libraesva") and exact
+
+
+def test_mimecast_is_a_domain_hint() -> None:
+    dest, services, exact = urlwrap.original(mk.mimecast("billing-portal.example"))
+    assert dest == "http://billing-portal.example/" and not exact
+
+
+def test_gateway_links_no_finding_and_iocs_are_the_originals(tmp_path: Path) -> None:
+    import make_samples as ms
+    from docutracex import ioc
+    p = tmp_path / "remesa.eml"
+    p.write_bytes(ms.gateway_links_eml())
+    email = mail.analyze(p, ".eml")
+    res = mail_rules.analyze(p, ".eml", email)
+    rules = _rules(res)
+    assert "gateway_rewritten_links" not in rules and "url_display_mismatch" not in _rules(email)
+    assert len(res["decoded_urls"]) >= 11
+    text = "\n".join(email.get("html_links") or []) + "\n" + (email.get("body_sample") or "")
+    got = ioc.extract([{"module": "mail", "location": "body", "text": text}])["iocs"]
+    vals = {(i["type"], i["value"]) for i in got}
+    assert not any(urlwrap.is_gateway_host(v) for t, v in vals if t == "domain")
+    assert not any(t == "url" and urlwrap.is_gateway_host(__import__("urllib.parse").parse.urlparse(v).hostname or "")
+                   for t, v in vals)
+    assert ("domain", ms.SUPPLIER_DOMAIN) in vals and not any("awstrack" in v for _t, v in vals)
+    assert ("url", "https://cdn-update.example.net/inv/remesa_2026-0613.pdf") in vals

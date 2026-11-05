@@ -26,6 +26,61 @@ def safelinks(url: str) -> str:
             "&data=05%7C02%7Cjdoe%40corp.example%7C1a2b3c&sdata=AbCdEf%3D&reserved=0")
 
 
+# --- more gateways' rewritten links (same shapes as the real ones) ----------------
+
+def cisco(url: str) -> str:
+    return f"https://secure-web.cisco.com/1Fq9TnInertToken2026/{quote(url, safe='')}"
+
+
+def sophos(url: str) -> str:
+    return (f"https://eu-central-1.protection.sophos.com?d=corp.example&u={quote(base64.b64encode(url.encode()).decode())}"
+            "&i=NjM0ZjQ2&t=dGVzdA==&h=a1b2c3d4&s=AVNPUEhUT0NFTkNSWVBUSVYN")
+
+
+def egress(url: str) -> str:
+    import zlib
+    blob = base64.urlsafe_b64encode(zlib.compress(url.encode())).decode().rstrip("=")
+    return (f"https://links.uk.defend.egress.com/Warning?crId=inert2026&Domain=corp.example&Lang=en"
+            f"&Base64Url={blob}")
+
+
+def avanan(url: str) -> str:
+    return f"https://url.avanan.click/v2/___{url}___.YXAzOmNvcnA6YTpvOmluZXJ0MjAyNg"
+
+
+def trellix(url: str) -> str:
+    return f"https://protect2.fireeye.com/v1/url?k=31323334-inert&q=1&e=abc&u={quote(url, safe='')}"
+
+
+def symantec(url: str) -> str:
+    return f"https://clicktime.symantec.com/15tN1nErT?h=x&u={quote(url, safe='')}"
+
+
+def libraesva(url: str) -> str:
+    return f"https://urlsand.esvalabs.com/?e=db21ba2b&f=y&h=af082c3b&p=y&u={quote(url, safe='')}"
+
+
+def edgepilot(url: str) -> str:
+    return f"https://link.edgepilot.com/s/9a8b7c6d/inert?u={base64.b64encode(url.encode()).decode()}"
+
+
+def barracuda(url: str) -> str:
+    return f"https://linkprotect.cudasvc.com/url?a={quote(quote(url, safe=''), safe='')}&c=E,1,inert&typo=1"
+
+
+def teams_safelinks(url: str) -> str:
+    return ("https://statics.teams.cdn.office.net/evergreen-assets/safelinks/1/atp-safelinks.html"
+            f"?url={quote(url, safe='')}&locale=es-es&dest=https%3A%2F%2Fteams.microsoft.com")
+
+
+def awstrack(url: str) -> str:
+    return f"https://3akl8z3v.r.eu-west-1.awstrack.me/L0/{quote(url, safe='')}/1/0102018abcd-inert/AbCdEf=123"
+
+
+def mimecast(domain: str) -> str:
+    return f"https://protect-eu.mimecast.com/s/InErTtOkEn2026?domain={domain}"
+
+
 def qr_png(text: str) -> bytes:
     import io
 
