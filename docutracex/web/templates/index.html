@@ -366,6 +366,12 @@
           <button id="mailintel-refresh" class="btn btn-ghost btn-sm" type="button">Refresh now</button>
           <span id="mailintel-msg" class="status"></span></div>
         <div id="mailintel-table"></div>
+        <div class="hint-line">abuse.ch Auth-Key for URLhaus (free: sign in at
+          <a href="https://auth.abuse.ch/" target="_blank" rel="noopener noreferrer">auth.abuse.ch</a> and copy the key;
+          stored only in this installation):
+          <input id="abusech-key" type="password" autocomplete="off" spellcheck="false" placeholder="not set" style="width:22em">
+          <button id="abusech-save" class="btn btn-ghost btn-sm" type="button">Save &amp; download</button>
+          <span id="abusech-msg" class="status"></span></div>
         <h3 class="formats-title">Email rules: your organisation</h3>
         <div class="hint-line">Your own domains (spoofing and look-alikes of them weigh the most) and extra brands to protect
           besides the built-in ones — one per line. Your own rules go in <span class="mono">config/rules/email/*.yml</span>.</div>
