@@ -214,7 +214,7 @@ def test_floss_language_crash_is_retried_without_language_strings(tmp_path, monk
     r = pe._run_floss(sample)
     assert len(calls) == 2
     assert "--language" not in calls[0]
-    assert calls[1][-3:-1] == ["--language", "none"] and calls[1][-1] == str(sample)
+    assert calls[1][-4:-1] == ["--language", "none", "--"] and calls[1][-1] == str(sample)
     assert r["status"] == "ok"
     assert r["strings"] == ["hxxp://evil.example/a", "cmd.exe /c whoami"]
     assert "--language none" in r["detail"] and r["language_strings"] == "disabled (crashed)"
