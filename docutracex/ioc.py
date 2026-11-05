@@ -239,16 +239,8 @@ def _domain_of(url: str) -> str | None:
 
 
 def _is_gateway(domain: str) -> bool:
-    return (
-        domain in (
-            "urldefense.com",
-            "urldefense.proofpoint.com",
-            "linkprotect.cudasvc.com",
-        )
-        or domain.endswith(
-            ("safelinks.protection.outlook.com", ".mimecast.com")
-        )
-    )
+    from . import urlwrap
+    return urlwrap.is_gateway_host(domain)
 
 
 def _known_tld(domain: str, strict: bool = False) -> bool:
@@ -557,6 +549,21 @@ def _scan_text(
         url = _clean_url(match.group(0))
         url_spans.append((match.start(), match.start() + len(url)))
         domain = _domain_of(url)
+        from . import urlwrap
+        if domain and (_is_gateway(domain) or urlwrap.is_wrapper(url)):
+            # a mail gateway's rewritten link / a click-tracking redirect
+            # (legitimate infrastructure): the IOC is the original destination;
+            # the wrapper itself never is one
+            dest, services, _exact = urlwrap.original(url)
+            if not services:
+                continue                        # opaque wrapper (nothing to recover)
+            ctx = f"{_ctx(text, match.start(), match.end())} [decoded from {' → '.join(services)}]"
+            dom = _domain_of(dest)
+            if dest.startswith(("http://", "https://")) and not services[-1].startswith("Mimecast"):
+                col.add("url", _clean_url(dest), module, location, ctx)
+            if dom and "." in dom and not _valid_ipv4(dom) and not _is_gateway(dom) and tlds.is_known(dom.rsplit(".", 1)[-1]):
+                col.add("domain", dom, module, location, ctx)
+            continue
 
         if domain in _NAMESPACE_HOSTS or _is_tool_url(url) or (
                 domain and _is_reference_host(domain)) or _MS_PKI.match(url):
