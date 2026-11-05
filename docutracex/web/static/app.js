@@ -1578,9 +1578,10 @@ function emailRulesBody(mr) {
   let html = "";
   const dec = mr.decoded_urls || [];
   if (dec.length) {
-    html += `<h3 class="formats-title">Links rewritten by a mail gateway (${dec.length})</h3>` + table(
-      ["Original destination", "Gateway", "Mark"], dec.map((d) => `<tr>
-        <td class="mono">${escapeHtml(d.original)}</td><td>${escapeHtml((d.services || []).join(" → "))}</td>
+    html += `<h3 class="formats-title">Links rewritten by a mail gateway (${dec.length})</h3>
+      <p class="hint-line">The recipient's own security gateways at work — legitimate, not a finding. The IOCs and every rule use the original destination.</p>` + table(
+      ["Original destination", "Gateway(s), outermost first", "Mark"], dec.map((d) => `<tr>
+        <td class="mono">${escapeHtml(d.original)}${d.exact === false ? ' <span class="badge badge-muted">domain hint only</span>' : ""}</td><td>${escapeHtml((d.services || []).join(" → "))}</td>
         <td>${addMarkCell("link", `Link to ${d.original}`, "body", d.wrapped)}</td></tr>`).join(""));
   }
   const qr = mr.qr || [];
