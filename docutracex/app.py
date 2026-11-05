@@ -6,6 +6,8 @@ lifecycle are wired in later phases.
 
 from __future__ import annotations
 
+import os
+
 from pathlib import Path
 
 from fastapi import Body, FastAPI, Request
@@ -44,6 +46,13 @@ def create_app() -> FastAPI:
 
     # Check dependencies at startup and log a concise report.
     log_startup_report()
+    # Email reputation lists: refreshed in the background when older than a day.
+    if not os.environ.get("PYTEST_CURRENT_TEST") and os.environ.get("DOCUTRACEX_MAILINTEL_REFRESH", "1") != "0":
+        try:
+            from . import appsettings, mailintel
+            mailintel.refresh_in_background(appsettings.proxy_url())
+        except Exception as exc:  # noqa: BLE001
+            log.warning("email reputation lists not refreshed: %s", exc)
 
     app = FastAPI(title="DocuTraceX", version=__version__)
 
