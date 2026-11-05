@@ -3342,7 +3342,65 @@ async function loadMarks(analysisId) {
 }
 
 // --- Reports view ------------------------------------------------------------
+// Reports → "Markdown (raw, for an LLM)": every part of the analysis as Markdown,
+// one sub-tab per section, with Copy / Download, plus the whole export in one file.
+let _mdCase = null;
+async function loadMdReport(analysisId) {
+  const pane = document.getElementById("reports-pane-md");
+  if (!pane) return;
+  if (!analysisId) { pane.innerHTML = '<p class="hint-line">Select a case first.</p>'; return; }
+  if (_mdCase === analysisId && pane.innerHTML) return;
+  _mdCase = analysisId;
+  pane.innerHTML = '<p class="hint-line"><span class="spin">●</span> Building the Markdown export…</p>';
+  let d;
+  try {
+    const r = await fetch(`/api/cases/${encodeURIComponent(analysisId)}/mdreport`);
+    d = await r.json();
+    if (!r.ok) throw new Error(d.detail || r.status);
+  } catch (err) {
+    pane.innerHTML = `<p class="bad-text">Could not build the export: ${escapeHtml(String(err.message || err))}</p>`;
+    return;
+  }
+  const secs = d.sections || [];
+  const base = `/api/cases/${encodeURIComponent(analysisId)}/mdreport.md`;
+  const total = secs.reduce((n, x) => n + x.chars, 0);
+  const kb = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+  const tabs = secs.map((x) => ({ id: x.id, label: `${x.title} · ${kb(x.chars)}`, html:
+    `<div class="comp-actions"><button class="btn btn-ghost btn-sm md-copy" type="button" data-sec="${escapeHtml(x.id)}">Copy</button>
+       <a class="btn btn-ghost btn-sm" href="${base}?section=${encodeURIComponent(x.id)}">Download .md</a></div>
+     <textarea class="md-raw mono" readonly spellcheck="false" data-sec="${escapeHtml(x.id)}">${escapeHtml(x.markdown)}</textarea>` }));
+  pane.innerHTML = `<p class="hint-line">The whole analysis as Markdown, one section per tab, to paste or attach into any LLM
+      (or a ticket) — the same content the AI tab's tools read. ${secs.length} sections · ${kb(total)} in all.
+      <a class="btn btn-ghost btn-sm" href="${base}">Download everything (.md)</a>
+      <button class="btn btn-ghost btn-sm" type="button" id="md-regen">Regenerate</button></p>${innerTabs("mdrep", tabs)}`;
+  wireInnerTabs(pane);
+  pane.querySelectorAll(".md-copy").forEach((b) => b.addEventListener("click", async () => {
+    const ta = pane.querySelector(`textarea[data-sec="${b.getAttribute("data-sec")}"]`);
+    try { await navigator.clipboard.writeText(ta.value); b.textContent = "Copied ✓"; }
+    catch (_) { ta.select(); document.execCommand("copy"); b.textContent = "Copied ✓"; }
+    setTimeout(() => { b.textContent = "Copy"; }, 1500);
+  }));
+  document.getElementById("md-regen").addEventListener("click", () => { _mdCase = null; loadMdReport(analysisId); });
+}
+
+function setupReportTabs(analysisId) {
+  const box = document.getElementById("reports-tabs");
+  if (!box) return;
+  box.querySelectorAll("[data-rtab]").forEach((b) => {
+    b.onclick = () => {
+      box.querySelectorAll("[data-rtab]").forEach((x) => x.classList.toggle("is-active", x === b));
+      const md = b.getAttribute("data-rtab") === "md";
+      document.getElementById("reports-pane-report").hidden = md;
+      document.getElementById("reports-pane-md").hidden = !md;
+      if (md) loadMdReport(analysisId);
+    };
+  });
+  if (!document.getElementById("reports-pane-md").hidden) loadMdReport(analysisId);
+}
+
 function loadReports(analysisId) {
+  setupReportTabs(analysisId);
+  if (_mdCase !== analysisId) { _mdCase = null; const p = document.getElementById("reports-pane-md"); if (p) p.innerHTML = ""; }
   const summary = document.getElementById("reports-summary");
   const caseLine = document.getElementById("reports-case");
   const actions = document.getElementById("reports-actions");
