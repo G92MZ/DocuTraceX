@@ -370,6 +370,7 @@ campaign's (`cdn-update.example.net`, `203.0.113.47`).
 | `c2/sample_cs_smb_beacon.bin` | Cobalt Strike | same, SMB beacon | **peer-to-peer** beacon on `\\.\pipe\factura_sync_%x`: a complete configuration without an internet C2 |
 | `c2/sample_cs_beacon.ps1` | Cobalt Strike | PowerShell payload template: base64 + gzip → `$var_code` base64 + XOR 35 | the PowerShell analysis decodes the XOR stage as **binary** (`decrypted_powershell-stage_*.bin`, recipe base64 → xor(0x23)); C2 finds the beacon in that child |
 | `c2/sample_cs_stager.ps1` | Cobalt Strike | same template (no gzip) around HTTPS stager shapes | stager read from its shellcode: `cdn-update.example.net:443`, URI `/Fctadz` (checksum8 92 = x86 stage), HTTPS from the request flags |
+| `c2/sample_cs_stager_array.vbs` | Cobalt Strike | VBA payload format: the stager as `Array(-4, -24, …)` with `_` continuations | the number array becomes a binary child (`decrypted_vbscript-number_array_*.bin`; the same for `\xfc\xe8…` C / Python strings, `0xfc,0xe8,…` C# / PowerShell lists, and arrays in Office macros); C2 reads the stager in it |
 | `c2/sample_msf_https_stager.bin` | Metasploit / Meterpreter | `block_api` prologue + reverse_https shapes | stager to `cdn-update.example.net:443`, URI `/inv/Fct2026_0187` |
 | `c2/sample_remcos.exe` | Remcos | RC4-encrypted `SETTINGS` RCDATA resource | C2 `cdn-update.example.net:2404` (TLS) and `203.0.113.47:2404`, campaign `Factura-2026`, mutex `Rmc-F4C7A1` |
 | `c2/sample_asyncrat.exe` | AsyncRAT | .NET settings, AES-256 + HMAC, PBKDF2 key | hosts `cdn-update.example.net`, `203.0.113.47`, ports 6606/7707/8808, version 0.5.8, mutex `AsyncMutex_6SI8OkPnk` |
@@ -396,6 +397,24 @@ dissect.cobaltstrike recovers — who it was built for), **peer-to-peer** beacon
 the team server's **RSA public key**, domain fronting (Host header ≠ C2 host),
 IDN hosts in punycode, and per tool (1768.py / dissect) the raw view and the
 rebuilt malleable profile.
+
+**Extractor contract.** Every registered extractor (Cobalt Strike, Remcos,
+AsyncRAT / DcRAT / Quasar, Metasploit, the .NET RATs and stealers) runs on every
+object and reports *extracted*, *partial*, *indicators*, *not found*, *not
+applicable*, *unsupported* or *error* — the **Extractors** sub-tab lists them
+with their version, formats and fields, and the counts of the run. Each run has
+an id; what every tool printed for every object (1768.py's JSON and text
+reports, dissect.cobaltstrike's output, the built-in readers' results) is
+stored as **RAW** under `results/c2_runs/<run>/` and never overwritten (the card
+links it). Each configuration also has **normalized fields**: value, type,
+status (*extracted* / *decrypted* / *inferred* / *conflicting* when the two
+Cobalt Strike tools disagree), which tool read it, confidence, run and RAW
+reference. **Re-interpret the RAW** re-reads a run with the current parsers
+without running anything again (earlier interpretations kept). Configurations
+that share an **RSA public key** (same team server), a **C2 host** or a
+**watermark** with another case are linked under *Seen in other cases*. A
+beacon DLL embedded in a loader / dropper / dump (reflective `MZARUH` / `MZRE`
+head, sRDI) is carved and read when the whole file gives nothing.
 | `c2/sample_nanocore.exe` | NanoCore | type names (identification only) | family identified; settings encrypted in a resource, not decrypted (a medium finding) |
 
 Analyse any of them (or the whole `c2/` folder zipped) and open **C2 / Beacons**:

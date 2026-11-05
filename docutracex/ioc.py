@@ -864,8 +864,13 @@ _MODULE_SKIP_PATHS = {
         r"|certificate_policies(?:\[\d+\])?|issuer)|lief/authenticode/status_message"
         r"|extraction/entries\[\d+\]/(?:name|path|stored_path))$"),
     # the C2 extractors' own bookkeeping (step names, which tool ran)
-    "c2": re.compile(r"^(?:timings(?:[/\[].*)?|configs\[\d+\]/(?:tools/[^/]+/tool|indicators(?:\[\d+\])?"
-                     r"|summary/Indicators(?:\[\d+\])?|public_key|sections/[^/]+/Note|note|status))$"),
+    "c2": re.compile(r"^(?:timings(?:[/\[].*)?|registry(?:[/\[].*)?|extractor_status(?:/.*)?|runs(?:\[\d+\])?"
+                     r"|run_id|interpretations(?:[/\[].*)?"
+                     r"|configs\[\d+\]/(?:tools/[^/]+/tool|indicators(?:\[\d+\])?"
+                     r"|summary/Indicators(?:\[\d+\])?|public_key|sections/[^/]+/Note|note|status"
+                     r"|run_id|raw_ref|extractor|extractor_version|related(?:[/\[].*)?"
+                     r"|normalized\[\d+\]/(?:name|type|status|extractor|extractor_version|run_id|raw_ref"
+                     r"|evidence|confidence)))$"),
     # emldump's dump of a non-text MIME part (an RTF / Office / binary
     # attachment) is markup and hex, not prose: the attachment itself is
     # analysed as a nested child, which is where its IOCs come from.

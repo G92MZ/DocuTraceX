@@ -221,10 +221,19 @@ def _c2(cid: str) -> str:
     out = [f"# C2 / beacon configurations ({len(cfgs)})", ""]
     for c in cfgs:
         out += [f"## {c.get('family')} ({c.get('kind')}) — {c.get('object')}", "",
-                f"- method: {c.get('method')} · confidence: {c.get('confidence')}",
-                f"- C2: {', '.join(c.get('c2') or []) or '—'}", "",
-                _fence(json.dumps({"summary": c.get("summary"), "fields": c.get("fields")}, ensure_ascii=False,
-                                  indent=1, default=str)[:20000], "json")]
+                f"- status: {c.get('status') or 'configuration'} · method: {c.get('method')} · confidence: {c.get('confidence')}",
+                f"- C2: {', '.join(c.get('c2') or []) or '—'}",
+                f"- run: {c.get('run_id') or '—'} · RAW: {c.get('raw_ref') or '—'}"]
+        for r in c.get("related") or []:
+            out.append(f"- related: case {r.get('case')} {r.get('object', '')} — {r.get('match')} ({r.get('strength')})")
+        norm = c.get("normalized") or []
+        if norm:
+            out += ["", "| field | value | status | read by | confidence |", "|---|---|---|---|---|"]
+            out += [f"| {n['name']} | {str(n['value']).replace('|', '/')[:200]} | {n['status']} | {n['extractor']} | {n['confidence']} |"
+                    for n in norm[:300]]
+        out += ["", _fence(json.dumps({"summary": c.get("summary"), "sections": c.get("sections"),
+                                       "fields": c.get("fields")}, ensure_ascii=False,
+                                      indent=1, default=str)[:20000], "json")]
     if not cfgs:
         out.append("_(no configuration found, or C2 not run)_")
     return "\n".join(out)
