@@ -514,11 +514,153 @@ def _tools_workers() -> int:
     return workers(cap, cap)
 
 
+# Large binaries: FLOSS's "tight strings" (emulating every tight loop) is what
+# takes minutes; above this size it is skipped (decoded + stack strings stay).
+FLOSS_LARGE_BYTES = int(_os.environ.get("DOCUTRACEX_FLOSS_LARGE_MB", "15")) * 1024 * 1024
+FLOSS_LARGE_ARGS = ["--no", "tight"]
+# Valid Authenticode from these publishers = library / runtime code (python3x.dll,
+# vcruntime, Qt…): FLOSS / capa would spend minutes on code nobody suspects.
+# DOCUTRACEX_TOOLS_SKIP_TRUSTED=0 analyses them anyway.
+TRUSTED_PUBLISHERS = (
+    "Microsoft Corporation", "Microsoft Windows", "Python Software Foundation", "Oracle America", "Google LLC",
+    "Mozilla Corporation", "Adobe Inc.", "Intel Corporation", "NVIDIA Corporation", "VMware, Inc.", "Broadcom Inc.",
+    "The Qt Company", "Apple Inc.", "Dell Inc.", "Cisco Systems", "Amazon.com Services LLC", "JetBrains s.r.o.",
+    "OpenJS Foundation", "Node.js Foundation", "Advanced Micro Devices", "Citrix Systems", "Zoom Video Communications",
+)
+
+
+def _trusted_signer(path: Path) -> str | None:
+    """Publisher name when ``path`` has a VALID Authenticode signature from a
+    trusted publisher (verified by Windows; elsewhere nothing is skipped)."""
+    if _os.environ.get("DOCUTRACEX_TOOLS_SKIP_TRUSTED", "1") == "0":
+        return None
+    try:
+        from . import authenticode
+        res = authenticode.verify(path)
+    except Exception:  # noqa: BLE001
+        return None
+    if res.get("status") != "valid":
+        return None
+    subj = str((res.get("signer") or {}).get("subject") or "")
+    org = next((v.strip() for k, v in (x.split("=", 1) for x in subj.split(",") if "=" in x)
+                if k.strip().upper() in ("O", "CN") and any(t.lower() == v.strip().lower() for t in TRUSTED_PUBLISHERS)), None)
+    return org
+
+
+def _tool_id(exe: Path | None) -> str:
+    try:
+        st = exe.stat() if exe else None
+        return f"{exe.name}:{st.st_size}:{int(st.st_mtime)}" if st else "none"
+    except OSError:
+        return "none"
+
+
+def _cache_file(sha: str, tool: str) -> Path:
+    from ..config import settings
+    return Path(settings.cases_dir) / ".tools_cache" / sha[:2] / f"{sha}.{tool}.json"
+
+
+def _cache_get(path: Path, tool: str, exe: Path | None, extra: list[str]) -> dict[str, Any] | None:
+    import json
+    sha = _sha(path)
+    if not sha:
+        return None
+    try:
+        got = json.loads(_cache_file(sha, tool).read_text(encoding="utf-8"))
+        if got.get("_key") == f"{_tool_id(exe)}|{' '.join(extra)}":
+            rec = got["record"]
+            rec["cached"] = True
+            return rec
+    except (OSError, ValueError, KeyError):
+        pass
+    return None
+
+
+def _cached(path: Path, tool: str, exe: Path | None, extra: list[str], run) -> dict[str, Any]:  # noqa: ANN001
+    """A FLOSS / capa result by SHA-256 across cases (same tool build, same
+    options): a re-analysis, or the same DLL in another case, is instant."""
+    import json
+    sha = _sha(path)
+    key = f"{_tool_id(exe)}|{' '.join(extra)}"
+    f = _cache_file(sha, tool) if sha else None
+    got = _cache_get(path, tool, exe, extra)
+    if got is not None:
+        return got
+    rec = run()
+    if f is not None and rec.get("status") == "ok":
+        try:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            tmp = f.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"_key": key, "record": rec}, default=str), encoding="utf-8")
+            tmp.replace(f)
+        except OSError:
+            pass
+    return dict(rec)
+
+
 def _both(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    """FLOSS and capa on one binary, concurrently (two processes)."""
+    """FLOSS and capa on one binary: from the cache when this exact file was
+    analysed before, skipped for libraries signed by a trusted publisher, else
+    both at the same time (two processes), FLOSS without tight strings on large files."""
+    from ..config import settings
+    pub = _trusted_signer(path)
+    if pub:
+        why = (f"signed by {pub} (valid Authenticode): library / runtime code — FLOSS/capa skipped to save time "
+               f"(DOCUTRACEX_TOOLS_SKIP_TRUSTED=0 analyses it)")
+        return {"status": "skipped", "detail": why, "trusted_signer": pub}, \
+               {"status": "skipped", "detail": why, "trusted_signer": pub}
+    try:
+        large = path.stat().st_size > FLOSS_LARGE_BYTES
+    except OSError:
+        large = False
+    fextra = FLOSS_LARGE_ARGS if large else []
+    if large and _cache_get(path, "floss_full", settings.floss_executable(), []) is not None:
+        fextra = []                     # the analyst already ran the full FLOSS on it: reuse that
     with ThreadPoolExecutor(max_workers=2) as ex:
-        ff, cf = ex.submit(_run_floss, path), ex.submit(_run_capa, path)
-        return ff.result(), cf.result()
+        ff = ex.submit(_cached, path, "floss_full" if large and not fextra else "floss", settings.floss_executable(),
+                       fextra, lambda: _run_floss(path, fextra) if fextra else _run_floss(path))
+        cf = ex.submit(_cached, path, "capa", settings.capa_executable(), [], lambda: _run_capa(path))
+        floss = ff.result()
+        if large and fextra and floss.get("status") == "ok":
+            floss["note"] = (f"large file (> {FLOSS_LARGE_BYTES // 1048576} MB): tight strings skipped on the "
+                             "whole file (decoded and stack strings extracted); the code analysis runs them on "
+                             "its priority functions")
+            floss["tight_skipped"] = True
+        return floss, cf.result()
+
+
+PRIORITY_TIGHT_MAX = int(_os.environ.get("DOCUTRACEX_FLOSS_PRIORITY_FUNCS", "128") or 128)
+
+
+def tight_on_functions(path: Path, addrs: list[int]) -> dict[str, Any]:
+    """FLOSS tight strings of only these functions (``--only tight --functions``):
+    what a large file skipped on the whole binary, recovered where it matters.
+    Cached by SHA-256 + function list like the full run."""
+    from ..config import settings
+    addrs = sorted(set(int(a) for a in addrs))[:PRIORITY_TIGHT_MAX]
+    if not addrs:
+        return {"status": "skipped", "detail": "no priority function"}
+    hexes = [hex(a) for a in addrs]
+
+    def run() -> dict[str, Any]:
+        # FLOSS releases call the filter --functions; newer builds --analyze-functions
+        r = _run_floss(path, ["--only", "tight", "--functions", *hexes])
+        if r.get("status") == "error" and "unrecognized arguments" in str(r.get("detail") or ""):
+            r = _run_floss(path, ["--only", "tight", "--analyze-functions", *hexes])
+        return r
+    extra = ["--only", "tight", "--functions", *hexes]
+    rec = _cached(path, "floss_tight", settings.floss_executable(), extra, run)
+    rec.pop("strings", None)
+    rec["functions"] = len(addrs)
+    return rec
+
+
+def full_floss(path: Path) -> dict[str, Any]:
+    """FLOSS with every string type on a file that was too large for the
+    automatic run (tight strings included). Cached: the next analysis of the
+    file reuses it instead of the lighter run."""
+    from ..config import settings
+    return _cached(path, "floss_full", settings.floss_executable(), [], lambda: _run_floss(path))
 
 
 def _sha(path: Path) -> str | None:
@@ -601,7 +743,7 @@ def tools_for(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     return _both(path)
 
 
-def _run_floss(path: Path) -> dict[str, Any]:
+def _run_floss(path: Path, extra: list[str] | None = None) -> dict[str, Any]:
     """FLOSS (standalone binary): static / decoded / stack / tight strings.
     Returns a status record plus ``strings`` (list[str]) when it ran."""
     import json
@@ -609,8 +751,10 @@ def _run_floss(path: Path) -> dict[str, Any]:
     from ..config import settings
 
     exe = settings.floss_executable()
-    args = ["--json", "--quiet", *FLOSS_EXTRA_ARGS]
-    rec, out = _run_tool("floss", exe, args, path, FLOSS_TIMEOUT)
+    args = ["--json", "--quiet", *FLOSS_EXTRA_ARGS, *(extra or [])]
+    # "--" before the sample: --no / --only / --analyze-functions take several
+    # values (nargs="+") and would swallow the path otherwise
+    rec, out = _run_tool("floss", exe, [*args, "--"], path, FLOSS_TIMEOUT)
     retry_note = ""
     if rec["status"] == "error" and _floss_language_crash(rec.get("detail") or ""):
         # Only this known crash is retried (never a timeout, a missing tool or
@@ -618,7 +762,7 @@ def _run_floss(path: Path) -> dict[str, Any]:
         first = rec.get("detail") or ""
         log.info("floss: language-specific string extraction crashed on %s; "
                  "retrying with --language none", path.name)
-        rec, out = _run_tool("floss", exe, [*args, *FLOSS_NO_LANGUAGE_ARGS], path, FLOSS_TIMEOUT)
+        rec, out = _run_tool("floss", exe, [*args, *FLOSS_NO_LANGUAGE_ARGS, "--"], path, FLOSS_TIMEOUT)
         if rec["status"] != "ok":
             rec["detail"] = (f"{rec.get('detail') or 'floss failed'} (retried with --language none "
                              f"after a Go/Rust string extraction crash; first run: {first[-160:]})")

@@ -149,7 +149,7 @@ def test_analyze_skips_tools_for_pyinstaller(tmp_path, monkeypatch) -> None:
     p = tmp_path / "frozen.exe"
     p.write_bytes(ms.packed_pe_exe() + pe._PYI_MAGIC + b"\0" * 80)
     called = []
-    monkeypatch.setattr(pe, "_run_floss", lambda path: called.append("floss") or {})
+    monkeypatch.setattr(pe, "_run_floss", lambda path, *_: called.append("floss") or {})
     monkeypatch.setattr(pe, "_run_capa", lambda path: called.append("capa") or {})
     r = pe.analyze(p, "frozen.exe", run_tools=True)
     assert called == []
@@ -172,7 +172,7 @@ def test_analyze_capa_findings(tmp_path, monkeypatch) -> None:
              "attack": [{"id": "T1622"}], "mbc": [], "matches": 1},
             {"name": "contain obfuscated stackstrings", "namespace": "", "attack": [],
              "mbc": [], "matches": 1}]
-    monkeypatch.setattr(pe, "_run_floss", lambda path: {"status": "ok", "strings": ["abc"]})
+    monkeypatch.setattr(pe, "_run_floss", lambda path, *_: {"status": "ok", "strings": ["abc"]})
     monkeypatch.setattr(pe, "_run_capa", lambda path: {"status": "ok", "capabilities": caps})
     r = pe.analyze(p, "plain.exe", run_tools=True)
     rules = [f["rule"] for f in r["findings"]]
@@ -214,7 +214,7 @@ def test_floss_language_crash_is_retried_without_language_strings(tmp_path, monk
     r = pe._run_floss(sample)
     assert len(calls) == 2
     assert "--language" not in calls[0]
-    assert calls[1][-3:-1] == ["--language", "none"] and calls[1][-1] == str(sample)
+    assert calls[1][-4:-1] == ["--language", "none", "--"] and calls[1][-1] == str(sample)
     assert r["status"] == "ok"
     assert r["strings"] == ["hxxp://evil.example/a", "cmd.exe /c whoami"]
     assert "--language none" in r["detail"] and r["language_strings"] == "disabled (crashed)"
