@@ -783,6 +783,7 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 
 .c2-kv th { width: 160px; white-space: nowrap; }
 .c2-kv td .mono, .c2-kv td.mono { word-break: break-all; }
+.c2-pre { max-height: 320px; overflow: auto; white-space: pre-wrap; word-break: break-all; font-size: 12px; margin: 6px 0; }
 
 /* Code analysis explorer (Go subtabs / Code tab) */
 .cx-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }

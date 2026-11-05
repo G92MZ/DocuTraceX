@@ -6181,7 +6181,7 @@ function c2Help(c2) {
     <p class="hint-line">Every object of the case — the original, everything extracted, nested children and decoded or decrypted
       stages — is searched for implant configurations, <b>statically</b>: nothing is executed. Families: ${escapeHtml(fams.join(", "))}.</p>
     <table class="cases"><thead><tr><th>Family</th><th>How the configuration is read</th></tr></thead><tbody>
-      <tr><td>Cobalt Strike</td><td>Didier Stevens' <span class="mono">1768.py</span>: the TLV config block (XOR 0x69 / 0x2e, or the 4-byte XOR of a PE beacon) in PE files, shellcode, stagers and memory dumps. Watermark = licence id.</td></tr>
+      <tr><td>Cobalt Strike</td><td>Two parsers, compared: Didier Stevens' <span class="mono">1768.py</span> and Fox-IT's <span class="mono">dissect.cobaltstrike</span> (PE / DLL beacons, shellcode, memory dumps; 3.x to 4.12, custom XOR keys, guardrails). Besides C2, URIs and User-Agent: DNS channel, process injection, sleep mask / syscalls / Beacon Gate, <b>guardrails</b> (the user / computer / domain the beacon is keyed to), the team server's RSA key, domain fronting, and the rebuilt malleable profile. Stagers (block_api shellcode, also decoded from PowerShell / HTA payloads) by their request; traces without a configuration (default pipes, beacon DLL names, the PowerShell template) are reported as <i>indicators only</i>, never as a configuration. Watermark = licence id.</td></tr>
       <tr><td>Metasploit / Meterpreter</td><td>Stager shellcode recognised by its <span class="mono">block_api</span> prologue; IP / port / host / URI read from the connect-back code. Cobalt Strike stagers share the prologue.</td></tr>
       <tr><td>Remcos</td><td>RC4-encrypted <span class="mono">SETTINGS</span> resource: C2 list (host:port:TLS), campaign, mutex.</td></tr>
       <tr><td>AsyncRAT · DcRAT · QuasarRAT</td><td>.NET settings strings encrypted with AES-256 + HMAC (PBKDF2 key from another settings string); older Quasar with AES-128.</td></tr>
@@ -6215,9 +6215,21 @@ function paneC2(c2, findings, caseId) {
     const rows = Object.entries(s).map(([k, v]) => `<tr><th>${escapeHtml(k)}</th><td>${c2Value(v)}</td></tr>`).join("");
     const all = Object.entries(c.fields || {}).map(([k, v]) => `<tr><th>${escapeHtml(k)}</th><td class="mono">${escapeHtml(String(v))}</td></tr>`).join("");
     const conf = c.confidence === "high" ? "badge-bad" : "badge-warn";
+    const kv = (o) => Object.entries(o || {}).map(([k, v]) => `<tr><th>${escapeHtml(k)}</th><td>${c2Value(v)}</td></tr>`).join("");
+    const secs = Object.entries(c.sections || {}).map(([name, o]) =>
+      `<details class="disclose"${name === "Guardrails" || name === "Peer-to-peer" ? " open" : ""}><summary>${escapeHtml(name)}</summary>
+        <table class="cases c2-kv"><tbody>${kv(o)}</tbody></table></details>`).join("");
+    const tools = Object.entries(c.tools || {}).map(([name, t]) => {
+      const st = t.status === "found" ? "badge-bad" : "badge-muted";
+      return `<details class="disclose"><summary>${escapeHtml(t.tool || name)} <span class="badge ${st}">${escapeHtml(t.status || "")}</span></summary>
+        ${t.method ? `<div class="hint-line">${escapeHtml(t.method)}</div>` : ""}${t.note ? `<div class="hint-line">${escapeHtml(t.note)}</div>` : ""}
+        ${t.summary ? `<table class="cases c2-kv"><tbody>${kv(t.summary)}</tbody></table>` : ""}
+        ${t.profile ? `<details class="disclose"><summary>Malleable C2 profile (rebuilt)</summary><pre class="mono c2-pre">${escapeHtml(t.profile)}</pre></details>` : ""}</details>`;
+    }).join("");
+    const status = c.status ? `<span class="badge ${c.kind === "indicators" ? "badge-muted" : c.status.startsWith("partial") ? "badge-warn" : "badge-ok"}">${escapeHtml(c.status)}</span>` : "";
     return `<details class="disclose ml-item c2-card"${i < 3 ? " open" : ""}>
       <summary>
-        <b>${escapeHtml(c.family)}</b> <span class="badge ${conf}">${escapeHtml(c.kind || "")}</span>
+        <b>${escapeHtml(c.family)}</b> <span class="badge ${conf}">${escapeHtml(c.kind || "")}</span> ${status}
         <span class="mono">${escapeHtml(c.object || "")}</span>
         ${(s.C2 || s.Hosts || []).length ? `<span class="hint-line mono">${escapeHtml((s.C2 || s.Hosts).slice(0, 3).join(", "))}</span>` : ""}
       </summary>
@@ -6227,6 +6239,9 @@ function paneC2(c2, findings, caseId) {
           ${c.stored_path ? fileActions(c.stored_path) : ""}</div>
         ${c.note ? `<div class="hint-line">${escapeHtml(c.note)}</div>` : ""}
         <table class="cases c2-kv"><tbody>${rows}</tbody></table>
+        ${secs}
+        ${c.public_key ? `<details class="disclose"><summary>RSA public key (the team server's)</summary><pre class="mono c2-pre">${escapeHtml(c.public_key)}</pre></details>` : ""}
+        ${tools ? `<details class="disclose"><summary>Per tool (${Object.keys(c.tools).length})${c.agreement ? ` · ${escapeHtml(c.agreement)}` : ""}</summary>${tools}</details>` : ""}
         ${all ? `<details class="disclose"><summary>Full configuration (${Object.keys(c.fields).length} fields)</summary>
           <table class="cases c2-kv"><tbody>${all}</tbody></table></details>` : ""}
         <div style="margin-top:6px">${f ? markControlsHtml(f) : '<span class="hint-line">re-analyse the case to mark it</span>'}</div>
