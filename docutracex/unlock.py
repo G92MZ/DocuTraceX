@@ -41,9 +41,14 @@ log = get_logger(__name__)
 OFFICE_DEFAULTS = ["VelvetSweatshop"]
 ARCHIVE_DEFAULTS = ["infected", "malware", "virus"]
 
-MAX_ENTRIES = 50
+import os as _os
+
+# Bounds for archives / installers (zip bombs, crafted archives). Raised from
+# 50 entries: an installer kit easily carries hundreds of files and every one
+# must show in Nested (the first ones are analysed in depth, the rest listed).
+MAX_ENTRIES = int(_os.environ.get("DOCUTRACEX_ARCHIVE_MAX_ENTRIES", "1000") or 1000)
 MAX_FILE = 100 * 1024 * 1024
-MAX_TOTAL = 250 * 1024 * 1024
+MAX_TOTAL = int(_os.environ.get("DOCUTRACEX_ARCHIVE_MAX_MB", "500") or 500) * 1024 * 1024
 
 _7Z_MAGIC = b"7z\xbc\xaf\x27\x1c"
 # RAR 1.5-4.x and RAR 5.0 signatures.

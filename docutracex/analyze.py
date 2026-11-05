@@ -928,6 +928,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         unpacked = []
         for it in msi_res.get("items") or []:
             unpacked.extend(it.pop("_children", []) or [])
+        for ch in unpacked:                 # its own batch kind: later batches never replace it
+            ch.setdefault("source", "unpacked")
         if msi_res.get("items"):
             write_subresult(paths, "msi", msi_res)
             ran.append("msi")
@@ -1098,6 +1100,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         _shas([nd for nd in prev_tree if not nd.get("decrypted_from")])
         ditems = decrypted.write(decrypted.payloads_from({k: v for k, v in dmods.items() if v}, paths.root),
                                  paths.extracted_dir / decrypted.DIRNAME, known)
+        for it in ditems:
+            it.setdefault("source", "decrypted")
         if ditems:
             dres = run(f"decrypted: {len(ditems)} recovered stage(s) → nested analysis",
                        lambda: nested.scan_children(ditems, paths, unlock_ctx={"user": user_pw}))

@@ -26,12 +26,41 @@ from .storage import CasePaths
 
 log = get_logger(__name__)
 
+import os as _os
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(_os.environ.get(name, "") or default))
+    except ValueError:
+        return default
+
+
 MAX_DEPTH = 12
-MAX_CHILDREN = 25
-# Total nodes per scan: 12 levels x 25 children could explode on a crafted
-# archive-in-archive, so the whole tree is capped (children past it are counted
-# as truncated, not analysed).
-MAX_NODES = 300
+# Children analysed in depth per file (an archive, an installer…). The rest, up
+# to MAX_LISTED, are still LISTED in the tree (name, type, size, SHA-256, file
+# actions) so nothing an installer carries is invisible — they can be opened
+# from Nested; only their deep analysis is skipped.
+MAX_CHILDREN = _env_int("DOCUTRACEX_NESTED_MAX_CHILDREN", 60)
+MAX_LISTED = _env_int("DOCUTRACEX_NESTED_MAX_LISTED", 1000)
+# Total analysed nodes per scan: 12 levels x 60 children could explode on a
+# crafted archive-in-archive, so deep analysis is capped for the whole tree
+# (children past it are listed, not analysed).
+MAX_NODES = _env_int("DOCUTRACEX_NESTED_MAX_NODES", 600)
+
+
+def _listed_node(p: Path, name: str, paths: "CasePaths", depth: int, why: str) -> dict[str, Any]:
+    """A child shown in the tree without its deep analysis (over the limits)."""
+    node: dict[str, Any] = {"filename": name, "kind": _kind(p, name), "depth": depth, "stored_path": _rel(paths, p),
+                            "findings": [], "children": [], "listed_only": True,
+                            "note": f"listed, not analysed in depth ({why}) — open it from Nested or re-analyse it alone"}
+    try:
+        node["size"] = p.stat().st_size
+        if node["size"] <= 256 * 1024 * 1024:
+            node["sha256"] = hashlib.sha256(p.read_bytes()).hexdigest()
+    except OSError:
+        pass
+    return node
 # Per-child timings kept in the result (Tasks tab, after the step ends): every
 # first-level child, plus the slowest deeper nodes, up to this many in total.
 MAX_TIMINGS = 40
@@ -573,11 +602,10 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
 
     if depth < MAX_DEPTH:
         _prefetch_tools([c for c, _ in kids[:MAX_CHILDREN]])
-        for i, (cpath, cname) in enumerate(kids[:MAX_CHILDREN]):
-            if ctx["_budget"][0] <= 0:      # node cap for the whole tree reached
-                node["truncated_children"] = len(kids[:MAX_CHILDREN]) - i
-                node["truncated_reason"] = f"node limit ({MAX_NODES}) reached"
-                break
+        for i, (cpath, cname) in enumerate(kids[:MAX_LISTED]):
+            deep = i < MAX_CHILDREN and ctx["_budget"][0] > 0
+            if not deep and i < MAX_CHILDREN and "truncated_reason" not in node:
+                node["truncated_reason"] = f"node limit ({MAX_NODES}) reached: the rest is listed, not analysed"
             if not cpath.is_file():
                 # Tools store paths relative to the parent of their output dir
                 # (here extracted/), not to the case root.
@@ -587,13 +615,22 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
                     alt = cpath
                 cpath = alt
             if cpath.is_file():
-                child = _scan_one(cpath, cname, paths, depth + 1, this_chain, ctx, sources_out)
+                if deep:
+                    child = _scan_one(cpath, cname, paths, depth + 1, this_chain, ctx, sources_out)
+                else:
+                    child = _listed_node(cpath, cname, paths, depth + 1,
+                                         f"more than {MAX_CHILDREN} files here" if i >= MAX_CHILDREN
+                                         else f"node limit ({MAX_NODES})")
+                    node["listed_children"] = node.get("listed_children", 0) + 1
                 if members.get(str(cpath)):
                     child["member"] = members[str(cpath)]
                 if str(cpath) in origins:
                     child["decrypted_from"] = origins[str(cpath)]
                     child["recipe"] = recipes.get(str(cpath)) or []
                 node["children"].append(child)
+        if len(kids) > MAX_LISTED:
+            node["truncated_children"] = len(kids) - MAX_LISTED
+            node["truncated_reason"] = f"more than {MAX_LISTED} files"
     elif kids:
         node["truncated_children"] = len(kids)
     return node
@@ -746,7 +783,7 @@ def scan_children(items: list[dict[str, Any]], paths: CasePaths,
     isrc: list[dict[str, Any]] = result["ioc_sources"]
     unlock_ctx = dict(unlock_ctx or {})
     unlock_ctx["_budget"] = [MAX_NODES]          # one node budget for the whole scan
-    todo = items[:MAX_CHILDREN]
+    todo = items[:MAX_LISTED]
     pend: set[str] = set()                      # files queued in this scan: a hidden payload equal to one is not re-added
     for it in todo:
         try:
@@ -755,24 +792,29 @@ def scan_children(items: list[dict[str, Any]], paths: CasePaths,
         except (OSError, KeyError):
             continue
     unlock_ctx["_pending_shas"] = pend
-    _prefetch_tools([Path(it["path"]) for it in todo if it.get("path")])
+    _prefetch_tools([Path(it["path"]) for it in todo[:MAX_CHILDREN] if it.get("path")])
     tracer = _Tracer(len(todo))
     unlock_ctx["_tracer"] = tracer
     for i, it in enumerate(todo):
         tracer.index = i + 1
-        if unlock_ctx["_budget"][0] <= 0:
-            result["truncated_children"] = len(items[:MAX_CHILDREN]) - i
-            break
         p = Path(it["path"])
+        deep = i < MAX_CHILDREN and unlock_ctx["_budget"][0] > 0
         if p.is_file():
-            child = _scan_one(p, it.get("filename") or p.name, paths, 1, "", unlock_ctx, isrc)
+            if deep:
+                child = _scan_one(p, it.get("filename") or p.name, paths, 1, "", unlock_ctx, isrc)
+            else:
+                child = _listed_node(p, it.get("filename") or p.name, paths, 1,
+                                     f"more than {MAX_CHILDREN} files" if i >= MAX_CHILDREN else f"node limit ({MAX_NODES})")
+                result["listed_children"] = result.get("listed_children", 0) + 1
             if it.get("member") and "/" in it["member"].replace("\\", "/").strip("/"):
                 child["member"] = it["member"]         # path inside the archive (lib/arm64-v8a/libapp.so)
             if it.get("origin"):
                 child["decrypted_from"] = it["origin"]
                 child["recipe"] = it.get("recipe") or []
-                if it.get("source"):
-                    child["source"] = it["source"]
+            if it.get("source"):
+                child["source"] = it["source"]
+            elif it.get("origin"):
+                child["source"] = "stage"           # a batch kind, so merge() only replaces its own kind
             if it.get("finding"):                      # why this child exists (hidden payload…)
                 f = dict(it["finding"])
                 f.setdefault("location", f"nested:{child.get('filename', '')}")
