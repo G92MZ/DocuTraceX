@@ -609,9 +609,29 @@ def _both(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         cf = ex.submit(_cached, path, "capa", settings.capa_executable(), [], lambda: _run_capa(path))
         floss = ff.result()
         if large and floss.get("status") == "ok":
-            floss["note"] = (f"large file (> {FLOSS_LARGE_BYTES // 1048576} MB): tight strings skipped "
-                             "(decoded and stack strings extracted)")
+            floss["note"] = (f"large file (> {FLOSS_LARGE_BYTES // 1048576} MB): tight strings skipped on the "
+                             "whole file (decoded and stack strings extracted); the code analysis runs them on "
+                             "its priority functions")
+            floss["tight_skipped"] = True
         return floss, cf.result()
+
+
+PRIORITY_TIGHT_MAX = int(_os.environ.get("DOCUTRACEX_FLOSS_PRIORITY_FUNCS", "64") or 64)
+
+
+def tight_on_functions(path: Path, addrs: list[int]) -> dict[str, Any]:
+    """FLOSS tight strings of only these functions (``--only tight --functions``):
+    what a large file skipped on the whole binary, recovered where it matters.
+    Cached by SHA-256 + function list like the full run."""
+    from ..config import settings
+    addrs = sorted(set(int(a) for a in addrs))[:PRIORITY_TIGHT_MAX]
+    if not addrs:
+        return {"status": "skipped", "detail": "no priority function"}
+    extra = ["--only", "tight", "--functions", *(hex(a) for a in addrs)]
+    rec = _cached(path, "floss_tight", settings.floss_executable(), extra, lambda: _run_floss(path, extra))
+    rec.pop("strings", None)
+    rec["functions"] = len(addrs)
+    return rec
 
 
 def _sha(path: Path) -> str | None:
