@@ -539,6 +539,32 @@ def toad_eml() -> bytes:
         message_id="<inert-toad-2026@renewals-desk.example>")
 
 
+def phish_kit_links_eml() -> bytes:
+    """Credential phishing with kit-style links, as in real campaigns: the
+    recipient's address pre-filled in the link (?email=…), lure words glued into
+    the path of a compromised site, a second link whose merge tag was left
+    unfilled ([[-Email-]), and the recipient's gateway "Report phish" button
+    (Proofpoint PhishAlarm: infrastructure, not an IOC). All inert (*.example)."""
+    rcpt = f"cuentas.pagar@{VICTIM_DOMAIN}"
+    kit1 = (f"https://tienda-kalamata.example/kalvan/scaverserverriorukuse-seceriwertorismailserv99/"
+            f"he-opas.html?email={rcpt}")
+    kit2 = "https://estudio-predolini.example/wp-content/servesyncerrorcertwerts/he-opas.html?email=[[-Email-"
+    report = "https://us-phishalarm-ewt.proofpoint.com/EWT/v1/inertToken2026!AbCdEf-inert$"
+    return mk.build_email(
+        from_="Servicio de correo <noreply@buzon-aviso.example>", to=TO,
+        subject=f"Acción requerida: su buzón {rcpt} ha alcanzado el límite",
+        text=(f"Su buzón {rcpt} está lleno y dejará de recibir mensajes.\n"
+              f"Verifique su cuenta e inicie sesión para ampliar el almacenamiento: {kit1}\n"
+              f"Si no puede acceder: {kit2}\n"),
+        html=(f'<p>Su buzón <b>{rcpt}</b> está lleno.</p>'
+              f'<p><a href="{kit1}">Verificar cuenta e iniciar sesión</a></p>'
+              f'<p><a href="{kit2}">Acceso alternativo</a></p>'
+              f'<p style="font-size:10px"><a href="{report}">Report phish</a></p>'),
+        received=_RULES_RCV, auth_results=f"mx01.{VICTIM_DOMAIN}; spf=fail smtp.mailfrom=buzon-aviso.example; "
+                                          "dmarc=fail (p=NONE) header.from=buzon-aviso.example",
+        message_id="<inert-kit-2026@buzon-aviso.example>")
+
+
 def newsletter_eml() -> bytes:
     """A LEGITIMATE newsletter through an email service provider: ESP headers,
     List-Unsubscribe, ESP bounce domain as Return-Path, click-tracking links and a
@@ -2932,6 +2958,7 @@ def build_all() -> dict[str, bytes]:
         "mail/sample_gateway_links.eml": gateway_links_eml(),
         "nested/sample_many_files.zip": many_files_zip(),
         "mail/sample_bec_freemail.eml": bec_freemail_eml(), "mail/sample_toad.eml": toad_eml(),
+        "mail/sample_phish_kit_links.eml": phish_kit_links_eml(),
         "mail/sample_newsletter.eml": newsletter_eml(), "mail/sample_lure_attachments.eml": lure_attachments_eml(),
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
         "sample_obf_techniques.js": obf_techniques_js(),
