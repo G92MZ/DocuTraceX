@@ -28,6 +28,7 @@ class _Opener:
 @pytest.fixture(autouse=True)
 def _tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "tools_dir", tmp_path)
+    monkeypatch.setattr(mailintel, "_refresh", {"running": False, "last": None, "error": None, "results": {}})
 
 
 def test_falls_back_to_settings_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
