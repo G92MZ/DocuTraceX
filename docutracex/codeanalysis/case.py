@@ -269,6 +269,7 @@ def overview(full: dict[str, Any]) -> dict[str, Any]:
     return {"summary": full.get("summary") or {}, "functions": light, "strings": strings,
             "crypto": full.get("crypto") or {}, "capabilities": full.get("capabilities") or {},
             "garble": full.get("garble") or {},
+            "floss_priority": full.get("floss_priority"), "floss_full": full.get("floss_full"),
             "apis": full.get("apis") or [], "resources": full.get("resources") or {},
             "dependencies": full.get("dependencies")}
 
@@ -676,6 +677,86 @@ def priority_tight(root: Path, path: Path, full: dict[str, Any], item: dict[str,
     full["floss_priority"] = {"status": rec.get("status"), "detail": rec.get("detail", ""),
                               "functions": len(addrs), "strings": len(located), "cached": bool(rec.get("cached"))}
     return located
+
+
+def _floss_job_file(root: Path, sha256: str, mode: str) -> Path:
+    return result_file(root, sha256, mode).with_suffix(".floss.json")
+
+
+def full_floss_status(root: Path, sha256: str, mode: str) -> dict[str, Any]:
+    key = str(_floss_job_file(root, sha256, mode))
+    with _jobs_lock:
+        job = _jobs.get(key)
+        if job:
+            return dict(job)
+    try:
+        st = json.loads(_floss_job_file(root, sha256, mode).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"state": "idle"}
+    if st.get("state") == "running":
+        st["state"] = "interrupted"
+    return st
+
+
+def merge_full_floss(root: Path, sha256: str, mode: str, rec: dict[str, Any]) -> int:
+    """Adds the strings of a full FLOSS run the code result does not have yet
+    (tight strings of a large file, mostly) to the Strings list and to their
+    function. Returns how many were added."""
+    with _write_lock:
+        full = load(root, sha256, mode)
+        if full is None:
+            return 0
+        have = {(x.get("value"), x.get("addr")) for x in full.get("floss") or []}
+        new = [dict(s, kind=f"{s.get('kind', '')} (full run)") for s in rec.get("located") or []
+               if (s.get("string"), s.get("function") or s.get("routine")) not in have]
+        tmp = {"functions": full.get("functions") or []}      # same function dicts: linked in place
+        attach_floss(tmp, new)
+        full["floss"] = ((full.get("floss") or []) + tmp["floss"])[:5000]
+        full["floss_full"] = {"status": rec.get("status"), "detail": rec.get("detail", ""), "added": len(new)}
+        result_file(root, sha256, mode).write_text(json.dumps(full), encoding="utf-8")
+        return len(new)
+
+
+def start_full_floss(root: Path, path: Path, sha256: str, mode: str) -> dict[str, Any]:
+    """Full FLOSS (tight strings on every function) in the background, for a
+    large file whose automatic run skipped them."""
+    from ..parsers import pe as _pe
+    if load(root, sha256, mode) is None:
+        raise FileNotFoundError("no code analysis for this object")
+    f = _floss_job_file(root, sha256, mode)
+    key = str(f)
+    with _jobs_lock:
+        cur = _jobs.get(key)
+        if cur and cur["state"] == "running":
+            return dict(cur)
+        job: dict[str, Any] = {"state": "running", "started": time.time(), "finished": None, "added": 0,
+                               "detail": "", "error": None}
+        _jobs[key] = job
+
+    def save() -> None:
+        try:
+            f.write_text(json.dumps(job), encoding="utf-8")
+        except OSError:
+            pass
+    save()
+
+    def run() -> None:
+        try:
+            rec = _pe.full_floss(path)
+            if rec.get("status") != "ok":
+                job["state"], job["error"] = "failed", str(rec.get("detail") or rec.get("status"))[:300]
+            else:
+                job["added"] = merge_full_floss(root, sha256, mode, rec)
+                job["detail"] = rec.get("detail", "")
+                job["state"] = "completed"
+        except Exception as exc:  # noqa: BLE001
+            log.warning("full FLOSS failed on %s: %s", sha256[:12], exc)
+            job["state"], job["error"] = "failed", str(exc)[:300]
+        job["finished"] = time.time()
+        save()
+
+    _threading.Thread(target=run, name=f"floss-full-{sha256[:8]}", daemon=True).start()
+    return dict(job)
 
 
 RES_DIR = "code_resources"

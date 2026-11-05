@@ -59,3 +59,35 @@ def test_nothing_runs_when_tight_was_not_skipped(tmp_path: Path, fake_floss, mon
     monkeypatch.setattr(case, "binary_item", lambda *a: {"floss": {"status": "ok"}})
     assert case.priority_tight(tmp_path, tmp_path / "x.exe", _full(), {}) == []
     assert fake_floss == []
+
+
+def test_full_floss_strings_merged_once(tmp_path: Path, monkeypatch) -> None:
+    import json
+    full = _full()
+    full["floss"] = [{"value": "old", "addr": 0x401010, "source": "FLOSS stack", "function": "main"}]
+    f = tmp_path / "res.json"
+    f.write_text(json.dumps(full))
+    monkeypatch.setattr(case, "result_file", lambda *a: f)
+    rec = {"status": "ok", "located": [{"kind": "tight", "string": "old", "function": 0x401010},
+                                       {"kind": "tight", "string": "inv-sync.example", "function": 0x403008}]}
+    assert case.merge_full_floss(tmp_path, "ab" * 32, "native", rec) == 1
+    got = json.loads(f.read_text())
+    assert [x["value"] for x in got["floss"]] == ["old", "inv-sync.example"]
+    assert got["floss"][1]["function"] == "copy" and got["floss"][1]["source"] == "FLOSS tight (full run)"
+    assert next(x for x in got["functions"] if x["name"] == "copy")["floss"][0]["value"] == "inv-sync.example"
+    assert case.merge_full_floss(tmp_path, "ab" * 32, "native", rec) == 0       # second time: nothing new
+
+
+def test_large_file_reuses_the_full_run(tmp_path: Path, fake_floss, monkeypatch) -> None:
+    exe = tmp_path / "big.exe"
+    exe.write_bytes(b"MZ inert stub")
+    monkeypatch.setattr(pe_mod, "FLOSS_LARGE_BYTES", 1)
+    monkeypatch.setattr(pe_mod, "_run_capa", lambda p, *_: {"status": "ok", "capabilities": []})
+    monkeypatch.setattr(pe_mod, "_trusted_signer", lambda p: None)
+    floss, _ = pe_mod._both(exe)
+    assert floss.get("tight_skipped") and fake_floss[-1] == ["--no", "tight"]
+    pe_mod.full_floss(exe)
+    assert fake_floss[-1] == []
+    n = len(fake_floss)
+    floss, _ = pe_mod._both(exe)                   # the full run is reused, not the lighter one
+    assert len(fake_floss) == n and not floss.get("tight_skipped") and floss.get("cached")

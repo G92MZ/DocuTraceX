@@ -560,6 +560,22 @@ def _cache_file(sha: str, tool: str) -> Path:
     return Path(settings.cases_dir) / ".tools_cache" / sha[:2] / f"{sha}.{tool}.json"
 
 
+def _cache_get(path: Path, tool: str, exe: Path | None, extra: list[str]) -> dict[str, Any] | None:
+    import json
+    sha = _sha(path)
+    if not sha:
+        return None
+    try:
+        got = json.loads(_cache_file(sha, tool).read_text(encoding="utf-8"))
+        if got.get("_key") == f"{_tool_id(exe)}|{' '.join(extra)}":
+            rec = got["record"]
+            rec["cached"] = True
+            return rec
+    except (OSError, ValueError, KeyError):
+        pass
+    return None
+
+
 def _cached(path: Path, tool: str, exe: Path | None, extra: list[str], run) -> dict[str, Any]:  # noqa: ANN001
     """A FLOSS / capa result by SHA-256 across cases (same tool build, same
     options): a re-analysis, or the same DLL in another case, is instant."""
@@ -567,15 +583,9 @@ def _cached(path: Path, tool: str, exe: Path | None, extra: list[str], run) -> d
     sha = _sha(path)
     key = f"{_tool_id(exe)}|{' '.join(extra)}"
     f = _cache_file(sha, tool) if sha else None
-    if f is not None:
-        try:
-            got = json.loads(f.read_text(encoding="utf-8"))
-            if got.get("_key") == key:
-                rec = got["record"]
-                rec["cached"] = True
-                return rec
-        except (OSError, ValueError, KeyError):
-            pass
+    got = _cache_get(path, tool, exe, extra)
+    if got is not None:
+        return got
     rec = run()
     if f is not None and rec.get("status") == "ok":
         try:
@@ -604,11 +614,14 @@ def _both(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     except OSError:
         large = False
     fextra = FLOSS_LARGE_ARGS if large else []
+    if large and _cache_get(path, "floss_full", settings.floss_executable(), []) is not None:
+        fextra = []                     # the analyst already ran the full FLOSS on it: reuse that
     with ThreadPoolExecutor(max_workers=2) as ex:
-        ff = ex.submit(_cached, path, "floss", settings.floss_executable(), fextra, lambda: _run_floss(path, fextra) if fextra else _run_floss(path))
+        ff = ex.submit(_cached, path, "floss_full" if large and not fextra else "floss", settings.floss_executable(),
+                       fextra, lambda: _run_floss(path, fextra) if fextra else _run_floss(path))
         cf = ex.submit(_cached, path, "capa", settings.capa_executable(), [], lambda: _run_capa(path))
         floss = ff.result()
-        if large and floss.get("status") == "ok":
+        if large and fextra and floss.get("status") == "ok":
             floss["note"] = (f"large file (> {FLOSS_LARGE_BYTES // 1048576} MB): tight strings skipped on the "
                              "whole file (decoded and stack strings extracted); the code analysis runs them on "
                              "its priority functions")
@@ -616,7 +629,7 @@ def _both(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         return floss, cf.result()
 
 
-PRIORITY_TIGHT_MAX = int(_os.environ.get("DOCUTRACEX_FLOSS_PRIORITY_FUNCS", "64") or 64)
+PRIORITY_TIGHT_MAX = int(_os.environ.get("DOCUTRACEX_FLOSS_PRIORITY_FUNCS", "128") or 128)
 
 
 def tight_on_functions(path: Path, addrs: list[int]) -> dict[str, Any]:
@@ -640,6 +653,14 @@ def tight_on_functions(path: Path, addrs: list[int]) -> dict[str, Any]:
     rec.pop("strings", None)
     rec["functions"] = len(addrs)
     return rec
+
+
+def full_floss(path: Path) -> dict[str, Any]:
+    """FLOSS with every string type on a file that was too large for the
+    automatic run (tight strings included). Cached: the next analysis of the
+    file reuses it instead of the lighter run."""
+    from ..config import settings
+    return _cached(path, "floss_full", settings.floss_executable(), [], lambda: _run_floss(path))
 
 
 def _sha(path: Path) -> str | None:

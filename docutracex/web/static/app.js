@@ -5568,6 +5568,7 @@ function cxStrings(k, d) {
   const all = (d.strings || []).filter((s) => !q || (s.value || "").toLowerCase().includes(q) || (s.function || "").toLowerCase().includes(q));
   const shown = all.slice(0, 1500);
   return `<div class="cx-toolbar"><input type="search" class="cx-sq" placeholder="Filter strings" value="${escapeHtml(flt.q)}"></div>
+    ${d.floss_priority ? '<div class="cx-ffloss"></div>' : ""}
     <div class="cx-slist"><p class="hint-line">${all.length} string(s) referenced by the analysed code${all.length > shown.length ? `, first ${shown.length} shown` : ""}.</p>
     <div class="cx-scroll"><table class="cases"><thead><tr><th>String</th><th>Used in</th><th>Source</th><th>Address</th></tr></thead><tbody>${
       shown.map((s) => `<tr><td class="mono">${escapeHtml(s.value)}</td>
@@ -5621,6 +5622,44 @@ function cxOpen(caseId, sha, mode, group, addr) {
 function cxWireOpen(scope, caseId, sha, mode, group) {
   scope.querySelectorAll("[data-cx-open]").forEach((b) => b.addEventListener("click", () =>
     cxOpen(caseId, sha, mode, group, b.getAttribute("data-cx-open"))));
+}
+
+// Large file: FLOSS ran tight strings only on the priority functions. "Full
+// FLOSS" runs them on every function in the background (the tab can be left).
+async function cxFullFloss(el, caseId, sha, mode, d, onDone) {
+  const box = el.querySelector(".cx-ffloss");
+  if (!box) return;
+  const url = `/api/cases/${encodeURIComponent(caseId)}/code/${sha}/${mode}/floss-full`;
+  const fp = d.floss_priority || {};
+  const draw = (st) => {
+    if (st.state === "running") {
+      box.innerHTML = `<div class="hint-line"><span class="spin">●</span> Full FLOSS running in the background (tight strings on every function) — it can take minutes; you can leave this tab.</div>`;
+      return;
+    }
+    const last = st.state === "completed" ? ` · full run done: <b>${st.added}</b> new string(s)`
+      : st.state === "failed" ? ` · full run failed: ${escapeHtml(st.error || "")}`
+      : st.state === "interrupted" ? " · full run interrupted (app restarted)" : "";
+    box.innerHTML = `<div class="hint-line">Large file: FLOSS tight strings ran on the ${fp.functions || 0} priority function(s) only (${fp.strings || 0} found).${last}
+      ${st.state === "completed" ? "" : '<button class="btn btn-ghost btn-sm cx-ffrun" type="button">Full FLOSS (every function)</button>'}</div>`;
+    const b = box.querySelector(".cx-ffrun");
+    if (b) b.addEventListener("click", async () => {
+      b.disabled = true;
+      const r = await fetch(url, { method: "POST" });
+      const j = await r.json();
+      if (!r.ok) { box.innerHTML = `<p class="bad-text">${escapeHtml(j.detail || String(r.status))}</p>`; return; }
+      poll(true);
+    });
+  };
+  const poll = async (was) => {
+    if (!box.isConnected) return;
+    let st;
+    try { st = await (await fetch(url)).json(); } catch (_) { return; }
+    if (!box.isConnected) return;
+    if (was && st.state === "completed") await onDone();
+    draw(st);
+    if (st.state === "running") setTimeout(() => poll(true), 5000);
+  };
+  poll(false);
 }
 
 // "Decompile all" runs on the server in the background: the tab can be left and
@@ -5704,6 +5743,11 @@ async function cxRender(el, caseId) {
       cxWireOpen(el.querySelector(".cx-slist"), caseId, sha, mode, group);
     });
     cxWireOpen(el, caseId, sha, mode, group);
+    cxFullFloss(el, caseId, sha, mode, d, async () => {       // new strings landed: reload this view
+      delete _cx.data[k];
+      Object.keys(_cx.fn).filter((x) => x.startsWith(k + "|")).forEach((x) => delete _cx.fn[x]);
+      if (el.isConnected) cxRender(el, caseId);
+    });
   } else if (part === "apis") {
     el.innerHTML = cxApis(k, d);
     cxWireOpen(el, caseId, sha, mode, group);
