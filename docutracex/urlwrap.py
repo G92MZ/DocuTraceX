@@ -11,6 +11,7 @@ URL Protect (only the domain hint: the target is resolved server-side), Cisco
 Secure Email, Check Point Harmony / Avanan (v1 / v2), Sophos Email, OpenText /
 EdgePilot, Libraesva URLSand, Egress Defend (base64 + zlib), Trellix / FireEye,
 Symantec / Broadcom ClickTime, Trend Micro click-time, Hornetsecurity,
+Proofpoint PhishAlarm's report button (opaque),
 Trustwave MailMarshal, Intermedia, Amazon SES click tracking, and the Google /
 Facebook / LinkedIn redirectors. Wrappers nest (several gateways in a row):
 ``unwrap_all`` peels them all.
@@ -179,6 +180,9 @@ def _host_is(host: str, *names: str) -> bool:
 PROVIDERS: list[tuple[str, Callable[[str], bool], Callable[[str], bool] | None, Callable[[str], str | None], bool]] = [
     ("Proofpoint URL Defense", lambda h: h in ("urldefense.proofpoint.com", "urldefense.com", "urldefense.us"),
      None, _proofpoint, True),
+    # the "Report phish" button PhishAlarm adds to every message (opaque token: nothing to decode)
+    ("Proofpoint PhishAlarm (report button)", lambda h: h.endswith("proofpoint.com") and "phishalarm" in h,
+     None, lambda _u: None, False),
     ("Microsoft Safe Links", lambda h: h.endswith(("safelinks.protection.outlook.com",
                                                      "safelinks.protection.office365.us",
                                                      "safelinks.protection.apps.mil")), None,
@@ -290,3 +294,12 @@ def original(url: str) -> tuple[str, list[str], bool]:
     if prov is not None and prov[0] not in _REDIRECTORS:   # an inner gateway we could not open
         exact = False
     return last, [c[0] for c in chain], exact
+
+
+def is_opaque_infrastructure(url: str) -> bool:
+    """A gateway URL that hides no destination (a report button, an undecodable
+    token): infrastructure only — neither an IOC nor a link the rules judge."""
+    prov, _p = _provider(url)
+    return prov is not None and prov[0] not in _REDIRECTORS and not unwrap_all(url) \
+        and not prov[0].startswith("Mimecast")
+
