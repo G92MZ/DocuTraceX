@@ -315,6 +315,57 @@ rules:
     when: {fact: links.redirects}
     evidence: "{links.redirects}"
 
+  # typical phishing-kit URLs (shape of the link itself)
+  - id: link_recipient_in_url
+    title: Link personalised with the recipient's address (kits pre-fill the fake login with it)
+    severity: medium
+    score: 25
+    attack: [T1566.002, T1598.003]
+    when: {fact: links.recipient_in_url}
+    evidence: "{links.recipient_in_url}"
+
+  - id: link_phishing_kit_path
+    title: Link with a phishing-kit style path (lure words glued together, kit page on a compromised site)
+    severity: medium
+    score: 20
+    attack: [T1566.002, T1584.004]
+    when: {fact: links.kit_path}
+    evidence: "{links.kit_path}"
+
+  - id: link_unfilled_placeholder
+    title: Link with an unfilled campaign merge tag ([[-Email-], {{email}}, %EMAIL%…)
+    severity: low
+    score: 10
+    attack: [T1566.002]
+    when: {fact: links.placeholder}
+    evidence: "{links.placeholder}"
+
+  - id: link_credential_harvest_pattern
+    title: Credential-harvesting link (personalised with the recipient and kit-shaped, or with a login lure)
+    severity: high
+    score: 20
+    attack: [T1566.002, T1598.003]
+    when: {all: [{any: [{fact: links.recipient_in_url}, {fact: links.placeholder}]},
+                 {any: [{fact: links.kit_path}, {text: credential}, {fact: links.abused_tld},
+                        {fact: links.hosting}]}]}
+    evidence: "{links.recipient_in_url} {links.placeholder}"
+
+  - id: link_userinfo_trick
+    title: Link with user-info before the host (http://trusted.example@real-host/ trick)
+    severity: medium
+    score: 20
+    attack: [T1566.002, T1036]
+    when: {fact: links.userinfo}
+    evidence: "{links.userinfo}"
+
+  - id: link_punycode_host
+    title: Link to an internationalised (punycode) host — possible homograph
+    severity: medium
+    score: 12
+    attack: [T1566.002, T1036]
+    when: {fact: links.punycode}
+    evidence: "{links.punycode}"
+
   # --- attachments --------------------------------------------------------------
   - id: svg_active_content
     title: SVG attachment with script / embedded HTML / event handlers
