@@ -62,7 +62,9 @@ def test_nested_limits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         f.write_text("plain text", encoding="utf-8")
         items.append({"path": str(f), "filename": f.name})
     res = nested.scan_children(items, CasePaths("c1", cases_dir=root.parent))
-    assert len(res["tree"]) == 3 and res["truncated_children"] == 3
+    # past the node budget the children are still listed (not analysed in depth)
+    assert len(res["tree"]) == 6 and res["listed_children"] == 3
+    assert [bool(n.get("listed_only")) for n in res["tree"]] == [False] * 3 + [True] * 3
 
 
 def test_steps_are_reported_live(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
