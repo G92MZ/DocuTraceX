@@ -96,3 +96,13 @@ def test_abusech_key_never_returned(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert out == {"configured": True, "hint": "…6789"} and appsettings.abusech_key() == "abcdef0123456789"
     with pytest.raises(ValueError):
         appsettings.set_abusech_key("bad key/with?chars")
+
+
+def test_tls_context_verifies_and_short_reason() -> None:
+    import ssl
+    ctx = mailintel._ssl_context()
+    assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname
+    err = ssl.SSLCertVerificationError(1, "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed")
+    err.verify_message = "unable to get local issuer certificate"
+    msg = mailintel._short(urllib.error.URLError(err))
+    assert msg.startswith("TLS certificate not trusted: unable to get local issuer certificate")

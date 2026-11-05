@@ -280,18 +280,41 @@ def _short(exc: BaseException) -> str:
     if "getaddrinfo" in str(reason) or "Name or service" in str(reason) or "11001" in str(reason):
         return "DNS lookup failed"
     if "CERTIFICATE" in str(reason).upper():
-        return "TLS certificate not trusted (inspecting proxy?)"
+        why = getattr(reason, "verify_message", "") or ""
+        try:
+            import truststore  # noqa: F401
+            tip = " (a TLS-inspecting proxy / firewall whose CA this machine does not trust?)"
+        except ImportError:
+            tip = " (TLS-inspecting proxy? run `python -m pip install truststore` to verify like the browser)"
+        return "TLS certificate not trusted" + (f": {why}" if why else "") + tip
     return str(reason)[:120]
+
+
+def _ssl_context() -> Any:
+    """Verify like the browser does: the OS trust store and verifier (``truststore``:
+    corporate / TLS-inspection CAs, intermediates fetched by the OS). Without it,
+    the stdlib default (which on Windows also loads the system store) minus the
+    RFC 5280 strict mode Python 3.13 turned on, which many corporate CAs fail.
+    Verification itself is never disabled."""
+    import ssl
+    try:
+        import truststore
+        return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    except Exception:  # noqa: BLE001  (not installed / unsupported platform)
+        ctx = ssl.create_default_context()
+        ctx.verify_flags &= ~getattr(ssl, "VERIFY_X509_STRICT", 0)
+        return ctx
 
 
 def _routes(proxy: str | None) -> list[tuple[str, Any]]:
     """How to reach the lists, in order: like the updater (direct, honouring the
     system proxy settings), then the proxy configured in Settings (HTTP/HTTPS;
     a free public proxy is tried last — they die often)."""
-    routes: list[tuple[str, Any]] = [("direct / system proxy", urllib.request.build_opener())]
+    tls = urllib.request.HTTPSHandler(context=_ssl_context())
+    routes: list[tuple[str, Any]] = [("direct / system proxy", urllib.request.build_opener(tls))]
     if proxy and proxy.startswith(("http://", "https://")):
         routes.append(("Settings proxy", urllib.request.build_opener(
-            urllib.request.ProxyHandler({"http": proxy, "https": proxy}))))
+            urllib.request.ProxyHandler({"http": proxy, "https": proxy}), tls)))
     elif proxy and proxy.startswith("socks"):
         try:
             import socks  # noqa: F401  (PySocks)
