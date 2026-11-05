@@ -459,6 +459,36 @@ def eml_doc() -> bytes:
     return ("\r\n".join(trace) + "\r\n").encode() + signed
 
 
+def gateway_links_eml() -> bytes:
+    """A routine remittance notice whose links went through the recipients' own
+    mail security gateways (Safe Links, Proofpoint, Cisco, Sophos, Egress,
+    Avanan, Trellix, Symantec, Libraesva, EdgePilot, Barracuda, Mimecast,
+    Teams, Amazon SES) — one link through six of them in a row. Legitimate
+    infrastructure: no finding for it; the IOCs are the original destinations."""
+    portal = f"https://{SUPPLIER_DOMAIN}/proveedores/remesa?ref={INVOICE}"
+    pdf = "https://cdn-update.example.net/inv/remesa_2026-0613.pdf"
+    links = [
+        ("Portal de proveedores", mk.safelinks(portal)), ("Remesa (Proofpoint)", mk.proofpoint_v3(pdf)),
+        ("Cisco", mk.cisco(portal + "&v=cisco")), ("Sophos", mk.sophos(portal + "&v=sophos")),
+        ("Egress", mk.egress(portal + "&v=egress")), ("Avanan", mk.avanan(portal + "&v=avanan")),
+        ("Trellix", mk.trellix(portal + "&v=trellix")), ("Symantec", mk.symantec(portal + "&v=symantec")),
+        ("Teams", mk.teams_safelinks(portal + "&v=teams")), ("SES", mk.awstrack(portal + "&v=ses")),
+        ("Mimecast", mk.mimecast(SUPPLIER_DOMAIN)),
+        ("Reenviado (6 pasarelas)", mk.libraesva(mk.egress(mk.cisco(mk.sophos(mk.edgepilot(mk.barracuda(pdf))))))),
+    ]
+    html = ("<html><body><p>Adjuntamos el aviso de remesa de la factura " + INVOICE + ".</p><ul>"
+            + "".join(f'<li><a href="{u}">{t}</a></li>' for t, u in links) + "</ul><p>Un saludo.</p></body></html>")
+    text = "Aviso de remesa " + INVOICE + "\n" + "\n".join(f"{t}: {u}" for t, u in links)
+    return mk.build_email(
+        from_=f'"{SUPPLIER} Administración" <facturacion@{SUPPLIER_DOMAIN}>', to=TO,
+        subject=f"Aviso de remesa {INVOICE}", html=html, text=text,
+        received=[f"from mail.{SUPPLIER_DOMAIN} (mail.{SUPPLIER_DOMAIN} [203.0.113.20]) by mx01.{VICTIM_DOMAIN} "
+                  "with ESMTPS; Tue, 13 Oct 2026 17:12:04 +0000"],
+        auth_results=(f"mx01.{VICTIM_DOMAIN}; spf=pass smtp.mailfrom={SUPPLIER_DOMAIN}; dkim=pass "
+                      f"header.d={SUPPLIER_DOMAIN}; dmarc=pass header.from={SUPPLIER_DOMAIN}"),
+        message_id=f"<remesa-{INVOICE}@mail.{SUPPLIER_DOMAIN}>")
+
+
 def emlx_doc() -> bytes:
     message = eml_doc()
     plist = (b'<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -2805,6 +2835,7 @@ def build_all() -> dict[str, bytes]:
         "sample.dotx": word_dotx(), "sample.dotm": word_dotm(),
         "sample.rtf": rtf_doc(), "sample.pdf": pdf_doc(),
         "sample.eml": eml_doc(), "sample.emlx": emlx_doc(), "sample.msg": msg_doc(),
+        "mail/sample_gateway_links.eml": gateway_links_eml(),
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
         "sample_obf_techniques.js": obf_techniques_js(),
         "sample_chain_dropper.js": chain_dropper_js(), "sample_msxml_dropper.js": msxml_dropper_js(), "sample_wsh_selfread.js": wsh_selfread_dropper_js(), "sample_xor_stager.ps1": xor_stager_ps1(),
