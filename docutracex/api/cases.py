@@ -871,6 +871,26 @@ def code_decompile_all_cancel(analysis_id: str, sha256: str, mode: str) -> dict:
     return code_case.cancel_batch(paths.root, sha256, mode)
 
 
+@router.get("/{analysis_id}/code/{sha256}/{mode}/floss-full")
+def code_floss_full_status(analysis_id: str, sha256: str, mode: str) -> dict:
+    """State of the background full FLOSS run (tight strings on every function)."""
+    from ..codeanalysis import case as code_case
+    _m, paths, _full = _code_ctx(analysis_id, sha256, mode)
+    return code_case.full_floss_status(paths.root, sha256, mode)
+
+
+@router.post("/{analysis_id}/code/{sha256}/{mode}/floss-full")
+def code_floss_full(analysis_id: str, sha256: str, mode: str) -> dict:
+    """Run the full FLOSS in the background on a large file whose automatic run
+    skipped the tight strings; new strings land in Code → Strings."""
+    from ..codeanalysis import case as code_case
+    from ..config import settings
+    if settings.floss_executable() is None:
+        raise HTTPException(status_code=503, detail="FLOSS not provisioned")
+    manifest, paths, _full = _code_ctx(analysis_id, sha256, mode)
+    return code_case.start_full_floss(paths.root, _code_target(manifest, paths, sha256), sha256, mode)
+
+
 @router.get("/{analysis_id}/code/{sha256}/{mode}/graph")
 def code_graph(analysis_id: str, sha256: str, mode: str) -> dict:
     """Call graph of one analysed binary (nodes, edges, roots, paths to sensitive code)."""
