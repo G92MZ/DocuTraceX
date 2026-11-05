@@ -67,10 +67,37 @@ The test suite unpacks it on its own.
 | `sample.eml` | The phishing email: SPF/DKIM/DMARC fail, two `Received` hops from `203.0.113.47`, PHPMailer, Reply-To diversion, a **DKIM signature broken by a later edit** of the amount (1.250,00 → 7.250,00), a **Safe Links + Proofpoint** wrapped link to the look-alike domain, hidden text and a tracking pixel. Attachments: `report.docm`, `pedido.doc` (**the RTF disguised as .doc**), `Factura_2026-0187.pdf.exe` (double extension), `Factura.html` (**HTML smuggling**: `atob` → Blob → download, then redirect) and `escanear.png` (**QR code**). All attachments are analysed recursively. |
 | `sample.emlx` | The same message in Apple Mail's `.emlx` wrapper. |
 | `mail/sample_gateway_links.eml` | A **legitimate** remittance notice whose links went through the recipients' own mail security gateways: Safe Links (Outlook and Teams), Proofpoint v3, Cisco Secure Email, Sophos, Egress (base64 + zlib), Check Point / Avanan, Trellix, Symantec ClickTime, Amazon SES tracking, Mimecast (domain hint) and one link through **six gateways in a row** (Libraesva → Egress → Cisco → Sophos → EdgePilot → Barracuda). Expected: **no finding** for the rewriting (it is infrastructure, shown under *Links rewritten by a mail gateway*), every link decoded to its original, and the **IOCs only the original destinations** (`suministros-iberia.example.com`, `cdn-update.example.net/…/remesa_2026-0613.pdf`) — never a gateway host. |
+<<<<<<< HEAD
 | `nested/sample_many_files.zip` | An installer-style kit with **80 files**, more than the per-file deep-analysis limit (60, `DOCUTRACEX_NESTED_MAX_CHILDREN`). Expected in **Nested**: all 80 children — the first 60 analysed, the other 20 *listed · not analysed in depth* (name, type, size, SHA-256, Folder / Download / Hex). Archives and MSIs extract up to 1000 entries (`DOCUTRACEX_ARCHIVE_MAX_ENTRIES`) and 500 MB (`DOCUTRACEX_ARCHIVE_MAX_MB`); an analysed file's own children up to 1000 are listed. |
+=======
+| `mail/sample_bec_freemail.eml` | **Invoice / BEC fraud** from a mail.com vanity address (`accountant.com`): a "Directora Financiera" announces a new IBAN, urgent and confidential, and asks to reply to `pagos.direccion@usa.com`. Expected verdict **phishing**: `bec_bank_details_change`, `bec_urgent_payment`, `freemail_business_request`, `executive_display_name_external`, `mailto_freemail_in_body`, `sender_freemail`. |
+| `mail/sample_toad.eml` | **Callback phishing (TOAD)**: a fake renewed subscription with a (fictional 555-01xx) phone number to call, no link. Verdict **phishing**: `callback_phishing`, `dmarc_fail_policy_none`. |
+| `mail/sample_newsletter.eml` | A **legitimate** newsletter through an email service provider (SendGrid headers, List-Unsubscribe, ESP bounce domain, click-tracking link, tracking pixel). Verdict **clean** (`legit_esp_newsletter` lowers it); the tracking pixel is still reported, and the tracking link is no `url_display_mismatch`. |
+| `mail/sample_lure_attachments.eml` | A fake `RE:` with no thread, a ZIP flagged as **encrypted with its password in the body**, an **SVG with script** and a **calendar invite** with a link. Verdict **malicious**: `password_protected_attachment`, `svg_active_content`, `calendar_invite_links`, `fake_reply_thread`. |
+>>>>>>> origin/main
 | `sample.msg` | The same message as an Outlook `.msg` (MAPI streams, HTML body, the same attachments). |
 | `encrypted/sample_encrypted.eml` | Gateway evasion: `Factura_2026-0187.zip` (**WinZip AES**) holding a **password-protected** `.xlsm`, with *"La contraseña del archivo es: Fact2026"* in the body. DocuTraceX finds the password, opens the ZIP and the workbook, and analyses the macros inside (Nested tab). |
 | `encrypted/sample_velvet.xlsm` | The macro workbook encrypted with Excel's built-in **`VelvetSweatshop`** password (opens without a prompt, scanners see only ciphertext): decrypted automatically, flagged high, and the decrypted copy analysed. |
+
+**Email rules and verdict.** Besides the built-in checks, every email goes
+through the declarative rules of `docutracex/rules/email/*.yml` (plus your own in
+`config/rules/email/*.yml`, which can add rules or override one by id): a
+condition over the message's facts (sender, Reply-To, authentication, ESP,
+thread, recipients, body lexicons in ES/EN/DE/FR/IT/PT, links already decoded
+from the gateways, attachments' bytes), a severity, a score and ATT&CK ids. The
+**verdict** (*clean / suspicious / phishing / malicious*) adds the scores of the
+rules and of the built-in findings, minus legitimacy signals (an authenticated
+newsletter from a known ESP), and lists what raised and what lowered it;
+*malicious* needs a payload or known-bad signal (smuggling, executable, implant
+config, reputation feed hit…). A second pass after the whole case ran uses what
+the attachments and links turned into (nested findings, C2 configurations).
+Reputation lists (Settings → *Email reputation lists*, refreshed on start): free
+webmail (Kikobeats, MIT — includes the mail.com vanity domains), disposable
+(CC0), phishing domains / IPs (Phishing.Database, MIT), URLhaus hosts (CC0);
+built in: big webmail providers, commonly abused TLDs, ESPs and their trackers,
+legitimate hosting abused for phishing. Settings → *Email rules: your
+organisation* takes your own domains (spoofing / look-alikes of them weigh most)
+and extra brands.
 
 ## Deobfuscation demos (standalone scripts)
 

@@ -1598,6 +1598,30 @@ function paneEmailBody(email, mr) {
 }
 
 // Email rules shown with the body: decoded gateway links, QR codes, emldump parts.
+const VERDICT_CLS = { clean: "badge-ok", suspicious: "badge-warn", phishing: "badge-bad", malicious: "badge-bad" };
+
+function emailVerdictBox(mr) {
+  const v = mr && mr.verdict;
+  if (!v) return "";
+  const sig = (xs) => (xs || []).map((s) => `<tr><td class="mono">${escapeHtml(s.id)}</td><td>${s.score > 0 ? "+" : ""}${s.score}</td>
+    <td>${escapeHtml(s.why || "")}</td></tr>`).join("");
+  const th = v.thresholds || {};
+  return `<div class="email-verdict"><h3 class="formats-title">Verdict <span class="badge ${VERDICT_CLS[v.verdict] || "badge-muted"}">${escapeHtml(v.verdict)}</span>
+      <span class="hint-line">score ${v.score} · clean &lt; ${th.clean}, suspicious &lt; ${th.suspicious}, phishing &lt; ${th.phishing}, above: malicious when a payload / known-bad signal is present</span></h3>
+    ${(v.raised || []).length ? `<details class="disclose" open><summary>What raised it (${v.raised.length})</summary>${table(["Signal", "Score", "Why"], sig(v.raised))}</details>` : ""}
+    ${(v.lowered || []).length ? `<details class="disclose" open><summary>What lowered it (legitimacy signals)</summary>${table(["Signal", "Score", "Why"], sig(v.lowered))}</details>` : ""}
+  </div>`;
+}
+
+function emailRuleMatches(mr) {
+  const ms = [...(((mr || {}).engine || {}).matched || []), ...(((mr || {}).engine || {}).case_matched || [])];
+  if (!ms.length) return '<p class="hint-line">No declarative rule matched.</p>';
+  return `<h3 class="formats-title">Rules that matched (${ms.length})</h3>` + table(["Rule", "Severity", "Score", "ATT&CK", "Evidence"],
+    ms.map((m) => `<tr><td><b>${escapeHtml(m.title)}</b><div class="hint-line mono">${escapeHtml(m.id)} · ${escapeHtml(m.source || "")}</div></td>
+      <td>${escapeHtml(m.severity)}</td><td>${m.score > 0 ? "+" : ""}${m.score}</td><td class="mono">${escapeHtml((m.attack || []).join(", "))}</td>
+      <td class="mono">${escapeHtml(m.evidence || "")}</td></tr>`).join(""));
+}
+
 function emailRulesBody(mr) {
   if (!mr) return "";
   let html = "";
@@ -2869,6 +2893,8 @@ async function openComponents(analysisId, keepTab, viewId) {
       sections.push({ id: "checks", label: `Checks (${mods.netcheck.checks.length})`, html: paneChecks(analysisId, mods.netcheck) });
     }
     if (email) {
+      const v = (mods.mailrules || {}).verdict;
+      if (v) sections.push({ id: "verdict", label: `Verdict: ${v.verdict}`, html: emailVerdictBox(mods.mailrules) + emailRuleMatches(mods.mailrules) });
       sections.push({ id: "auth", label: "Authentication", html: paneAuth(email, mods.mailrules) });
       sections.push({ id: "headers", label: `Headers (${(email.headers || []).length})`, html: paneEmailHeaders(email) });
       sections.push({ id: "attachments", label: `Attachments (${email.attachment_count || 0})`, html: paneAttachments(email, nested) });
@@ -4709,8 +4735,56 @@ async function loadSettings() {
     document.getElementById("ipdb-line").innerHTML =
       `DB-IP Lite ASN: ${escapeHtml(db.dbip_asn || "missing")} · country: ${escapeHtml(db.dbip_country || "missing")} · iptoasn: ${escapeHtml(db.ip2asn || "missing")} · Chromium: ${n.chromium ? "tools/playwright" : "not provisioned"}<br>${escapeHtml(db.attribution || "")}`;
     renderTlds(n.tlds);
+    loadMailintel();
+    loadEmailOrg();
   } catch (err) { st.textContent = "Could not load settings."; }
 }
+
+function renderMailintel(m) {
+  const box = document.getElementById("mailintel-table");
+  if (!box) return;
+  const rows = (m.feeds || []).map((f) => `<tr><td>${escapeHtml(f.label)}</td><td>${f.count ? f.count.toLocaleString() : "—"}</td>
+    <td>${escapeHtml(f.updated || "not downloaded")}</td><td class="mono">${escapeHtml(f.source)}</td><td>${escapeHtml(f.license)}</td></tr>`).join("");
+  box.innerHTML = table(["List", "Entries", "Updated", "Source", "Licence"], rows)
+    + `<div class="hint-line">Built in (always on): ${(m.builtin || {}).freemail || 0} big webmail providers; abused TLDs ${escapeHtml(((m.builtin || {}).abused_tlds || []).map((t) => "." + t).join(" "))}.
+       ${m.running ? " Refreshing…" : ""}${m.error ? ` <span class="bad-text">Last refresh: ${escapeHtml(m.error)}</span>` : ""}</div>`;
+}
+
+async function loadMailintel() {
+  try { renderMailintel(await (await fetch("/api/settings/mailintel")).json()); } catch (_) { /* optional */ }
+}
+
+async function loadEmailOrg() {
+  try {
+    const e = await (await fetch("/api/settings/email")).json();
+    document.getElementById("email-own").value = (e.own_domains || []).join("\n");
+    document.getElementById("email-brands").value = (e.brands || []).join("\n");
+  } catch (_) { /* optional */ }
+}
+
+document.getElementById("mailintel-refresh").addEventListener("click", async (ev) => {
+  const btn = ev.currentTarget, msg = document.getElementById("mailintel-msg");
+  btn.disabled = true; msg.className = "status"; msg.textContent = "Downloading…";
+  try {
+    const r = await fetch("/api/settings/mailintel/refresh", { method: "POST" });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    renderMailintel(j);
+    msg.className = j.error ? "status bad-text" : "status ok-text"; msg.textContent = j.error ? "Some lists failed." : "Updated.";
+  } catch (err) { msg.className = "status bad-text"; msg.textContent = String(err.message || err); }
+  btn.disabled = false;
+});
+
+document.getElementById("email-save").addEventListener("click", async () => {
+  const msg = document.getElementById("email-msg");
+  try {
+    const r = await fetch("/api/settings/email", { method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ own_domains: document.getElementById("email-own").value, brands: document.getElementById("email-brands").value }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    msg.className = "status ok-text"; msg.textContent = `Saved (${j.own_domains.length} domain(s), ${j.brands.length} brand(s)); applies to new analyses.`;
+  } catch (err) { msg.className = "status bad-text"; msg.textContent = String(err.message || err); }
+});
 
 function renderTlds(t) {
   t = t || {};

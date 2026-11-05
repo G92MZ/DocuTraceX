@@ -502,6 +502,87 @@ def many_files_zip(n: int = 80) -> bytes:
     return buf.getvalue()
 
 
+_RULES_RCV = [f"from mail.relay.example (mail.relay.example [203.0.113.20]) by mx01.{VICTIM_DOMAIN} with ESMTPS; "
+              "Tue, 13 Oct 2026 17:12:04 +0000"]
+
+
+def bec_freemail_eml() -> bytes:
+    """Invoice / BEC fraud from a mail.com vanity address (accountant.com): a
+    "finance director" announces new bank details, urgent and confidential, and
+    asks to write to another free-webmail address. No link, no attachment."""
+    return mk.build_email(
+        from_="Laura Gómez - Directora Financiera <l.gomez.finanzas@accountant.com>", to=TO,
+        subject=f"URGENTE - Factura {INVOICE} - cambio de cuenta",
+        text=(f"Buenos días,\n\nPor una auditoría interna hemos cambiado nuestra cuenta bancaria. Les ruego abonen hoy "
+              f"mismo la factura {INVOICE} ({AMOUNT} EUR) en el nuevo IBAN ES91 2100 0418 4502 0005 1332.\n"
+              "Es un asunto confidencial: no lo comenten y respondan solo a pagos.direccion@usa.com\n\nLaura"),
+        html=("<p>Buenos días,</p><p>Hemos cambiado nuestra cuenta bancaria; abonen hoy mismo la factura en el nuevo "
+              "IBAN ES91 2100 0418 4502 0005 1332.</p><p>Confidencial. Respondan a "
+              "<a href='mailto:pagos.direccion@usa.com'>pagos.direccion@usa.com</a></p>"),
+        received=_RULES_RCV, auth_results=f"mx01.{VICTIM_DOMAIN}; spf=pass smtp.mailfrom=accountant.com; dkim=none; "
+                                          "dmarc=none header.from=accountant.com",
+        message_id="<inert-bec-2026@accountant.com>")
+
+
+def toad_eml() -> bytes:
+    """Callback phishing (TOAD): a fake "renewed subscription" with a phone
+    number to call to cancel — no link to click, so link scanners see nothing.
+    The number is a reserved fictional one (555-01xx)."""
+    return mk.build_email(
+        from_="Geek Squad Billing <billing@renewals-desk.example>", to=TO, subject="Your subscription has been renewed",
+        text=("Dear customer,\n\nYour annual Geek Squad protection subscription was renewed and you have been charged "
+              "$499.99 (order #GS-88721).\nIf you did not authorise this charge, call our support line at "
+              "+1 (808) 555-0142 within 24 hours to cancel and get a refund.\n\nBilling team"),
+        html="<p>Order #GS-88721 — $499.99</p><p>Call +1 (808) 555-0142 to cancel.</p>",
+        received=_RULES_RCV, auth_results=f"mx01.{VICTIM_DOMAIN}; spf=softfail smtp.mailfrom=renewals-desk.example; "
+                                          "dmarc=fail (p=NONE) header.from=renewals-desk.example",
+        message_id="<inert-toad-2026@renewals-desk.example>")
+
+
+def newsletter_eml() -> bytes:
+    """A LEGITIMATE newsletter through an email service provider: ESP headers,
+    List-Unsubscribe, ESP bounce domain as Return-Path, click-tracking links and a
+    tracking pixel. Expected: verdict clean (the pixel is still reported)."""
+    return mk.build_email(
+        from_="Suministros Iberia <novedades@suministros-iberia.example.com>", to=TO,
+        subject="Novedades de noviembre", text="Nuevos productos para su oficina. Darse de baja: enlace al pie.",
+        html=('<p>Nuevos productos para su oficina.</p>'
+              '<p><a href="https://u2026.ct.sendgrid.net/ls/click?upn=inert">suministros-iberia.example.com</a></p>'
+              '<img src="https://u2026.ct.sendgrid.net/wf/open?upn=inert" width="1" height="1" alt="">'),
+        received=_RULES_RCV, return_path="bounces+2026@em2026.sendgrid.net",
+        auth_results=(f"mx01.{VICTIM_DOMAIN}; spf=pass smtp.mailfrom=em2026.sendgrid.net; dkim=pass "
+                      "header.d=suministros-iberia.example.com; dmarc=pass header.from=suministros-iberia.example.com"),
+        message_id="<inert-news-2026@suministros-iberia.example.com>",
+        extra_headers=[("List-Unsubscribe", "<https://suministros-iberia.example.com/baja>"),
+                       ("List-Id", "novedades.suministros-iberia.example.com"), ("X-SG-EID", "inert2026")])
+
+
+def lure_attachments_eml() -> bytes:
+    """Attachment tricks the rules weigh: a password-protected ZIP with its
+    password in the body, an SVG with script (redirect), a calendar invite with
+    a link, and a fake "RE:" with no thread. All inert (*.example)."""
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("Factura.txt", b"inert DocuTraceX sample")
+    data = bytearray(buf.getvalue())
+    data[6] |= 0x1
+    i = data.find(b"PK\x01\x02")
+    data[i + 8] |= 0x1                       # flagged as encrypted (the content itself is not)
+    svg = (b'<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><script>'
+           b'window.location="https://billing-portal.example/inv"</script></svg>')
+    ics = (b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nSUMMARY:Firma de factura\r\n"
+           b"DESCRIPTION:Acceda: https://billing-portal.example/firma\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+    return mk.build_email(
+        from_=f'"{SUPPLIER}" <facturacion@{SUPPLIER_DOMAIN}>', to=TO, subject=f"RE: Factura {INVOICE}",
+        text="Adjunto la factura comprimida. Contraseña: Fct2026", html="<p>Adjunto la factura. Contraseña: Fct2026</p>",
+        received=_RULES_RCV, auth_results=f"mx01.{VICTIM_DOMAIN}; spf=pass smtp.mailfrom={SUPPLIER_DOMAIN}; dmarc=pass "
+                                          f"header.from={SUPPLIER_DOMAIN}",
+        attachments=[("Factura.zip", "application/zip", bytes(data)), ("logo.svg", "image/svg+xml", svg),
+                     ("firma.ics", "text/calendar", ics)])
+
+
 def emlx_doc() -> bytes:
     message = eml_doc()
     plist = (b'<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -2850,6 +2931,8 @@ def build_all() -> dict[str, bytes]:
         "sample.eml": eml_doc(), "sample.emlx": emlx_doc(), "sample.msg": msg_doc(),
         "mail/sample_gateway_links.eml": gateway_links_eml(),
         "nested/sample_many_files.zip": many_files_zip(),
+        "mail/sample_bec_freemail.eml": bec_freemail_eml(), "mail/sample_toad.eml": toad_eml(),
+        "mail/sample_newsletter.eml": newsletter_eml(), "mail/sample_lure_attachments.eml": lure_attachments_eml(),
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
         "sample_obf_techniques.js": obf_techniques_js(),
         "sample_chain_dropper.js": chain_dropper_js(), "sample_msxml_dropper.js": msxml_dropper_js(), "sample_wsh_selfread.js": wsh_selfread_dropper_js(), "sample_xor_stager.ps1": xor_stager_ps1(),
