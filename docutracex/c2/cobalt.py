@@ -146,13 +146,32 @@ def _run_1768_once(script: Path, path: Path, extra: list[str]) -> dict[str, Any]
         name = v.get("id") or f"0x{int(k):04x}"
         info = v.get("info")
         if isinstance(info, str) and len(info) >= 2 and info[0] == info[-1] == "'":
-            info = info[1:-1].encode().decode("unicode_escape", "replace")
+            info = _demojibake(info[1:-1].encode().decode("unicode_escape", "replace"))
         fields[name] = {"value": info, "raw": v.get("rawvalue")}
     msgs = [m for m in out.get("messages") or [] if isinstance(m, str)]
     xor = next((m.split()[-1] for m in msgs if m.startswith("xorkey")), "")
+    xor = xor[2:] if xor.lower().startswith("0x") else xor
     sanity = next((m for m in msgs if m.startswith("Sanity check")), "")
     return {"fields": fields, "method": "1768.py" + (f" (XOR 0x{xor})" if xor else ""),
             "sanity": sanity, "_messages": msgs}
+
+
+def _demojibake(s: str) -> str:
+    """1768.py prints UTF-8 names (an IDN C2: ``façade.example``) byte by byte: "faÃ§ade.example"."""
+    try:
+        return s.encode("latin-1").decode("utf-8") if not s.isascii() else s
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return s
+
+
+def channel(ptype: str) -> str:
+    """1768.py's payload type ("windows-beacon_https-reverse_https") → HTTP / HTTPS / DNS / SMB / TCP."""
+    t = (ptype or "").lower()
+    for key, name in (("dns", "DNS"), ("smb", "SMB"), ("tcp", "TCP"), ("https", "HTTPS"), ("http", "HTTP"),
+                      ("foreign", "foreign listener")):
+        if key in t:
+            return name + (" (stager)" if "stager" in t else "")
+    return ptype.split(" ", 1)[1] if " " in ptype else ptype
 
 
 def _text_report(args: list[str], path: Path) -> list[str]:
@@ -446,14 +465,19 @@ def summarise(fields: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     v = {k: (f.get("value") if isinstance(f, dict) else f) for k, f in fields.items()}
     servers = str(v.get("server,get-uri") or "")
     parts = [p.strip() for p in servers.split(",") if p.strip()]
-    hosts = parts[0::2]
+    hosts = list(dict.fromkeys(parts[0::2]))
     uris = parts[1::2]
     ptype = str(v.get("payload type") or "")
     port = str(v.get("port") or "")
+    from .cobalt_dissect import fronting, host_header, idn
+    hdr = host_header(v.get("host_header"))
     summary: dict[str, Any] = {
-        "Type": ptype.split(" ", 1)[1] if " " in ptype else ptype,
+        "Type": channel(ptype),
         "C2": [f"{h}:{port}" if port else h for h in hosts],
-        "GET URI": uris,
+        "C2 (punycode)": [f"{h} = {idn(h)}" for h in hosts if idn(h)],
+        "GET URI": list(dict.fromkeys(uris)),
+        "Host header": hdr,
+        "Domain fronting": fronting(hosts, hdr),
         "POST URI": v.get("post-uri") or "",
         "User-Agent": v.get("useragent") or "",
         "Sleep / jitter": (f"{int(v['sleeptime']) // 1000}s / {v.get('jitter', 0)}%"
@@ -498,7 +522,9 @@ def _view_1768(path: Path, data: bytes) -> dict[str, Any]:
 
 
 def _norm_hosts(view: dict[str, Any]) -> set[str]:
-    return {h.strip().lower() for h in view.get("hosts") or [] if h}
+    """Hosts compared across tools: lower case, IDN as punycode (both spellings agree)."""
+    from .cobalt_dissect import idn
+    return {(idn(h.strip()) or h.strip()).lower() for h in view.get("hosts") or [] if h}
 
 
 def extract(path: Path, data: bytes) -> dict[str, Any] | None:
@@ -534,14 +560,19 @@ def extract(path: Path, data: bytes) -> dict[str, Any] | None:
     summary = dict(primary.get("summary") or {})
     if len(found) == 2 and h1 != h2:
         summary["C2 (other tool)"] = [h for h in (found[1].get("summary") or {}).get("C2", [])]
-    for k in ("Version", "Kill date", "Public key SHA-256"):          # dissect-only facts worth the card
+    for k in ("Version", "Kill date", "Guardrails", "Host header", "Domain fronting", "C2 (punycode)",
+              "Public key SHA-256", "Architecture"):          # dissect-only facts worth the card
         if k in (vdis.get("summary") or {}) and k not in summary:
             summary[k] = vdis["summary"][k]
+    if summary.get("Version"):
+        summary.pop("Version (guess)", None)              # dissect's version is exact, 1768's a guess
     method = " + ".join(v["method"] for v in found)
     out = {"family": "Cobalt Strike", "kind": primary.get("kind", "beacon"), "method": method,
            "confidence": confidence, "summary": summary, "c2": hosts,
            "fields": primary.get("fields") or {},
            "agreement": agreement,
+           "sections": vdis.get("sections") or {},
+           "public_key": vdis.get("public_key") or "",
            "tools": {"1768": {k: x for k, x in v1768.items() if k != "_messages"},
                      "dissect": vdis},
            "_messages": v1768.get("_messages", [])}
