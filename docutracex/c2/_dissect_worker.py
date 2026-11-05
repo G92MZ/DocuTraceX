@@ -34,6 +34,25 @@ def _plain(v):
     return str(v)
 
 
+def _guardrail(g) -> dict:
+    """Guardrails (CS 4.8+): what the beacon is keyed to. ``key`` = the
+    environment value dissect recovered (user / computer / domain / IP the
+    payload only runs on) — the target, not the operator."""
+    names = {5: "user", 6: "computer", 7: "domain", 8: "local IP", 9: "payload checksum"}
+    opts = [names.get(int(s.option), str(s.option)) for s in g.settings]
+    key = g.payload_xor_key
+    return {"options": [o for o in opts if o != "payload checksum"],
+            "key": key.decode("utf-8", "replace") if isinstance(key, bytes) else key,
+            "checksum": g.checksum}
+
+
+def _pem(der: bytes) -> str:
+    import base64
+    b64 = base64.b64encode(der).decode()
+    return "-----BEGIN PUBLIC KEY-----\n" + "\n".join(b64[i:i + 64] for i in range(0, len(b64), 64)) \
+        + "\n-----END PUBLIC KEY-----"
+
+
 def main() -> None:
     logging.basicConfig(level=logging.ERROR)
     path, all_xor = sys.argv[1], sys.argv[2:3] == ["1"]
@@ -87,7 +106,9 @@ def main() -> None:
         "xorkey": b.xorkey.hex() if b.xorkey else None, "xorencoded": b.xorencoded,
         "architecture": b.architecture, "pe_compile_stamp": b.pe_compile_stamp,
         "pe_export_stamp": b.pe_export_stamp, "stages": list(b.stages or []),
-        "guardrails": str(b.guardrails) if b.guardrails else None,
+        "guardrails": str(b.guardrails)[:300] if b.guardrails else None,
+        "guardrail": safe(lambda: _guardrail(b.guardrails)) if b.guardrails else None,
+        "pubkey_pem": safe(lambda: _pem(b.public_key)) if safe(lambda: b.public_key) else None,
         "modifications": str(b.modifications) if b.modifications else None,
         "settings": settings, "profile": profile,
     }

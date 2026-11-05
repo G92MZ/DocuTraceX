@@ -146,13 +146,32 @@ def _run_1768_once(script: Path, path: Path, extra: list[str]) -> dict[str, Any]
         name = v.get("id") or f"0x{int(k):04x}"
         info = v.get("info")
         if isinstance(info, str) and len(info) >= 2 and info[0] == info[-1] == "'":
-            info = info[1:-1].encode().decode("unicode_escape", "replace")
+            info = _demojibake(info[1:-1].encode().decode("unicode_escape", "replace"))
         fields[name] = {"value": info, "raw": v.get("rawvalue")}
     msgs = [m for m in out.get("messages") or [] if isinstance(m, str)]
     xor = next((m.split()[-1] for m in msgs if m.startswith("xorkey")), "")
+    xor = xor[2:] if xor.lower().startswith("0x") else xor
     sanity = next((m for m in msgs if m.startswith("Sanity check")), "")
     return {"fields": fields, "method": "1768.py" + (f" (XOR 0x{xor})" if xor else ""),
             "sanity": sanity, "_messages": msgs}
+
+
+def _demojibake(s: str) -> str:
+    """1768.py prints UTF-8 names (an IDN C2: ``façade.example``) byte by byte: "faÃ§ade.example"."""
+    try:
+        return s.encode("latin-1").decode("utf-8") if not s.isascii() else s
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return s
+
+
+def channel(ptype: str) -> str:
+    """1768.py's payload type ("windows-beacon_https-reverse_https") → HTTP / HTTPS / DNS / SMB / TCP."""
+    t = (ptype or "").lower()
+    for key, name in (("dns", "DNS"), ("smb", "SMB"), ("tcp", "TCP"), ("https", "HTTPS"), ("http", "HTTP"),
+                      ("foreign", "foreign listener")):
+        if key in t:
+            return name + (" (stager)" if "stager" in t else "")
+    return ptype.split(" ", 1)[1] if " " in ptype else ptype
 
 
 def _text_report(args: list[str], path: Path) -> list[str]:
@@ -320,7 +339,23 @@ def _checksum8(uri: str) -> int | None:
     return sum(path.encode("latin-1", "replace")) % 256 if path else None
 
 
-def _stager_from_messages(msgs: list[str]) -> dict[str, Any] | None:
+def _block_api_head(data: bytes) -> bool:
+    head = data[:64]
+    return any(sig in head for sigs in _PROLOGUES.values() for sig in sigs)
+
+
+def _stager_from_shellcode(data: bytes) -> dict[str, Any] | None:
+    """A raw block_api stager (a decoded PowerShell / HTA payload, a .bin) read
+    directly, when 1768.py gave nothing: same rules as its report."""
+    if not _block_api_head(data):
+        return None
+    res = _stager_from_messages(["Probably found shellcode (DocuTraceX shellcode reader)"], sc=data[:0x2000])
+    if res:
+        res["method"] = "shellcode reader (block_api stager)"
+    return res
+
+
+def _stager_from_messages(msgs: list[str], sc: bytes | None = None) -> dict[str, Any] | None:
     """Parse 1768.py's 'Probably found shellcode' report (stager in a PE).
 
     Lines used: ``Parameter: <off> b'<host>'``, ``push : <off> <value> b'..'``,
@@ -351,7 +386,7 @@ def _stager_from_messages(msgs: list[str]) -> dict[str, Any] | None:
             xor = m.split()[-1]
         elif m.startswith("payloadSize:") and not m.endswith("0x00000000"):
             size = m.split()[-1]
-    sc = _hexdump_bytes(msgs)
+    sc = sc if sc is not None else _hexdump_bytes(msgs)
     scfg = _shellcode_config(sc) if sc else {}
     hosts = [h for h in dict.fromkeys(hosts + scfg.get("hosts", [])) if h]
     if not hosts:
@@ -446,14 +481,19 @@ def summarise(fields: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     v = {k: (f.get("value") if isinstance(f, dict) else f) for k, f in fields.items()}
     servers = str(v.get("server,get-uri") or "")
     parts = [p.strip() for p in servers.split(",") if p.strip()]
-    hosts = parts[0::2]
+    hosts = list(dict.fromkeys(parts[0::2]))
     uris = parts[1::2]
     ptype = str(v.get("payload type") or "")
     port = str(v.get("port") or "")
+    from .cobalt_dissect import fronting, host_header, idn
+    hdr = host_header(v.get("host_header"))
     summary: dict[str, Any] = {
-        "Type": ptype.split(" ", 1)[1] if " " in ptype else ptype,
+        "Type": channel(ptype),
         "C2": [f"{h}:{port}" if port else h for h in hosts],
-        "GET URI": uris,
+        "C2 (punycode)": [f"{h} = {idn(h)}" for h in hosts if idn(h)],
+        "GET URI": list(dict.fromkeys(uris)),
+        "Host header": hdr,
+        "Domain fronting": fronting(hosts, hdr),
         "POST URI": v.get("post-uri") or "",
         "User-Agent": v.get("useragent") or "",
         "Sleep / jitter": (f"{int(v['sleeptime']) // 1000}s / {v.get('jitter', 0)}%"
@@ -469,6 +509,39 @@ def summarise(fields: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     return {k: x for k, x in summary.items() if x not in ("", [], None)}, hosts
 
 
+# --- Cobalt Strike indicators without a configuration ------------------------------
+# (needle, what it is, strong). Strong = specific to Cobalt Strike on its own;
+# the others count only together. Format strings, as they sit in the binary.
+_INDICATORS = (
+    (b"MSSE-%d-server", "artifact kit named pipe format (\\\\.\\pipe\\MSSE-%d-server)", True),
+    (b"%c%c%c%c%c%c%c%c%cMSSE", "artifact kit pipe builder", True),
+    (b"msagent_%x", "default SMB beacon pipe format (msagent_%x)", True),
+    (b"postex_ssh_%04x", "default post-exploitation SSH pipe (postex_ssh_%04x)", True),
+    (b"postex_%04x", "default post-exploitation pipe (postex_%04x)", True),
+    (b"status_%x", "default named pipe (status_%x)", False),
+    (b"beacon.x64.dll", "beacon DLL name (x64)", True),
+    (b"beacon.dll", "beacon DLL name", False),
+    (b"ReflectiveLoader", "reflective loader export", False),
+    (b"%02d/%02d/%02d %02d:%02d:%02d", "beacon timestamp format", False),
+    (b"$var_code", "Cobalt Strike PowerShell template variable ($var_code)", False),
+    (b"-bxor 35", "PowerShell template XOR key 35", False),
+    (b"func_get_delegate_type", "PowerShell / Metasploit template helper", False),
+)
+
+
+def indicators(data: bytes) -> list[str]:
+    """Cobalt Strike traces in an object that has no readable configuration:
+    named pipe formats, beacon DLL names, the PowerShell template. Never a
+    configuration — at most "this looks like Cobalt Strike"."""
+    hits = [(what, strong) for needle, what, strong in _INDICATORS if needle in data]
+    if data[:2] == b"MZ" and data[2:6] == b"ARUH":
+        hits.append(("reflective loader stub at offset 0 (MZARUH: Cobalt Strike or Meterpreter)", False))
+    strong = any(st for _w, st in hits)
+    if strong or len(hits) >= 2:
+        return [w for w, _s in hits]
+    return []
+
+
 def _view_1768(path: Path, data: bytes) -> dict[str, Any]:
     """1768.py (or the built-in decoder) as a view: status, method, summary, fields, hosts."""
     res = _run_1768(path, data)
@@ -476,6 +549,9 @@ def _view_1768(path: Path, data: bytes) -> dict[str, Any]:
     if not res and prefilter(data):
         res = _fallback(data)
         tool = "built-in decoder"
+    if not res:
+        res = _stager_from_shellcode(data)
+        tool = "shellcode reader"
     if not res:
         note = ("1768.py not found (tools/didier) and no 1-byte-XOR config header."
                 if _script() is None else "No configuration or stager found by 1768.py.")
@@ -498,7 +574,9 @@ def _view_1768(path: Path, data: bytes) -> dict[str, Any]:
 
 
 def _norm_hosts(view: dict[str, Any]) -> set[str]:
-    return {h.strip().lower() for h in view.get("hosts") or [] if h}
+    """Hosts compared across tools: lower case, IDN as punycode (both spellings agree)."""
+    from .cobalt_dissect import idn
+    return {(idn(h.strip()) or h.strip()).lower() for h in view.get("hosts") or [] if h}
 
 
 def extract(path: Path, data: bytes) -> dict[str, Any] | None:
@@ -508,7 +586,8 @@ def extract(path: Path, data: bytes) -> dict[str, Any] | None:
     sub-tab per tool. The top-level summary / c2 (finding, IOCs, CSV, report) come from the tool that
     found something — 1768.py first — and the C2 hosts of both are merged into ``c2``.
     """
-    if not (prefilter(data) or _is_pe(data) or deep_candidate(data)):
+    ind = indicators(data)
+    if not (prefilter(data) or _is_pe(data) or deep_candidate(data) or ind or _block_api_head(data)):
         return None
     from . import cobalt_dissect
 
@@ -516,7 +595,16 @@ def extract(path: Path, data: bytes) -> dict[str, Any] | None:
     vdis = cobalt_dissect.extract(path) if cobalt_dissect.enabled() else cobalt_dissect.view({"status": "disabled"})
     found = [v for v in (v1768, vdis) if v.get("status") == "found"]
     if not found:
-        return None
+        if not ind:
+            return None
+        # traces only: said as such, never as a configuration
+        return {"family": "Cobalt Strike", "kind": "indicators", "method": "static indicators",
+                "confidence": "low", "status": "indicators only",
+                "summary": {"Indicators": ind,
+                            "Configuration": "not recovered (1768.py and dissect.cobaltstrike found none)"},
+                "c2": [], "fields": {}, "indicators": ind,
+                "note": "Cobalt Strike traces without a beacon configuration: not proof of a beacon, and no C2.",
+                "tools": {"1768": {k: x for k, x in v1768.items() if k != "_messages"}, "dissect": vdis}}
     primary = found[0]
     hosts = list(dict.fromkeys([h for v in found for h in v.get("hosts") or []]))
     h1, h2 = _norm_hosts(v1768), _norm_hosts(vdis)
@@ -534,14 +622,26 @@ def extract(path: Path, data: bytes) -> dict[str, Any] | None:
     summary = dict(primary.get("summary") or {})
     if len(found) == 2 and h1 != h2:
         summary["C2 (other tool)"] = [h for h in (found[1].get("summary") or {}).get("C2", [])]
-    for k in ("Version", "Kill date", "Public key SHA-256"):          # dissect-only facts worth the card
+    for k in ("Version", "Kill date", "Guardrails", "Host header", "Domain fronting", "C2 (punycode)",
+              "Public key SHA-256", "Architecture"):          # dissect-only facts worth the card
         if k in (vdis.get("summary") or {}) and k not in summary:
             summary[k] = vdis["summary"][k]
+    if str(summary.get("Version") or "").lower() == "unknown" and summary.get("Version (guess)"):
+        summary.pop("Version")
+    elif summary.get("Version"):
+        summary.pop("Version (guess)", None)              # dissect's version is exact, 1768's a guess
     method = " + ".join(v["method"] for v in found)
+    p2p = str(summary.get("Type") or "").upper().startswith(("SMB", "TCP"))
+    partial = ([k for k in ("C2", "Sleep / jitter") if k not in summary and not (k == "C2" and p2p)]
+               if primary.get("kind") != "stager" else [])
     out = {"family": "Cobalt Strike", "kind": primary.get("kind", "beacon"), "method": method,
+           "status": "partial configuration" if partial else "configuration",
+           "indicators": ind,
            "confidence": confidence, "summary": summary, "c2": hosts,
            "fields": primary.get("fields") or {},
            "agreement": agreement,
+           "sections": vdis.get("sections") or {},
+           "public_key": vdis.get("public_key") or "",
            "tools": {"1768": {k: x for k, x in v1768.items() if k != "_messages"},
                      "dissect": vdis},
            "_messages": v1768.get("_messages", [])}

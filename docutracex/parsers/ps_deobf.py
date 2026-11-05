@@ -51,6 +51,25 @@ def _stage(recipe: list[str], text: str, source: str) -> None:
         _STAGES.append({"recipe": recipe, "text": text, "source": source})
 
 
+def _stage_bin(recipe: list[str], data: bytes, source: str) -> None:
+    """A decoded stage that is BINARY (shellcode, a PE): kept as bytes, so the
+    nested child is the exact payload (a text round-trip would corrupt it)."""
+    if _STAGES is not None and len(_STAGES) < 20 and len(data) >= 64:
+        _STAGES.append({"recipe": recipe, "data": data, "source": source})
+
+
+# Payloads that are never text even when they happen to be mostly printable.
+_SHELLCODE_HEADS = (b"\xfc\xe8", b"\xfc\x48\x83\xe4", b"\xfc\x48\x89", b"MZARUH", b"\x4d\x5a\x41\x52\x55\x48")
+
+
+def _is_binary_payload(raw: bytes) -> bool:
+    if raw[:2] == b"MZ" and len(raw) > 0x40:
+        off = int.from_bytes(raw[0x3C:0x40], "little")
+        if raw[off:off + 4] == b"PE\0\0":
+            return True
+    return raw.startswith(_SHELLCODE_HEADS) or raw[:16].count(b"\x90") >= 8
+
+
 def _sq_value(lit: str) -> str:
     return lit[1:-1].replace("''", "'")
 
@@ -141,6 +160,10 @@ def _t_frombase64(code: str) -> tuple[str, int]:
 
     def repl_bare(m: re.Match) -> str:
         nonlocal n
+        # ``[Byte[]]$x = [Convert]::FromBase64String(..)``: bytes by declaration
+        # (shellcode for a -bxor loop), never text — the XOR transform takes it
+        if re.search(r"(?i)\[byte\[\]\]\s*\$[\w:]+\s*=\s*$", code[max(0, m.start() - 80):m.start()]):
+            return m.group(0)
         text = _b64_to_text(_lit_value(m.group(1)))
         # binary (compressed/encrypted bytes) stays as base64: a later stage
         # (decompress / XOR) or the analyst handles it, not latin-1 garbage
@@ -381,11 +404,15 @@ def _t_xor_base64(code: str) -> tuple[str, int]:
             raw = base64.b64decode(re.sub(r"\s+", "", _lit_value(am.group(2))) + "===")
         except (binascii.Error, ValueError):
             continue
-        text = _bytes_text(bytes(b ^ key[i % len(key)] for i, b in enumerate(raw)))
+        dec = bytes(b ^ key[i % len(key)] for i, b in enumerate(raw))
+        kdesc = f"0x{key[0]:02x}" if len(key) == 1 else repr(key.decode("latin-1"))
+        text = None if _is_binary_payload(dec) else _bytes_text(dec)
         if text is None:
+            # shellcode / a PE (Cobalt Strike & Metasploit "powershell" payloads:
+            # base64 + -bxor 35): the bytes are the stage
+            _stage_bin(["base64", f"xor({kdesc})"], dec, _lit_value(am.group(2)))
             continue
         n += 1
-        kdesc = f"0x{key[0]:02x}" if len(key) == 1 else repr(key.decode("latin-1"))
         _stage(["base64", f"xor({kdesc})"], text, _lit_value(am.group(2)))
         # Put the decrypted stage where the blob was; the loop stays as context.
         code = code.replace(am.group(0), f"{var} = <# XOR-decrypted (key {key!r}) #> " + _as_lit(text), 1)
@@ -975,7 +1002,8 @@ def deobfuscate(cmd: str, *, max_passes: int = _MAX_PASSES,
     top, seen = [], set()
     for st in stages:
         src = st.pop("source", "")
-        if src and src in original and st["text"] not in seen:
-            seen.add(st["text"])
+        body = st.get("text") if "text" in st else st.get("data")
+        if src and src in original and body not in seen:
+            seen.add(body)
             top.append(st)
     return {"changed": cur.strip() != original.strip(), "code": cur, "methods": methods, "stages": top}

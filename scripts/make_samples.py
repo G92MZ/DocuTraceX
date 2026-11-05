@@ -1748,7 +1748,21 @@ def marker_drop_js() -> bytes:
 C2_STUB = b"MZ" + b"This is an inert DocuTraceX sample, not a program.\r\n".ljust(510, b"\x00")
 
 
-def cs_beacon_blob() -> bytes:
+def _cs_inert_pubkey() -> bytes:
+    """A DER RSA SubjectPublicKeyInfo whose modulus is a hash chain — the shape
+    parsers look for (dissect.cobaltstrike finds the config by its OID), not a
+    usable key."""
+    import hashlib
+    mod = b"".join(hashlib.sha256(b"inert-invoice-key-%d" % i).digest() for i in range(4))
+    return (bytes.fromhex("30819f300d06092a864886f70d010101050003818d0030818902818100")
+            + bytes([mod[0] | 0x80]) + mod[1:] + bytes.fromhex("0203010001"))
+
+
+def cs_beacon_blob(kind: str = "https") -> bytes:
+    """Cobalt Strike config block (TLV, XOR 0x2e as in a 4.x memory dump).
+    ``https``: beacon to cdn-update.example.net fronted with a Host header;
+    ``dns``: DNS beacon (idle IP, DNS sleep, subdomain prefixes); ``smb``:
+    peer-to-peer beacon on a named pipe. Inert: a TLV table, no code."""
     import struct
 
     def short(i, v):
@@ -1759,15 +1773,73 @@ def cs_beacon_blob() -> bytes:
 
     def data(i, b, n):
         return struct.pack(">HHH", i, 3, n) + b.ljust(n, b"\x00")
-    cfg = (short(1, 8) + short(2, 443) + num(3, 45000) + num(4, 1048576) + short(5, 25)
-           + data(7, b"\x30\x81\x9f" + b"\x00" * 159, 256)
-           + data(8, b"cdn-update.example.net,/jquery-3.3.1.min.js", 256)
-           + data(9, b"Mozilla/5.0 (Windows NT 10.0; Win64; x64) InvoiceSync/2.4", 256)
-           + data(10, b"/jquery-3.3.2.min.js", 64) + data(15, b"\\\\.\\pipe\\factura_sync_%x", 128)
-           + data(29, b"%windir%\\syswow64\\rundll32.exe", 64)
-           + data(30, b"%windir%\\sysnative\\rundll32.exe", 64)
-           + num(37, 20260187) + b"\x00\x00")
+    ptype, port = {"https": (8, 443), "dns": (1, 53), "smb": (2, 0)}[kind]
+    cfg = (short(1, ptype) + short(2, port) + num(3, 45000) + num(4, 1048576) + short(5, 25)
+           + data(7, _cs_inert_pubkey(), 256))
+    if kind == "dns":
+        cfg += (data(8, b"ns1.billing-portal.example,/inv/sync.css,ns2.billing-portal.example,/inv/sync.css", 256)
+                + short(6, 235) + num(19, 0xC6336409) + num(20, 120)            # idle 198.51.100.9
+                + data(60, b"fct.", 33) + data(61, b"cdn.", 33) + data(63, b"api.", 33))
+    elif kind == "smb":
+        cfg += data(15, b"\\\\.\\pipe\\factura_sync_%x", 128)
+    else:
+        cfg += (data(8, b"cdn-update.example.net,/jquery-3.3.1.min.js", 256)
+                + data(9, b"Mozilla/5.0 (Windows NT 10.0; Win64; x64) InvoiceSync/2.4", 256)
+                + data(10, b"/jquery-3.3.2.min.js", 64) + data(15, b"\\\\.\\pipe\\factura_sync_%x", 128)
+                + data(54, b"Host: billing-portal.example\r\n", 128))
+    cfg += (data(29, b"%windir%\\syswow64\\rundll32.exe", 64)
+            + data(30, b"%windir%\\sysnative\\rundll32.exe", 64)
+            + num(37, 20260187) + b"\x00\x00")
     return C2_STUB + bytes(c ^ 0x2E for c in cfg.ljust(4096, b"\x00"))
+
+
+def _cs_ps_template(payload: bytes, gzip_wrap: bool) -> bytes:
+    """Cobalt Strike's PowerShell payload template: base64 of the payload XOR-ed
+    with 35 in ``$var_code``, run by ``IEX $DoIt``; the stageless variant wraps
+    it in base64 + gzip. Here the "payload" is an inert byte table."""
+    import base64
+    import gzip
+    enc = base64.b64encode(bytes(b ^ 35 for b in payload)).decode()
+    inner = ("Set-StrictMode -Version 2\n$DoIt = @'\n"
+             "function func_get_proc_address { Param ($var_module, $var_procedure) }\n"
+             "function func_get_delegate_type { Param ($var_parameters, $var_return_type) }\n"
+             f"[Byte[]]$var_code = [System.Convert]::FromBase64String('{enc}')\n"
+             "for ($x = 0; $x -lt $var_code.Count; $x++) {\n\t$var_code[$x] = $var_code[$x] -bxor 35\n}\n"
+             "# invoice-2024-0613 sync (inert DocuTraceX sample: nothing below is called)\n'@\n"
+             "If ([IntPtr]::size -eq 8) { start-job { param($a) IEX $a } -RunAs32 -Argument $DoIt | wait-job | Receive-Job }\n"
+             "else { IEX $DoIt }\n")
+    if not gzip_wrap:
+        return inner.encode()
+    gz = base64.b64encode(gzip.compress(inner.encode(), mtime=0)).decode()
+    return ("$s=New-Object IO.MemoryStream(,[Convert]::FromBase64String(\"" + gz + "\"));"
+            "IEX (New-Object IO.StreamReader(New-Object IO.Compression.GzipStream($s,"
+            "[IO.Compression.CompressionMode]::Decompress))).ReadToEnd();\n").encode()
+
+
+CS_STAGER_URI = "/Fctadz"           # checksum8 = 92: Cobalt Strike's x86 stage request
+
+
+def cs_stager_shellcode() -> bytes:
+    """Cobalt Strike HTTPS stager *shapes* (block_api prologue, port pushed
+    before InternetConnectA's hash, request flags before HttpOpenRequestA's,
+    the checksum8 URI and the host), separated by text so nothing can run."""
+    assert sum(CS_STAGER_URI[1:].encode()) % 256 == 92
+    return (b"\xfc\xe8\x89\x00\x00\x00\x60\x89\xe5" + b" -- inert: block_api -- "
+            + b"\x68\xbb\x01\x00\x00\x68\x57\x89\x9f\xc6" + b" -- port 443, InternetConnectA -- "
+            + b"\x68\x00\x32\xc0\x84\x68\xeb\x55\x2e\x3b" + b" -- flags (SECURE), HttpOpenRequestA -- "
+            + b"\x00" + CS_STAGER_URI.encode() + b"\x00 -- uri, host -- \x00cdn-update.example.net\x00"
+            + b" -- end of inert fragments --\x00")
+
+
+def cs_beacon_ps1() -> bytes:
+    """Stageless PowerShell beacon (base64 + gzip → template → base64 + XOR 35 →
+    'shellcode' carrying the config block). Inert."""
+    return _cs_ps_template(b"\xfc\xe8\x89\x00\x00\x00\x60\x89\xe5" + cs_beacon_blob(), True)
+
+
+def cs_stager_ps1() -> bytes:
+    """PowerShell stager (template, XOR 35) whose payload is the stager shapes. Inert."""
+    return _cs_ps_template(cs_stager_shellcode(), False)
 
 
 def msf_https_stager_blob() -> bytes:
@@ -2701,6 +2773,10 @@ def c2_samples() -> dict[str, bytes]:
             "c2/sample_njrat.exe": njrat_exe(), "c2/sample_xworm.exe": xworm_exe(),
             "c2/sample_agenttesla.exe": agenttesla_exe(), "c2/sample_nanocore.exe": nanocore_exe(),
             "c2/sample_cs_beacon.bin": cs_beacon_blob(),
+            "c2/sample_cs_dns_beacon.bin": cs_beacon_blob("dns"),
+            "c2/sample_cs_smb_beacon.bin": cs_beacon_blob("smb"),
+            "c2/sample_cs_beacon.ps1": cs_beacon_ps1(),
+            "c2/sample_cs_stager.ps1": cs_stager_ps1(),
             "c2/sample_msf_https_stager.bin": msf_https_stager_blob(),
             "c2/sample_remcos.exe": remcos_exe(),
             "c2/sample_asyncrat.exe": asyncrat_exe(),
