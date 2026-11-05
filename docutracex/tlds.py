@@ -97,13 +97,18 @@ def status() -> dict[str, Any]:
 def download(proxy: str | None = None, timeout: int = 30) -> dict[str, Any]:
     """Fetch the IANA list (through an HTTP(S) proxy if given) and store it.
     Raises on network error or an implausible file; the old copy is kept."""
-    handlers = []
-    if proxy and proxy.startswith(("http://", "https://")):
-        handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
-    opener = urllib.request.build_opener(*handlers)
-    req = urllib.request.Request(IANA_URL, headers={"User-Agent": "DocuTraceX"})
-    with opener.open(req, timeout=timeout) as r:
-        text = r.read().decode("ascii", "replace")
+    from .mailintel import _routes, _short
+    text, errors = None, []
+    for label, opener in _routes(proxy):     # direct / system proxy first, then Settings proxy
+        req = urllib.request.Request(IANA_URL, headers={"User-Agent": "DocuTraceX"})
+        try:
+            with opener.open(req, timeout=timeout) as r:
+                text = r.read().decode("ascii", "replace")
+            break
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{label}: {_short(exc)}")
+    if text is None:
+        raise ConnectionError("; ".join(errors))
     if len(parse(text)) < 100:
         raise ValueError("IANA list looks empty or invalid")
     p = path()

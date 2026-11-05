@@ -4732,10 +4732,16 @@ function renderMailintel(m) {
   const box = document.getElementById("mailintel-table");
   if (!box) return;
   const rows = (m.feeds || []).map((f) => `<tr><td>${escapeHtml(f.label)}</td><td>${f.count ? f.count.toLocaleString() : "—"}</td>
-    <td>${escapeHtml(f.updated || "not downloaded")}</td><td class="mono">${escapeHtml(f.source)}</td><td>${escapeHtml(f.license)}</td></tr>`).join("");
+    <td>${escapeHtml(f.updated || "not downloaded")}${f.route ? `<div class="hint-line">via ${escapeHtml(f.route)}</div>` : ""}${
+      f.last_error ? `<div class="bad-text hint-line">${escapeHtml(f.last_error)}</div>` : ""}</td>
+    <td class="mono"><a href="${escapeHtml(f.url || "#")}" target="_blank" rel="noopener noreferrer">${escapeHtml(f.source)}</a></td><td>${escapeHtml(f.license)}</td></tr>`).join("");
   box.innerHTML = table(["List", "Entries", "Updated", "Source", "Licence"], rows)
     + `<div class="hint-line">Built in (always on): ${(m.builtin || {}).freemail || 0} big webmail providers; abused TLDs ${escapeHtml(((m.builtin || {}).abused_tlds || []).map((t) => "." + t).join(" "))}.
-       ${m.running ? " Refreshing…" : ""}${m.error ? ` <span class="bad-text">Last refresh: ${escapeHtml(m.error)}</span>` : ""}</div>`;
+       ${m.running ? " Refreshing…" : ""}${m.error ? ` <span class="bad-text">Last refresh (${escapeHtml(m.last || "")}): ${escapeHtml(m.error)}.</span>
+       Tried direct (with the system proxy settings) and the proxy of Settings → Network. If this machine has no access to
+       raw.githubusercontent.com / urlhaus.abuse.ch, download the files from the links and drop them, renamed as
+       <span class="mono">&lt;list id&gt;.txt</span>, into <span class="mono">tools/mailintel/</span>
+       (${(m.feeds || []).map((f) => `<span class="mono">${escapeHtml(f.id)}.txt</span>`).join(", ")}).` : ""}</div>`;
 }
 
 async function loadMailintel() {
