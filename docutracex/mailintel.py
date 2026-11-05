@@ -106,7 +106,7 @@ HOSTING_ABUSE = {
 
 _lock = threading.Lock()
 _cache: dict[str, tuple[float, set[str]]] = {}
-_refresh: dict[str, Any] = {"running": False, "last": None, "error": None}
+_refresh: dict[str, Any] = {"running": False, "last": None, "error": None, "results": {}}
 
 
 def folder() -> Path:
@@ -234,30 +234,78 @@ def status() -> dict[str, Any]:
             updated, count = time.strftime("%Y-%m-%d %H:%M", time.localtime(st.st_mtime)), len(_load(name))
         except OSError:
             updated, count = None, 0
+        r = (_refresh.get("results") or {}).get(name) or {}
         feeds.append({"id": name, "label": f["label"], "license": f["license"], "source": f["source"],
-                      "updated": updated, "count": count})
+                      "url": f["url"], "updated": updated, "count": count,
+                      "last_error": r.get("error") if r and not r.get("ok") else None, "route": r.get("route")})
     return {"feeds": feeds, "running": _refresh["running"], "last": _refresh["last"], "error": _refresh["error"],
             "builtin": {"freemail": len(FREEMAIL_BUILTIN), "abused_tlds": sorted(ABUSED_TLDS)}}
 
 
-def _download(name: str, proxy: str | None, timeout: int) -> int:
-    f = FEEDS[name]
-    handlers = []
+def _short(exc: BaseException) -> str:
+    """A one-line reason (Windows' WinError 10060 essay → "timed out")."""
+    import socket
+    import urllib.error
+    reason = getattr(exc, "reason", exc)
+    if isinstance(reason, (socket.timeout, TimeoutError)) or "10060" in str(reason) or "timed out" in str(reason):
+        return "timed out (no route to the site: firewall / proxy?)"
+    if isinstance(exc, urllib.error.HTTPError):
+        return f"HTTP {exc.code}"
+    if "10061" in str(reason) or "refused" in str(reason).lower():
+        return "connection refused"
+    if "getaddrinfo" in str(reason) or "Name or service" in str(reason) or "11001" in str(reason):
+        return "DNS lookup failed"
+    if "CERTIFICATE" in str(reason).upper():
+        return "TLS certificate not trusted (inspecting proxy?)"
+    return str(reason)[:120]
+
+
+def _routes(proxy: str | None) -> list[tuple[str, Any]]:
+    """How to reach the lists, in order: like the updater (direct, honouring the
+    system proxy settings), then the proxy configured in Settings (HTTP/HTTPS;
+    a free public proxy is tried last — they die often)."""
+    routes: list[tuple[str, Any]] = [("direct / system proxy", urllib.request.build_opener())]
     if proxy and proxy.startswith(("http://", "https://")):
-        handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
-    opener = urllib.request.build_opener(*handlers)
-    req = urllib.request.Request(f["url"], headers={"User-Agent": "DocuTraceX"})
-    with opener.open(req, timeout=timeout) as r:
-        text = r.read(64 * 1024 * 1024).decode("utf-8", "replace")
-    vals = parse(name, text)
-    if len(vals) < 10:
-        raise ValueError(f"{name}: list looks empty")
-    p = _file(name)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".tmp")
-    tmp.write_text("\n".join(sorted(vals)) + "\n", encoding="utf-8")
-    tmp.replace(p)
-    return len(vals)
+        routes.append(("Settings proxy", urllib.request.build_opener(
+            urllib.request.ProxyHandler({"http": proxy, "https": proxy}))))
+    elif proxy and proxy.startswith("socks"):
+        try:
+            import socks  # noqa: F401  (PySocks)
+            from urllib.parse import urlparse
+
+            import sockshandler  # type: ignore[import-not-found]
+            u = urlparse(proxy)
+            kind = socks.SOCKS5 if u.scheme.startswith("socks5") else socks.SOCKS4
+            routes.append(("Settings proxy (SOCKS)", urllib.request.build_opener(
+                sockshandler.SocksiPyHandler(kind, u.hostname, u.port, rdns=True,
+                                             username=u.username, password=u.password))))
+        except Exception:  # noqa: BLE001  (no SOCKS support for urllib here)
+            pass
+    return routes
+
+
+def _download(name: str, proxy: str | None, timeout: int) -> tuple[int, str]:
+    f = FEEDS[name]
+    errors = []
+    for label, opener in _routes(proxy):
+        req = urllib.request.Request(f["url"], headers={"User-Agent": "DocuTraceX"})
+        try:
+            with opener.open(req, timeout=timeout) as r:
+                text = r.read(64 * 1024 * 1024).decode("utf-8", "replace")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"{label}: {_short(exc)}")
+            continue
+        vals = parse(name, text)
+        if len(vals) < 10:
+            errors.append(f"{label}: list looks empty")
+            continue
+        p = _file(name)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text("\n".join(sorted(vals)) + "\n", encoding="utf-8")
+        tmp.replace(p)
+        return len(vals), label
+    raise ConnectionError("; ".join(errors) or "no route")
 
 
 def stale(name: str) -> bool:
@@ -267,24 +315,27 @@ def stale(name: str) -> bool:
         return True
 
 
-def refresh(proxy: str | None = None, only_stale: bool = False, timeout: int = 60) -> dict[str, Any]:
+def refresh(proxy: str | None = None, only_stale: bool = False, timeout: int = 25) -> dict[str, Any]:
     """Download every feed (or the stale ones). A failed feed keeps its old copy."""
     with _lock:
         if _refresh["running"]:
             return status()
         _refresh["running"] = True
-    errors = []
+    errors, results = [], {}
     try:
         for name in FEEDS:
             if only_stale and not stale(name):
                 continue
             try:
-                n = _download(name, proxy, timeout)
-                log.info("mailintel: %s refreshed (%d entries)", name, n)
+                n, route = _download(name, proxy, timeout)
+                results[name] = {"ok": True, "route": route, "count": n}
+                log.info("mailintel: %s refreshed via %s (%d entries)", name, route, n)
             except Exception as exc:  # noqa: BLE001  (offline: the old copy stays)
-                errors.append(f"{name}: {exc}"[:200])
+                results[name] = {"ok": False, "error": str(exc)[:240]}
+                errors.append(FEEDS[name]["label"])
     finally:
-        _refresh.update(running=False, last=time.strftime("%Y-%m-%d %H:%M"), error="; ".join(errors) or None)
+        _refresh.update(running=False, last=time.strftime("%Y-%m-%d %H:%M"), results=results,
+                        error=(f"{len(errors)} list(s) not downloaded: {', '.join(errors)}" if errors else None))
     return status()
 
 
