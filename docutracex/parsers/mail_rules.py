@@ -35,6 +35,7 @@ from urllib.parse import urlparse
 from .. import quiet, toolrun, urlwrap
 from ..logging_config import get_logger
 from .didier import didier_dir
+from . import mail as _mail_mod
 from ..config import tmo
 
 log = get_logger(__name__)
@@ -64,9 +65,23 @@ _OFFICIAL = {d for ds in BRANDS.values() for d in ds} | {
     "facebook.com", "fb.com", "instagram.com", "whatsapp.com", "linkedin.com", "lnkd.in"}
 _HOMO_SUBS = (("rn", "m"), ("vv", "w"), ("cl", "d"), ("0", "o"), ("1", "l"), ("3", "e"),
               ("5", "s"), ("4", "a"), ("7", "t"), ("@", "a"), ("$", "s"))
+# Scripting / bulk tools typical of phishing kits. Legitimate email service
+# providers (SendGrid, Mailchimp, Brevo…) are NOT here: they are a legitimacy
+# signal of the verdict (mailintel.ESP_HEADERS), not a finding.
 _MASS_MAILERS = ("phpmailer", "swiftmailer", "swift mailer", "python", "microsoft cdo", "the bat",
-                 "leaf phpmailer", "sendgrid", "mailchimp", "sendinblue", "brevo", "massmail",
-                 "powermta", "atomic mail", "gammadyne", "emkei", "anonymousemail")
+                 "leaf phpmailer", "massmail", "powermta", "atomic mail", "gammadyne", "emkei", "anonymousemail",
+                 "x-php-originating-script")
+# Tracking-pixel vendors (by host), shown with the finding.
+_PIXEL_VENDORS = (("list-manage.com", "Mailchimp"), ("mailchimp", "Mailchimp"), ("hubspot", "HubSpot"),
+                  ("hs-analytics", "HubSpot"), ("sendgrid", "SendGrid"), ("mandrillapp", "Mailchimp Transactional"),
+                  ("mailgun", "Mailgun"), ("sparkpost", "SparkPost"), ("exacttarget", "Salesforce Marketing Cloud"),
+                  ("sfmc", "Salesforce Marketing Cloud"), ("pardot", "Salesforce Pardot"), ("eloqua", "Oracle Eloqua"),
+                  ("en25.com", "Oracle Eloqua"), ("marketo", "Marketo"), ("mktoresp", "Marketo"), ("klaviyo", "Klaviyo"),
+                  ("mailjet", "Mailjet"), ("sendinblue", "Brevo"), ("brevo", "Brevo"), ("sendibt", "Brevo"),
+                  ("constantcontact", "Constant Contact"), ("createsend", "Campaign Monitor"), ("cmail", "Campaign Monitor"),
+                  ("yesware", "Yesware"), ("mailtrack", "Mailtrack"), ("streak", "Streak"), ("mixmax", "Mixmax"),
+                  ("superhuman", "Superhuman"), ("bananatag", "Bananatag"), ("getnotify", "GetNotify"),
+                  ("awstrack", "Amazon SES"), ("google-analytics", "Google Analytics"), ("pixel", "generic pixel"))
 _MAX_QR_IMAGES = 15
 _IMG_EXT = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff")
 
@@ -157,7 +172,9 @@ def analyze_html(html: str, location: str = "body") -> list[dict[str, Any]]:
                         r"height\s*=\s*[\"']?[01]\b[^>]*width\s*=\s*[\"']?[01]\b)[^>]*>", html, re.IGNORECASE)
     remote_px = [p for p in pixels if re.search(r"src\s*=\s*[\"']?https?://", p, re.IGNORECASE)]
     if remote_px:
-        out.append(_finding("tracking_pixel", "low", f"{len(remote_px)} remote 1x1 tracking image(s)",
+        vendors = sorted({v for px in remote_px for k, v in _PIXEL_VENDORS if k in str(px).lower()})
+        out.append(_finding("tracking_pixel", "low", f"{len(remote_px)} remote 1x1 tracking image(s)"
+                            + (f" — {', '.join(vendors)}" if vendors else "") + " (opening the email tells the sender)",
                             location, remote_px[0][:300]))
     hidden = re.findall(r"<[^>]+style\s*=\s*[\"'][^\"']*(?:font-size\s*:\s*0(?:px|pt)?\b|display\s*:\s*none|"
                         r"color\s*:\s*(?:#fff(?:fff)?|white)\b[^\"']*background(?:-color)?\s*:\s*(?:#fff(?:fff)?|white))",
@@ -390,7 +407,7 @@ def _fingerprint(email: dict[str, Any], res: dict[str, Any]) -> None:
         res["findings"].append(_finding("missing_message_id", "low", "No Message-ID header", "headers"))
     elif m and from_dom and _registrable(fp["message_id_domain"]) != _registrable(from_dom) and \
             not fp["message_id_domain"].endswith(("outlook.com", "prod.outlook.com", "mail.gmail.com",
-                                                  "googlemail.com", "amazonses.com")):
+                                                  "googlemail.com", "amazonses.com") + _mail_mod._ESP_BOUNCE):
         res["findings"].append(_finding("messageid_domain_mismatch", "low",
                                         f"Message-ID domain ({fp['message_id_domain']}) differs from From ({from_dom})",
                                         "headers", mid))
@@ -496,7 +513,106 @@ def analyze(original_path: Path, declared_ext: str, email: dict[str, Any],
     _qr_images(email, case_root, res)
     _html_attachments(email, case_root, res)
     _emldump_parts(original_path, ext, res)
+    _engine(email, res, case_root)
     res["counts"] = {"findings": len(res["findings"])}
     if res["findings"]:
         res["status"] = "ok_with_findings"
     return res
+
+
+# --- declarative rules + verdict (mailengine) -------------------------------------------
+
+def _rule_finding(m: dict[str, Any]) -> dict[str, Any]:
+    f = _finding(m["id"], m["severity"], m["title"], "rules", m.get("evidence", ""))
+    if m.get("attack"):
+        f["attack"] = m["attack"]
+    return f
+
+
+def _signals(email: dict[str, Any], res: dict[str, Any], matched: list[dict[str, Any]],
+             legit: bool) -> list[dict[str, Any]]:
+    from .. import mailengine
+    sig = []
+    seen = set()
+    for f in list(email.get("findings") or []) + [x for x in res["findings"] if x.get("location") != "rules"]:
+        key = f.get("rule", "")
+        if key in seen:
+            continue
+        seen.add(key)
+        w = mailengine.weight(key, f.get("severity", "info"))
+        if legit and key in ("from_returnpath_mismatch", "messageid_domain_mismatch", "replyto_mismatch",
+                             "tracking_pixel", "received_long_delay"):
+            w = 0                       # normal for authenticated bulk mail
+        if w:
+            sig.append({"id": key, "score": w, "why": f.get("detail", ""), "kind": "check"})
+    for m in matched:
+        if m["score"]:
+            sig.append({"id": m["id"], "score": m["score"], "why": m.get("evidence") or m["title"], "kind": "rule"})
+    return sig
+
+
+def _engine(email: dict[str, Any], res: dict[str, Any], case_root: Path | None) -> None:
+    from .. import mailengine
+    try:
+        f = mailengine.facts(email, res, case_root)
+        fired = {x.get("rule", "") for x in list(email.get("findings") or []) + res["findings"]}
+        matched = mailengine.run(f, "email", {"rules_fired": fired})
+    except Exception as exc:  # noqa: BLE001  (the rules never break the email analysis)
+        log.warning("email rules failed: %s", exc)
+        res["engine"] = {"error": str(exc)[:300]}
+        return
+    for m in matched:
+        if m["score"] > 0 and m["severity"] != "info":
+            res["findings"].append(_rule_finding(m))
+    legit = bool(f["esp"]["known"] and (f["auth"]["dkim_aligned_pass"] or f["auth"]["dmarc"] == "pass"))
+    facts_view = {k: ({kk: vv for kk, vv in v.items() if kk != "all"} if isinstance(v, dict) else v)
+                  for k, v in f.items()}
+    res["engine"] = {"facts": facts_view, "matched": matched, "legit_bulk": legit}
+    res["verdict"] = mailengine.verdict(_signals(email, res, matched, legit))
+
+
+def case_stage(case_root: Path) -> dict[str, Any] | None:
+    """After the whole case ran: rules over what the attachments' / links'
+    analysis found, then the final verdict (written into the mailrules result,
+    plus an ``email_verdict`` finding)."""
+    from .. import mailengine
+    from ..storage import CasePaths, read_json, write_subresult
+    paths = CasePaths(case_root.name, cases_dir=case_root.parent)
+    res = read_json(paths.subresult("mailrules"))
+    email = read_json(paths.subresult("email")) or {}
+    if not res or "engine" not in res or res["engine"].get("error"):
+        return None
+    case: list[dict[str, Any]] = []
+
+    def walk(nodes: list[dict[str, Any]], chain: str) -> None:
+        for n in nodes or []:
+            here = f"{chain} › {n.get('filename', '')}" if chain else n.get("filename", "")
+            for x in n.get("findings") or []:
+                case.append({"rule": x.get("rule", ""), "severity": x.get("severity", "info"), "location": here,
+                             "nested": True})
+            walk(n.get("children") or [], here)
+    walk((read_json(paths.subresult("nested")) or {}).get("tree") or [], "")
+    for x in (read_json(paths.subresult("c2")) or {}).get("findings") or []:
+        case.append({"rule": x.get("rule", ""), "severity": x.get("severity", "info"), "location": x.get("location", ""),
+                     "nested": True})
+    f = res["engine"].get("facts") or {}
+    matched = mailengine.run(f, "case", {"case_findings": case})
+    res["findings"] = [x for x in res["findings"] if x.get("rule") != "email_verdict"
+                       and not any(x.get("rule") == m["id"] for m in matched)]
+    for m in matched:
+        res["findings"].append(_rule_finding(m))
+    em_matched = [m for m in res["engine"].get("matched") or [] if not m.get("stage")]
+    all_matched = [m for m in em_matched if all(m["id"] != c["id"] for c in matched)] + matched
+    res["engine"]["case_matched"] = matched
+    res["verdict"] = v = mailengine.verdict(_signals(email, {"findings": [x for x in res["findings"]
+                                                                        if x.get("location") != "rules"]},
+                                                     all_matched, bool(res["engine"].get("legit_bulk"))))
+    sev = {"malicious": "high", "phishing": "high", "suspicious": "medium", "clean": "info"}[v["verdict"]]
+    top = "; ".join(f"{s['id']} (+{s['score']})" for s in v["raised"][:5])
+    low = "; ".join(f"{s['id']} ({s['score']})" for s in v["lowered"][:3])
+    res["findings"].append(_finding("email_verdict", sev, f"Email verdict: {v['verdict']} (score {v['score']})",
+                                    "verdict", f"raised by: {top or '—'}" + (f" · lowered by: {low}" if low else "")))
+    res["counts"] = {"findings": len(res["findings"])}
+    res["status"] = "ok_with_findings" if res["findings"] else "ok"
+    write_subresult(paths, "mailrules", res)
+    return v

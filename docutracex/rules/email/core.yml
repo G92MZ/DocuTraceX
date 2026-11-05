@@ -1,0 +1,375 @@
+# DocuTraceX email rules (declarative). Each rule:
+#   id, title, severity (info|low|medium|high), score (adds to the email's
+#   score; negative = a legitimacy signal that lowers it, never a finding),
+#   attack (ATT&CK ids), when (condition), evidence (template over the facts),
+#   stage: email (default, on the message) | case (after the whole case — the
+#   attachments' and links' analysis — has run).
+#
+# Conditions: {fact: path} (truthy) with optional eq / ne / in / gte / lte;
+# {text: lexicon} (subject + bodies); {finding: glob} (a finding of the email
+# modules); {case_finding: glob, min_severity: level} (any finding of the case,
+# nested children included); {all: [...]}, {any: [...]}, {not: cond}.
+# Facts are listed in docs (samples/README.md › Email rules) and in mailengine.py.
+
+version: 1
+
+verdict:                 # score thresholds (upper bound, exclusive)
+  clean: 15
+  suspicious: 40
+  phishing: 70           # >= 70: malicious — only with a payload / reputation signal below
+  malicious_requires: [payload_implant_configuration, payload_malicious_content, html_smuggling,
+                       dangerous_attachment, double_extension, filename_spoofing, svg_active_content,
+                       link_bad_reputation, sender_bad_reputation, reply_to_bad_reputation, link_direct_download]
+
+# weight of the findings the built-in checks raise (default: by severity)
+weights:
+  default: {high: 20, medium: 8, low: 2, info: 0}
+  rules:
+    tracking_pixel: 0
+    received_long_delay: 0
+    received_chain_break: 1
+    received_private_after_public: 1
+    mass_mailer_client: 3
+    messageid_domain_mismatch: 2
+    from_returnpath_mismatch: 4
+    replyto_mismatch: 4
+    lookalike_domain: 30
+    homoglyph_domain: 30
+    idn_domain: 8
+    html_credential_form: 35
+    html_external_form: 15
+    html_smuggling: 40
+    data_uri_payload: 20
+    meta_refresh_redirect: 10
+    dkim_body_hash_mismatch: 25
+    url_display_mismatch: 15
+    spf_fail: 12
+    spf_softfail: 5
+    dkim_fail: 10
+    dmarc_fail: 20
+    dangerous_attachment: 30
+    double_extension: 30
+    filename_spoofing: 30
+    html_attachment: 12
+    macro_capable_attachment: 8
+    display_name_spoof: 20
+
+lexicons:
+  payment: '\b(factura|facturas|invoice|invoices|pago|pagos|payment|transferencia|wire transfer|remittance|remesa|abono|cobro|vencimiento|overdue|outstanding|proforma|albar[aá]n|purchase order|orden de compra|rechnung|zahlung|facture|paiement|fattura|pagamento)\b'
+  bank_change: '(cambi(o|ar|ado|amos) (de |la |nuestra |su |el )*(cuenta|iban|banco|datos bancarios)|nuev(a|o)s? (cuenta|iban|datos bancarios)|new (bank|banking|account) (details|information|account)|updated? (our |the )?(bank|banking|account) (details|information)|change (of|in|to) (our )?(bank|account|banking)|\biban\b|swift|bic code|bankverbindung|nouveau rib|nuove coordinate bancarie)'
+  urgency: '\b(urgente|urgent|urgently|inmediat\w*|immediate\w*|asap|hoy mismo|today|lo antes posible|as soon as possible|plazo|deadline|final notice|[uú]ltimo aviso|last reminder|suspend\w*|bloquead\w*|blocked|locked|expir\w*|caduca\w*|within 24|en 24 horas|sofort|dringend)\b'
+  confidential: '\b(confidencial|confidential|discreci[oó]n|discreet|between us|entre nosotros|no lo comentes|do not share|don.t share|top secret|vertraulich)\b'
+  gift_cards: '(gift ?cards?|tarjetas? (de )?regalo|itunes card|google play card|steam card|amazon (gift )?card|apple card|razer gold)'
+  callback: '(call (us|now|our)|llam[ae] (al|ahora)|contact (our|the) (support|billing)|help ?line|support line|customer (service|support) (at|on|number)|n[uú]mero de (atenci[oó]n|soporte)|toll[- ]free|cancel (your|this) (order|subscription) .{0,40}call)'
+  subscription: '\b(subscription|suscripci[oó]n|renewal|renovaci[oó]n|auto-?renew\w*|been charged|se le ha cobrado|cargo de|order (confirmation|#|number)|your (order|purchase)|norton|mcafee|geek squad|antivirus|lifelock|best buy|invoice #)\b'
+  credential: '(verify your|verifica (tu|su)|confirm your|confirme (su|tu)|log ?in to|inicia(r)? sesi[oó]n|password (expir|reset)|contrase[nñ]a (caduc|expir)|account (suspended|locked|disabled)|cuenta (suspendida|bloqueada|desactivada)|unusual (sign|activity)|actividad inusual|update your (details|information|account)|re-?activ\w+ your|mailbox (is )?(full|quota)|buz[oó]n (lleno|cuota))'
+  document: '(shared (a |the )?(file|document|folder)|ha compartido|compartido contigo|view (the )?document|ver (el )?documento|secure (document|message|file)|mensaje seguro|documento seguro|\bfax\b|voice ?mail|buz[oó]n de voz|e-?signature|firma electr[oó]nica|docusign|review and sign|revisar y firmar)'
+
+rules:
+  # --- legitimacy signals (lower the score; never findings) -------------------
+  - id: legit_esp_newsletter
+    title: Bulk mail from an email service provider, authenticated, with unsubscribe
+    score: -25
+    when: {all: [{fact: esp.known}, {fact: esp.list_unsubscribe}, {any: [{fact: auth.dkim_aligned_pass}, {fact: auth.dmarc, eq: pass}]}]}
+    evidence: "{esp.name}; DKIM d={auth.dkim_domain} dmarc={auth.dmarc}; List-Unsubscribe present"
+
+  - id: legit_authenticated_sender
+    title: DMARC pass with an aligned, intact DKIM signature
+    score: -10
+    when: {all: [{fact: auth.dmarc, eq: pass}, {fact: auth.dkim_aligned_pass}]}
+    evidence: "dmarc=pass, DKIM d={auth.dkim_domain}"
+
+  - id: legit_forward_arc
+    title: DMARC failed after forwarding, but ARC records a pass from the original hop
+    score: -10
+    when: {all: [{fact: auth.dmarc_fail}, {fact: auth.arc_pass}]}
+    evidence: "ARC: {auth.arc_summary}"
+
+  # --- sender -------------------------------------------------------------------
+  - id: sender_freemail
+    title: Sender on a free webmail provider
+    severity: low
+    score: 5
+    attack: [T1585.002]
+    when: {fact: sender.freemail}
+    evidence: "From {sender.address}"
+
+  - id: sender_disposable
+    title: Sender on a disposable (throw-away) email domain
+    severity: medium
+    score: 15
+    attack: [T1585.002]
+    when: {fact: sender.disposable}
+    evidence: "From {sender.address}"
+
+  - id: freemail_business_request
+    title: Business / payment request from a free webmail address
+    severity: high
+    score: 25
+    attack: [T1566, T1585.002]
+    when:
+      all:
+        - any: [{fact: sender.freemail}, {fact: sender.disposable}]
+        - any: [{text: payment}, {text: bank_change}, {text: document}, {fact: sender.exec_title}]
+    evidence: "From {sender.address} ({sender.display})"
+
+  - id: sender_abused_tld
+    title: Sender domain under a TLD frequently abused for phishing / spam
+    severity: low
+    score: 8
+    when: {fact: sender.tld_abused}
+    evidence: "{sender.domain}"
+
+  - id: sender_bad_reputation
+    title: Sender domain listed in a phishing / malware reputation feed
+    severity: high
+    score: 60
+    attack: [T1566]
+    when: {fact: sender.reputation}
+    evidence: "{sender.domain}: {sender.reputation}"
+
+  - id: reply_to_bad_reputation
+    title: Reply-To domain listed in a phishing / malware reputation feed
+    severity: high
+    score: 60
+    attack: [T1566]
+    when: {fact: reply_to.reputation}
+    evidence: "{reply_to.domain}: {reply_to.reputation}"
+
+  - id: reply_to_freemail_diversion
+    title: Replies diverted to a free webmail address
+    severity: high
+    score: 25
+    attack: [T1566, T1656]
+    when: {all: [{fact: reply_to.differs}, {any: [{fact: reply_to.freemail}, {fact: reply_to.disposable}]}, {not: {fact: sender.freemail}}]}
+    evidence: "From {sender.address}, Reply-To {reply_to.address}"
+
+  - id: executive_display_name_external
+    title: Executive title in the display name of an external / webmail sender
+    severity: medium
+    score: 15
+    attack: [T1656]
+    when: {all: [{fact: sender.exec_title}, {any: [{fact: sender.freemail}, {fact: sender.external_with_own_configured}]}]}
+    evidence: "\"{sender.display}\" <{sender.address}>"
+
+  - id: brand_display_name_mismatch
+    title: Display name shows a brand the sending domain does not belong to
+    severity: medium
+    score: 20
+    attack: [T1656]
+    when: {fact: sender.brand_in_display}
+    evidence: "\"{sender.display}\" <{sender.address}> (brand: {sender.brand_in_display})"
+
+  - id: own_domain_spoofed
+    title: From uses one of the organisation's own domains but fails authentication
+    severity: high
+    score: 40
+    attack: [T1566, T1656]
+    when: {all: [{fact: sender.own_domain}, {any: [{fact: auth.dmarc_fail}, {fact: auth.spf, eq: fail}]}]}
+    evidence: "From {sender.address}; spf={auth.spf} dmarc={auth.dmarc}"
+
+  - id: own_domain_lookalike
+    title: Look-alike of one of the organisation's own domains
+    severity: high
+    score: 45
+    attack: [T1566, T1583.001]
+    when: {any: [{fact: sender.own_lookalike}, {fact: reply_to.own_lookalike}, {fact: links.own_lookalike}]}
+    evidence: "{sender.own_lookalike} {reply_to.own_lookalike} {links.own_lookalike}"
+
+  # --- body ---------------------------------------------------------------------
+  - id: mailto_freemail_in_body
+    title: The body asks to write to a free webmail address
+    severity: medium
+    score: 12
+    attack: [T1566]
+    when: {fact: body.mailto_freemail}
+    evidence: "{body.mailto_freemail}"
+
+  - id: bec_bank_details_change
+    title: Payment request announcing new bank details (invoice / BEC fraud)
+    severity: high
+    score: 35
+    attack: [T1566, T1657]
+    when: {all: [{text: bank_change}, {text: payment}]}
+    evidence: "IBAN / account mentioned: {body.ibans}"
+
+  - id: bec_urgent_payment
+    title: Urgent, confidential payment request
+    severity: medium
+    score: 20
+    attack: [T1657]
+    when: {all: [{text: payment}, {text: urgency}, {any: [{text: confidential}, {fact: sender.exec_title}]}]}
+    evidence: "{sender.display}"
+
+  - id: gift_card_request
+    title: Gift-card purchase request
+    severity: high
+    score: 30
+    attack: [T1657]
+    when: {all: [{text: gift_cards}, {any: [{text: urgency}, {text: confidential}, {fact: sender.exec_title}]}]}
+
+  - id: callback_phishing
+    title: "Callback phishing (TOAD): fake charge / subscription with a phone number to call"
+    severity: high
+    score: 35
+    attack: [T1566.004]
+    when: {all: [{fact: body.phones}, {text: subscription}, {fact: links.count, lte: 2}]}
+    evidence: "phone(s): {body.phones}"
+
+  - id: credential_lure
+    title: Credential / account lure with a link
+    severity: low
+    score: 6
+    attack: [T1566.002]
+    when: {all: [{text: credential}, {fact: links.count, gte: 1}]}
+
+  - id: password_protected_attachment
+    title: Encrypted attachment with its password in the body (evades the gateway's scan)
+    severity: high
+    score: 30
+    attack: [T1027.013, T1566.001]
+    when: {all: [{fact: body.password_hint}, {fact: attachments.encrypted}]}
+    evidence: "password: {body.password_hint}; encrypted: {attachments.encrypted}"
+
+  - id: password_with_archive
+    title: Password given in the body next to an archive / document attachment
+    severity: medium
+    score: 12
+    attack: [T1027.013]
+    when: {all: [{fact: body.password_hint}, {fact: attachments.archives}, {not: {fact: attachments.encrypted}}]}
+    evidence: "password: {body.password_hint}; {attachments.archives}"
+
+  - id: image_only_lure
+    title: Almost no text — an image (or QR code) carries the message and the link
+    severity: medium
+    score: 15
+    attack: [T1566, T1027]
+    when: {fact: content.image_only}
+    evidence: "{text.length} characters of text, {attachments.images} image(s), {links.count} link(s)"
+
+  - id: invisible_characters
+    title: Invisible / direction-override characters in the subject or sender name
+    severity: medium
+    score: 15
+    attack: [T1036]
+    when: {any: [{fact: invisible.subject}, {fact: invisible.display}]}
+    evidence: "{invisible.subject} {invisible.display}"
+
+  - id: recipient_in_subject
+    title: The recipient's address or name is pasted into the subject
+    severity: low
+    score: 4
+    when: {fact: recipients.in_subject}
+
+  - id: undisclosed_recipients
+    title: No visible recipients (BCC / undisclosed-recipients)
+    severity: low
+    score: 4
+    when: {fact: recipients.undisclosed}
+
+  # --- links (already decoded from the mail gateways) ---------------------------
+  - id: link_bad_reputation
+    title: Link to a domain / IP listed in a phishing / malware reputation feed
+    severity: high
+    score: 60
+    attack: [T1566.002]
+    when: {fact: links.reputation}
+    evidence: "{links.reputation}"
+
+  - id: link_abused_tld
+    title: Link under a TLD frequently abused for phishing
+    severity: low
+    score: 8
+    when: {fact: links.abused_tld}
+    evidence: "{links.abused_tld}"
+
+  - id: link_legit_hosting_abuse
+    title: Lure pointing to a legitimate hosting / document service (abused to host phishing)
+    severity: medium
+    score: 18
+    attack: [T1566.002, T1583.006]
+    when: {all: [{fact: links.hosting}, {any: [{text: credential}, {text: document}, {text: payment}]}]}
+    evidence: "{links.hosting}"
+
+  - id: link_direct_download
+    title: Link to a direct download of an executable / script / disk image / archive
+    severity: medium
+    score: 20
+    attack: [T1566.002, T1204.001]
+    when: {fact: links.download}
+    evidence: "{links.download}"
+
+  - id: link_ip_address
+    title: Link to a bare IP address
+    severity: medium
+    score: 15
+    attack: [T1566.002]
+    when: {fact: links.ip}
+    evidence: "{links.ip}"
+
+  - id: link_open_redirect
+    title: Link through an open redirect to another site
+    severity: medium
+    score: 12
+    attack: [T1566.002]
+    when: {fact: links.redirects}
+    evidence: "{links.redirects}"
+
+  # --- attachments --------------------------------------------------------------
+  - id: svg_active_content
+    title: SVG attachment with script / embedded HTML / event handlers
+    severity: high
+    score: 40
+    attack: [T1566.001, T1027.006]
+    when: {fact: attachments.svg_script}
+    evidence: "{attachments.svg_script}"
+
+  - id: calendar_invite_links
+    title: Calendar invitation (.ics) carrying links
+    severity: medium
+    score: 15
+    attack: [T1566.002]
+    when: {fact: attachments.ics_links}
+    evidence: "{attachments.ics_links}"
+
+  # --- thread / authentication --------------------------------------------------
+  - id: fake_reply_thread
+    title: "Subject says RE: / FW: but the message belongs to no thread"
+    severity: medium
+    score: 12
+    attack: [T1566]
+    when: {all: [{fact: thread.reply_prefix}, {not: {fact: thread.has_in_reply_to}}, {not: {fact: thread.has_references}}]}
+    evidence: "Subject: {thread.subject}"
+
+  - id: dmarc_fail_policy_none
+    title: "DMARC fails and the domain's policy is none (nothing stops spoofing it)"
+    severity: low
+    score: 6
+    when: {all: [{fact: auth.dmarc_fail}, {fact: auth.dmarc_policy, eq: none}]}
+
+  - id: authentication_results_untrusted
+    title: An Authentication-Results header below the receiving server claims a pass
+    severity: medium
+    score: 20
+    attack: [T1036]
+    when: {fact: auth.untrusted_pass}
+    evidence: "{auth.untrusted_pass}"
+
+  # --- the whole case (attachments' and links' analysis) -------------------------
+  - id: payload_implant_configuration
+    title: An attachment / stage carries an implant configuration (C2)
+    stage: case
+    severity: high
+    score: 80
+    attack: [T1566.001]
+    when: {case_finding: "c2:*"}
+    evidence: "{case.matched}"
+
+  - id: payload_malicious_content
+    title: An attachment / stage has high-severity findings of its own
+    stage: case
+    severity: high
+    score: 30
+    attack: [T1566.001]
+    when: {case_finding: "*", min_severity: high, nested_only: true}
+    evidence: "{case.matched}"
