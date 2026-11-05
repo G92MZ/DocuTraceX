@@ -6237,15 +6237,15 @@ function paneC2(c2, findings, caseId) {
         ${t.profile ? `<details class="disclose"><summary>Malleable C2 profile (rebuilt)</summary><pre class="mono c2-pre">${escapeHtml(t.profile)}</pre></details>` : ""}</details>`;
     }).join("");
     const rel = (c.related || []).length ? `<div class="hint-line"><b>Seen in other cases:</b> ${c.related.map((r) =>
-      `<span class="badge ${r.strength === "strong" ? "badge-bad" : "badge-warn"}">${escapeHtml(r.match)}</span> <a href="#" class="c2-rel" data-case="${escapeHtml(r.case)}">${escapeHtml(r.case)}</a> <span class="mono">${escapeHtml(r.object || "")}</span>`).join(" · ")}</div>` : "";
+      `<span class="badge ${r.strength === "strong" ? "badge-bad" : "badge-warn"}">${escapeHtml(r.match)}</span> <button type="button" class="cx-link c2-rel" data-case="${escapeHtml(r.case)}">${escapeHtml(r.case)}</button> <span class="mono">${escapeHtml(r.object || "")}</span>`).join(" · ")}</div>` : "";
     const stCls = { extracted: "badge-ok", decrypted: "badge-ok", inferred: "badge-muted", conflicting: "badge-warn" };
     const norm = (c.normalized || []).length ? `<details class="disclose"><summary>Normalized fields (${c.normalized.length}) — status, source, confidence</summary>
       <table class="cases c2-kv"><thead><tr><th>Field</th><th>Value</th><th>Type</th><th>Status</th><th>Read by</th><th>Confidence</th></tr></thead><tbody>${
       c.normalized.map((n) => `<tr><th>${escapeHtml(n.name)}</th><td class="mono">${escapeHtml(String(n.value))}</td><td>${escapeHtml(n.type)}</td>
-        <td><span class="badge ${stCls[n.status] || "badge-muted"}">${escapeHtml(n.status)}</span></td><td>${escapeHtml(n.extractor)} ${escapeHtml(n.extractor_version || "")}</td>
+        <td><span class="badge ${stCls[n.status] || "badge-muted"}">${escapeHtml(n.status)}</span></td><td>${escapeHtml(n.extractor)}${n.extractor_version ? ` <span class="hint-line">(extractor v${escapeHtml(n.extractor_version)})</span>` : ""}</td>
         <td>${escapeHtml(n.confidence)}</td></tr>`).join("")}</tbody></table></details>` : "";
     const rawLink = c.raw_ref && caseId ? (() => { const [, run, file] = c.raw_ref.split("/");
-      return ` · <a href="/api/cases/${encodeURIComponent(caseId)}/c2/runs/${encodeURIComponent(run)}/${encodeURIComponent(file)}" target="_blank">RAW (run ${escapeHtml(run)})</a>`; })() : "";
+      return ` · <a class="c2-raw" href="/api/cases/${encodeURIComponent(caseId)}/c2/runs/${encodeURIComponent(run)}/${encodeURIComponent(file)}" target="_blank">RAW (run ${escapeHtml(run)})</a>`; })() : "";
     const status = c.status ? `<span class="badge ${c.kind === "indicators" ? "badge-muted" : c.status.startsWith("partial") ? "badge-warn" : "badge-ok"}">${escapeHtml(c.status)}</span>` : "";
     return `<details class="disclose ml-item c2-card"${i < 3 ? " open" : ""}>
       <summary>
