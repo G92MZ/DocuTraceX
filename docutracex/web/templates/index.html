@@ -169,8 +169,15 @@
           <span id="reports-summary" class="status"></span>
         </div>
         <div id="reports-case" class="hint-line"></div>
-        <div id="reports-actions" class="comp-actions"></div>
-        <iframe id="report-frame" class="report-frame" title="Case report"></iframe>
+        <div class="itabs" id="reports-tabs">
+          <button class="itab is-active" type="button" data-rtab="report">Report</button>
+          <button class="itab" type="button" data-rtab="md">Markdown (raw, for an LLM)</button>
+        </div>
+        <div id="reports-pane-report">
+          <div id="reports-actions" class="comp-actions"></div>
+          <iframe id="report-frame" class="report-frame" title="Case report"></iframe>
+        </div>
+        <div id="reports-pane-md" hidden></div>
       </section>
     </div>
     <!-- YARA -->

@@ -292,6 +292,17 @@ PyInstaller bundles and files over 64 MB are not started ahead (the triage decid
 whether their tools run at all). `sample_bloated_invoice.exe`, `sample_pyinstaller.exe`
 and the MSI / archive samples exercise it.
 
+## Reports → Markdown (raw, for an LLM)
+
+Next to the report, **Markdown (raw, for an LLM)** has one sub-tab per part of
+the analysis — Summary, Findings (with marks), IOCs, Nested / stages, Decrypted,
+Code (functions by priority + the pseudocode of the 25 best decompiled ones),
+.NET (methods of interest, decrypted strings, resources), Machine Learning, C2,
+Network checks and every module's raw JSON — each with **Copy** and **Download
+.md**, plus **Download everything**. Same content the AI tools read, for when no
+model is connected: paste it into any LLM or a ticket. Try it on the case of
+`make_samples.dotnet_bitmap_loader_exe(make_samples.dotnet_stealer_exe())`.
+
 ## AI tab and MCP: asking about the code of a case
 
 The AI chat (your OpenAI-compatible / LiteLLM endpoint, or a local one) and the
