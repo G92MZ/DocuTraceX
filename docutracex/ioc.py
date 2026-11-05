@@ -321,7 +321,8 @@ _TOOL_REPOS = {  # owner or owner/repo on GitHub (github.com, raw/codeload/api)
     "py-pdf/pypdf", "j4k0xb/webcrack", "connorshride/box-ps", "zrax/pycdc",
     "leibnitz27/cfr", "fboldewin/reconstructer.org", "miurahr/py7zr",
     "danifus/pyzipper", "clalancette/pycdlib", "astral-sh/python-build-standalone",
-    "g92mz/docutracex",
+    "g92mz/docutracex", "digitalsleuth/peepdf-3", "jesparza", "fox-it/dissect.cobaltstrike",
+    "lief-project/lief", "unicorn-engine/unicorn", "mandiant/gostringungarbler",
 }
 _TOOL_HOSTS = (  # hosts that belong to a tool (subdomains included)
     "decalage.info", "didierstevens.com", "reconstructer.org", "benf.org",
@@ -339,16 +340,91 @@ _GH_HOSTS = ("github.com", "www.github.com", "raw.githubusercontent.com",
              "codeload.github.com", "objects.githubusercontent.com")
 
 
-def _is_tool_url(url: str) -> bool:
+# Code-hosting / package hosts: a project there is matched by owner/repo,
+# never by host (an unrelated repo on them stays an IOC).
+_FORGE_HOSTS = _GH_HOSTS + ("gitlab.com", "bitbucket.org", "codeberg.org", "sourceforge.net", "pypi.org",
+                            "pypi.python.org", "readthedocs.org", "python.org", "www.python.org", "docs.python.org",
+                            "launchpad.net", "bugs.launchpad.net", "code.launchpad.net", "foss.heptapod.net",
+                            "gitlab.gnome.org", "salsa.debian.org", "git.sr.ht", "sr.ht")
+
+
+def _split_url(url: str) -> tuple[str, list[str]]:
     try:
         u = urlparse(url if "://" in url else "http://" + url)
+        host = (u.hostname or "").lower()
     except ValueError:
-        return False
-    host = (u.hostname or "").lower()
+        return "", []
     parts = [p for p in u.path.lower().split("/") if p]
     if host == "api.github.com" and parts[:1] == ["repos"]:
         host, parts = "github.com", parts[1:]
-    if host in _GH_HOSTS and parts:
+    if host in _GH_HOSTS:
+        host = "github.com"
+    return host, parts
+
+
+_INSTALLED: tuple[set[str], set[tuple[str, tuple[str, ...]]]] | None = None
+
+
+def _installed_projects() -> tuple[set[str], set[tuple[str, tuple[str, ...]]]]:
+    """Home pages / project URLs of every package of the toolchain (the tools that
+    print banners, help and tracebacks): ``owner/repo`` on forges, own hosts
+    elsewhere. Read from the installed packages' metadata, so a new tool needs
+    no entry here."""
+    global _INSTALLED
+    if _INSTALLED is None:
+        repos: set[str] = set()
+        hosts: set[tuple[str, tuple[str, ...]]] = set()   # (host, path prefix): a URL prefix, never a bare host
+        try:
+            from importlib import metadata
+            for dist in metadata.distributions():
+                md = dist.metadata
+                urls = [md.get("Home-page") or "", md.get("Download-URL") or ""]
+                urls += [u.split(",", 1)[-1].strip() for u in (md.get_all("Project-URL") or [])]
+                for u in urls:
+                    if not u.startswith(("http://", "https://")):
+                        continue
+                    host, parts = _split_url(u)
+                    if host in _FORGE_HOSTS:
+                        if len(parts) >= 2:
+                            repos.add(f"{host}/{parts[0]}/{parts[1].removesuffix('.git')}")
+                    elif host and "." in host:
+                        # the project's own site / docs: matched as a URL prefix
+                        # (host + its first path segments), so a funding, chat or
+                        # social link can never hide a sample's URL on that service
+                        hosts.add((host.removeprefix("www."), tuple(parts[:2])))
+        except Exception:  # noqa: BLE001
+            pass
+        _INSTALLED = (repos, hosts)
+    return _INSTALLED
+
+
+def _is_installed_tool_url(url: str) -> bool:
+    """A URL of an installed tool's own project (only trusted inside tool output)."""
+    repos, hosts = _installed_projects()
+    host, parts = _split_url(url)
+    if len(parts) >= 2 and f"{host}/{parts[0]}/{parts[1].removesuffix('.git')}" in repos:
+        return True
+    h = host.removeprefix("www.")
+    return bool(h) and any(h == x and tuple(parts[:len(pre)]) == pre
+                           and (pre or x not in _GENERIC_SERVICE_HOSTS) for x, pre in hosts)
+
+
+# Services a project may link to (funding, chat, social, CDN): never matched by host alone.
+_GENERIC_SERVICE_HOSTS = {
+    "twitter.com", "x.com", "discord.gg", "discord.com", "t.me", "telegram.me", "patreon.com", "opencollective.com",
+    "tidelift.com", "ko-fi.com", "buymeacoffee.com", "paypal.me", "paypal.com", "liberapay.com", "gitter.im",
+    "slack.com", "matrix.to", "youtube.com", "linkedin.com", "facebook.com", "mastodon.social", "fosstodon.org",
+    "medium.com", "reddit.com", "google.com", "groups.google.com", "drive.google.com", "dropbox.com",
+    "cloudflare.com", "amazonaws.com", "s3.amazonaws.com", "blogspot.com", "wordpress.com", "zenodo.org",
+    "doi.org", "arxiv.org", "stackoverflow.com", "example.com", "localhost",
+}
+
+
+def _is_tool_url(url: str) -> bool:
+    host, parts = _split_url(url)
+    if not host:
+        return False
+    if host == "github.com" and parts:
         return parts[0] in _TOOL_REPOS or "/".join(parts[:2]) in _TOOL_REPOS
     if host in ("pypi.org", "pypi.python.org") and len(parts) >= 2 \
             and parts[0] in ("project", "pypi", "simple"):
@@ -514,6 +590,15 @@ def _scan_text(
         ):
             continue
         args = match.group("args").split()
+        # PDF syntax, not a command line: a dictionary key and its name values
+        # (/Type /Annot, /Type /XObject /Width 1707 …)
+        if (text[match.start() - 1:match.start()] == "/" and not match.group("exe")
+                and match.group("cmd").lower() in _AMBIGUOUS_COMMANDS):
+            continue
+        if (match.group("cmd").lower() == "type" and not match.group("exe")
+                and re.fullmatch(r"/[A-Z][A-Za-z0-9#]*", args[0])
+                and all(re.fullmatch(r"/[A-Za-z][A-Za-z0-9#]*|-?\d+(?:\.\d+)?|R|true|false", a) for a in args)):
+            continue
         # code, not a command line: an assignment / comparison (cmd = name,
         # nc += prev, cmd in topics), a printf format (type %.100s, at %p)
         if (re.fullmatch(r"(?:[=!<>+*/%&|^-]=?|==|in|is|and|or|not)", args[0])
@@ -566,6 +651,7 @@ def _scan_text(
             continue
 
         if domain in _NAMESPACE_HOSTS or _is_tool_url(url) or (
+                _TOOL_OUTPUT_LOC.search(location or "") and _is_installed_tool_url(url)) or (
                 domain and _is_reference_host(domain)) or _MS_PKI.match(url):
             continue
 
@@ -741,6 +827,9 @@ def _scan_text(
             or re.match(r"\d?(?:system|microsoft|mscorlib)$", labels[0])     # .NET namespaces (System.Net…)
             or (floss and all(len(x) <= 2 for x in labels[:-1]))             # c.sc.ki: FLOSS junk
             or text[match.start() - 1:match.start()] == "]"            # [MsiProperty].NET
+            # a tool's own project written without scheme (github.com/owner/tool)
+            or _is_tool_url(bare := match.group(0) + re.match(r"[^\s\"'<>()]*", text[match.end():]).group(0))
+            or (_TOOL_OUTPUT_LOC.search(location or "") and _is_installed_tool_url(bare))
             # bundled code: a bare host is only one written as a string literal
             or (code_text and text[match.start() - 1:match.start()] not in ("\"", "'", "`", "/", "@"))
         ):
