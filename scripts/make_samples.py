@@ -489,6 +489,19 @@ def gateway_links_eml() -> bytes:
         message_id=f"<remesa-{INVOICE}@mail.{SUPPLIER_DOMAIN}>")
 
 
+def many_files_zip(n: int = 80) -> bytes:
+    """An installer-style kit with more files than the per-file deep-analysis
+    limit (60): every one must still show in Nested — the first 60 analysed, the
+    rest listed (name, type, size, SHA-256). Inert text files."""
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for i in range(n):
+            z.writestr(f"kit/lib/module_{i:03d}.txt", f"invoice viewer component {i} (inert DocuTraceX sample)\n")
+    return buf.getvalue()
+
+
 def emlx_doc() -> bytes:
     message = eml_doc()
     plist = (b'<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -2836,6 +2849,7 @@ def build_all() -> dict[str, bytes]:
         "sample.rtf": rtf_doc(), "sample.pdf": pdf_doc(),
         "sample.eml": eml_doc(), "sample.emlx": emlx_doc(), "sample.msg": msg_doc(),
         "mail/sample_gateway_links.eml": gateway_links_eml(),
+        "nested/sample_many_files.zip": many_files_zip(),
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
         "sample_obf_techniques.js": obf_techniques_js(),
         "sample_chain_dropper.js": chain_dropper_js(), "sample_msxml_dropper.js": msxml_dropper_js(), "sample_wsh_selfread.js": wsh_selfread_dropper_js(), "sample_xor_stager.ps1": xor_stager_ps1(),
