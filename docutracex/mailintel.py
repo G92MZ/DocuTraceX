@@ -7,7 +7,7 @@ day, and from Settings → *Email reputation lists*). Only permissive licences:
   ~200 mail.com vanity domains (accountant.com, engineer.com, usa.com…);
 * **disposable** — disposable-email-domains (CC0);
 * **phishing domains / IPs** — Phishing-Database/Phishing.Database (MIT);
-* **malware hosts** — URLhaus by abuse.ch (CC0).
+* **malware hosts** — URLhaus by abuse.ch (CC0; the export needs a free abuse.ch Auth-Key).
 
 Built-in fallbacks keep the rules working offline: a short list of the big free
 webmail providers, commonly abused TLDs (Spamhaus / Interisle public reports on
@@ -45,8 +45,11 @@ FEEDS: dict[str, dict[str, Any]] = {
                      "url": "https://raw.githubusercontent.com/Phishing-Database/Phishing.Database/master/"
                             "phishing-IPs-ACTIVE.txt",
                      "source": "github.com/Phishing-Database/Phishing.Database"},
+    # abuse.ch retired the keyless downloads (HTTP 410, 2026): the export needs a
+    # free Auth-Key (auth.abuse.ch) — Settings → Email reputation lists.
     "urlhaus_hosts": {"label": "Malware distribution hosts (URLhaus)", "license": "CC0-1.0", "kind": "domains",
-                      "url": "https://urlhaus.abuse.ch/downloads/hostfile/", "source": "urlhaus.abuse.ch"},
+                      "url": "https://urlhaus-api.abuse.ch/v2/files/exports/{key}/recent.csv",
+                      "page": "https://urlhaus.abuse.ch/api/", "source": "urlhaus.abuse.ch", "needs_key": "abusech"},
 }
 
 # --- built-in lists -----------------------------------------------------------------
@@ -117,8 +120,28 @@ def _file(name: str) -> Path:
     return folder() / f"{name}.txt"
 
 
+def _urlhaus_csv(text: str) -> set[str]:
+    """URLhaus export (id,dateadded,url,url_status,…): hosts of the URLs still online."""
+    import csv
+    from urllib.parse import urlsplit
+    out: set[str] = set()
+    for row in csv.reader(line for line in text.splitlines() if line and not line.startswith("#")):
+        if len(row) < 4 or row[0] == "id" or row[3].strip().lower() != "online":
+            continue
+        try:
+            host = (urlsplit(row[2].strip()).hostname or "").rstrip(".")
+        except ValueError:
+            continue
+        if host:
+            out.add(host)
+    return out
+
+
 def parse(name: str, text: str) -> set[str]:
     out: set[str] = set()
+    head = text.lstrip()[:400]
+    if name == "urlhaus_hosts" and ("url_status" in head or head.startswith('"')):
+        return _urlhaus_csv(text)
     if name == "freemail" and text.lstrip().startswith("["):
         import json
         try:
@@ -236,7 +259,8 @@ def status() -> dict[str, Any]:
             updated, count = None, 0
         r = (_refresh.get("results") or {}).get(name) or {}
         feeds.append({"id": name, "label": f["label"], "license": f["license"], "source": f["source"],
-                      "url": f["url"], "updated": updated, "count": count,
+                      "url": f.get("page") or f["url"], "updated": updated, "count": count,
+                      "needs_key": bool(f.get("needs_key")),
                       "last_error": r.get("error") if r and not r.get("ok") else None, "route": r.get("route")})
     return {"feeds": feeds, "running": _refresh["running"], "last": _refresh["last"], "error": _refresh["error"],
             "builtin": {"freemail": len(FREEMAIL_BUILTIN), "abused_tlds": sorted(ABUSED_TLDS)}}
@@ -284,16 +308,44 @@ def _routes(proxy: str | None) -> list[tuple[str, Any]]:
     return routes
 
 
+class NeedsKey(Exception):
+    """The feed needs an API key that is not configured (not a network failure)."""
+
+
+def _feed_url(f: dict[str, Any]) -> str:
+    if f.get("needs_key") == "abusech":
+        from . import appsettings
+        key = appsettings.abusech_key()
+        if not key:
+            raise NeedsKey("needs a free abuse.ch Auth-Key (auth.abuse.ch): set it below this table")
+        return f["url"].format(key=key)
+    return f["url"]
+
+
+def _body(raw: bytes) -> str:
+    if raw[:2] == b"PK":                       # zipped export
+        import io
+        import zipfile
+        with zipfile.ZipFile(io.BytesIO(raw)) as z:
+            first = next((i for i in z.infolist() if not i.is_dir()), None)
+            raw = z.read(first) if first and first.file_size <= 256 * 1024 * 1024 else b""
+    return raw.decode("utf-8", "replace")
+
+
 def _download(name: str, proxy: str | None, timeout: int) -> tuple[int, str]:
     f = FEEDS[name]
+    url = _feed_url(f)
     errors = []
     for label, opener in _routes(proxy):
-        req = urllib.request.Request(f["url"], headers={"User-Agent": "DocuTraceX"})
+        req = urllib.request.Request(url, headers={"User-Agent": "DocuTraceX"})
         try:
             with opener.open(req, timeout=timeout) as r:
-                text = r.read(64 * 1024 * 1024).decode("utf-8", "replace")
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"{label}: {_short(exc)}")
+                text = _body(r.read(64 * 1024 * 1024))
+        except Exception as exc:  # noqa: BLE001  (the reason never carries the URL: it may hold the key)
+            reason = _short(exc)
+            if f.get("needs_key") and reason in ("HTTP 401", "HTTP 403"):
+                reason += " (Auth-Key not accepted?)"
+            errors.append(f"{label}: {reason}")
             continue
         vals = parse(name, text)
         if len(vals) < 10:
@@ -330,6 +382,8 @@ def refresh(proxy: str | None = None, only_stale: bool = False, timeout: int = 2
                 n, route = _download(name, proxy, timeout)
                 results[name] = {"ok": True, "route": route, "count": n}
                 log.info("mailintel: %s refreshed via %s (%d entries)", name, route, n)
+            except NeedsKey as exc:                # not a failure: optional, waits for the key
+                results[name] = {"ok": False, "error": str(exc), "needs_key": True}
             except Exception as exc:  # noqa: BLE001  (offline: the old copy stays)
                 results[name] = {"ok": False, "error": str(exc)[:240]}
                 errors.append(FEEDS[name]["label"])
