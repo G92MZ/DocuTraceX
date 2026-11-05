@@ -703,7 +703,9 @@ def _run_floss(path: Path, extra: list[str] | None = None) -> dict[str, Any]:
 
     exe = settings.floss_executable()
     args = ["--json", "--quiet", *FLOSS_EXTRA_ARGS, *(extra or [])]
-    rec, out = _run_tool("floss", exe, args, path, FLOSS_TIMEOUT)
+    # "--" before the sample: --no / --only / --analyze-functions take several
+    # values (nargs="+") and would swallow the path otherwise
+    rec, out = _run_tool("floss", exe, [*args, "--"], path, FLOSS_TIMEOUT)
     retry_note = ""
     if rec["status"] == "error" and _floss_language_crash(rec.get("detail") or ""):
         # Only this known crash is retried (never a timeout, a missing tool or
@@ -711,7 +713,7 @@ def _run_floss(path: Path, extra: list[str] | None = None) -> dict[str, Any]:
         first = rec.get("detail") or ""
         log.info("floss: language-specific string extraction crashed on %s; "
                  "retrying with --language none", path.name)
-        rec, out = _run_tool("floss", exe, [*args, *FLOSS_NO_LANGUAGE_ARGS], path, FLOSS_TIMEOUT)
+        rec, out = _run_tool("floss", exe, [*args, *FLOSS_NO_LANGUAGE_ARGS, "--"], path, FLOSS_TIMEOUT)
         if rec["status"] != "ok":
             rec["detail"] = (f"{rec.get('detail') or 'floss failed'} (retried with --language none "
                              f"after a Go/Rust string extraction crash; first run: {first[-160:]})")
