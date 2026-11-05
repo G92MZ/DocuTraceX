@@ -395,6 +395,21 @@ def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[s
             loc = sc.get("location") or key
             for st in (sc.get("decoded_stages") or [])[:PER_SCRIPT]:
                 text, recipe = st.get("text") or "", list(st.get("recipe") or [])
+                if st.get("data_b64"):                       # a binary stage (shellcode, PE)
+                    try:
+                        raw = base64.b64decode(st["data_b64"])
+                    except (ValueError, TypeError):
+                        continue
+                    from .parsers.ps_deobf import _is_binary_payload
+                    origin = f"{key} {loc}: {' → '.join(recipe)}"
+                    if _is_binary_payload(raw) and not _magic_ext(raw):      # shellcode: bytes as they are
+                        p = {"how": f"{key}-stage", "ext": ".bin", "data": raw, "recipe": recipe + ["shellcode"],
+                             "origin": f"{origin} → shellcode ({len(raw)} bytes)"}
+                    else:
+                        p = classify(raw, f"{key}-stage", origin, recipe=recipe)
+                    if p:
+                        out.append(p)
+                    continue
                 if worth_text_child(text, ext if len(text.strip()) >= 8 else None):
                     out.append({"how": f"{key}-stage", "origin": f"{key} {loc}: {' → '.join(recipe)}",
                                 "text": text, "ext": ext, "recipe": recipe})

@@ -124,7 +124,7 @@ def sections(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
     }
     if "dns" in proto or any(dns.values()) and proto in ("", "dns"):
         out["DNS channel"] = {k: v for k, v in dns.items() if v not in ("", None, 0)}
-    if proto in ("smb", "tcp") or s.get("SETTING_PIPENAME"):
+    if proto in ("smb", "tcp"):
         p2p = {"Named pipe": s.get("SETTING_PIPENAME") or "",
                "Frame header": s.get("SETTING_SMB_FRAME_HEADER") or s.get("SETTING_TCP_FRAME_HEADER") or ""}
         if proto == "tcp":

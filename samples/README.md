@@ -345,7 +345,11 @@ campaign's (`cdn-update.example.net`, `203.0.113.47`).
 
 | Sample | Family | How it is stored | What comes out |
 | --- | --- | --- | --- |
-| `c2/sample_cs_beacon.bin` | Cobalt Strike | TLV config XOR 0x2e (4.x), as in a memory dump | HTTPS beacon to `cdn-update.example.net:443`, GET/POST URIs, user agent, 45 s / 25 % sleep, pipe `\\.\pipe\factura_sync_%x`, spawn-to, watermark `20260187` |
+| `c2/sample_cs_beacon.bin` | Cobalt Strike | TLV config XOR 0x2e (4.x), as in a memory dump | HTTPS beacon to `cdn-update.example.net:443`, GET/POST URIs, user agent, 45 s / 25 % sleep, pipe `\\.\pipe\factura_sync_%x`, spawn-to, watermark `20260187`; Host header `billing-portal.example` → **domain fronting** note; RSA key (inert modulus) for dissect.cobaltstrike |
+| `c2/sample_cs_dns_beacon.bin` | Cobalt Strike | same, DNS beacon | C2 `ns1/ns2.billing-portal.example:53`; **DNS channel**: idle IP `198.51.100.9`, DNS sleep, subdomain prefixes `fct.` / `cdn.` / `api.` |
+| `c2/sample_cs_smb_beacon.bin` | Cobalt Strike | same, SMB beacon | **peer-to-peer** beacon on `\\.\pipe\factura_sync_%x`: a complete configuration without an internet C2 |
+| `c2/sample_cs_beacon.ps1` | Cobalt Strike | PowerShell payload template: base64 + gzip → `$var_code` base64 + XOR 35 | the PowerShell analysis decodes the XOR stage as **binary** (`decrypted_powershell-stage_*.bin`, recipe base64 → xor(0x23)); C2 finds the beacon in that child |
+| `c2/sample_cs_stager.ps1` | Cobalt Strike | same template (no gzip) around HTTPS stager shapes | stager read from its shellcode: `cdn-update.example.net:443`, URI `/Fctadz` (checksum8 92 = x86 stage), HTTPS from the request flags |
 | `c2/sample_msf_https_stager.bin` | Metasploit / Meterpreter | `block_api` prologue + reverse_https shapes | stager to `cdn-update.example.net:443`, URI `/inv/Fct2026_0187` |
 | `c2/sample_remcos.exe` | Remcos | RC4-encrypted `SETTINGS` RCDATA resource | C2 `cdn-update.example.net:2404` (TLS) and `203.0.113.47:2404`, campaign `Factura-2026`, mutex `Rmc-F4C7A1` |
 | `c2/sample_asyncrat.exe` | AsyncRAT | .NET settings, AES-256 + HMAC, PBKDF2 key | hosts `cdn-update.example.net`, `203.0.113.47`, ports 6606/7707/8808, version 0.5.8, mutex `AsyncMutex_6SI8OkPnk` |
@@ -358,6 +362,20 @@ campaign's (`cdn-update.example.net`, `203.0.113.47`).
 | `c2/sample_raccoon_v2.exe` | Raccoon Stealer v2 | base64 + RC4 strings, key `edinayarossiya2026` | C2 `http://203.0.113.47/`, `machineId=` / `&configId=` |
 | `c2/sample_warzone.exe` | Warzone / AveMaria | `.bss`: RC4 key + config | `cdn-update.example.net:5200` |
 | `c2/sample_darkgate.bin` | DarkGate | base64 with a custom alphabet (MZ + text stub) | `http://cdn-update.example.net:2351`, `http://203.0.113.47:2351` (medium) |
+
+**Cobalt Strike, in depth.** Every configuration says whether it is complete
+(*configuration*), *partial*, or only *indicators* — traces such as the artifact
+kit pipe format `MSSE-%d-server`, `msagent_%x` / `postex_%04x`, `beacon.x64.dll`
+or the PowerShell template (`$var_code`, `-bxor 35`), reported with low
+confidence, without C2, and dropped when the same case has the real
+configuration. Besides the C2, the card shows the beacon's **DNS channel**,
+**process injection** (execute methods, allocator, permissions, transforms),
+**evasion** (sleep mask, syscalls, Beacon Gate, proxy, kill date),
+**guardrails** (the user / computer / domain it is keyed to, with the value
+dissect.cobaltstrike recovers — who it was built for), **peer-to-peer** beacons,
+the team server's **RSA public key**, domain fronting (Host header ≠ C2 host),
+IDN hosts in punycode, and per tool (1768.py / dissect) the raw view and the
+rebuilt malleable profile.
 | `c2/sample_nanocore.exe` | NanoCore | type names (identification only) | family identified; settings encrypted in a resource, not decrypted (a medium finding) |
 
 Analyse any of them (or the whole `c2/` folder zipped) and open **C2 / Beacons**:

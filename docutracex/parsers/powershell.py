@@ -18,6 +18,8 @@ recovered command in its own Components tab, dumping the full text to
 
 from __future__ import annotations
 
+import base64
+
 import re
 from pathlib import Path
 from typing import Any
@@ -223,7 +225,8 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
                   "original_code": orig_code[:_KEEP_CODE] if deob["changed"] else "",
                   "original_truncated": deob["changed"] and len(full) > _KEEP_CODE,
                   "deob_methods": deob["methods"], "deob_schemes": [],
-                  "decoded_stages": [{"recipe": st["recipe"], "text": st["text"][:400_000]}
+                  "decoded_stages": [({"recipe": st["recipe"], "text": st["text"][:400_000]} if "text" in st else
+                                      {"recipe": st["recipe"], "data_b64": base64.b64encode(st["data"][:8_000_000]).decode()})
                                      for st in deob.get("stages") or []],
                   "deob_size": len(deob_full) if deob["changed"] else 0,
                   "hits": hits, "metrics": mets, "_full_code": full}
