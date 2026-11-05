@@ -116,31 +116,51 @@ def _run_1768(path: Path, data: bytes) -> dict[str, Any] | None:
     return None
 
 
+# RAW record of every tool run of one extract() call: what 1768.py / dissect
+# printed, untouched — kept as evidence and re-interpreted without re-running.
+_RAW: list[dict[str, Any]] | None = None
+
+
+def _record(tool: str, args: list[str], stdout: str, stderr: str = "", rc: int | None = None) -> None:
+    if _RAW is not None:
+        _RAW.append({"tool": tool, "args": args, "stdout": stdout, "stderr": (stderr or "")[-4000:], "rc": rc})
+
+
 def _run_1768_once(script: Path, path: Path, extra: list[str]) -> dict[str, Any] | None:
     args = [sys.executable, str(script), "-J", "-n", *extra]
     try:
         r = subprocess.run(args + [str(path)], capture_output=True, text=True, check=False,
                            encoding="utf-8", errors="replace", timeout=120,
                            stdin=subprocess.DEVNULL)
+        _record("1768.py", ["-J", "-n", *extra], r.stdout or "", r.stderr or "", r.returncode)
         out = json.loads(r.stdout or "{}")
     except Exception as exc:  # noqa: BLE001
         log.warning("1768.py %s failed on %s: %s", " ".join(extra), path.name, exc)
         return None
+    text: list[str] = []
+    msgs = [m for m in out.get("messages") or [] if isinstance(m, str)]
+    if (not out.get("config") and any("Probably found shellcode" in m for m in msgs)
+            and not any(_HEXLINE.match(ln) for m in msgs for ln in m.splitlines())):
+        # The JSON report may omit the hex dump: take it from the text report.
+        text = _text_report(args[:2] + [a for a in args[2:] if a != "-J"], path)
+        _record("1768.py (text report)", [a for a in ["-n", *extra]], "\n".join(text))
+    res = parse_1768(out, text)
+    if res is None:
+        err = next((m for m in msgs if m.startswith("Error")), "")
+        if err:
+            log.info("1768.py on %s: %s", path.name, err)
+    return res
+
+
+def parse_1768(out: dict[str, Any], text_report: list[str] | None = None) -> dict[str, Any] | None:
+    """1768.py's JSON report (+ its text report for stagers) → fields. Pure: used
+    on a fresh run and when a stored RAW report is re-interpreted."""
     cfg = out.get("config") or {}
+    msgs = [m for m in out.get("messages") or [] if isinstance(m, str)]
     if not cfg:
         # No beacon config, but 1768.py may have decoded a stager (shellcode XOR-ed
         # with a 4-byte key inside a PE): it reports it as messages, not as config.
-        msgs = [m for m in out.get("messages") or [] if isinstance(m, str)]
-        if (any("Probably found shellcode" in m for m in msgs)
-                and not any(_HEXLINE.match(ln) for m in msgs for ln in m.splitlines())):
-            # The JSON report may omit the hex dump: take it from the text report.
-            msgs += _text_report(args[:2] + [a for a in args[2:] if a != "-J"], path)
-        stager = _stager_from_messages(msgs)
-        if stager is None:
-            err = next((m for m in msgs if m.startswith("Error")), "")
-            if err:
-                log.info("1768.py on %s: %s", path.name, err)
-        return stager
+        return _stager_from_messages(msgs + list(text_report or []))
     fields = {}
     for k, v in cfg.items():
         name = v.get("id") or f"0x{int(k):04x}"
@@ -148,7 +168,6 @@ def _run_1768_once(script: Path, path: Path, extra: list[str]) -> dict[str, Any]
         if isinstance(info, str) and len(info) >= 2 and info[0] == info[-1] == "'":
             info = _demojibake(info[1:-1].encode().decode("unicode_escape", "replace"))
         fields[name] = {"value": info, "raw": v.get("rawvalue")}
-    msgs = [m for m in out.get("messages") or [] if isinstance(m, str)]
     xor = next((m.split()[-1] for m in msgs if m.startswith("xorkey")), "")
     xor = xor[2:] if xor.lower().startswith("0x") else xor
     sanity = next((m for m in msgs if m.startswith("Sanity check")), "")
@@ -552,6 +571,12 @@ def _view_1768(path: Path, data: bytes) -> dict[str, Any]:
     if not res:
         res = _stager_from_shellcode(data)
         tool = "shellcode reader"
+    if res and tool != "1768.py":          # built-in readers: their output is the RAW
+        _record(tool, [], json.dumps({k: v for k, v in res.items() if k != "_messages"}, default=str))
+    return view_1768(res, tool)
+
+
+def view_1768(res: dict[str, Any] | None, tool: str = "1768.py") -> dict[str, Any]:
     if not res:
         note = ("1768.py not found (tools/didier) and no 1-byte-XOR config header."
                 if _script() is None else "No configuration or stager found by 1768.py.")
@@ -569,8 +594,47 @@ def _view_1768(path: Path, data: bytes) -> dict[str, Any]:
     return {"tool": tool, "status": "found", "kind": kind, "method": res["method"],
             "experimental": bool(res.get("experimental")), "sanity": res.get("sanity", ""),
             "summary": summary, "hosts": hosts,
-            "fields": {k: f.get("value") for k, f in res["fields"].items() if k != "publickey"},
+            "fields": {k: (f.get("value") if isinstance(f, dict) else f) for k, f in res["fields"].items()
+                       if k != "publickey"},
             "_messages": res.get("_messages", [])}
+
+
+def reinterpret(raw: list[dict[str, Any]], ind: list[str] | None = None) -> dict[str, Any] | None:
+    """The configuration rebuilt from a stored RAW record (1768.py's and
+    dissect's output as they printed it) — the tools are NOT run again."""
+    from . import cobalt_dissect
+    v1768: dict[str, Any] = view_1768(None)
+    for i, r in enumerate(raw):
+        if r.get("tool") == "1768.py":
+            try:
+                out = json.loads(r.get("stdout") or "{}")
+            except ValueError:
+                continue
+            nxt = raw[i + 1] if i + 1 < len(raw) else {}
+            text = (nxt.get("stdout") or "").splitlines() if nxt.get("tool") == "1768.py (text report)" else []
+            res = parse_1768(out, text)
+            if res:
+                extra = [a for a in r.get("args") or [] if a not in ("-J", "-n")]
+                if extra and extra != ["-r"]:
+                    res["method"] += f" [retry: {' '.join(extra)}]"
+                if "-e" in extra:
+                    res["experimental"] = True
+                v1768 = view_1768(res)
+                break
+        elif r.get("tool") in ("built-in decoder", "shellcode reader"):
+            try:
+                v1768 = view_1768(json.loads(r.get("stdout") or "{}"), r["tool"])
+            except (ValueError, KeyError):
+                continue
+            break
+    vdis = cobalt_dissect.view({"status": "nothing"})
+    for r in raw:
+        if r.get("tool") == cobalt_dissect.TOOL:
+            try:
+                vdis = cobalt_dissect.view(json.loads((r.get("stdout") or "").strip().splitlines()[-1]))
+            except (ValueError, IndexError):
+                vdis = cobalt_dissect.view({"status": "error", "error": "unreadable RAW output"})
+    return combine(v1768, vdis, list(ind or []))
 
 
 def _norm_hosts(view: dict[str, Any]) -> set[str]:
@@ -579,7 +643,72 @@ def _norm_hosts(view: dict[str, Any]) -> set[str]:
     return {(idn(h.strip()) or h.strip()).lower() for h in view.get("hosts") or [] if h}
 
 
-def extract(path: Path, data: bytes) -> dict[str, Any] | None:
+# Reflective loader stubs at the head of a beacon DLL ("MZ" doubling as code):
+# x64 ``MZARUH`` (pop r10; push r10; push rbp; mov rbp, rsp), x86 ``MZRE``
+# (dec ebp; pop edx; push edx; inc ebp) — Cobalt Strike's (and Meterpreter's).
+_REFLECTIVE_HEADS = (b"MZARUH", b"MZRE\x89\xe5", b"MZ\xe8\x00\x00\x00\x00\x5b")
+MAX_CARVE = 4
+
+
+def carve_reflective(data: bytes) -> list[tuple[int, bytes]]:
+    """Beacon DLLs embedded in something else — a shellcode loader, a dropper,
+    a memory dump, sRDI (a bootstrap stub before the DLL): every reflective
+    loader head, and every valid PE header, past offset 0."""
+    offs: set[int] = set()
+    for head in _REFLECTIVE_HEADS:
+        i = data.find(head, 1)
+        while i > 0 and len(offs) < MAX_CARVE * 4:
+            offs.add(i)
+            i = data.find(head, i + 1)
+    i = data.find(b"MZ", 1)
+    while 0 < i and len(offs) < MAX_CARVE * 4:
+        if i + 0x40 < len(data):
+            e = struct.unpack_from("<I", data, i + 0x3C)[0]
+            if 0x40 <= e < 0x1000 and data[i + e:i + e + 4] == b"PE\x00\x00":
+                offs.add(i)
+        i = data.find(b"MZ", i + 2)
+    return [(o, data[o:]) for o in sorted(offs)[:MAX_CARVE]]
+
+
+def extract(path: Path, data: bytes, _depth: int = 0) -> dict[str, Any] | None:
+    global _RAW
+    own = _RAW is None
+    if own:
+        _RAW = []
+    try:
+        res = _extract_carving(path, data, _depth)
+        if res is not None and own:
+            res["_raw"] = list(_RAW or [])
+        return res
+    finally:
+        if own:
+            _RAW = None
+
+
+def _extract_carving(path: Path, data: bytes, _depth: int) -> dict[str, Any] | None:
+    res = _extract(path, data)
+    if (res is None or res.get("kind") == "indicators") and _depth == 0:
+        import tempfile
+        for off, blob in carve_reflective(data):
+            with tempfile.TemporaryDirectory() as t:
+                cp = Path(t) / f"carved_{off:x}.bin"
+                cp.write_bytes(blob)
+                got = extract(cp, blob, _depth + 1)
+            if got and got.get("kind") != "indicators":
+                got["carved_at"] = off
+                got["method"] = f"{got['method']} · beacon carved at offset 0x{off:x}"
+                got["summary"] = {"Carved at": f"0x{off:x} (embedded reflective DLL / PE)", **(got.get("summary") or {})}
+                return got
+    return res
+
+
+def applicable(data: bytes) -> bool:
+    """In the Cobalt Strike extractor's scope (its quick tests)."""
+    return bool(prefilter(data) or _is_pe(data) or deep_candidate(data) or indicators(data)
+                or _block_api_head(data) or carve_reflective(data[:16 * 1024 * 1024])[:1])
+
+
+def _extract(path: Path, data: bytes) -> dict[str, Any] | None:
     """Cobalt Strike, read by BOTH parsers (1768.py and dissect.cobaltstrike).
 
     One configuration per object with ``tools = {"1768": view, "dissect": view}``: the UI shows one
@@ -593,6 +722,11 @@ def extract(path: Path, data: bytes) -> dict[str, Any] | None:
 
     v1768 = _view_1768(path, data)
     vdis = cobalt_dissect.extract(path) if cobalt_dissect.enabled() else cobalt_dissect.view({"status": "disabled"})
+    return combine(v1768, vdis, ind)
+
+
+def combine(v1768: dict[str, Any], vdis: dict[str, Any], ind: list[str]) -> dict[str, Any] | None:
+    """The two tools' views → one configuration (or indicators only, or None)."""
     found = [v for v in (v1768, vdis) if v.get("status") == "found"]
     if not found:
         if not ind:
