@@ -605,7 +605,7 @@ def _both(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         large = False
     fextra = FLOSS_LARGE_ARGS if large else []
     with ThreadPoolExecutor(max_workers=2) as ex:
-        ff = ex.submit(_cached, path, "floss", settings.floss_executable(), fextra, lambda: _run_floss(path, fextra))
+        ff = ex.submit(_cached, path, "floss", settings.floss_executable(), fextra, lambda: _run_floss(path, fextra) if fextra else _run_floss(path))
         cf = ex.submit(_cached, path, "capa", settings.capa_executable(), [], lambda: _run_capa(path))
         floss = ff.result()
         if large and floss.get("status") == "ok":

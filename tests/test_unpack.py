@@ -108,7 +108,7 @@ def test_upx_unpacked_and_repair_retry(tmp_path, monkeypatch) -> None:
 
 def test_pe_analyze_skips_floss_capa_when_unpacked(tmp_path, monkeypatch) -> None:
     called = []
-    monkeypatch.setattr(pe, "_run_floss", lambda p: called.append("floss") or {})
+    monkeypatch.setattr(pe, "_run_floss", lambda p, *_: called.append("floss") or {})
     monkeypatch.setattr(pe, "_run_capa", lambda p: called.append("capa") or {})
 
     def fake_process(path, blob, pe_, out_dir, use_die=True):
