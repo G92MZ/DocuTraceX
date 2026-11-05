@@ -297,8 +297,16 @@ whether their tools run at all). Also:
   analysed (`DOCUTRACEX_TOOLS_SKIP_TRUSTED=0` analyses them); a broken or untrusted
   signature never qualifies, so a side-loaded fake `vcruntime140.dll` still is;
 - **large files** (> 15 MB, `DOCUTRACEX_FLOSS_LARGE_MB`): FLOSS without *tight strings*
-  (the slowest part), decoded and stack strings kept. `sample_bloated_invoice.exe`, `sample_pyinstaller.exe`
-and the MSI / archive samples exercise it.
+  (the slowest part) on the whole file, decoded and stack strings kept. The tight strings are
+  **not lost**: once the code analysis has ranked the functions, FLOSS runs again with
+  `--only tight --functions …` on the **priority functions** only (the analyst's code with
+  loops / XOR, best ranked first, up to 64 — `DOCUTRACEX_FLOSS_PRIORITY_FUNCS`), cached
+  like the full run. They appear in **Code → Strings** and on their function as
+  *FLOSS tight (priority functions)*, are mined for IOCs, and the Code summary counts them.
+  `sample_bloated_invoice.exe`, `sample_pyinstaller.exe` and the MSI / archive samples
+  exercise the size limit; to see the priority pass on a small file, analyse
+  `code/sample_code_loader.exe` (its XOR decode loop is a priority function) with
+  `DOCUTRACEX_FLOSS_LARGE_MB=0`.
 
 ## Reports → Markdown (raw, for an LLM)
 

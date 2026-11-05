@@ -652,6 +652,32 @@ def attach_floss(full: dict[str, Any], located: list[dict[str, Any]]) -> int:
     return n
 
 
+def priority_functions(full: dict[str, Any], limit: int) -> list[int]:
+    """The functions most likely to build or decode strings: the analyst's code
+    (not runtime / library) with loops or XOR, best ranked first."""
+    fns = [f for f in full.get("functions") or []
+           if f.get("user") is not False and ((f.get("loops") or 0) > 0 or (f.get("xor_ops") or 0) > 0)]
+    fns.sort(key=lambda f: (-(1 if (f.get("xor_ops") or 0) > 0 and (f.get("loops") or 0) > 0 else 0),
+                            f.get("rank") or 10 ** 6))
+    return [int(f["addr"]) for f in fns[:limit] if isinstance(f.get("addr"), int)]
+
+
+def priority_tight(root: Path, path: Path, full: dict[str, Any], item: dict[str, Any]) -> list[dict[str, Any]]:
+    """When FLOSS skipped tight strings on a large file, run them on the
+    priority functions only. Returns located strings (kind ``tight (priority)``)."""
+    floss = binary_item(root, item.get("stored_path") or "", bool(item.get("original"))).get("floss") or {}
+    if not floss.get("tight_skipped"):
+        return []
+    from ..parsers import pe as _pe
+    addrs = priority_functions(full, _pe.PRIORITY_TIGHT_MAX)
+    rec = _pe.tight_on_functions(path, addrs)
+    located = [dict(s, kind="tight (priority functions)") for s in rec.pop("located", None) or []
+               if s.get("kind") == "tight"]
+    full["floss_priority"] = {"status": rec.get("status"), "detail": rec.get("detail", ""),
+                              "functions": len(addrs), "strings": len(located), "cached": bool(rec.get("cached"))}
+    return located
+
+
 RES_DIR = "code_resources"
 MAX_CHILDREN = 60
 
@@ -670,7 +696,12 @@ def enrich(root: Path, path: Path, data: bytes, sha256: str, mode: str, item: di
         return []
     label = item.get("label") or path.name
     try:
-        n = attach_floss(full, floss_located(root, item.get("stored_path") or "", bool(item.get("original"))))
+        located = list(floss_located(root, item.get("stored_path") or "", bool(item.get("original"))))
+        try:
+            located += priority_tight(root, path, full, item)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("FLOSS tight on priority functions failed on %s: %s", label, exc)
+        n = attach_floss(full, located)
     except Exception as exc:  # noqa: BLE001
         log.warning("FLOSS linking failed on %s: %s", label, exc)
         n = 0
@@ -752,6 +783,7 @@ def enrich(root: Path, path: Path, data: bytes, sha256: str, mode: str, item: di
         log.warning("capabilities step failed on %s: %s", label, exc)
         full["capabilities"] = {"capabilities": [], "error": str(exc)[:300]}
     summary = {"floss_linked": n, "floss": len(full.get("floss") or []),
+               "floss_priority_tight": (full.get("floss_priority") or {}).get("strings"),
                "embed_files": sum(len(fs["files"]) for fs in res["embed"]),
                "certificates": sum(1 for c in res["certificates"] if not c.get("private")),
                "private_keys": sum(1 for c in res["certificates"] if c.get("private")),
