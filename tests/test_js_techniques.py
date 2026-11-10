@@ -13,10 +13,10 @@ from docutracex.parsers import js_techniques as jt
 
 
 def _sample() -> str:
-    spec = importlib.util.spec_from_file_location(
-        "ms", Path(__file__).parents[1] / "scripts" / "make_samples.py")
-    ms = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(ms)
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    import samplegen  # the generator ships encrypted (scripts/make_samples.zip)
+    ms = samplegen.load()
     return ms.obf_techniques_js().decode("utf-8")
 
 
@@ -78,10 +78,10 @@ def test_sample_end_to_end(tmp_path: Path) -> None:
 
 
 def _ms():
-    spec = importlib.util.spec_from_file_location(
-        "ms2", Path(__file__).parents[1] / "scripts" / "make_samples.py")
-    ms = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(ms)
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    import samplegen  # the generator ships encrypted (scripts/make_samples.zip)
+    ms = samplegen.load()
     return ms
 
 
