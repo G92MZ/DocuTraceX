@@ -257,18 +257,6 @@ def _registrable(host: str) -> str:
     return ".".join(parts[-2:])
 
 
-def _lev(a: str, b: str) -> int:
-    if abs(len(a) - len(b)) > 2:
-        return 9
-    prev = list(range(len(b) + 1))
-    for i, ca in enumerate(a, 1):
-        cur = [i]
-        for j, cb in enumerate(b, 1):
-            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
-        prev = cur
-    return prev[-1]
-
-
 def check_domain(host: str) -> list[tuple[str, str, str]]:
     """(rule, severity, explanation) for a suspicious-looking domain."""
     out: list[tuple[str, str, str]] = []
@@ -296,6 +284,8 @@ def check_domain(host: str) -> list[tuple[str, str, str]]:
     norm = label
     for a, b in _HOMO_SUBS:
         norm = norm.replace(a, b)
+    from .. import similarity
+    th = similarity.thresholds()
     sub = host[: -len(reg)].rstrip(".")           # subdomains also carry brands
     words = set(re.split(r"[-_.]", f"{sub}.{norm}")) - {""}
     for brand, official in BRANDS.items():
@@ -304,8 +294,8 @@ def check_domain(host: str) -> list[tuple[str, str, str]]:
         hit = None
         if norm == brand and label != brand:
             hit = f"'{label}' imitates '{brand}' with look-alike characters"
-        elif len(brand) >= 5 and label != brand and _lev(norm, brand) == 1:
-            hit = f"'{label}' is one edit away from '{brand}'"
+        elif label != brand and (dist := similarity.lookalike_distance(norm, brand, th)):
+            hit = f"'{label}' is {dist} edit{'s' if dist > 1 else ''} away from '{brand}'"
         elif len(brand) >= 4 and (brand in words or brand in norm):
             how = " with look-alike characters" if brand not in label and brand in norm else ""
             hit = f"uses the brand '{brand}'{how} in a domain that is not {brand}'s ({reg})"
