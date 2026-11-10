@@ -333,6 +333,18 @@ def _dt(iso: str) -> datetime:
         return datetime.min
 
 
+def later(a: str, b: str) -> bool:
+    """``a`` is later than ``b``. Quoted dates carry no zone: when either side
+    has none, compare wall-clock times (converting one zone would invent hours)."""
+    try:
+        da, db = datetime.fromisoformat(a), datetime.fromisoformat(b)
+    except ValueError:
+        return False
+    if (da.tzinfo is None) != (db.tzinfo is None):
+        da, db = da.replace(tzinfo=None), db.replace(tzinfo=None)
+    return da > db
+
+
 def _same_message(q: dict[str, Any], m: dict[str, Any]) -> bool:
     fq = {_key(p) for p in q.get("from") or []}
     fm = {_key(p) for p in m.get("from") or []} | {"name:" + p.get("name", "").lower() for p in m.get("from") or []}
@@ -372,7 +384,7 @@ def build(root: dict[str, Any], attached: list[dict[str, Any]], quoted: list[dic
             continue
         pos = None
         if m.get("date") and any(t.get("date") for t in thread):
-            pos = next((i for i, t in enumerate(thread) if t.get("date") and _dt(t["date"]) > _dt(m["date"])), None)
+            pos = next((i for i, t in enumerate(thread) if t.get("date") and later(t["date"], m["date"])), None)
         if pos is None and m.get("message_id") in ref_order:
             pos = min(ref_order.index(m["message_id"]), len(thread) - 1)
         thread.insert(len(thread) - 1 if pos is None else min(pos, len(thread) - 1), m)

@@ -166,6 +166,62 @@ def _phish_url_patterns(links: list[str], recipients: list[str], sdom: str) -> d
             "userinfo": userinfo[:10], "punycode": puny[:10]}
 
 
+# --- thread identifiers: Message-ID / In-Reply-To / References ---------------
+
+def thread_facts(chain: dict[str, Any]) -> dict[str, Any]:
+    """Anomalies in the message's thread identifiers, read against Chain.
+    A reference to a message that is not here is *incomplete*, not suspicious;
+    what is suspicious is identifiers that contradict each other or a thread
+    that someone joins from outside."""
+    msgs = [m for m in chain.get("messages") or [] if m.get("related", True)]
+    root = next((m for m in msgs if m.get("kind") == "root"), None)
+    if not root:
+        return {"missing_refs": [], "orphan": False, "self_reference": "", "irt_not_in_refs": "",
+                "irt_not_last": "", "duplicate_refs": [], "chronology": [], "newcomer_sender": "", "injected_sender": "", "ids": {}}
+    mid, irt, refs = root.get("message_id") or "", root.get("in_reply_to") or [], root.get("references") or []
+    earlier = [m for m in msgs if m is not root and m.get("index", 0) < root.get("index", 0)]
+    chrono = []
+    from .mailchain import later        # noqa: PLC0415
+    for a, b in zip(msgs, msgs[1:]):
+        if a.get("date") and b.get("date") and later(a["date"], b["date"]):
+            chrono.append(f"message {b['index']} ({b['date'][:16]}) is older than message {a['index']} "
+                          f"({a['date'][:16]}) it follows")
+    newcomer = ""
+    if earlier and (refs or irt):
+        seen = {(p.get("address") or "").lower() for m in earlier for r in ("from", "sender", "to", "cc", "bcc", "reply_to")
+                for p in m.get(r) or [] if p.get("address")}
+        sender = next(((p.get("address") or "").lower() for p in root.get("from") or [] if p.get("address")), "")
+        if sender and seen and sender not in seen:
+            newcomer = sender
+    # injected then took over: first seen as a participant added after the start
+    # of the thread, from a domain the first message did not involve, now sender
+    injected = ""
+    if earlier:
+        sender = next(((p.get("address") or "").lower() for p in root.get("from") or [] if p.get("address")), "")
+        first = msgs[0]
+        base_doms = {(p.get("address") or "").rsplit("@", 1)[-1].lower() for r in ("from", "sender", "to", "cc", "bcc")
+                     for p in first.get(r) or [] if "@" in (p.get("address") or "")}
+        seen_in = [m["index"] for m in earlier
+                   if sender in {(p.get("address") or "").lower() for r in ("to", "cc", "bcc") for p in m.get(r) or []}]
+        if sender and first is not root and seen_in and min(seen_in) > first.get("index", 1) \
+                and sender.rsplit("@", 1)[-1] not in base_doms:
+            injected = f"{sender} (added in message {min(seen_in)}, writes in message {root.get('index')})"
+    dups = sorted({r for r in refs if refs.count(r) > 1})
+    missing = chain.get("missing_references") or []
+    return {
+        "missing_refs": missing,
+        "orphan": bool(irt) and irt[0] in missing and not earlier,
+        "self_reference": mid if mid and (mid in refs or mid in irt) else "",
+        "irt_not_in_refs": irt[0] if irt and refs and irt[0] not in refs else "",
+        "irt_not_last": irt[0] if irt and refs and irt[0] in refs and refs[-1] != irt[0] else "",
+        "duplicate_refs": dups,
+        "chronology": chrono,
+        "newcomer_sender": newcomer,
+        "injected_sender": injected,
+        "ids": {"message_id": mid, "in_reply_to": irt, "references": refs},
+    }
+
+
 def _dom(addr: str) -> str:
     return addr.rsplit("@", 1)[-1].lower().strip(">").strip() if addr and "@" in addr else ""
 
@@ -396,7 +452,8 @@ def facts(email: dict[str, Any], mailrules: dict[str, Any], case_root: Path | No
         "esp": _esp(email),
         "thread": {"subject": subject, "reply_prefix": bool(_REPLY.match(subject)),
                    "has_in_reply_to": any(h.get("name", "").lower() == "in-reply-to" for h in email.get("headers") or []),
-                   "has_references": any(h.get("name", "").lower() == "references" for h in email.get("headers") or [])},
+                   "has_references": any(h.get("name", "").lower() == "references" for h in email.get("headers") or []),
+                   **thread_facts(email.get("chain") or {})},
         "recipients": {"to_count": len(to),
                        "undisclosed": not to or "undisclosed" in to_raw.lower(),
                        "in_subject": any(a and (a in subject.lower() or (len(a.split("@")[0]) >= 5 and
