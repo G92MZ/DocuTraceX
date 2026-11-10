@@ -93,6 +93,9 @@ async def get_components(analysis_id: str) -> dict:
         data = read_json(paths.subresult(module))
         if data is not None:
             modules[module] = data
+    ds = read_json(paths.subresult("domainsim"))     # derived after the IOCs, not a "ran" module
+    if ds is not None:
+        modules["domainsim"] = ds
     if modules.get("ml"):
         from ..ml import family_info
         modules["ml"] = family_info.enrich(modules["ml"])

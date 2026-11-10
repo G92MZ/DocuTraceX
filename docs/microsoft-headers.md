@@ -20,10 +20,10 @@ rule is named, used by the email rules (`docutracex/rules/email/core.yml`).
 | `X-MS-Exchange-CrossTenant-AuthAs` | `Internal` (authenticated in that tenant) / `Anonymous` (came in from outside) | Tells the **sender's** tenant (Internal) from the **receiving** one (Anonymous) | As above | CrossTenant-Id of the same block | `ms_own_domain_from_internet` (via the receiving block) | — | High | **Implemented** |
 | `X-MS-Exchange-CrossTenant-AuthSource` | Server that authenticated it in that tenant | The sender's mailbox server (EXO host) | As above | Received chain | — | Host | Low | Decoded |
 | `X-MS-Exchange-CrossTenant-FromEntityHeader` | `Hosted` (from a mailbox in a tenant) / `Internet` | Mail from the Internet claiming an internal domain | As above | AuthAs | `ms_own_domain_from_internet` | — | Medium | **Implemented** |
-| `X-MS-Exchange-CrossTenant-OriginalArrivalTime` | When the tenant received it | Timeline; compare with Date / Received | Sender-side copy forgeable | Date, Received, Chain | (future: clock skew) | — | Medium | Decoded |
+| `X-MS-Exchange-CrossTenant-OriginalArrivalTime` | When the tenant received it | Timeline; compare with Date / Received | Sender-side copy forgeable | Date, Received, Chain | `ms_date_vs_arrival` (Date > 1 h after arrival, or > 7 days before) | — | Medium | **Implemented** |
 | `X-MS-Exchange-CrossTenant-Network-Message-Id` / `X-MS-Exchange-Organization-Network-Message-Id` | Internal message ID of the tenant | Pivot into **Message trace** / Defender Explorer of the tenant | — | Message-ID | — | ID (markable) | High (for the tenant's own SOC) | Decoded |
 | `X-MS-Exchange-CrossTenant-MailboxType`, `-UserPrincipalName` | Sender mailbox type / UPN (when present) | Real account behind a display name | Sender-side | From, Sender | — | Email | Medium | Decoded |
-| `X-OriginatorOrg` | The originating organisation's primary domain | Attribution; compare with From | Forgeable from outside | From, CrossTenant-Id | (future: OriginatorOrg ≠ From) | Domain | Medium | Decoded |
+| `X-OriginatorOrg` | The originating organisation's primary domain | Attribution; compare with From | Forgeable from outside | From, CrossTenant-Id | `ms_originator_org_mismatch` (unless the From domain is one of the tenant's, per AZMap) | Domain | Medium | **Implemented** |
 | `X-EOPAttributedMessage`, `X-EOPTenantAttributedMessage` | Attribution of the message to a tenant (`<tenant>:0`) | Which tenant EOP charged it to | — | CrossTenant-Id | — | Tenant ID | Low | Decoded |
 
 ## Direction and authentication inside Exchange
@@ -44,7 +44,7 @@ rule is named, used by the email rules (`docutracex/rules/email/core.yml`).
 | … **SFV** | NSPM, SPM, SKA, SKB, SKI, SKN, SKQ, SKS, SFE, BLK [MS-AS] | Spam verdict, and **why filtering was skipped** (allow lists, transport rules) | As above | IPV | `ms_spam_verdict`, `ms_filter_bypassed` | — | High | **Implemented** |
 | … **SFTY** | 9.19 domain impersonation, 9.20 user impersonation, 9.25 first contact [MS-AS] | Impersonation of protected users / domains | As above | CAT | `ms_impersonation_tip`, `ms_first_contact` (info) | — | High | **Implemented** |
 | … **CIP** | Connecting IP | The sending server | As above | Received, PTR, CTRY | — | **IPv4/IPv6** | High | **Implemented** (IOC) |
-| … **CTRY**, **LANG** | Country of the connecting IP; language of the message | Context (a Spanish supplier sending from elsewhere…) | As above | CIP | — | — | Medium | Decoded |
+| … **CTRY**, **LANG** | Country of the connecting IP; language of the message | Context (a Spanish supplier sending from elsewhere…) | As above | CIP | `ms_country_not_allowed` (allowed-country list in Settings) | — | Medium | **Implemented** |
 | … **PTR**, **H** | Reverse DNS of CIP; HELO/EHLO string | Sending infrastructure | As above | CIP, Received | — | **Domain** | Medium | **Implemented** (IOC) |
 | … **IPV**, **DIR**, **SRV**, **SFS** | IP reputation (CAL = allow list, NLI), direction (INB/OUT/INT), BULK, internal rule IDs (diagnostic) [MS-AS] | Allow-listed source; direction | As above | SFV | `ms_filter_bypassed` (IPV:CAL) | — | Medium | Decoded |
 | `X-Microsoft-Antispam` **BCL** / PCL | Bulk complaint level (higher = more complaints); PCL undocumented [MS-AS] | Bulk vs targeted | As above | CAT:BULK | `ms_bulk_high` (BCL ≥ 7) | — | Low | **Implemented** |
@@ -62,12 +62,9 @@ rule is named, used by the email rules (`docutracex/rules/email/core.yml`).
 | `X-MS-Has-Attach`, `X-MS-TNEF-Correlator` | Outlook client markers | Message really written in Outlook (vs a mailer faking it) | Trivial to add | X-Mailer | — | — | Low | Listed |
 | `X-MS-PublicTrafficType`, `X-MS-TrafficTypeDiagnostic` | Internal traffic classification / diagnostics | Undocumented | — | — | — | — | Low | Listed |
 | `X-MS-Office365-Filtering-Correlation-Id` | Correlation ID for Microsoft support | Pivot for the tenant's admins | — | Network-Message-Id | — | ID | Low | Listed |
-| `Thread-Topic`, `Thread-Index` | Outlook conversation topic and index (base64: 22-byte header + 5 bytes per reply) | Thread position; a reply whose Thread-Index has no history is suspicious | Forgeable | Chain, References | (future: Thread-Index depth vs Chain) | — | Medium | Shown in Chain |
+| `Thread-Topic`, `Thread-Index` | Outlook conversation topic and index (base64: 22-byte header + 5 bytes per reply) | Conversation start (FILETIME) and one 5-byte block per reply ([MS-OXOMSG] 2.2.1.3) | Forgeable | Chain, References, Date | `thread_index_after_date`, `thread_index_new_conversation_reply` | — | Medium | **Implemented** (decoded in Chain and the Microsoft 365 box) |
 | `ARC-*` | Authenticated Received Chain (AAR, AMS, AS with cv=none/pass/fail) [MS-AS] | Forwarding that broke SPF/DKIM | Signed | Authentication-Results | ARC-vouched forward = legitimacy signal (existing) | — | Medium | Existing |
 
 ## Next candidates (not implemented yet)
 
-- `X-OriginatorOrg` ≠ the From domain → finding.
-- OriginalArrivalTime vs `Date` → clock-skew finding.
-- Thread-Index decoding (timestamp + number of replies) cross-checked with Chain.
-- CTRY / X-Originating-IP against a country allow list in Settings.
+- The country of `X-Originating-IP` (needs an offline GeoIP database with a permissive licence).

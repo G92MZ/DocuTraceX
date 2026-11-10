@@ -1321,6 +1321,10 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         write_subresult(paths, "iocs", ioc_result)
         overall_counts["iocs"] = ioc_result.get("counts", {}).get("total", 0)
         steps[-1]["iocs"] = overall_counts["iocs"]
+        ds = run("domains: similarity (look-alikes of your domains, brands and each other)",
+                 lambda: _domainsim(paths, modules, ioc_result))
+        if ds:
+            modules["domainsim"] = ds
 
         # Consolidated findings with stable ids (source of truth for marks).
         # Written separately; never touches marks.json.
@@ -1387,7 +1391,22 @@ _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto"
                "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules", "javascript", "rtf",
                "powershell", "vbscript", "batch", "shortcut", "msi", "python", "java", "onenote", "ml", "c2", "golang", "code", "dotnet")
 # Modules whose findings feed the consolidated view (includes derived ones).
-_COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file", "pyinstaller")
+_COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file", "pyinstaller", "domainsim")
+
+
+def _domainsim(paths: CasePaths, modules: dict[str, Any], ioc_result: dict[str, Any]) -> dict[str, Any] | None:
+    """Global domain similarity over every Domain IOC of the case (any file type)."""
+    try:
+        from . import appsettings, domainsim
+        cfg = appsettings.email_settings()
+        mail_f = list((modules.get("mailrules") or {}).get("findings") or [])
+        mail_f += list((modules.get("email") or {}).get("findings") or [])
+        res = domainsim.run(ioc_result, cfg["own_domains"], cfg["brands"], mail_f)
+    except Exception as exc:  # noqa: BLE001  (never breaks the analysis)
+        log.warning("domain similarity skipped for %s: %s", paths.root.name, exc)
+        res = {"module": "domainsim", "status": "error", "error": str(exc)[:300], "matches": [], "findings": []}
+    write_subresult(paths, "domainsim", res)
+    return res
 
 
 def _collect_modules(paths: CasePaths) -> dict[str, Any]:
@@ -1410,8 +1429,12 @@ def _recompute_derived(paths: CasePaths) -> tuple[int, int]:
     from . import ioc
 
     modules = _collect_modules(paths)
+    modules.pop("domainsim", None)
     ioc_result = ioc.extract(ioc.sources_from_modules(modules))
     write_subresult(paths, "iocs", ioc_result)
+    ds = _domainsim(paths, modules, ioc_result)
+    if ds:
+        modules["domainsim"] = ds
     consolidated = findings_mod.consolidate(modules)
     write_subresult(paths, "findings", {"findings": consolidated,
                                         "counts": {"total": len(consolidated)}})

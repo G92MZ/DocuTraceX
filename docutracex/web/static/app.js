@@ -1495,6 +1495,8 @@ function chainChip(p, state) {
     p.address ? `<span class="mono">&lt;${escapeHtml(p.address)}&gt;</span>` : ""}<button type="button" class="chain-copy" data-copy-text="${escapeHtml(txt)}" title="Copy name and address">⧉</button></span>`;
 }
 
+let tiDecoded = null;   // the message's Thread-Index, decoded (set by paneEmailChain)
+
 function chainCard(m, prevIds) {
   const st = {};
   (m.changes || []).forEach((c) => { const k = c.address || `name:${(c.name || "").toLowerCase()}`; if (c.type !== "removed") st[k] = st[k] === "added" ? "added" : c.type; });
@@ -1528,7 +1530,9 @@ function chainCard(m, prevIds) {
     <td>${addMarkCell("header", `${h.name}: ${h.value}`, "chain", `message ${m.index} (${m.kind})`)}</td></tr>`).join(""));
   const details = `<details class="chain-details"><summary>Message details</summary>
     ${refRows ? `<h4>References</h4>` + table(["Identifier", "Where", "Status"], refRows) : `<p class="hint-line">No In-Reply-To / References.</p>`}
-    ${m.thread_index || m.thread_topic ? `<p class="hint-line">Thread-Topic: <span class="mono">${escapeHtml(m.thread_topic || "—")}</span> · Thread-Index: <span class="mono">${escapeHtml(m.thread_index || "—")}</span></p>` : ""}
+    ${m.thread_index || m.thread_topic ? `<p class="hint-line">Thread-Topic: <span class="mono">${escapeHtml(m.thread_topic || "—")}</span> · Thread-Index: <span class="mono">${escapeHtml(m.thread_index || "—")}</span>${
+      m.kind === "root" && tiDecoded ? ` — conversation started <b>${escapeHtml((tiDecoded.start || "").slice(0, 19))}Z</b>, ${tiDecoded.replies} repl${tiDecoded.replies === 1 ? "y" : "ies"} before this one${
+        (tiDecoded.reply_times || []).length ? ` (${tiDecoded.reply_times.map((t) => escapeHtml(t.slice(0, 19))).join(", ")})` : ""}` : ""}</p>` : ""}
     ${key.length ? `<h4>Key headers (identifiers, participants, authentication, transport, X-MS-Exchange)</h4>` + hdr(key) : ""}
     ${hs.length > key.length ? `<details><summary>All headers (${hs.length})</summary>${hdr(hs)}</details>` : ""}
     ${!hs.length ? `<p class="hint-line">${m.kind === "quoted" ? "Quoted in the body: only the fields the quote shows (no Message-ID, no transport headers)." : "No headers."}</p>` : ""}
@@ -1544,6 +1548,7 @@ function chainCard(m, prevIds) {
 
 function paneEmailChain(email, mr) {
   const c = (email && email.chain) || {};
+  tiDecoded = ((email && email.microsoft) || {}).thread_index || null;
   const threadRules = (((mr || {}).engine || {}).matched || []).filter((m) => /^(thread_|fake_reply)/.test(m.id));
   if (c.error) return `<p class="bad-text">Chain could not be built: ${escapeHtml(c.error)}</p>`;
   const msgs = c.messages || [];
@@ -1589,6 +1594,24 @@ document.addEventListener("click", async (ev) => {
   catch (_) { b.textContent = "✗"; }
   setTimeout(() => { b.textContent = old; }, 1200);
 });
+
+function paneDomainSim(d) {
+  const kindLabel = { own: "your domain", brand: "brand", case: "another domain of this case" };
+  const th = d.thresholds || {};
+  const rows = (d.matches || []).slice().sort((a, b) => ["own", "brand", "case"].indexOf(a.reference_kind) - ["own", "brand", "case"].indexOf(b.reference_kind))
+    .map((m) => `<tr><td class="mono">${escapeHtml(m.candidate)}</td>
+      <td><span class="badge ${m.reference_kind === "case" ? "badge-muted" : "badge-bad"}">${escapeHtml(kindLabel[m.reference_kind] || m.reference_kind)}</span>
+        <span class="mono">${escapeHtml(m.reference)}</span></td>
+      <td>${escapeHtml(m.algorithm)}</td><td>${m.distance}</td><td>${m.score}</td><td>${m.threshold}</td>
+      <td>${escapeHtml(m.reason)}${m.reported_by_email ? ' <span class="muted">(already reported by the email rules)</span>' : ""}</td>
+      <td class="mono" title="${escapeHtml((m.candidate_sources || []).join(", "))}">${escapeHtml((m.candidate_sources || []).slice(0, 2).join(", "))}</td>
+      <td>${addMarkCell("lookalike", `${m.candidate} ≈ ${m.reference} (${m.algorithm})`, "domainsim", m.reason)}</td></tr>`).join("");
+  return `<p class="hint-line">Every domain of the case (${d.compared || 0}, from any file) compared with your own domains
+    (${(d.references || {}).own || 0}), the protected brands and each other: Levenshtein and Damerau-Levenshtein within the
+    thresholds of Settings (names up to ${th.short_len} letters → ${th.short_dist} edit(s), longer → ${th.long_dist}; not under
+    ${th.min_len}), look-alike characters (rn→m, 0→o, Cyrillic…), the same name under another TLD, and your name embedded in
+    another domain.</p>` + table(["Domain", "Looks like", "Algorithm", "Distance", "Score", "Threshold", "Why", "Found in", "Mark"], rows);
+}
 
 function paneEmailHeaders(email) {
   const hs = (email && email.headers) || [];
@@ -1674,6 +1697,8 @@ function msHeadersBox(ms, tenant) {
     row("Org AuthAs", ms.org_auth_as, ms.org_auth_as === "Anonymous" ? "came from outside, unauthenticated" : ms.org_auth_as === "Internal" ? "authenticated inside the organisation" : ""),
     row("Directionality", ms.directionality, ""), row("Network-Message-Id", ms.network_message_id, "for the message trace"),
     row("Original arrival", ms.original_arrival_time, ""),
+    row("Thread-Index", ms.thread_index && `${(ms.thread_index.start || "").slice(0, 19)}Z · ${ms.thread_index.replies} repl.`,
+      ms.thread_index ? "conversation start (Outlook) and replies before this message" : ""),
     row("Mailbox delivery", Object.entries(ms.mailbox_delivery || {}).map(([k, v]) => `${k}:${v}`).join(";"), ms.mailbox_delivery_note),
   ].join(""));
   const tb = ms.tenant_blocks || [];
@@ -3047,6 +3072,10 @@ async function openComponents(analysisId, keepTab, viewId) {
     const headerHtml = lockBanner(mods) + (email ? hopsTable(email) : "");
     sections.push({ id: "findings", label: `Findings (${findings.length})`, render: () => paneFindings(findings) });
     sections.push({ id: "iocs", label: `IOCs (${ni})`, html: paneIocs(iocs, mods.netcheck) });
+    const dsim = mods.domainsim || {};
+    if ((dsim.matches || []).length) {
+      sections.push({ id: "lookalikes", label: `Look-alike domains (${dsim.matches.length})`, html: paneDomainSim(dsim) });
+    }
     if (mods.netcheck && (mods.netcheck.checks || []).length) {
       sections.push({ id: "checks", label: `Checks (${mods.netcheck.checks.length})`, html: paneChecks(analysisId, mods.netcheck) });
     }
@@ -4934,8 +4963,28 @@ async function loadTenantLookup() {
   });
 }
 
+async function loadAllowedCountries() {
+  const inp = document.getElementById("allowed-countries");
+  if (!inp) return;
+  try { inp.value = ((await (await fetch("/api/settings/allowed-countries")).json()).countries || []).join(" "); } catch (_) { /* optional */ }
+  const btn = document.getElementById("allowed-countries-save");
+  if (btn.dataset.wired) return;
+  btn.dataset.wired = "1";
+  btn.addEventListener("click", async () => {
+    const msg = document.getElementById("allowed-countries-msg");
+    try {
+      const r = await fetch("/api/settings/allowed-countries", { method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ countries: inp.value }) });
+      const j = await r.json();
+      inp.value = (j.countries || []).join(" ");
+      msg.className = "status ok-text"; msg.textContent = j.countries.length ? `Saved (${j.countries.length}); applies to new analyses.` : "No check.";
+    } catch (err) { msg.className = "status bad-text"; msg.textContent = String(err); }
+  });
+}
+
 async function loadMailintel() {
   loadTenantLookup();
+  loadAllowedCountries();
   try { renderMailintel(await (await fetch("/api/settings/mailintel")).json()); } catch (_) { /* optional */ }
   try {
     const a = await (await fetch("/api/settings/abusech")).json();

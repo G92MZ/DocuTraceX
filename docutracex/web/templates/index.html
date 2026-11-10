@@ -377,6 +377,11 @@
           (<span class="mono">X-MS-Exchange-CrossTenant-Id</span>) with <a href="https://azmap.dev/" target="_blank"
           rel="noopener noreferrer">AZMap</a> — only the tenant ID is sent; cached; never blocks the analysis</label>
           <span id="tenant-lookup-msg" class="status"></span></div>
+        <div class="hint-line">Allowed countries for sending servers (ISO codes, e.g. <span class="mono">ES PT FR</span>; empty = no check —
+          compared with the country Microsoft 365 stamps for the connecting IP):
+          <input id="allowed-countries" type="text" spellcheck="false" style="width:16em">
+          <button id="allowed-countries-save" class="btn btn-ghost btn-sm" type="button">Save</button>
+          <span id="allowed-countries-msg" class="status"></span></div>
         <h3 class="formats-title">Email rules: your organisation</h3>
         <div class="hint-line">Your own domains (spoofing and look-alikes of them weigh the most) and extra brands to protect
           besides the built-in ones — one per line. Your own rules go in <span class="mono">config/rules/email/*.yml</span>.</div>
