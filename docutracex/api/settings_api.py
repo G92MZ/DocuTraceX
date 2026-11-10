@@ -153,6 +153,25 @@ async def tenant_lookup_put(body: dict = Body(...)) -> dict:
     return {"enabled": data["tenant_lookup"]}
 
 
+@router.get("/allowed-countries")
+async def allowed_countries_get() -> dict:
+    """ISO country codes the organisation expects mail servers in (empty = no check)."""
+    return {"countries": list(appsettings.load().get("allowed_countries") or [])}
+
+
+@router.put("/allowed-countries")
+async def allowed_countries_put(body: dict = Body(...)) -> dict:
+    import re as _re
+    raw = body.get("countries") or []
+    if isinstance(raw, str):
+        raw = _re.split(r"[\s,;]+", raw)
+    codes = sorted({str(c).strip().upper() for c in raw if _re.fullmatch(r"[A-Za-z]{2}", str(c).strip())})
+    data = appsettings.load()
+    data["allowed_countries"] = codes[:250]
+    appsettings.save(data)
+    return {"countries": data["allowed_countries"]}
+
+
 @router.get("/email")
 async def email_settings_get() -> dict:
     return appsettings.email_settings()

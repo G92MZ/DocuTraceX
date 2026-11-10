@@ -196,6 +196,50 @@ def ms_facts(ms: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def ms_extra_facts(ms: dict[str, Any], sender_domain: str, date_hdr: str, subject: str,
+                   tenant: dict[str, Any]) -> dict[str, Any]:
+    """X-OriginatorOrg vs From, arrival time vs Date, Thread-Index, country allow list."""
+    from datetime import datetime
+    from email.utils import parsedate_to_datetime
+    out: dict[str, Any] = {"originator_mismatch": "", "date_skew": "", "thread_index_after_date": "",
+                           "thread_index_new_for_reply": False, "country_not_allowed": ""}
+    org = (ms.get("originator_org") or "").lower().strip()
+    if org and sender_domain and _registrable(org) != _registrable(sender_domain):
+        related = {_registrable(d) for t in tenant.get("tenants") or [] for d in (t.get("data") or {}).get("related_domains") or []}
+        if _registrable(sender_domain) not in related:
+            out["originator_mismatch"] = f"X-OriginatorOrg {org} vs From domain {sender_domain}"
+    from datetime import timezone
+    try:
+        sent = parsedate_to_datetime(date_hdr) if date_hdr else None
+    except (TypeError, ValueError, IndexError):
+        sent = None
+    if sent is not None and sent.tzinfo is None:      # "-0000" = zone unknown: read it as UTC
+        sent = sent.replace(tzinfo=timezone.utc)
+    arr = ms.get("original_arrival_iso") or ""
+    if sent and sent.tzinfo and arr:
+        delta = (sent - datetime.fromisoformat(arr)).total_seconds()
+        if delta > 3600:
+            out["date_skew"] = f"Date is {delta / 3600:.1f} h after Exchange received it (future-dated)"
+        elif delta < -7 * 86400:
+            out["date_skew"] = f"Date is {-delta / 86400:.0f} days before Exchange received it (back-dated)"
+    ti = ms.get("thread_index") or {}
+    if ti.get("start") and sent and sent.tzinfo and datetime.fromisoformat(ti["start"]) > sent.replace(microsecond=0) \
+            and (datetime.fromisoformat(ti["start"]) - sent).total_seconds() > 300:
+        out["thread_index_after_date"] = f"conversation started {ti['start'][:19]}Z, after the message's Date {date_hdr}"
+    if ti and _REPLY.match(subject or "") and ti.get("replies") == 0:
+        out["thread_index_new_for_reply"] = True
+    try:
+        from .appsettings import load
+        allowed = [c.upper() for c in (load().get("allowed_countries") or []) if c]
+    except Exception:  # noqa: BLE001
+        allowed = []
+    ctry = ((ms.get("antispam") or {}).get("CTRY") or "").upper()
+    if allowed and ctry and ctry not in allowed:
+        out["country_not_allowed"] = f"connecting IP in {ctry}; allowed: {', '.join(allowed)}"
+    out["thread_replies"] = ti.get("replies", -1) if ti else -1
+    return out
+
+
 def tenant_facts(t: dict[str, Any], sender_domain: str) -> dict[str, Any]:
     """The sender's tenant as AZMap knows it, and whether the sender's domain is one of it."""
     tenants = t.get("tenants") or []
@@ -491,7 +535,9 @@ def facts(email: dict[str, Any], mailrules: dict[str, Any], case_root: Path | No
                      "reputation": mailintel.bad_reputation(rdom), "own_lookalike": own_lookalike(rdom, own)},
         "auth": _auth(email, mailrules),
         "esp": _esp(email),
-        "ms": ms_facts(email.get("microsoft") or {}),
+        "ms": {**ms_facts(email.get("microsoft") or {}),
+               **ms_extra_facts(email.get("microsoft") or {}, sdom, addrs.get("date") or "", subject,
+                                (mailrules or {}).get("tenant") or {})},
         "tenant": tenant_facts((mailrules or {}).get("tenant") or {}, sdom),
         "thread": {"subject": subject, "reply_prefix": bool(_REPLY.match(subject)),
                    "has_in_reply_to": any(h.get("name", "").lower() == "in-reply-to" for h in email.get("headers") or []),
