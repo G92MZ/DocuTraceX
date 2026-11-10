@@ -539,6 +539,46 @@ rules:
     when: {all: [{fact: sender.own_domain}, {fact: ms.anonymous}]}
     evidence: "From {sender.address}; X-MS-Exchange AuthAs Anonymous / FromEntityHeader Internet"
 
+  - id: ms_originator_org_mismatch
+    title: X-OriginatorOrg (the sending organisation) is not the From domain (attribution clue)
+    severity: low
+    score: 4
+    attack: [T1566, T1656]
+    when: {fact: ms.originator_mismatch}
+    evidence: "{ms.originator_mismatch}"
+
+  - id: ms_date_vs_arrival
+    title: The Date header disagrees with when Exchange received the message (forged or replayed date)
+    severity: medium
+    score: 8
+    attack: [T1566, T1070.006]
+    when: {fact: ms.date_skew}
+    evidence: "{ms.date_skew}"
+
+  - id: thread_index_after_date
+    title: Outlook's Thread-Index says the conversation started after this message was written
+    severity: medium
+    score: 8
+    attack: [T1566, T1070.006]
+    when: {fact: ms.thread_index_after_date}
+    evidence: "{ms.thread_index_after_date}"
+
+  - id: thread_index_new_conversation_reply
+    title: "Subject says RE: / FW: but Outlook's Thread-Index starts a new conversation"
+    severity: low
+    score: 4
+    attack: [T1566]
+    when: {all: [{fact: ms.thread_index_new_for_reply}, {fact: thread.reply_prefix}]}
+    evidence: "Subject: {thread.subject}; Thread-Index with 0 replies"
+
+  - id: ms_country_not_allowed
+    title: The connecting server is in a country outside your allowed list (Settings)
+    severity: low
+    score: 4
+    attack: [T1566]
+    when: {fact: ms.country_not_allowed}
+    evidence: "{ms.country_not_allowed}"
+
   - id: tenant_sender_domain_unrelated
     title: The sender's domain is not one of its Microsoft 365 tenant's domains (attribution clue)
     severity: medium

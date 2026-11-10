@@ -196,10 +196,6 @@ key is kept in your browser, not on the server.
 - **Optional components** are provisioned when possible and skipped cleanly when absent; Diagnostics shows what is available. Tools, licences and configuration variables: [`docs/TOOLS.md`](docs/TOOLS.md).
 - **Licences:** DocuTraceX is Apache-2.0 and ships no third-party GPL code. Some optional tools are GPL/LGPL: they are installed at provisioning time (or picked up from `tools/`) and run as separate processes, never distributed in this repository.
 
-## 🧭 Roadmap
-
-See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full design notes and the task breakdown.
-
 ## 📜 License
 
 Licensed under the **Apache License 2.0** — free to use, modify and distribute
