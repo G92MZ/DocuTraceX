@@ -392,6 +392,79 @@ rules:
     when: {all: [{fact: thread.reply_prefix}, {not: {fact: thread.has_in_reply_to}}, {not: {fact: thread.has_references}}]}
     evidence: "Subject: {thread.subject}"
 
+  # Message-ID / In-Reply-To / References, read against Chain
+  - id: thread_references_missing
+    title: The thread references earlier messages that are not available (incomplete conversation — not suspicious by itself)
+    severity: info
+    score: 0
+    attack: []
+    when: {fact: thread.missing_refs}
+    evidence: "missing: {thread.missing_refs}"
+
+  - id: thread_orphan_reply
+    title: Reply to a message that is neither attached nor quoted (orphan reply)
+    severity: info
+    score: 0
+    attack: []
+    when: {fact: thread.orphan}
+    evidence: "In-Reply-To {thread.ids.in_reply_to}"
+
+  - id: thread_self_reference
+    title: The message references its own Message-ID (forged thread identifiers)
+    severity: high
+    score: 25
+    attack: [T1566, T1656]
+    when: {fact: thread.self_reference}
+    evidence: "Message-ID {thread.self_reference} also in In-Reply-To / References"
+
+  - id: thread_irt_not_in_references
+    title: In-Reply-To is not among References (headers that contradict each other)
+    severity: medium
+    score: 10
+    attack: [T1566]
+    when: {fact: thread.irt_not_in_refs}
+    evidence: "In-Reply-To {thread.irt_not_in_refs}; References {thread.ids.references}"
+
+  - id: thread_irt_not_last_reference
+    title: In-Reply-To is not the last element of References (unexpected order)
+    severity: low
+    score: 4
+    attack: [T1566]
+    when: {fact: thread.irt_not_last}
+    evidence: "In-Reply-To {thread.irt_not_last}; References {thread.ids.references}"
+
+  - id: thread_duplicate_references
+    title: References repeats identifiers
+    severity: low
+    score: 2
+    attack: []
+    when: {fact: thread.duplicate_refs}
+    evidence: "{thread.duplicate_refs}"
+
+  - id: thread_chronology_inverted
+    title: Messages of the thread are dated out of order (anomalous sequence)
+    severity: medium
+    score: 10
+    attack: [T1566, T1070.006]
+    when: {fact: thread.chronology}
+    evidence: "{thread.chronology}"
+
+  - id: thread_hijack_newcomer
+    title: A sender who was not in the conversation replies inside the thread (possible thread hijack / injection)
+    severity: high
+    score: 25
+    attack: [T1566, T1534, T1656]
+    when: {fact: thread.newcomer_sender}
+    evidence: "{thread.newcomer_sender} writes in a thread whose earlier messages never included it"
+
+  - id: thread_hijack_injected_participant
+    title: A participant added mid-thread from a new domain now writes as the sender (thread hijack pattern)
+    severity: high
+    score: 25
+    attack: [T1566, T1534, T1656]
+    when: {fact: thread.injected_sender}
+    evidence: "{thread.injected_sender}"
+
   - id: dmarc_fail_policy_none
     title: "DMARC fails and the domain's policy is none (nothing stops spoofing it)"
     severity: low

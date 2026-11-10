@@ -1542,8 +1542,9 @@ function chainCard(m, prevIds) {
     ${changes}</li>`;
 }
 
-function paneEmailChain(email) {
+function paneEmailChain(email, mr) {
   const c = (email && email.chain) || {};
+  const threadRules = (((mr || {}).engine || {}).matched || []).filter((m) => /^(thread_|fake_reply)/.test(m.id));
   if (c.error) return `<p class="bad-text">Chain could not be built: ${escapeHtml(c.error)}</p>`;
   const msgs = c.messages || [];
   if (!msgs.length) return `<p class="hint-line">No messages.</p>`;
@@ -1557,6 +1558,11 @@ function paneEmailChain(email) {
     h += `<div class="chain-banner"><b>Incomplete chain:</b> ${miss.length} referenced message(s) are not available as messages here${
       c.quoted ? ` (${c.quoted} message(s) are quoted in the body, without identifiers — they may be some of these)` : ""}:
       ${miss.map((r) => `<span class="mono">${escapeHtml(r)}</span>`).join(", ")}</div>`;
+  }
+  if (threadRules.length) {
+    h += `<div class="chain-rules"><b>Thread detections</b> (Message-ID / In-Reply-To / References read against this chain)<ul>${threadRules.map((r) =>
+      `<li><span class="badge ${r.severity === "high" ? "badge-bad" : r.severity === "medium" ? "badge-warn" : "badge-muted"}">${escapeHtml(r.severity)}</span>
+        ${escapeHtml(r.title)} — <span class="mono">${escapeHtml(r.evidence || "")}</span></li>`).join("")}</ul></div>`;
   }
   h += `<ol class="chain-timeline">${thread.map((m) => chainCard(m, ids)).join("")}</ol>`;
   if (apart.length) {
@@ -3002,7 +3008,7 @@ async function openComponents(analysisId, keepTab, viewId) {
       sections.push({ id: "auth", label: "Authentication", html: paneAuth(email, mods.mailrules) });
       const ch = email.chain || {};
       if ((ch.messages || []).length) {
-        sections.push({ id: "chain", label: `Chain (${ch.count || 1}${ch.changes ? ` · ${ch.changes} change${ch.changes === 1 ? "" : "s"}` : ""})`, html: paneEmailChain(email) });
+        sections.push({ id: "chain", label: `Chain (${ch.count || 1}${ch.changes ? ` · ${ch.changes} change${ch.changes === 1 ? "" : "s"}` : ""})`, html: paneEmailChain(email, mods.mailrules) });
       }
       sections.push({ id: "headers", label: `Headers (${(email.headers || []).length})`, html: paneEmailHeaders(email) });
       sections.push({ id: "attachments", label: `Attachments (${email.attachment_count || 0})`, html: paneAttachments(email, nested) });
