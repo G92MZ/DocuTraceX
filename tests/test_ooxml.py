@@ -14,7 +14,7 @@ from docutracex.parsers import ooxml
 SAMPLES = Path(__file__).resolve().parent.parent / "samples"
 
 samples_needed = pytest.mark.skipif(
-    not (SAMPLES / "sample.docx").exists(),
+    not (SAMPLES / "word/sample.docx").exists(),
     reason="samples not generated (run scripts/make_samples.py)",
 )
 
@@ -45,7 +45,7 @@ def _make_docx_with_external_rel(path: Path) -> None:
 # trace: gmzpt
 @samples_needed
 def test_analyze_valid_docx(tmp_path: Path) -> None:
-    res = ooxml.analyze(SAMPLES / "sample.docx", tmp_path / "extracted")
+    res = ooxml.analyze(SAMPLES / "word/sample.docx", tmp_path / "extracted")
     assert res["status"] in ("ok", "ok_with_findings")
     assert res["counts"]["components"] >= 3
     # The main document part is present and has a resolved content type.
@@ -77,7 +77,7 @@ def test_not_a_zip_is_error(tmp_path: Path) -> None:
 
 @samples_needed
 def test_analyze_case_end_to_end(tmp_path: Path) -> None:
-    with (SAMPLES / "sample.docx").open("rb") as fh:
+    with (SAMPLES / "word/sample.docx").open("rb") as fh:
         manifest = cases.create_case(fh, "sample.docx", cases_dir=tmp_path)
     case_root = tmp_path / manifest["analysis_id"]
     out = analyze.analyze_case(case_root)

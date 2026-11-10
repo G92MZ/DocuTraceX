@@ -142,14 +142,14 @@ from docutracex.storage import CasePaths, read_json  # noqa: E402
 
 SAMPLES = Path(__file__).resolve().parent.parent / "samples"
 has_rich = pytest.mark.skipif(
-    not (SAMPLES / "sample.docm").exists(),
+    not (SAMPLES / "word/sample.docm").exists(),
     reason="samples not generated (run scripts/make_samples.py)",
 )
 
 
 @has_rich
 def test_sample_docm_findings_and_iocs(tmp_path: Path) -> None:
-    with (SAMPLES / "sample.docm").open("rb") as fh:
+    with (SAMPLES / "word/sample.docm").open("rb") as fh:
         manifest = cases.create_case(fh, "sample.docm", cases_dir=tmp_path)
     analyze.analyze_case(tmp_path / manifest["analysis_id"])
     paths = CasePaths(manifest["analysis_id"], cases_dir=tmp_path)

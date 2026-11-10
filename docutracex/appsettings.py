@@ -148,15 +148,22 @@ def public_network() -> dict[str, Any]:
     return {"proxy": p, "risk_accepted": net["risk_accepted"], "proxy_active": proxy_url(net) is not None}
 
 
-def email_settings() -> dict[str, list[str]]:
-    e = load().get("email") or {}
+def email_settings() -> dict[str, Any]:
+    from . import similarity
+    data = load()
+    e = data.get("email") or {}
     clean = lambda xs: sorted({str(x).strip().lower().lstrip("@").rstrip(".") for x in xs or [] if str(x).strip()})  # noqa: E731
-    return {"own_domains": clean(e.get("own_domains")), "brands": clean(e.get("brands"))}
+    return {"own_domains": clean(e.get("own_domains")), "brands": clean(e.get("brands")),
+            "similarity": similarity.clean(data.get("similarity")), "similarity_defaults": dict(similarity.DEFAULTS)}
 
 
-def set_email_settings(own_domains: list[str], brands: list[str]) -> dict[str, list[str]]:
+def set_email_settings(own_domains: list[str], brands: list[str],
+                       similarity_values: dict[str, Any] | None = None) -> dict[str, Any]:
+    from . import similarity
     data = load()
     data["email"] = {"own_domains": list(own_domains or [])[:200], "brands": list(brands or [])[:200]}
+    if similarity_values is not None:
+        data["similarity"] = similarity.clean(similarity_values)
     save(data)
     return email_settings()
 

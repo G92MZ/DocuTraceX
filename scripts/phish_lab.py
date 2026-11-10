@@ -20,7 +20,7 @@ infrastructure:
     python scripts/phish_lab.py --port 9000
 
 Then open ``lab/phish_lab.eml`` from ``samples/samples.zip`` (password
-``infected``; or ``python scripts/make_samples.py --extract``) in DocuTraceX and press "Check" on the
+``infected``; or ``python scripts/samplegen.py --extract``) in DocuTraceX and press "Check" on the
 127.0.0.1 URL in the IOCs tab. Everything here is inert and local.
 """
 

@@ -192,7 +192,7 @@ def test_extensionless_ooxml_is_not_dumped_by_7zip(cases_dir: Path, monkeypatch:
 def test_extensionless_cab_takes_the_archive_path(cases_dir: Path) -> None:
     from docutracex import analyze
 
-    sample = Path(__file__).resolve().parent.parent / "samples" / "sample_cabinet.cab"
+    sample = Path(__file__).resolve().parent.parent / "samples" / "archives/sample_cabinet.cab"
     if not sample.is_file():
         pytest.skip("samples not unpacked")
     paths = _new_case(cases_dir, "cabinet", sample.read_bytes())

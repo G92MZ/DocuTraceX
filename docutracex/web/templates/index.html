@@ -384,6 +384,12 @@
           <label>Own domains<textarea id="email-own" rows="4" placeholder="corp.example&#10;corp-group.example"></textarea></label>
           <label>Brands<textarea id="email-brands" rows="4" placeholder="corpname"></textarea></label>
         </div>
+        <div class="hint-line sim-settings">Look-alike distance (Levenshtein edits), for own domains and brands:
+          names of up to <input id="sim-short-len" type="number" min="1" max="30" style="width:4em"> letters →
+          <input id="sim-short-dist" type="number" min="0" max="5" style="width:4em"> edit(s); longer →
+          <input id="sim-long-dist" type="number" min="0" max="5" style="width:4em"> edit(s); names shorter than
+          <input id="sim-min-len" type="number" min="1" max="30" style="width:4em"> letters are not compared
+          <span id="sim-defaults" class="mono"></span></div>
         <div class="hint-line"><button id="email-save" class="btn btn-ghost btn-sm" type="button">Save</button>
           <span id="email-msg" class="status"></span></div>
       </section>

@@ -41,11 +41,11 @@ class _FakeParser:
         pass
 
 
-@pytest.mark.skipif(not (SAMPLES / "sample.docm").exists(), reason="samples not generated")
+@pytest.mark.skipif(not (SAMPLES / "word/sample.docm").exists(), reason="samples not generated")
 def test_findings_have_evidence_and_tools_keep_output(tmp_path: Path, monkeypatch) -> None:
     import oletools.olevba
     monkeypatch.setattr(oletools.olevba, "VBA_Parser", _FakeParser)
-    res = oletools_suite.analyze(SAMPLES / "sample.docm", tmp_path / "extracted")
+    res = oletools_suite.analyze(SAMPLES / "word/sample.docm", tmp_path / "extracted")
     by_kw = {f["detail"].split(":")[0]: f for f in res["findings"] if f["tool"] == "olevba"}
 
     # Hex/Base64 strings: the encoded value and what it decodes to.

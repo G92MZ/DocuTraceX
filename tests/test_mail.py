@@ -12,6 +12,11 @@ import pytest
 from docutracex.parsers import mail
 
 SAMPLES = Path(__file__).resolve().parent.parent / "samples"
+
+
+def _in_samples(name: str) -> Path:
+    """An unpacked sample by file name (samples.zip has one folder per type)."""
+    return next(SAMPLES.glob(f"*/{name}"), SAMPLES / name)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 
@@ -128,7 +133,7 @@ def test_msg_rejects_non_ole(tmp_path: Path) -> None:
 # --- enriched samples --------------------------------------------------------
 
 has_samples = pytest.mark.skipif(
-    not (SAMPLES / "sample.eml").exists(),
+    not (SAMPLES / "email/sample.eml").exists(),
     reason="samples not generated (run scripts/make_samples.py)",
 )
 
@@ -137,7 +142,7 @@ has_samples = pytest.mark.skipif(
 @pytest.mark.parametrize("name,ext", [("sample.eml", ".eml"), ("sample.emlx", ".emlx"),
                                       ("sample.msg", ".msg")])
 def test_sample_emails_have_findings(tmp_path: Path, name: str, ext: str) -> None:
-    r = mail.analyze(SAMPLES / name, ext, tmp_path / "extracted")
+    r = mail.analyze(_in_samples(name), ext, tmp_path / "extracted")
     assert r["hop_count"] == 2
     rules = {f["rule"] for f in r["findings"]}
     assert "spf_fail" in rules and "dangerous_attachment" in rules
@@ -151,7 +156,7 @@ def test_recursive_attachment_scan(tmp_path: Path, name: str) -> None:
     from docutracex import analyze, cases
     from docutracex.storage import CasePaths, read_json
 
-    with (SAMPLES / name).open("rb") as fh:
+    with _in_samples(name).open("rb") as fh:
         manifest = cases.create_case(fh, name, cases_dir=tmp_path)
     cid = manifest["analysis_id"]
     summary = analyze.analyze_case(tmp_path / cid)
