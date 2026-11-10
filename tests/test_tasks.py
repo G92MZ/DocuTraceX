@@ -15,7 +15,7 @@ from docutracex.storage import CasePaths, read_json
 from docutracex.tasks import TaskManager
 
 SAMPLES = Path(__file__).resolve().parent.parent / "samples"
-has_samples = pytest.mark.skipif(not (SAMPLES / "sample.xlsm").exists(),
+has_samples = pytest.mark.skipif(not (SAMPLES / "excel/sample.xlsm").exists(),
                                  reason="samples not generated")
 
 
@@ -140,7 +140,7 @@ def test_concurrency_setting_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 @has_samples
 def test_task_records_executed_substeps(client: TestClient) -> None:
     """The task carries the list of tools it executed (what ran per file)."""
-    with (SAMPLES / "sample.xlsm").open("rb") as fh:
+    with (SAMPLES / "excel/sample.xlsm").open("rb") as fh:
         cid = client.post("/api/cases", files={"file": ("sample.xlsm", fh.read())}).json()["analysis_id"]
     # ref: gmzpt
     _wait(lambda: client.get(f"/api/cases/{cid}").json().get("state"),
@@ -156,7 +156,7 @@ def test_task_records_executed_substeps(client: TestClient) -> None:
 
 @has_samples
 def test_upload_queues_and_completes(client: TestClient) -> None:
-    with (SAMPLES / "sample.xlsm").open("rb") as fh:
+    with (SAMPLES / "excel/sample.xlsm").open("rb") as fh:
         r = client.post("/api/cases", files={"file": ("sample.xlsm", fh.read())}).json()
     assert r["task"]["state"] in ("queued", "running")
     cid = r["analysis_id"]
@@ -169,7 +169,7 @@ def test_upload_queues_and_completes(client: TestClient) -> None:
 
 @has_samples
 def test_module_rerun_preserves_marks_and_records_history(client: TestClient) -> None:
-    with (SAMPLES / "sample.xlsm").open("rb") as fh:
+    with (SAMPLES / "excel/sample.xlsm").open("rb") as fh:
         cid = client.post("/api/cases", files={"file": ("sample.xlsm", fh.read())}).json()["analysis_id"]
     _wait(lambda: client.get(f"/api/cases/{cid}").json().get("state"),
           lambda s: s in ("completed", "partial", "error"))
@@ -194,7 +194,7 @@ def test_module_rerun_preserves_marks_and_records_history(client: TestClient) ->
 
 @has_samples
 def test_history_snapshot_written_on_rerun(client: TestClient, tmp_path: Path) -> None:
-    with (SAMPLES / "sample.docx").open("rb") as fh:
+    with (SAMPLES / "word/sample.docx").open("rb") as fh:
         cid = client.post("/api/cases", files={"file": ("sample.docx", fh.read())}).json()["analysis_id"]
     _wait(lambda: client.get(f"/api/cases/{cid}").json().get("state"),
           lambda s: s in ("completed", "partial", "error"))

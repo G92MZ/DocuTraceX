@@ -18,12 +18,19 @@ os.environ.setdefault("DOCUTRACEX_AUTO_MODULES", "yara,ml,c2")
 ROOT = Path(__file__).resolve().parent.parent
 ARCHIVE = ROOT / "samples" / "samples.zip"
 
+# The sample generator ships encrypted (scripts/make_samples.zip): load it in
+# memory once, so the tests' ``import make_samples`` finds it.
+sys.path.insert(0, str(ROOT / "scripts"))
+import samplegen  # noqa: E402
+
+samplegen.load()
+
 
 def pytest_configure(config) -> None:  # noqa: ARG001
     if not ARCHIVE.is_file():
         # gmzpt
         return
-    marker = ROOT / "samples" / "sample.docm"
+    marker = ROOT / "samples" / "word/sample.docm"
     if marker.is_file() and marker.stat().st_mtime >= ARCHIVE.stat().st_mtime:
         return
     sys.path.insert(0, str(ROOT / "scripts"))

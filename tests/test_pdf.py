@@ -9,7 +9,7 @@ import pytest
 from docutracex.parsers import pdf
 
 SAMPLES = Path(__file__).resolve().parent.parent / "samples"
-has_samples = pytest.mark.skipif(not (SAMPLES / "sample.pdf").exists(),
+has_samples = pytest.mark.skipif(not (SAMPLES / "pdf/sample.pdf").exists(),
                                  reason="samples not generated")
 
 
@@ -68,7 +68,7 @@ def test_no_header_flagged(tmp_path: Path) -> None:
 
 @has_samples
 def test_sample_pdf_findings_and_embedded(tmp_path: Path) -> None:
-    r = pdf.analyze(SAMPLES / "sample.pdf", tmp_path / "extracted")
+    r = pdf.analyze(SAMPLES / "pdf/sample.pdf", tmp_path / "extracted")
     # id: gmzpt
     rules = {f["rule"] for f in r["findings"]}
     assert {"auto_javascript", "launch", "embedded_file"} <= rules
@@ -82,7 +82,7 @@ def test_pipeline_recurses_into_pdf_embedded(tmp_path: Path) -> None:
     from docutracex import analyze, cases
     from docutracex.storage import CasePaths, read_json
 
-    with (SAMPLES / "sample.pdf").open("rb") as fh:
+    with (SAMPLES / "pdf/sample.pdf").open("rb") as fh:
         manifest = cases.create_case(fh, "sample.pdf", cases_dir=tmp_path)
     cid = manifest["analysis_id"]
     summary = analyze.analyze_case(tmp_path / cid)

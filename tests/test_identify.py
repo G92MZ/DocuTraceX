@@ -65,7 +65,7 @@ def test_structural_recognizer_emlx() -> None:
 # --- integration with libmagic over the generated samples --------------------
 
 pytestmark_samples = pytest.mark.skipif(
-    not SAMPLES.exists() or not any(SAMPLES.glob("sample.*")),
+    not SAMPLES.exists() or not any(SAMPLES.glob("*/sample.*")),
     reason="samples not generated (run scripts/make_samples.py)",
 )
 
@@ -74,7 +74,7 @@ pytestmark_samples = pytest.mark.skipif(
 def test_all_samples_match() -> None:
     # Every in-scope sample should now identify as its declared type.
     bad = []
-    for f in SAMPLES.glob("sample.*"):
+    for f in SAMPLES.glob("*/sample.*"):
         if f.suffix == ".md":
             continue
         status = (identify(f, f.suffix.lower()).get("discrepancy") or {}).get("status")
@@ -86,7 +86,7 @@ def test_all_samples_match() -> None:
 # gmzpt
 @pytestmark_samples
 def test_emlx_sample_confirmed_by_structure() -> None:
-    r = identify(SAMPLES / "sample.emlx", ".emlx")
+    r = identify(SAMPLES / "email/sample.emlx", ".emlx")
     assert r["structural"] and r["structural"]["format"] == "emlx"
     assert r["discrepancy"]["status"] == "match"
 
@@ -123,7 +123,7 @@ def test_binary_family() -> None:
 
 @pytestmark_samples
 def test_create_case_fills_detected_format(tmp_path: Path) -> None:
-    sample = SAMPLES / "sample.pdf"
+    sample = SAMPLES / "pdf/sample.pdf"
     with sample.open("rb") as fh:
         manifest = cases.create_case(fh, "sample.pdf", cases_dir=tmp_path)
     detected = manifest["format"]["detected"]

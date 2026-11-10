@@ -37,3 +37,8 @@ htmlcov/
 Thumbs.db
 .idea/
 .vscode/
+
+# The sample generator ships encrypted in scripts/make_samples.zip (password
+# "infected": antivirus engines flag its source). An unpacked copy to edit
+# (python scripts/samplegen.py --unpack) is never committed.
+/scripts/make_samples.py

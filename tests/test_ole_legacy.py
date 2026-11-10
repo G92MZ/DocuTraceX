@@ -10,8 +10,13 @@ import pytest
 from docutracex.parsers import ole_legacy
 
 SAMPLES = Path(__file__).resolve().parent.parent / "samples"
+
+
+def _in_samples(name: str) -> Path:
+    """An unpacked sample by file name (samples.zip has one folder per type)."""
+    return next(SAMPLES.glob(f"*/{name}"), SAMPLES / name)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-has_samples = pytest.mark.skipif(not (SAMPLES / "sample.xls").exists(),
+has_samples = pytest.mark.skipif(not (SAMPLES / "excel/sample.xls").exists(),
                                  reason="samples not generated")
 
 
@@ -44,7 +49,7 @@ def test_legacy_family_pipeline(tmp_path: Path, name: str, kind: str) -> None:
     from docutracex import analyze, cases
     from docutracex.storage import CasePaths, read_json
 
-    with (SAMPLES / name).open("rb") as fh:
+    with _in_samples(name).open("rb") as fh:
         manifest = cases.create_case(fh, name, cases_dir=tmp_path)
     cid = manifest["analysis_id"]
     summary = analyze.analyze_case(tmp_path / cid)

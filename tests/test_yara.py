@@ -19,7 +19,7 @@ from docutracex.config import settings  # noqa: E402
 from docutracex.storage import CasePaths, read_json  # noqa: E402
 
 SAMPLES = Path(__file__).resolve().parent.parent / "samples"
-has_samples = pytest.mark.skipif(not (SAMPLES / "sample.xlsm").exists(),
+has_samples = pytest.mark.skipif(not (SAMPLES / "excel/sample.xlsm").exists(),
                                  reason="samples not generated")
 
 # id: gmzpt
@@ -108,7 +108,7 @@ def _run_yara(client: TestClient, cid: str) -> None:
 def test_yara_runs_automatically_and_hits_are_findings_only_once_marked(client: TestClient, env: Path) -> None:
     client.post("/api/yara/upload", files={"file": ("t.yar", RULE.encode())})
     _compile(client)
-    with (SAMPLES / "sample.xlsm").open("rb") as fh:
+    with (SAMPLES / "excel/sample.xlsm").open("rb") as fh:
         cid = client.post("/api/cases", files={"file": ("sample.xlsm", fh.read())}).json()["analysis_id"]
     _wait_case(client, cid)
     comp = client.get(f"/api/cases/{cid}/components").json()
@@ -152,7 +152,7 @@ def test_yara_runs_automatically_and_hits_are_findings_only_once_marked(client: 
 @has_samples
 def test_scan_without_compiled_rules_says_so(client: TestClient, env: Path) -> None:
     client.post("/api/yara/upload", files={"file": ("t.yar", RULE.encode())})
-    with (SAMPLES / "sample.xlsm").open("rb") as fh:
+    with (SAMPLES / "excel/sample.xlsm").open("rb") as fh:
         cid = client.post("/api/cases", files={"file": ("sample.xlsm", fh.read())}).json()["analysis_id"]
     _wait_case(client, cid)
     _run_yara(client, cid)
