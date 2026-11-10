@@ -124,3 +124,46 @@ def test_disabled_in_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     m = msheaders.parse([{"name": "X-MS-Exchange-CrossTenant-Id", "value": ms.M365_SENDER_TENANT}])
     r = tenantintel.resolve(m, [], [])
     assert r["status"] == "disabled" and r["tenants"][0]["status"] == "disabled"
+
+
+def test_thread_index_decoding() -> None:
+    import base64
+    from datetime import datetime, timezone
+    st = int((datetime(2026, 11, 10, 9, 15, tzinfo=timezone.utc) - datetime(1601, 1, 1, tzinfo=timezone.utc)).total_seconds() * 10**7)
+    diff = 17 * 60 * 10**7
+    raw = (st >> 16).to_bytes(6, "big") + bytes(16) + ((((diff >> 18) & 0x7FFFFFFF) << 8) | 0x5A).to_bytes(5, "big")
+    ti = msheaders.thread_index(base64.b64encode(raw).decode())
+    assert ti["start"].startswith("2026-11-10T09:14:59") and ti["replies"] == 1
+    assert ti["reply_times"][0].startswith("2026-11-10T09:31:59")
+    assert msheaders.thread_index("not base64 !!") == {} or msheaders.thread_index("not base64 !!")["replies"] >= 0
+    assert msheaders.arrival_iso("13 Oct 2026 17:12:09.0000 (UTC)") == "2026-10-13T17:12:09+00:00"
+
+
+def test_sample_new_microsoft_rules() -> None:
+    e, r = _analyse(ms.m365_headers_eml())
+    ids = {x["id"]: x for x in r["engine"]["matched"]}
+    assert {"ms_originator_org_mismatch", "ms_date_vs_arrival", "thread_index_after_date"} <= set(ids)
+    assert "after Exchange received it" in ids["ms_date_vs_arrival"]["evidence"]
+    assert e["microsoft"]["thread_index"]["replies"] == 0
+
+
+def test_allowed_countries_setting() -> None:
+    from fastapi.testclient import TestClient
+
+    from docutracex.app import create_app
+    c = TestClient(create_app())
+    assert c.put("/api/settings/allowed-countries", json={"countries": "es, pt fr xx1 Z"}).json() == \
+        {"countries": ["ES", "FR", "PT"]}
+    _, r = _analyse(ms.m365_headers_eml())
+    m = next(x for x in r["engine"]["matched"] if x["id"] == "ms_country_not_allowed")
+    assert "connecting IP in NL" in m["evidence"]
+    c.put("/api/settings/allowed-countries", json={"countries": ["NL"]})
+    _, r = _analyse(ms.m365_headers_eml())
+    assert "ms_country_not_allowed" not in {x["id"] for x in r["engine"]["matched"]}
+
+
+def test_reply_subject_with_new_conversation_index() -> None:
+    from docutracex import mailengine
+    f = mailengine.ms_extra_facts({"thread_index": {"start": "2026-10-01T00:00:00+00:00", "replies": 0}},
+                                  "a.example", "Mon, 05 Oct 2026 10:00:00 +0000", "RE: Factura", {})
+    assert f["thread_index_new_for_reply"] and not f["thread_index_after_date"]

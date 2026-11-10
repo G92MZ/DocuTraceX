@@ -133,12 +133,56 @@ def tenant_blocks(headers: list[dict[str, str]]) -> list[dict[str, str]]:
     return out
 
 
+def thread_index(value: str) -> dict[str, Any]:
+    """Outlook's Thread-Index (PidTagConversationIndex, [MS-OXOMSG] 2.2.1.3):
+    a 22-byte header — the conversation's start time (FILETIME, its top bits)
+    and a GUID — then one 5-byte block per reply: a delta code bit, 31 bits of
+    time difference from the start, 8 random bits."""
+    import base64
+    from datetime import datetime, timedelta, timezone
+    try:
+        raw = base64.b64decode((value or "").strip() + "==", validate=False)
+    except ValueError:
+        return {}
+    if len(raw) < 22:
+        return {}
+    epoch = datetime(1601, 1, 1, tzinfo=timezone.utc)
+
+    def ft(n: int) -> str:
+        try:
+            return (epoch + timedelta(microseconds=n // 10)).isoformat()
+        except OverflowError:
+            return ""
+    start = int.from_bytes(raw[0:6], "big") << 16
+    replies = []
+    for off in range(22, len(raw) - 4, 5):
+        v = int.from_bytes(raw[off:off + 5], "big")
+        code, delta = v >> 39, (v >> 8) & 0x7FFFFFFF
+        replies.append(ft(start + (delta << (23 if code else 18))))
+    g = raw[6:22]
+    guid = f"{g[0:4].hex()}-{g[4:6].hex()}-{g[6:8].hex()}-{g[8:10].hex()}-{g[10:16].hex()}"
+    return {"start": ft(start), "guid": guid, "replies": len(replies), "reply_times": replies[:50],
+            "trailing_bytes": (len(raw) - 22) % 5}
+
+
+def arrival_iso(value: str) -> str:
+    """X-MS-Exchange-CrossTenant-OriginalArrivalTime ("13 Oct 2026 17:12:09.0000 (UTC)") → ISO."""
+    from datetime import datetime, timezone
+    v = re.sub(r"\s*\(UTC\)\s*$", "", (value or "").strip())
+    for fmt in ("%d %b %Y %H:%M:%S.%f", "%d %b %Y %H:%M:%S"):
+        try:
+            return datetime.strptime(v, fmt).replace(tzinfo=timezone.utc).isoformat()
+        except ValueError:
+            continue
+    return ""
+
+
 def parse(headers: list[dict[str, str]]) -> dict[str, Any]:
     """Decoded Microsoft headers; ``{}`` when the message carries none."""
     names = {str(h.get("name", "")).lower() for h in headers}
     ms = sorted(n for n in names if n.startswith(("x-ms-", "x-microsoft-", "x-forefront-", "x-originatororg",
                                                    "x-eopattributedmessage", "x-eoptenantattributedmessage")))
-    if not ms:
+    if not ms and "thread-index" not in names:
         return {}
     tenants = []
     for v in _all(headers, "X-MS-Exchange-CrossTenant-Id"):
@@ -209,6 +253,10 @@ def parse(headers: list[dict[str, str]]) -> dict[str, Any]:
     if len(tenants) > 1:
         out["notes"].append(f"{len(tenants)} different X-MS-Exchange-CrossTenant-Id values (sender and receiver "
                             "tenants, or a relay through another tenant)")
+    out["original_arrival_iso"] = arrival_iso(out["original_arrival_time"])
+    ti = _first(headers, "Thread-Index")
+    if ti:
+        out["thread_index"] = thread_index(ti)
     out["mailbox_delivery_note"] = ("undocumented by Microsoft: dest:I / dest:J are commonly read as Inbox / Junk"
                                     if out["mailbox_delivery"] else "")
     return out
