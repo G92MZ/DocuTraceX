@@ -934,6 +934,20 @@ def _email_sources(
     for link in email.get("html_links", []) or []:
         add("body_html_link", link)
 
+    # Chain: every participant of every message (From / Sender / Reply-To /
+    # Return-Path / To / CC / BCC / Delivered-To), as email + its domain, with
+    # the message and the field it came from.
+    from .mailchain import ROLE_LABEL
+    for m in ((email.get("chain") or {}).get("messages") or [])[:60]:
+        where = f"chain/message {m.get('index', '?')} ({m.get('kind', '')})"
+        for role, label in ROLE_LABEL.items():
+            for person in m.get(role) or []:
+                addr = (person.get("address") or "").strip().lower()
+                if "@" not in addr:
+                    continue
+                add(f"{where}/{label}", addr)
+                add(f"{where}/{label} domain", addr.rsplit("@", 1)[1])
+
 
 # Modules whose output is never mined for IOCs. YARA results echo the matched
 # bytes, rule metadata (author URLs, references) and hex context, which are

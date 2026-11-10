@@ -565,6 +565,42 @@ def phish_kit_links_eml() -> bytes:
         message_id="<inert-kit-2026@buzon-aviso.example>")
 
 
+def email_chain_eml() -> bytes:
+    """Thread hijack in an invoice conversation, for Chain: the first message is
+    attached as .eml (with a BCC), the second is quoted in the body (Outlook
+    block, a new CC appears and Bob is dropped), and the message itself comes from
+    the address added in CC, on a look-alike domain, asking for a new IBAN. Its
+    References also name a message that is not available. Inert (*.example)."""
+    corp, prov, evil = VICTIM_DOMAIN, "proveedor.example", "proveedor-pagos.example"
+    m1 = mk.build_email(
+        from_=f"John Smith <john.smith@{corp}>", to=f"Alice Brown <alice@{prov}>",
+        subject="Factura 2026-114", text="Hola Alice, ¿nos envías la factura 2026-114?\n",
+        html="<p>Hola Alice, ¿nos envías la factura 2026-114?</p>", received=_RULES_RCV,
+        message_id=f"<msg-001@{corp}>", date="Mon, 10 Nov 2026 09:15:23 +0100",
+        extra_headers=[("Cc", f"Bob White <bob.white@{corp}>"), ("Bcc", f"archivo@{corp}"),
+                       ("References", f"<msg-000@{corp}>"), ("In-Reply-To", f"<msg-000@{corp}>")])
+    quoted = (f"From: Alice Brown <alice@{prov}>\n"
+              "Sent: Monday, November 10, 2026 9:32 AM\n"
+              f"To: John Smith <john.smith@{corp}>\n"
+              f"Cc: Facturación <facturacion@{evil}>\n"
+              "Subject: RE: Factura 2026-114\n\n"
+              "Adjunto la factura. Nuestro departamento de facturación os escribirá.\n")
+    body = ("Buenos días John,\n\nHemos cambiado de banco: por favor, abonad la factura 2026-114 en la nueva cuenta "
+            "ES91 2100 0418 4502 0005 1332 antes del viernes.\n\nUn saludo,\nFacturación\n\n" + quoted)
+    return mk.build_email(
+        from_=f"Facturación <facturacion@{evil}>", to=f"John Smith <john.smith@{corp}>",
+        subject="RE: Factura 2026-114", text=body,
+        html="<pre>" + body.replace("<", "&lt;") + "</pre>",
+        received=_RULES_RCV, message_id=f"<msg-003@{evil}>", date="Mon, 10 Nov 2026 09:48:52 +0100",
+        auth_results=f"mx01.{corp}; spf=pass smtp.mailfrom={evil}; dmarc=pass header.from={evil}",
+        attachments=[("Factura 2026-114 (mensaje original).eml", "application/octet-stream", m1)],
+        extra_headers=[("In-Reply-To", f"<msg-002@{prov}>"),
+                       ("References", f"<msg-000@{corp}> <msg-001@{corp}> <msg-002@{prov}>"),
+                       ("Thread-Topic", "Factura 2026-114"),
+                       ("X-MS-Exchange-CrossTenant-Id", "00000000-0000-4000-8000-0000000000c2"),
+                       ("X-MS-Exchange-Organization-AuthAs", "Anonymous")])
+
+
 def newsletter_eml() -> bytes:
     """A LEGITIMATE newsletter through an email service provider: ESP headers,
     List-Unsubscribe, ESP bounce domain as Return-Path, click-tracking links and a
@@ -2959,6 +2995,7 @@ def build_all() -> dict[str, bytes]:
         "nested/sample_many_files.zip": many_files_zip(),
         "mail/sample_bec_freemail.eml": bec_freemail_eml(), "mail/sample_toad.eml": toad_eml(),
         "mail/sample_phish_kit_links.eml": phish_kit_links_eml(),
+        "mail/sample_email_chain.eml": email_chain_eml(),
         "mail/sample_newsletter.eml": newsletter_eml(), "mail/sample_lure_attachments.eml": lure_attachments_eml(),
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
         "sample_obf_techniques.js": obf_techniques_js(),
