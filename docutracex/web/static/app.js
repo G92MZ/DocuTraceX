@@ -4886,10 +4886,16 @@ document.getElementById("abusech-save").addEventListener("click", async () => {
   } catch (err) { msg.className = "status bad-text"; msg.textContent = String(err.message || err); }
 });
 
+const SIM_FIELDS = [["sim-short-len", "short_len"], ["sim-short-dist", "short_dist"], ["sim-long-dist", "long_dist"], ["sim-min-len", "min_len"]];
+
 async function loadEmailOrg() {
   try {
     const e = await (await fetch("/api/settings/email")).json();
     document.getElementById("email-own").value = (e.own_domains || []).join("\n");
+    const sim = e.similarity || {}, dft = e.similarity_defaults || {};
+    for (const [id, k] of SIM_FIELDS) document.getElementById(id).value = sim[k] ?? "";
+    document.getElementById("sim-defaults").textContent = dft.short_len
+      ? `(default: ≤${dft.short_len} → ${dft.short_dist}, longer → ${dft.long_dist}, min ${dft.min_len})` : "";
     document.getElementById("email-brands").value = (e.brands || []).join("\n");
   } catch (_) { /* optional */ }
 }
@@ -4911,7 +4917,8 @@ document.getElementById("email-save").addEventListener("click", async () => {
   const msg = document.getElementById("email-msg");
   try {
     const r = await fetch("/api/settings/email", { method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ own_domains: document.getElementById("email-own").value, brands: document.getElementById("email-brands").value }) });
+      body: JSON.stringify({ own_domains: document.getElementById("email-own").value, brands: document.getElementById("email-brands").value,
+        similarity: Object.fromEntries(SIM_FIELDS.map(([id, k]) => [k, Number(document.getElementById(id).value)])) }) });
     const j = await r.json();
     if (!r.ok) throw new Error(j.detail || r.statusText);
     msg.className = "status ok-text"; msg.textContent = `Saved (${j.own_domains.length} domain(s), ${j.brands.length} brand(s)); applies to new analyses.`;
