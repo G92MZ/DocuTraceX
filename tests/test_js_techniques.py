@@ -352,7 +352,7 @@ def test_nested_child_views(client) -> None:
     (its modules, findings with a source, IOCs, its own children)."""
     import json
     from pathlib import Path as _P
-    eml = _P(__file__).resolve().parents[1] / "samples" / "sample.eml"
+    eml = _P(__file__).resolve().parents[1] / "samples" / "email/sample.eml"
     if not eml.is_file():
         pytest.skip("samples not unpacked")
     cid, res = _analyze(client, "sample.eml", eml.read_bytes())

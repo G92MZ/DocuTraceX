@@ -146,7 +146,7 @@ def _remove_loose_samples() -> list[str]:
     """Since 1.11 the samples ship encrypted in samples/samples.zip (password
     "infected") so antivirus engines leave them alone. Remove the copies that
     older versions shipped unpacked (sample.<ext> and lab/phish_lab.eml);
-    ``python scripts/make_samples.py --extract`` brings them back."""
+    ``python scripts/samplegen.py --extract`` brings them back (one folder per type)."""
     base = os.path.join(HERE, "samples")
     if not os.path.isfile(os.path.join(base, "samples.zip")):
         return []
@@ -159,7 +159,41 @@ def _remove_loose_samples() -> list[str]:
     if os.path.isfile(lab):
         os.remove(lab)
         removed.append("lab/phish_lab.eml")
+    # unpacked copies in the old layout (before one folder per type): only our
+    # sample files, never anything else you keep there
+    for old in _OLD_LAYOUT_DIRS:
+        d = os.path.join(base, old)
+        if not os.path.isdir(d):
+            continue
+        for fn in sorted(os.listdir(d)):
+            f = os.path.join(d, fn)
+            if os.path.isfile(f) and (fn.startswith("sample_") or fn in ("dropper_bundle.zip",)):
+                os.remove(f)
+                removed.append(f"{old}/{fn}")
+        try:
+            os.rmdir(d)                       # only if now empty
+        except OSError:
+            pass
     return removed
+
+
+# folders the samples were unpacked to before samples.zip had one folder per type
+# (c2/ keeps its name but its samples now live in c2/<family>/)
+_OLD_LAYOUT_DIRS = ("mail", "ml", "lab", "stego", "encrypted", "nested", "code", "c2")
+
+
+def _remove_plain_generator() -> bool:
+    """The sample generator now ships encrypted (scripts/make_samples.zip):
+    remove the plain make_samples.py an older version installed, which antivirus
+    engines flag. ``python scripts/samplegen.py --unpack`` writes it again."""
+    plain = os.path.join(HERE, "scripts", "make_samples.py")
+    if os.path.isfile(plain) and os.path.isfile(os.path.join(HERE, "scripts", "make_samples.zip")):
+        try:
+            os.remove(plain)
+            return True
+        except OSError:
+            return False
+    return False
 
 
 def main() -> None:
@@ -201,7 +235,10 @@ def main() -> None:
     gone = _remove_loose_samples()
     if gone:
         print(f"Removed {len(gone)} unpacked sample(s): they now live in samples/samples.zip "
-              "(password 'infected'); unpack with: python scripts/make_samples.py --extract")
+              "(password 'infected', one folder per type); unpack with: python scripts/samplegen.py --extract")
+    if _remove_plain_generator():
+        print("Removed scripts/make_samples.py: the sample generator now ships encrypted in "
+              "scripts/make_samples.zip (run it with: python scripts/samplegen.py)")
     print(f"Updated to {rem} ({n} files).")
     sys.exit(2)   # signal "updated" so run.py re-provisions the toolchain
 

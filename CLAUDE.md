@@ -19,8 +19,13 @@
 - Every change that adds or updates an analysis tool, parser, engine or
   detection capability must also add a new sample — or update an existing one —
   so the feature can be exercised end to end. Generators live in
-  `scripts/make_samples.py`; document each sample in `samples/README.md`.
+  `scripts/make_samples.py`, which ships **encrypted** in `scripts/make_samples.zip`
+  (password `infected`; antivirus engines flag its source): edit it with
+  `python scripts/samplegen.py --unpack`, re-encrypt with `--pack` (the plain
+  copy is git-ignored). Document each sample in `samples/README.md`.
 - Samples are **benign**: inert indicators only (`*.example`, RFC 5737 IPs,
   `MZ`+text stubs). They tell the same invoice-fraud story as the rest.
 - Keep `samples/samples.zip` (password `infected`) in sync when samples change
-  (`python scripts/make_samples.py`, or add entries to the existing archive).
+  (`python scripts/samplegen.py`, or add entries to the existing archive).
+  Inside the archive each sample goes in its type folder (`c2/<family>/` for
+  C2): `archive_path()` in the generator decides it.

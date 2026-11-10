@@ -283,18 +283,6 @@ def _registrable(host: str) -> str:
     return ".".join(parts[-2:])
 
 
-def _lev(a: str, b: str) -> int:
-    if abs(len(a) - len(b)) > 3:
-        return 9
-    prev = list(range(len(b) + 1))
-    for i, ca in enumerate(a, 1):
-        cur = [i]
-        for j, cb in enumerate(b, 1):
-            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
-        prev = cur
-    return prev[-1]
-
-
 def own_lookalike(host: str, own: list[str]) -> str:
     """``host`` imitates one of the organisation's domains (not one of them)."""
     if not host or not own:
@@ -304,11 +292,14 @@ def own_lookalike(host: str, own: list[str]) -> str:
     for d in own:
         if h == d or h.endswith("." + d):
             return ""
+    from . import similarity
+    th = similarity.thresholds()
     for d in own:
         label, dl = reg.split(".")[0], d.split(".")[0]
-        if len(dl) >= 4 and (0 < _lev(label, dl) <= (1 if len(dl) <= 6 else 2)
-                             or (label == dl and reg != d)
-                             or (dl in h.replace("-", "") and reg != d)):
+        dist = similarity.lookalike_distance(label, dl, th)
+        if dist:
+            return f"{host} ≈ {d} ({dist} edit{'s' if dist > 1 else ''})"
+        if len(dl) >= th["min_len"] and reg != d and (label == dl or dl in h.replace("-", "")):
             return f"{host} ≈ {d}"
     return ""
 

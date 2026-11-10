@@ -34,7 +34,7 @@ def test_non_office_is_not_applicable(tmp_path: Path) -> None:
     assert res["encrypted"] is False  # unrecognized format -> not encrypted/applicable
 
 
-@pytest.mark.skipif(not (SAMPLES / "sample.xlsm").exists(), reason="samples not generated")
+@pytest.mark.skipif(not (SAMPLES / "excel/sample.xlsm").exists(), reason="samples not generated")
 def test_sample_not_encrypted() -> None:
-    res = crypto.analyze(SAMPLES / "sample.xlsm")
+    res = crypto.analyze(SAMPLES / "excel/sample.xlsm")
     assert res["encrypted"] is False

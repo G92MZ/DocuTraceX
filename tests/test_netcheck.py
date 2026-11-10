@@ -168,7 +168,7 @@ def test_reserved_domain_is_not_looked_up_but_lookalike_is_flagged() -> None:
 def _case(tmp_path: Path):
     from docutracex import analyze, cases
 
-    with (ROOT / "samples" / "sample.eml").open("rb") as fh:
+    with (ROOT / "samples" / "email/sample.eml").open("rb") as fh:
         m = cases.create_case(fh, "sample.eml", cases_dir=tmp_path / "cases")
     root = tmp_path / "cases" / m["analysis_id"]
     analyze.analyze_case(root)
@@ -266,7 +266,7 @@ def test_check_runs_as_a_subprocess_like_on_the_portable(tmp_path: Path) -> None
     from docutracex import cases
     from docutracex.storage import CasePaths, read_json
 
-    with (ROOT / "samples" / "sample.rtf").open("rb") as fh:
+    with (ROOT / "samples" / "word/sample.rtf").open("rb") as fh:
         m = cases.create_case(fh, "x.rtf", cases_dir=tmp_path / "cases")
     root = tmp_path / "cases" / m["analysis_id"]
     # AeWckx3pKh
