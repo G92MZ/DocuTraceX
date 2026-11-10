@@ -146,12 +146,14 @@ async def email_settings_get() -> dict:
 
 @router.put("/email")
 async def email_settings_put(body: dict = Body(...)) -> dict:
-    """Own domains and extra brands for the email rules (one per entry)."""
+    """Own domains, extra brands and the look-alike thresholds (``similarity``)."""
     def norm(v):  # noqa: ANN001
         if isinstance(v, str):
             v = v.splitlines()
         return [str(x).strip() for x in v or [] if str(x).strip()]
-    return appsettings.set_email_settings(norm(body.get("own_domains")), norm(body.get("brands")))
+    sim = body.get("similarity")
+    return appsettings.set_email_settings(norm(body.get("own_domains")), norm(body.get("brands")),
+                                          sim if isinstance(sim, dict) else None)
 
 
 @router.get("/ml/family")
