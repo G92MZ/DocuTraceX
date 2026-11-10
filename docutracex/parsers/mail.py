@@ -661,6 +661,13 @@ def analyze(original_path: Path, declared_ext: str,
         result["status"] = "error"
         result["findings"].append(_finding("parse_error", "medium", f"Email parse failed: {exc}"))
     try:
+        from .. import msheaders
+        ms = msheaders.parse(result.get("headers") or [])
+        if ms:
+            result["microsoft"] = ms
+    except Exception as exc:  # noqa: BLE001
+        result["microsoft"] = {"error": str(exc)[:300]}
+    try:
         from .. import mailchain
         root = result.pop("_chain_root", None)
         if root is not None:
