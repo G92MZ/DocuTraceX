@@ -88,7 +88,7 @@ Las de Didier Stevens (`tools/didier/`) se descargan al provisionar el portable 
 
 **Pensadas para otras familias (cuando lleguen sus parsers):** `pdfid` / `pdf-parser` (Didier) + `pypdf` / `qpdf` / `pypdfium2` / `Tesseract` para **PDF**; `emldump` (Didier) + `extract-msg` para **correo**; `oledump` ya aplica al **Office antiguo (OLE)**; Apache POI + OpenJDK para la interpretación semántica de Office antiguo.
 
-Ficheros de prueba (uno por tipo del alcance) en `samples/` — ver `samples/README.md`; se regeneran con `python scripts/make_samples.py`.
+Ficheros de prueba (uno por tipo del alcance) en `samples/` — ver `samples/README.md`; se regeneran con `python scripts/samplegen.py`.
 
 <!-- c9omYR6Yrv -->
 

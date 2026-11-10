@@ -30,9 +30,9 @@ def test_suite_runs_the_tools(tmp_path: Path) -> None:
     assert isinstance(res["findings"], list)
 
 
-@pytest.mark.skipif(not (SAMPLES / "sample.docm").exists(), reason="samples not generated")
+@pytest.mark.skipif(not (SAMPLES / "word/sample.docm").exists(), reason="samples not generated")
 def test_msodde_flags_ddeauto_in_sample(tmp_path: Path) -> None:
-    res = oletools_suite.analyze(SAMPLES / "sample.docm", tmp_path / "extracted")
+    res = oletools_suite.analyze(SAMPLES / "word/sample.docm", tmp_path / "extracted")
     rules = {(f["tool"], f["rule"]) for f in res["findings"]}
     assert ("msodde", "dde_link") in rules
     assert any("DDEAUTO" in link for link in res["dde_links"])

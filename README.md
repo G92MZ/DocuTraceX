@@ -67,7 +67,7 @@ python update.py --yes      # update without asking
 ## 🧪 Samples
 
 `samples/samples.zip` (password **`infected`**, so antivirus engines leave it alone — open it
-with 7-Zip/Windows, or run `python scripts/make_samples.py --extract`) holds realistic, **benign**
+with 7-Zip/Windows, or run `python scripts/samplegen.py --extract`) holds realistic, **benign**
 samples for every supported type, all telling the same story: an invoice-fraud campaign
 impersonating a supplier — malicious Office documents, PDFs, RTFs and the phishing emails that
 carry them, droppers in every script language, shortcuts, installers, Java, OneNote, containers,
@@ -151,7 +151,7 @@ Checking an indicator means contacting the attacker's infrastructure, so DocuTra
 - **Nothing runs.** The page's scripts never run in a browser and nothing else is downloaded; screenshots and previews are rendered offline. The optional *live screenshot* is the only exception, still through the proxy and without JavaScript.
 - **Forms only on request.** *Send fake credentials* posts the fake identity only when you press it.
 - **IPs are never contacted:** their owner and network come from public registries and a local database.
-- **Practise safely:** `python scripts/phish_lab.py` starts a local phishing-kit simulator; then open `lab/phish_lab.eml` from the samples archive and press **Check**.
+- **Practise safely:** `python scripts/phish_lab.py` starts a local phishing-kit simulator; then open `email/phish_lab.eml` from the samples archive and press **Check**.
 
 IP data: *IP Geolocation by [DB-IP](https://db-ip.com)* (CC BY 4.0) and [iptoasn.com](https://iptoasn.com) (public domain), downloaded at install time. Domain TLDs are validated against the official [IANA list](https://data.iana.org/TLD/tlds-alpha-by-domain.txt).
 

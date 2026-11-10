@@ -148,10 +148,11 @@ def test_url_with_a_non_alphabetic_tld_is_not_an_ioc() -> None:
 
 
 def test_ioc_noise_filters() -> None:
-    import importlib.util, pathlib
-    spec = importlib.util.spec_from_file_location(
-        "ms", pathlib.Path(__file__).parents[1] / "scripts" / "make_samples.py")
-    ms = importlib.util.module_from_spec(spec); spec.loader.exec_module(ms)
+    import pathlib
+    import sys
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
+    import samplegen  # the generator ships encrypted (scripts/make_samples.zip)
+    ms = samplegen.load()
     text = ms.ioc_noise_bat().decode("utf-8")
     vals = {(i["type"], i["value"]) for i in
             ioc.extract([{"module": "script", "location": "text", "text": text}])["iocs"]}

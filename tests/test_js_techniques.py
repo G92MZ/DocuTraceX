@@ -13,10 +13,10 @@ from docutracex.parsers import js_techniques as jt
 
 
 def _sample() -> str:
-    spec = importlib.util.spec_from_file_location(
-        "ms", Path(__file__).parents[1] / "scripts" / "make_samples.py")
-    ms = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(ms)
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    import samplegen  # the generator ships encrypted (scripts/make_samples.zip)
+    ms = samplegen.load()
     return ms.obf_techniques_js().decode("utf-8")
 
 
@@ -78,10 +78,10 @@ def test_sample_end_to_end(tmp_path: Path) -> None:
 
 
 def _ms():
-    spec = importlib.util.spec_from_file_location(
-        "ms2", Path(__file__).parents[1] / "scripts" / "make_samples.py")
-    ms = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(ms)
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+    import samplegen  # the generator ships encrypted (scripts/make_samples.zip)
+    ms = samplegen.load()
     return ms
 
 
@@ -352,7 +352,7 @@ def test_nested_child_views(client) -> None:
     (its modules, findings with a source, IOCs, its own children)."""
     import json
     from pathlib import Path as _P
-    eml = _P(__file__).resolve().parents[1] / "samples" / "sample.eml"
+    eml = _P(__file__).resolve().parents[1] / "samples" / "email/sample.eml"
     if not eml.is_file():
         pytest.skip("samples not unpacked")
     cid, res = _analyze(client, "sample.eml", eml.read_bytes())

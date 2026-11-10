@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 @pytest.fixture(scope="module")
 def case(tmp_path_factory):
     base = tmp_path_factory.mktemp("cases")
-    with (ROOT / "samples" / "sample.rtf").open("rb") as fh:
+    with (ROOT / "samples" / "word/sample.rtf").open("rb") as fh:
         m = cases.create_case(fh, "pedido.rtf", cases_dir=base)
     analyze.analyze_case(base / m["analysis_id"])
     return base, m["analysis_id"]

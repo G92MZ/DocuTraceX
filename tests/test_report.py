@@ -13,7 +13,7 @@ from docutracex.config import settings
 from docutracex.storage import CasePaths, read_json
 
 SAMPLES = Path(__file__).resolve().parent.parent / "samples"
-has_samples = pytest.mark.skipif(not (SAMPLES / "sample.xlsm").exists(),
+has_samples = pytest.mark.skipif(not (SAMPLES / "excel/sample.xlsm").exists(),
                                  reason="samples not generated")
 
 
@@ -25,7 +25,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 @has_samples
 def test_webservice_finding_carries_formula_evidence(tmp_path: Path) -> None:
-    with (SAMPLES / "sample.xlsm").open("rb") as fh:
+    with (SAMPLES / "excel/sample.xlsm").open("rb") as fh:
         manifest = cases.create_case(fh, "sample.xlsm", cases_dir=tmp_path)
     cid = manifest["analysis_id"]
     analyze.analyze_case(tmp_path / cid)
@@ -38,7 +38,7 @@ def test_webservice_finding_carries_formula_evidence(tmp_path: Path) -> None:
 def test_report_contains_findings_iocs_and_evidence(client: TestClient, tmp_path: Path) -> None:
     import time
 
-    with (SAMPLES / "sample.xlsm").open("rb") as fh:
+    with (SAMPLES / "excel/sample.xlsm").open("rb") as fh:
         cid = client.post("/api/cases", files={"file": ("sample.xlsm", fh.read())}).json()["analysis_id"]
     for _ in range(1200):  # real VBA: ViperMonkey emulation takes a few seconds
         if client.get(f"/api/cases/{cid}").json().get("state") in ("completed", "error"):
@@ -72,7 +72,7 @@ def test_report_missing_case_404(client: TestClient) -> None:
 def test_report_lists_only_marked_iocs_by_default(client: TestClient) -> None:
     import time
 
-    with (SAMPLES / "sample.xlsm").open("rb") as fh:
+    with (SAMPLES / "excel/sample.xlsm").open("rb") as fh:
         cid = client.post("/api/cases", files={"file": ("sample.xlsm", fh.read())}).json()["analysis_id"]
     for _ in range(1200):
         if client.get(f"/api/cases/{cid}").json().get("state") in ("completed", "error"):
