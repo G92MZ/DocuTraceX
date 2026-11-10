@@ -166,6 +166,56 @@ def _phish_url_patterns(links: list[str], recipients: list[str], sdom: str) -> d
             "userinfo": userinfo[:10], "punycode": puny[:10]}
 
 
+# --- Microsoft 365 headers and tenant ----------------------------------------
+
+def ms_facts(ms: dict[str, Any]) -> dict[str, Any]:
+    from .msheaders import CAT_MALICIOUS, CAT_PHISH, SFV_BYPASS
+    rep = ms.get("antispam") or {}
+    cat, sfv, sfty = rep.get("CAT", "").upper(), rep.get("SFV", "").upper(), rep.get("SFTY", "")
+    ca = ms.get("compauth") or {}
+
+    def num(v: Any) -> int:
+        try:
+            return int(str(v).strip())
+        except ValueError:
+            return -1
+    anon = any(str(ms.get(k, "")).lower() == "anonymous" for k in ("org_auth_as",)) or any(
+        b.get("role") == "receiver" and b.get("from_entity", "").lower() == "internet" for b in ms.get("tenant_blocks") or [])
+    return {
+        "present": bool(ms.get("present")), "cat": cat, "cat_meaning": rep.get("CAT_meaning", ""),
+        "cat_phish": cat if cat in CAT_PHISH else "", "cat_malicious": cat if cat in CAT_MALICIOUS else "",
+        "sfv": sfv, "sfv_meaning": rep.get("SFV_meaning", ""),
+        "sfv_spam": sfv if sfv in ("SPM", "SKB", "SKS") else "",
+        "bypass": (sfv if sfv in SFV_BYPASS else "") or ("IPV:CAL" if rep.get("IPV", "").upper() == "CAL" else ""),
+        "sfty": sfty, "impersonation": rep.get("SFTY_meaning", "") if sfty in ("9.19", "9.20") else "",
+        "first_contact": sfty == "9.25",
+        "compauth": ca.get("result", ""), "compauth_reason": ca.get("reason", ""),
+        "compauth_text": ca.get("reason_text", ""),
+        "bcl": num(ms.get("bcl", "")), "scl": num(rep.get("SCL", "") or ms.get("org_scl", "")),
+        "ctry": rep.get("CTRY", ""), "cip": rep.get("CIP", ""), "anonymous": anon,
+    }
+
+
+def tenant_facts(t: dict[str, Any], sender_domain: str) -> dict[str, Any]:
+    """The sender's tenant as AZMap knows it, and whether the sender's domain is one of it."""
+    tenants = t.get("tenants") or []
+    sender_t = next((x for x in tenants if x.get("role") == "sender" and x.get("status") == "ok"), None)
+    out = {"looked_up": bool(tenants), "brand": "", "name": "", "related": [], "sender_domain_unrelated": "",
+           "id": ""}
+    if not sender_t:
+        return out
+    data = sender_t.get("data") or {}
+    rel = data.get("related_domains") or []
+    out.update(id=sender_t.get("tenant_id", ""), brand=data.get("brand_name", ""), name=data.get("tenant_name", ""),
+               related=rel[:50])
+    if rel and sender_domain and not sender_t.get("own_tenant"):
+        reg = _registrable(sender_domain)
+        if reg not in {_registrable(d) for d in rel}:
+            out["sender_domain_unrelated"] = (f"{sender_domain} not among the {len(rel)} domain(s) of tenant "
+                                              f"{out['brand'] or out['name'] or out['id']}")
+    return out
+
+
 # --- thread identifiers: Message-ID / In-Reply-To / References ---------------
 
 def thread_facts(chain: dict[str, Any]) -> dict[str, Any]:
@@ -450,6 +500,8 @@ def facts(email: dict[str, Any], mailrules: dict[str, Any], case_root: Path | No
                      "reputation": mailintel.bad_reputation(rdom), "own_lookalike": own_lookalike(rdom, own)},
         "auth": _auth(email, mailrules),
         "esp": _esp(email),
+        "ms": ms_facts(email.get("microsoft") or {}),
+        "tenant": tenant_facts((mailrules or {}).get("tenant") or {}, sdom),
         "thread": {"subject": subject, "reply_prefix": bool(_REPLY.match(subject)),
                    "has_in_reply_to": any(h.get("name", "").lower() == "in-reply-to" for h in email.get("headers") or []),
                    "has_references": any(h.get("name", "").lower() == "references" for h in email.get("headers") or []),
