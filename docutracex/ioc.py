@@ -934,6 +934,16 @@ def _email_sources(
     for link in email.get("html_links", []) or []:
         add("body_html_link", link)
 
+    # Microsoft 365 stamps: the connecting server (CIP / PTR / HELO) and the
+    # sender's client IP (X-Originating-IP) — the sending side, not ours
+    ms = email.get("microsoft") or {}
+    rep = ms.get("antispam") or {}
+    for key, label in (("CIP", "connecting IP"), ("PTR", "PTR"), ("H", "HELO")):
+        if rep.get(key):
+            add(f"headers/X-Forefront-Antispam-Report {key} ({label})", rep[key])
+    if ms.get("originating_ip"):
+        add("headers/X-Originating-IP", ms["originating_ip"])
+
     # Chain: every participant of every message (From / Sender / Reply-To /
     # Return-Path / To / CC / BCC / Delivered-To), as email + its domain, with
     # the message and the field it came from.

@@ -139,6 +139,20 @@ async def abusech_put(body: dict = Body(...)) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.get("/tenant-lookup")
+async def tenant_lookup_get() -> dict:
+    """Whether X-MS-Exchange-CrossTenant-Id is resolved with AZMap (on by default)."""
+    return {"enabled": bool(appsettings.load().get("tenant_lookup", True))}
+
+
+@router.put("/tenant-lookup")
+async def tenant_lookup_put(body: dict = Body(...)) -> dict:
+    data = appsettings.load()
+    data["tenant_lookup"] = bool(body.get("enabled", True))
+    appsettings.save(data)
+    return {"enabled": data["tenant_lookup"]}
+
+
 @router.get("/email")
 async def email_settings_get() -> dict:
     return appsettings.email_settings()

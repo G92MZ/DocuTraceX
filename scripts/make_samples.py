@@ -613,6 +613,48 @@ def brand_lookalike_eml() -> bytes:
         message_id="<inert-lookalike-2026@micrsofl.example>")
 
 
+M365_SENDER_TENANT = "5e1f0c2a-0000-4000-8000-00000000a7a7"
+M365_RECEIVER_TENANT = "0b0b0b0b-0000-4000-8000-00000000b0b0"
+
+
+def m365_headers_eml() -> bytes:
+    """A message as an Exchange Online tenant receives it: the sender's tenant
+    block (AuthAs Internal), the receiving tenant's block (Anonymous / Internet),
+    EOP's verdict (CAT:PHSH, SFV:SPM, SFTY:9.25 first contact), compauth=fail
+    reason=601 (your own accepted domain, spoofed), the sender's client IP and
+    originator org. It uses the victim's own domain in From. Inert: RFC 5737
+    IPs, *.example, made-up tenant GUIDs."""
+    return mk.build_email(
+        from_=f"Dirección General <direccion@{VICTIM_DOMAIN}>", to=TO,
+        subject="Transferencia urgente — confidencial",
+        text="Necesito que tramites hoy una transferencia urgente. Te paso los datos en cuanto me confirmes.\n",
+        html="<p>Necesito que tramites hoy una transferencia urgente. Te paso los datos en cuanto me confirmes.</p>",
+        received=_RULES_RCV,
+        auth_results=(f"spf=fail (sender IP is 198.51.100.23) smtp.mailfrom={VICTIM_DOMAIN}; dkim=none (message not "
+                      f"signed) header.d=none;dmarc=fail action=oreject header.from={VICTIM_DOMAIN};compauth=fail reason=601"),
+        message_id="<inert-m365-2026@mail.attacker-tenant.example>",
+        extra_headers=[
+            ("X-MS-Exchange-Organization-AuthAs", "Anonymous"),
+            ("X-MS-Exchange-Organization-MessageDirectionality", "Incoming"),
+            ("X-MS-Exchange-CrossTenant-Id", M365_RECEIVER_TENANT),
+            ("X-MS-Exchange-CrossTenant-AuthAs", "Anonymous"),
+            ("X-MS-Exchange-CrossTenant-FromEntityHeader", "Internet"),
+            ("X-MS-Exchange-CrossTenant-OriginalArrivalTime", "13 Oct 2026 17:12:09.0000 (UTC)"),
+            ("X-MS-Exchange-CrossTenant-Network-Message-Id", "inert0000-0000-4000-8000-000000000001"),
+            ("X-Forefront-Antispam-Report", "CIP:198.51.100.23;CTRY:NL;LANG:es;SCL:5;SRV:;IPV:NLI;SFV:SPM;"
+                                            "H:mail.attacker-tenant.example;PTR:smtp.attacker-tenant.example;CAT:PHSH;"
+                                            "SFTY:9.25;DIR:INB;SFS:(13230040)"),
+            ("X-Microsoft-Antispam", "BCL:0;"),
+            ("X-Microsoft-Antispam-Mailbox-Delivery", "ucf:0;jmr:0;auth:0;dest:J;ENG:(910001)"),
+            ("X-MS-Exchange-CrossTenant-Id", M365_SENDER_TENANT),
+            ("X-MS-Exchange-CrossTenant-AuthAs", "Internal"),
+            ("X-MS-Exchange-CrossTenant-AuthSource", "AM0PR00MB0000.eurprd00.prod.outlook.example"),
+            ("X-MS-Exchange-CrossTenant-FromEntityHeader", "Hosted"),
+            ("X-OriginatorOrg", "attacker-tenant.example"),
+            ("X-Originating-IP", "[198.51.100.77]"),
+        ])
+
+
 def newsletter_eml() -> bytes:
     """A LEGITIMATE newsletter through an email service provider: ESP headers,
     List-Unsubscribe, ESP bounce domain as Return-Path, click-tracking links and a
@@ -3008,6 +3050,7 @@ def build_all() -> dict[str, bytes]:
         "mail/sample_bec_freemail.eml": bec_freemail_eml(), "mail/sample_toad.eml": toad_eml(),
         "mail/sample_phish_kit_links.eml": phish_kit_links_eml(),
         "mail/sample_email_chain.eml": email_chain_eml(),
+        "mail/sample_m365_headers.eml": m365_headers_eml(),
         "mail/sample_brand_lookalike.eml": brand_lookalike_eml(),
         "mail/sample_newsletter.eml": newsletter_eml(), "mail/sample_lure_attachments.eml": lure_attachments_eml(),
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
