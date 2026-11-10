@@ -1649,8 +1649,56 @@ function paneAuth(email, mr) {
     `<tr><td class="file">${escapeHtml(k)}</td><td class="mono">${escapeHtml(String(v))}</td>
      <td>${addMarkCell("sender", `${k}: ${v}`, "authentication", "")}</td></tr>`).join("");
   if (rows) html += `<h3 class="formats-title">Sender / routing</h3>` + table(["Field", "Value", "Mark"], rows);
+  html += msHeadersBox(email && email.microsoft, mr && mr.tenant);
   html += emailRulesAuth(mr);
   return html;
+}
+
+function msHeadersBox(ms, tenant) {
+  if (!ms || !Object.keys(ms).length) return "";
+  if (ms.error) return `<p class="bad-text">Microsoft headers: ${escapeHtml(ms.error)}</p>`;
+  const rep = ms.antispam || {};
+  const ca = ms.compauth || {};
+  const row = (k, v, note) => v ? `<tr><td class="file">${escapeHtml(k)}</td><td class="mono">${escapeHtml(String(v))}</td>
+    <td>${note ? escapeHtml(note) : ""}</td><td>${addMarkCell("header", `${k}: ${v}`, "microsoft", note || "")}</td></tr>` : "";
+  let h = `<h3 class="formats-title">Microsoft 365 / Exchange Online</h3>
+    <p class="hint-line">Decoded from the receiving tenant's stamps (the topmost copy; lower copies came with the message).
+    Meanings from Microsoft's documentation; undocumented fields are shown raw. Inventory: <span class="mono">docs/microsoft-headers.md</span>.</p>`;
+  h += table(["Field", "Value", "Meaning", "Mark"], [
+    row("CAT (policy applied)", rep.CAT, rep.CAT_meaning), row("SFV (spam verdict)", rep.SFV, rep.SFV_meaning),
+    row("SFTY (safety tip)", rep.SFTY, rep.SFTY_meaning), row("compauth", ca.result && `${ca.result}${ca.reason ? ` reason=${ca.reason}` : ""}`, ca.reason_text),
+    row("DMARC action", ms.dmarc_action, ""), row("CIP (connecting IP)", rep.CIP, ""), row("CTRY", rep.CTRY, "country of the connecting IP"),
+    row("PTR", rep.PTR, ""), row("HELO", rep.H, ""), row("IPV", rep.IPV, rep.IPV_meaning), row("DIR", rep.DIR, rep.DIR_meaning),
+    row("LANG", rep.LANG, ""), row("SCL", rep.SCL || ms.org_scl, "not the cloud's verdict (use CAT / SFV)"), row("BCL", ms.bcl, "bulk complaint level"),
+    row("X-Originating-IP", ms.originating_ip, "the sender's client IP"), row("X-OriginatorOrg", ms.originator_org, ""),
+    row("Org AuthAs", ms.org_auth_as, ms.org_auth_as === "Anonymous" ? "came from outside, unauthenticated" : ms.org_auth_as === "Internal" ? "authenticated inside the organisation" : ""),
+    row("Directionality", ms.directionality, ""), row("Network-Message-Id", ms.network_message_id, "for the message trace"),
+    row("Original arrival", ms.original_arrival_time, ""),
+    row("Mailbox delivery", Object.entries(ms.mailbox_delivery || {}).map(([k, v]) => `${k}:${v}`).join(";"), ms.mailbox_delivery_note),
+  ].join(""));
+  const tb = ms.tenant_blocks || [];
+  const looked = {};
+  ((tenant && tenant.tenants) || []).forEach((t) => { looked[t.tenant_id] = t; });
+  if (tb.length || (ms.tenant_ids || []).length) {
+    const ids = tb.length ? tb : (ms.tenant_ids || []).map((t) => ({ tenant_id: t, role: "unknown" }));
+    h += `<h4>Tenants (X-MS-Exchange-CrossTenant-Id)</h4><p class="hint-line">AuthAs <b>Internal</b> = the sender's tenant; <b>Anonymous</b> = the receiving one.
+      The tenant is an <b>attribution clue</b>, not proof of who sent the message.${tenant && tenant.status === "skipped" ? " Lookup skipped." : ""}${
+      tenant && tenant.status === "disabled" ? " Lookup off (Settings)." : ""}</p>`;
+    h += table(["Tenant", "Role", "AuthAs / from", "Organisation (AZMap)", "Related domains", "Mark"], ids.map((b) => {
+      const t = looked[b.tenant_id] || {};
+      const d = t.data || {};
+      const org = t.status === "ok" ? escapeHtml([d.brand_name, d.tenant_name].filter(Boolean).join(" · ") || "(no name)")
+        : t.status ? `<span class="muted">${escapeHtml(t.status)}${t.error ? `: ${escapeHtml(t.error)}` : ""}</span>` : "";
+      const rel = (d.related_domains || []);
+      return `<tr><td class="mono"><a href="${escapeHtml(t.source || `https://azmap.dev/?tenant_id=${b.tenant_id}`)}" target="_blank" rel="noopener noreferrer">${escapeHtml(b.tenant_id)}</a></td>
+        <td>${escapeHtml(t.role || b.role || "")}</td><td>${escapeHtml([b.auth_as, b.from_entity].filter(Boolean).join(" / "))}</td>
+        <td>${org}${t.cached ? ' <span class="muted">(cached)</span>' : ""}</td>
+        <td class="mono">${rel.slice(0, 12).map((x) => (t.matched_domains || []).includes(x) ? `<b>${escapeHtml(x)}</b>` : escapeHtml(x)).join(", ")}${rel.length > 12 ? ` … (${rel.length})` : ""}</td>
+        <td>${addMarkCell("tenant", `Tenant ${b.tenant_id}${d.brand_name ? ` (${d.brand_name})` : ""}`, "microsoft", rel.join(", "))}</td></tr>`;
+    }).join(""));
+  }
+  if ((ms.notes || []).length) h += `<ul class="hint-list">${ms.notes.map((n) => `<li>${escapeHtml(n)}</li>`).join("")}</ul>`;
+  return h;
 }
 
 function paneAttachments(email, nestedMod) {
@@ -4870,7 +4918,24 @@ function renderMailintel(m) {
        (${(m.feeds || []).map((f) => `<span class="mono">${escapeHtml(f.id)}.txt</span>`).join(", ")}).` : ""}</div>`;
 }
 
+async function loadTenantLookup() {
+  const box = document.getElementById("tenant-lookup");
+  if (!box) return;
+  try { box.checked = !!(await (await fetch("/api/settings/tenant-lookup")).json()).enabled; } catch (_) { /* optional */ }
+  if (box.dataset.wired) return;
+  box.dataset.wired = "1";
+  box.addEventListener("change", async () => {
+    const msg = document.getElementById("tenant-lookup-msg");
+    try {
+      const r = await fetch("/api/settings/tenant-lookup", { method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: box.checked }) });
+      msg.className = "status ok-text"; msg.textContent = (await r.json()).enabled ? "On (new analyses)" : "Off";
+    } catch (err) { msg.className = "status bad-text"; msg.textContent = String(err); }
+  });
+}
+
 async function loadMailintel() {
+  loadTenantLookup();
   try { renderMailintel(await (await fetch("/api/settings/mailintel")).json()); } catch (_) { /* optional */ }
   try {
     const a = await (await fetch("/api/settings/abusech")).json();

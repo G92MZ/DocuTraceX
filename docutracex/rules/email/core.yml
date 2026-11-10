@@ -19,7 +19,8 @@ verdict:                 # score thresholds (upper bound, exclusive)
   phishing: 70           # >= 70: malicious — only with a payload / reputation signal below
   malicious_requires: [payload_implant_configuration, payload_malicious_content, html_smuggling,
                        dangerous_attachment, double_extension, filename_spoofing, svg_active_content,
-                       link_bad_reputation, sender_bad_reputation, reply_to_bad_reputation, link_direct_download]
+                       link_bad_reputation, sender_bad_reputation, reply_to_bad_reputation, link_direct_download,
+                       ms_classified_malware]
 
 # weight of the findings the built-in checks raise (default: by severity)
 weights:
@@ -464,6 +465,87 @@ rules:
     attack: [T1566, T1534, T1656]
     when: {fact: thread.injected_sender}
     evidence: "{thread.injected_sender}"
+
+  # Microsoft 365 / Exchange Online headers (receiving tenant's stamps) and tenant
+  - id: ms_classified_phishing
+    title: Microsoft 365 classified the message as phishing / spoofing / impersonation
+    severity: high
+    score: 25
+    attack: [T1566]
+    when: {fact: ms.cat_phish}
+    evidence: "X-Forefront-Antispam-Report CAT:{ms.cat_phish} ({ms.cat_meaning})"
+
+  - id: ms_classified_malware
+    title: Microsoft 365 classified the message as malware
+    severity: high
+    score: 30
+    attack: [T1566.001]
+    when: {fact: ms.cat_malicious}
+    evidence: "X-Forefront-Antispam-Report CAT:{ms.cat_malicious} ({ms.cat_meaning})"
+
+  - id: ms_spam_verdict
+    title: Microsoft 365 spam filter marked it as spam
+    severity: low
+    score: 5
+    attack: []
+    when: {fact: ms.sfv_spam}
+    evidence: "SFV:{ms.sfv_spam} ({ms.sfv_meaning})"
+
+  - id: ms_filter_bypassed
+    title: Microsoft 365 spam filtering was bypassed (allow list / transport rule) — the verdict says nothing
+    severity: low
+    score: 0
+    attack: []
+    when: {fact: ms.bypass}
+    evidence: "{ms.bypass} {ms.sfv_meaning}"
+
+  - id: ms_impersonation_tip
+    title: Microsoft 365 flagged impersonation of a protected domain or user
+    severity: high
+    score: 20
+    attack: [T1566, T1656]
+    when: {fact: ms.impersonation}
+    evidence: "SFTY:{ms.sfty} ({ms.impersonation})"
+
+  - id: ms_first_contact
+    title: First contact — the recipient never received mail from this sender (Microsoft safety tip)
+    severity: info
+    score: 0
+    attack: []
+    when: {fact: ms.first_contact}
+    evidence: "SFTY:9.25"
+
+  - id: ms_compauth_fail
+    title: Microsoft composite authentication failed (compauth=fail)
+    severity: medium
+    score: 10
+    attack: [T1566, T1656]
+    when: {fact: ms.compauth, eq: fail}
+    evidence: "compauth=fail reason={ms.compauth_reason} ({ms.compauth_text})"
+
+  - id: ms_bulk_high
+    title: High bulk complaint level (BCL 7+)
+    severity: low
+    score: 3
+    attack: []
+    when: {fact: ms.bcl, gte: 7}
+    evidence: "BCL:{ms.bcl}"
+
+  - id: ms_own_domain_from_internet
+    title: Uses your organisation's domain but arrived anonymously from the Internet
+    severity: high
+    score: 30
+    attack: [T1566, T1656]
+    when: {all: [{fact: sender.own_domain}, {fact: ms.anonymous}]}
+    evidence: "From {sender.address}; X-MS-Exchange AuthAs Anonymous / FromEntityHeader Internet"
+
+  - id: tenant_sender_domain_unrelated
+    title: The sender's domain is not one of its Microsoft 365 tenant's domains (attribution clue)
+    severity: medium
+    score: 8
+    attack: [T1566, T1586.002]
+    when: {fact: tenant.sender_domain_unrelated}
+    evidence: "{tenant.sender_domain_unrelated}"
 
   - id: dmarc_fail_policy_none
     title: "DMARC fails and the domain's policy is none (nothing stops spoofing it)"

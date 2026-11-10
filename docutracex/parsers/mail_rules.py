@@ -541,8 +541,40 @@ def _signals(email: dict[str, Any], res: dict[str, Any], matched: list[dict[str,
     return sig
 
 
+def _tenant(email: dict[str, Any], res: dict[str, Any]) -> None:
+    """X-MS-Exchange-CrossTenant-Id → organisation (AZMap), crossed with the
+    message's domains. Optional and never blocking."""
+    import os
+    import sys
+    ms = email.get("microsoft") or {}
+    if not ms.get("tenant_ids"):
+        return
+    if os.environ.get("DOCUTRACEX_TENANT_LOOKUP") == "0" or (
+            "pytest" in sys.modules and os.environ.get("DOCUTRACEX_TENANT_LOOKUP") != "1"):
+        res["tenant"] = {"status": "skipped", "tenants": []}
+        return
+    try:
+        from .. import appsettings, tenantintel
+        addrs = email.get("addresses") or {}
+        doms = [a.rsplit("@", 1)[-1] for a in [addrs.get("from"), addrs.get("reply_to"), addrs.get("return_path"),
+                                               addrs.get("sender")] if a and "@" in a]
+        doms += [p.get("domain", "") for p in (email.get("chain") or {}).get("participants") or []]
+        for u in email.get("html_links") or []:
+            try:
+                h = urlparse(u).hostname
+            except ValueError:
+                h = None
+            if h:
+                doms.append(h)
+        res["tenant"] = tenantintel.resolve(ms, sorted(set(doms)), appsettings.email_settings()["own_domains"],
+                                            appsettings.proxy_url())
+    except Exception as exc:  # noqa: BLE001
+        res["tenant"] = {"status": "error", "error": str(exc)[:300], "tenants": []}
+
+
 def _engine(email: dict[str, Any], res: dict[str, Any], case_root: Path | None) -> None:
     from .. import mailengine
+    _tenant(email, res)
     try:
         f = mailengine.facts(email, res, case_root)
         fired = {x.get("rule", "") for x in list(email.get("findings") or []) + res["findings"]}
