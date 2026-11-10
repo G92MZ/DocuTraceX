@@ -64,7 +64,3 @@ rule is named, used by the email rules (`docutracex/rules/email/core.yml`).
 | `X-MS-Office365-Filtering-Correlation-Id` | Correlation ID for Microsoft support | Pivot for the tenant's admins | — | Network-Message-Id | — | ID | Low | Listed |
 | `Thread-Topic`, `Thread-Index` | Outlook conversation topic and index (base64: 22-byte header + 5 bytes per reply) | Conversation start (FILETIME) and one 5-byte block per reply ([MS-OXOMSG] 2.2.1.3) | Forgeable | Chain, References, Date | `thread_index_after_date`, `thread_index_new_conversation_reply` | — | Medium | **Implemented** (decoded in Chain and the Microsoft 365 box) |
 | `ARC-*` | Authenticated Received Chain (AAR, AMS, AS with cv=none/pass/fail) [MS-AS] | Forwarding that broke SPF/DKIM | Signed | Authentication-Results | ARC-vouched forward = legitimacy signal (existing) | — | Medium | Existing |
-
-## Next candidates (not implemented yet)
-
-- The country of `X-Originating-IP` (needs an offline GeoIP database with a permissive licence).
