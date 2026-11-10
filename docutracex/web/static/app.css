@@ -879,3 +879,39 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 .email-org { display: flex; gap: 12px; flex-wrap: wrap; margin: 6px 0; }
 .email-org label { display: flex; flex-direction: column; gap: 4px; flex: 1 1 240px; font-size: 13px; }
 .email-org textarea { font-family: var(--mono, monospace); font-size: 12px; background: #0b0e12; border: 1px solid var(--panel-border); border-radius: 6px; color: var(--text); padding: 6px 8px; }
+
+/* Chain: email conversation timeline */
+.chain-timeline { list-style: none; margin: 8px 0 16px; padding: 0 0 0 14px; border-left: 2px solid var(--panel-border); }
+.chain-item { position: relative; display: grid; grid-template-columns: 190px minmax(0, 1fr) 260px; gap: 12px; margin: 0 0 14px; }
+.chain-when { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; overflow-wrap: anywhere; }
+.chain-dot { flex: none; margin-left: -27px; width: 24px; height: 24px; border-radius: 50%; background: var(--accent-dim);
+  color: var(--text); display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12px; }
+.chain-card { border: 1px solid var(--panel-border); border-radius: 8px; padding: 8px 10px; background: var(--panel); min-width: 0; }
+.chain-base .chain-card { border-color: var(--accent-dim); }
+.chain-warn .chain-card { border-color: #7a632a; }
+.chain-alert .chain-card { border-color: #7a3a2a; }
+.chain-apart { opacity: .85; }
+.chain-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
+.chain-head .badge { margin-left: auto; }
+.chain-people { width: 100%; border-collapse: collapse; font-size: 13px; }
+.chain-people th { text-align: left; color: var(--text-dim); font-weight: 500; width: 72px; vertical-align: top; padding: 2px 6px 2px 0; }
+.chain-people td { padding: 2px 0; overflow-wrap: anywhere; }
+.chain-chip { display: inline-flex; gap: 4px; align-items: center; padding: 1px 6px; margin: 1px 2px 1px 0; border-radius: 10px;
+  border: 1px solid var(--panel-border); }
+.chain-add { color: #5fd38b; border-color: #2f6b45; background: rgba(95, 211, 139, .08); }
+.chain-del { color: #e8795a; border-color: #7a3a2a; background: rgba(232, 121, 90, .08); text-decoration: line-through; }
+.chain-expected { color: var(--text-dim); border-color: var(--panel-border); background: none; }
+.chain-mod { color: #e0b65a; border-color: #7a632a; background: rgba(224, 182, 90, .08); }
+.chain-copy { border: 0; background: none; color: var(--text-dim); cursor: pointer; padding: 0 2px; font-size: 12px; }
+.chain-copy:hover { color: var(--accent); }
+.chain-side { border: 1px dashed var(--panel-border); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; align-self: start; }
+.chain-side ul { margin: 6px 0 0; padding-left: 4px; list-style: none; }
+.chain-side li { margin: 3px 0; overflow-wrap: anywhere; }
+.chain-side-ok { color: #5fd38b; }
+.chain-alert .chain-side { border-color: #7a3a2a; }
+.chain-warn .chain-side { border-color: #7a632a; }
+.chain-banner { border: 1px solid #7a632a; color: #e0b65a; border-radius: 8px; padding: 8px 10px; margin: 8px 0; overflow-wrap: anywhere; }
+.chain-details { margin-top: 6px; }
+.chain-details h4 { margin: 8px 0 4px; font-size: 12.5px; color: var(--text-dim); }
+.warn-text { color: #e0b65a; }
+@media (max-width: 1100px) { .chain-item { grid-template-columns: minmax(0, 1fr); } .chain-dot { margin-left: -27px; } }

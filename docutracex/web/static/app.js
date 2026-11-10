@@ -1480,6 +1480,110 @@ function hopsTable(email) {
     + table(["#", "From", "By", "IP", "With", "Timestamp", "Δt", "Mark"], rows);
 }
 
+// --- Chain: the conversation's messages and how their participants change ---
+const CHAIN_ROLES = [["from", "From"], ["sender", "Sender"], ["reply_to", "Reply-To"], ["to", "To"], ["cc", "CC"], ["bcc", "BCC"]];
+const CHAIN_KIND = { root: "this message", attached: "attached message", quoted: "quoted in the body" };
+const CHAIN_KEY_HEADERS = /^(message-id|in-reply-to|references|thread-index|thread-topic|from|sender|reply-to|return-path|to|cc|bcc|delivered-to|x-original-to|date|subject|authentication-results|arc-authentication-results|received-spf|dkim-signature|received|x-ms-exchange-.*|x-microsoft-.*|x-forefront-.*|x-originating-ip)$/i;
+
+function personText(p) { return p.name && p.address ? `${p.name} <${p.address}>` : (p.address || p.name || ""); }
+
+function chainChip(p, state) {
+  const cls = { added: "chain-add", removed: "chain-del", changed: "chain-mod", expected: "chain-del chain-expected" }[state] || "";
+  const sign = { added: "＋ ", removed: "− ", changed: "± ", expected: "− " }[state] || "";
+  const txt = personText(p);
+  return `<span class="chain-chip ${cls}" title="${escapeHtml(txt)}">${sign}${p.name ? `${escapeHtml(p.name)} ` : ""}${
+    p.address ? `<span class="mono">&lt;${escapeHtml(p.address)}&gt;</span>` : ""}<button type="button" class="chain-copy" data-copy-text="${escapeHtml(txt)}" title="Copy name and address">⧉</button></span>`;
+}
+
+function chainCard(m, prevIds) {
+  const st = {};
+  (m.changes || []).forEach((c) => { const k = c.address || `name:${(c.name || "").toLowerCase()}`; if (c.type !== "removed") st[k] = st[k] === "added" ? "added" : c.type; });
+  const removedBy = {};
+  (m.changes || []).filter((c) => c.type === "removed").forEach((c) => (c.roles || []).forEach((r) => (removedBy[r] = removedBy[r] || []).push(c)));
+  const rows = CHAIN_ROLES.map(([r, label]) => {
+    const people = m[r] || [];
+    const gone = removedBy[r] || [];
+    if (!people.length && !gone.length) return "";
+    const chips = people.map((p) => chainChip(p, st[p.address || `name:${(p.name || "").toLowerCase()}`]))
+      .concat(gone.map((c) => chainChip(c, c.expected ? "expected" : "removed")));
+    return `<tr><th>${label}</th><td>${chips.join(" ")}</td></tr>`;
+  }).join("");
+  const n = m.change_count || 0;
+  const att = (m.changes || []).some((c) => c.attention);
+  const tone = m.baseline ? "chain-base" : !n ? "chain-same" : att ? "chain-alert" : "chain-warn";
+  const badge = m.baseline ? `<span class="badge badge-muted">baseline</span>`
+    : `<span class="badge ${!n ? "badge-ok" : att ? "badge-bad" : "badge-warn"}">${n} change${n === 1 ? "" : "s"}</span>`;
+  const changes = m.baseline ? `<div class="chain-side chain-side-ok">First message of the chain: the baseline.</div>`
+    : (m.changes || []).length ? `<div class="chain-side"><b>Changes from message ${m.index - 1}</b><ul>${(m.changes || []).map((c) =>
+      `<li class="${c.type === "added" ? "ok-text" : c.type === "removed" ? (c.expected ? "muted" : "bad-text") : "warn-text"}">${
+        c.type === "added" ? "＋" : c.type === "removed" ? "−" : "±"} <span class="mono">${escapeHtml(personText(c))}</span> — ${escapeHtml(c.detail)}</li>`).join("")}</ul></div>`
+    : `<div class="chain-side chain-side-ok">No changes in participants.</div>`;
+  const refs = (m.references || []).concat(m.in_reply_to || []);
+  const refRows = [...new Set(refs)].map((r) => `<tr><td class="mono">${escapeHtml(r)}</td><td>${(m.in_reply_to || []).includes(r) ? "In-Reply-To" : ""}${
+    (m.references || []).includes(r) ? `${(m.in_reply_to || []).includes(r) ? ", " : ""}References #${m.references.indexOf(r) + 1}` : ""}</td><td>${
+    prevIds.has(r) ? `<span class="badge badge-ok">in this chain</span>` : `<span class="badge badge-warn">not available</span>`}</td></tr>`).join("");
+  const hs = (m.headers || []);
+  const key = hs.filter((h) => CHAIN_KEY_HEADERS.test(h.name));
+  const hdr = (list) => table(["Header", "Value", "Mark"], list.map((h) => `<tr><td class="file">${escapeHtml(h.name)}</td><td class="mono">${escapeHtml(h.value)}</td>
+    <td>${addMarkCell("header", `${h.name}: ${h.value}`, "chain", `message ${m.index} (${m.kind})`)}</td></tr>`).join(""));
+  const details = `<details class="chain-details"><summary>Message details</summary>
+    ${refRows ? `<h4>References</h4>` + table(["Identifier", "Where", "Status"], refRows) : `<p class="hint-line">No In-Reply-To / References.</p>`}
+    ${m.thread_index || m.thread_topic ? `<p class="hint-line">Thread-Topic: <span class="mono">${escapeHtml(m.thread_topic || "—")}</span> · Thread-Index: <span class="mono">${escapeHtml(m.thread_index || "—")}</span></p>` : ""}
+    ${key.length ? `<h4>Key headers (identifiers, participants, authentication, transport, X-MS-Exchange)</h4>` + hdr(key) : ""}
+    ${hs.length > key.length ? `<details><summary>All headers (${hs.length})</summary>${hdr(hs)}</details>` : ""}
+    ${!hs.length ? `<p class="hint-line">${m.kind === "quoted" ? "Quoted in the body: only the fields the quote shows (no Message-ID, no transport headers)." : "No headers."}</p>` : ""}
+  </details>`;
+  return `<li class="chain-item ${tone}${m.related === false ? " chain-apart" : ""}">
+    <div class="chain-when"><span class="chain-dot">${m.index}</span><div><b>${escapeHtml(m.date ? m.date.replace("T", " ").slice(0, 19) : (m.date_raw || "no date"))}</b>
+      <div class="mono muted">${escapeHtml(m.message_id || "(no Message-ID)")}</div></div></div>
+    <div class="chain-card"><div class="chain-head"><b>Message ${m.index}</b> <span class="muted">· ${escapeHtml(CHAIN_KIND[m.kind] || m.kind)}${
+      m.also_quoted ? " · also quoted in the body" : ""}</span> ${badge}</div>
+      <table class="chain-people">${rows}<tr><th>Subject</th><td>${escapeHtml(m.subject || "—")}</td></tr></table>${details}</div>
+    ${changes}</li>`;
+}
+
+function paneEmailChain(email) {
+  const c = (email && email.chain) || {};
+  if (c.error) return `<p class="bad-text">Chain could not be built: ${escapeHtml(c.error)}</p>`;
+  const msgs = c.messages || [];
+  if (!msgs.length) return `<p class="hint-line">No messages.</p>`;
+  const ids = new Set(msgs.map((m) => m.message_id).filter(Boolean));
+  const thread = msgs.filter((m) => m.related !== false), apart = msgs.filter((m) => m.related === false);
+  const miss = c.missing_references || [];
+  let h = `<p class="hint-line">The conversation as this file shows it: the message, the messages attached to it and the ones quoted in its body,
+    oldest first. Each message is compared with the previous one: <span class="ok-text">new</span>, <span class="bad-text">removed</span>,
+    <span class="warn-text">moved / changed</span>. ${thread.length} message(s)${c.quoted ? `, ${c.quoted} quoted` : ""}, ${c.changes || 0} change(s).</p>`;
+  if (miss.length) {
+    h += `<div class="chain-banner"><b>Incomplete chain:</b> ${miss.length} referenced message(s) are not available as messages here${
+      c.quoted ? ` (${c.quoted} message(s) are quoted in the body, without identifiers — they may be some of these)` : ""}:
+      ${miss.map((r) => `<span class="mono">${escapeHtml(r)}</span>`).join(", ")}</div>`;
+  }
+  h += `<ol class="chain-timeline">${thread.map((m) => chainCard(m, ids)).join("")}</ol>`;
+  if (apart.length) {
+    h += `<h3 class="formats-title">Attached messages not linked to this thread</h3><p class="hint-line">No shared identifiers or subject: listed apart, not compared.</p>
+      <ol class="chain-timeline">${apart.map((m) => chainCard(m, ids)).join("")}</ol>`;
+  }
+  const parts = c.participants || [];
+  if (parts.length) {
+    h += `<h3 class="formats-title">Participants (${parts.length})</h3>` + table(["Name", "Address", "Domain", "Roles", "Messages", "", "Mark"],
+      parts.map((p) => `<tr><td>${escapeHtml(p.name || "")}</td><td class="mono">${escapeHtml(p.address || "—")}</td><td class="mono">${escapeHtml(p.domain || "")}</td>
+        <td>${escapeHtml((p.roles || []).map((r) => r.replace("_", "-")).join(", "))}</td><td>${(p.messages || []).join(", ")}</td>
+        <td><button type="button" class="btn btn-ghost btn-sm" data-copy-text="${escapeHtml(personText(p))}">Copy</button></td>
+        <td>${addMarkCell("participant", personText(p), "chain", `roles: ${(p.roles || []).join(", ")}; messages: ${(p.messages || []).join(", ")}`)}</td></tr>`).join(""));
+  }
+  return h;
+}
+
+document.addEventListener("click", async (ev) => {
+  const b = ev.target.closest && ev.target.closest("[data-copy-text]");
+  if (!b) return;
+  ev.preventDefault();
+  const old = b.textContent;
+  try { await navigator.clipboard.writeText(b.getAttribute("data-copy-text")); b.textContent = "✓"; }
+  catch (_) { b.textContent = "✗"; }
+  setTimeout(() => { b.textContent = old; }, 1200);
+});
+
 function paneEmailHeaders(email) {
   const hs = (email && email.headers) || [];
   if (!hs.length) return `<p class="hint-line">No headers.</p>`;
@@ -2896,6 +3000,10 @@ async function openComponents(analysisId, keepTab, viewId) {
       const v = (mods.mailrules || {}).verdict;
       if (v) sections.push({ id: "verdict", label: `Verdict: ${v.verdict}`, html: emailVerdictBox(mods.mailrules) + emailRuleMatches(mods.mailrules) });
       sections.push({ id: "auth", label: "Authentication", html: paneAuth(email, mods.mailrules) });
+      const ch = email.chain || {};
+      if ((ch.messages || []).length) {
+        sections.push({ id: "chain", label: `Chain (${ch.count || 1}${ch.changes ? ` · ${ch.changes} change${ch.changes === 1 ? "" : "s"}` : ""})`, html: paneEmailChain(email) });
+      }
       sections.push({ id: "headers", label: `Headers (${(email.headers || []).length})`, html: paneEmailHeaders(email) });
       sections.push({ id: "attachments", label: `Attachments (${email.attachment_count || 0})`, html: paneAttachments(email, nested) });
       sections.push({ id: "body", label: "Body", html: paneEmailBody(email, mods.mailrules) });

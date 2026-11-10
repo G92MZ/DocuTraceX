@@ -181,6 +181,9 @@ def _analyze_message(msg: Message, result: dict[str, Any]) -> None:
         "from": from_addr, "from_display": from_name, "return_path": return_path,
         "reply_to": reply_to, "sender": sender,
         "to": [a for _, a in getaddresses(msg.get_all("To", [])) if a],
+        "cc": [a.lower() for _, a in getaddresses(msg.get_all("Cc", [])) if a],
+        "bcc": [a.lower() for _, a in getaddresses(msg.get_all("Bcc", [])) if a],
+        "delivered_to": [a.lower() for _, a in getaddresses(msg.get_all("Delivered-To", []) + msg.get_all("X-Original-To", [])) if a],
         "subject": msg.get("Subject", ""),
         "message_id": msg.get("Message-ID", ""),
         "date": msg.get("Date", ""),
@@ -303,6 +306,8 @@ def _analyze_eml_body(msg: Message, extracted_dir: Path | None, result: dict[str
         ctype = part.get_content_type()
         structure.append(ctype)
         disp = (part.get_content_disposition() or "")
+        if ctype == "message/rfc822":
+            _chain_attached(part, result)
         if part.is_multipart():
             continue
         if disp == "attachment" or part.get_filename():
@@ -313,6 +318,7 @@ def _analyze_eml_body(msg: Message, extracted_dir: Path | None, result: dict[str
             except Exception:  # noqa: BLE001
                 payload = b""
             _collect_attachment(part.get_filename() or "", payload, extracted_dir, result)
+            _chain_attached_bytes(part.get_filename() or "", payload, result)
             continue
         try:
             body = part.get_content()
@@ -324,9 +330,95 @@ def _analyze_eml_body(msg: Message, extracted_dir: Path | None, result: dict[str
             html.append(str(body))
     result["mime_structure"] = structure
     text = "\n".join(texts)
+    result["_chain_text"] = text if text.strip() else _html_to_text("\n".join(html))
     result["body_sample"] = text[:_BODY_SAMPLE]
     result["body_length"] = len(text)
     _set_html_body("\n".join(html), result)
+
+
+def _chain_attached(part: Message, result: dict[str, Any]) -> None:
+    """An attached message (message/rfc822) for Chain."""
+    from .. import mailchain
+    try:
+        inner = part.get_payload(0) if part.is_multipart() else part.get_content()
+    except Exception:  # noqa: BLE001
+        return
+    if isinstance(inner, Message):
+        name = part.get_filename() or str(inner.get("Subject", "") or "attached message")
+        result.setdefault("_chain_attached", []).append(
+            mailchain.from_headers(inner, "attached", f"attachment: {name}"[:200]))
+
+
+def _chain_attached_bytes(name: str, data: bytes, result: dict[str, Any]) -> None:
+    """``.eml`` / ``.msg`` files attached as plain attachments, for Chain."""
+    from .. import mailchain
+    low = (name or "").lower()
+    try:
+        if low.endswith((".eml", ".emlx")) and data:
+            m = message_from_bytes(data, policy=_POLICY)
+            if m.get("From") or m.get("Message-ID"):
+                result.setdefault("_chain_attached", []).append(
+                    mailchain.from_headers(m, "attached", f"attachment: {name}"[:200]))
+        elif low.endswith(".msg") and data[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+            import olefile
+            ole = olefile.OleFileIO(data)
+            try:
+                result.setdefault("_chain_attached", []).append(_msg_chain_message(ole, "attached", f"attachment: {name}"))
+            finally:
+                ole.close()
+    except Exception:  # noqa: BLE001  (a broken attachment never breaks the email)
+        return
+
+
+def _msg_recipients(ole) -> list[tuple[str, str, int]]:
+    """(name, address, type 1=To 2=Cc 3=Bcc) from a .msg's __recip_* storages."""
+    import struct
+    out = []
+    for entry in ole.listdir(streams=False, storages=True):
+        top = entry[0] if isinstance(entry, list) else entry
+        if not top.lower().startswith("__recip_") or (isinstance(entry, list) and len(entry) > 1):
+            continue
+        addr = _mapi_text(ole, f"{top}/", _MAPI_RECIP_EMAIL).strip()
+        name = _mapi_text(ole, f"{top}/", _MAPI_RECIP_NAME).strip()
+        rtype = 1
+        props = [top, "__properties_version1.0"]
+        if ole.exists(props):
+            try:
+                with ole.openstream(props) as st:
+                    raw = st.read()
+                for off in range(8, len(raw) - 15, 16):
+                    tag = struct.unpack_from("<I", raw, off)[0]
+                    if tag == 0x0C150003:                       # PR_RECIPIENT_TYPE
+                        rtype = struct.unpack_from("<I", raw, off + 8)[0] & 0x0F
+                        break
+            except Exception:  # noqa: BLE001
+                pass
+        if addr or name:
+            out.append((name, addr if "@" in addr else "", rtype))
+    return out
+
+
+def _msg_chain_message(ole, kind: str, source: str) -> dict[str, Any]:
+    from .. import mailchain
+    headers = _mapi_text(ole, "", _MAPI["transport_headers"])
+    subject = _mapi_text(ole, "", _MAPI["subject"])
+    if headers.strip():
+        hm = message_from_string(headers, policy=_POLICY)
+        m = mailchain.from_headers(hm, kind, source)
+        m["subject"] = m["subject"] or subject
+    else:
+        sender = _mapi_text(ole, "", _MAPI["sender_email"])
+        m = mailchain.from_people(kind, source, subject, "", {
+            "from": [{"name": _mapi_text(ole, "", _MAPI["sender_name"]), "address": sender.lower() if "@" in sender else ""}]})
+    roles = {1: "to", 2: "cc", 3: "bcc"}
+    for name, addr, rtype in _msg_recipients(ole):
+        role = roles.get(rtype)
+        if not role:
+            continue
+        key = addr.lower() or name.lower()
+        if key and key not in {(p["address"] or p["name"].lower()) for p in m[role]}:
+            m[role].append({"name": name, "address": addr.lower()})
+    return m
 
 
 def _set_html_body(html_text: str, result: dict[str, Any]) -> None:
@@ -507,7 +599,15 @@ def _parse_msg(path: Path, extracted_dir: Path | None, result: dict[str, Any]) -
         result["mime_structure"] = ["message/rfc822 (MAPI)"]
         result["body_sample"] = body[:_BODY_SAMPLE]
         result["body_length"] = len(body)
-        _set_html_body(_msg_html(ole), result)
+        msg_html = _msg_html(ole)
+        _set_html_body(msg_html, result)
+        result["_chain_text"] = body if body.strip() else _html_to_text(msg_html)
+        result["_chain_root"] = _msg_chain_message(ole, "root", "this message")
+        bcc = [a for _n, a, t in _msg_recipients(ole) if t == 3 and a]
+        cc = [a for _n, a, t in _msg_recipients(ole) if t == 2 and a]
+        if result.get("addresses") is not None:
+            result["addresses"].setdefault("cc", cc)
+            result["addresses"]["bcc"] = sorted(set(result["addresses"].get("bcc") or []) | {a.lower() for a in bcc})
 
         # Recipients and attachments live in __recip_*/__attach_* storages.
         for entry in ole.listdir(streams=False, storages=True):
@@ -523,6 +623,7 @@ def _parse_msg(path: Path, extracted_dir: Path | None, result: dict[str, Any]) -
                     except Exception:  # noqa: BLE001
                         data = b""
                 _collect_attachment(name or top, data, extracted_dir, result)
+                _chain_attached_bytes(name or top, data, result)
     finally:
         ole.close()
 
@@ -554,9 +655,21 @@ def analyze(original_path: Path, declared_ext: str,
             msg = message_from_bytes(raw, policy=_POLICY)
             _analyze_message(msg, result)
             _analyze_eml_body(msg, extracted_dir, result)
+            from .. import mailchain
+            result["_chain_root"] = mailchain.from_headers(msg, "root", "this message")
     except Exception as exc:  # noqa: BLE001
         result["status"] = "error"
         result["findings"].append(_finding("parse_error", "medium", f"Email parse failed: {exc}"))
+    try:
+        from .. import mailchain
+        root = result.pop("_chain_root", None)
+        if root is not None:
+            result["chain"] = mailchain.build(root, result.pop("_chain_attached", []),
+                                              mailchain.quoted_messages(result.pop("_chain_text", "")))
+    except Exception as exc:  # noqa: BLE001  (Chain never breaks the email analysis)
+        result["chain"] = {"error": str(exc)[:300], "messages": []}
+    for k in ("_chain_root", "_chain_attached", "_chain_text"):
+        result.pop(k, None)
 
     result["attachment_count"] = len(result["attachments"])
     result["counts"] = {"findings": len(result["findings"])}
