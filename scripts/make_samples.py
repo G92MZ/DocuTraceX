@@ -599,6 +599,18 @@ def email_chain_eml() -> bytes:
                        ("Thread-Topic", "Factura 2026-114"),
                        ("X-MS-Exchange-CrossTenant-Id", "00000000-0000-4000-8000-0000000000c2"),
                        ("X-MS-Exchange-Organization-AuthAs", "Anonymous")])
+def brand_lookalike_eml() -> bytes:
+    """Sender domain two edits away from a brand (micrsofl ≈ microsoft): caught
+    with the default look-alike thresholds (longer names → 2 edits), which are
+    editable in Settings → Email rules: your organisation. Inert (*.example)."""
+    return mk.build_email(
+        from_="Microsoft 365 <no-reply@micrsofl.example>", to=TO,
+        subject="Su licencia de Microsoft 365 caduca hoy",
+        text="Su licencia caduca hoy. Inicie sesión para renovarla: https://portal.micrsofl.example/renovar\n",
+        html='<p>Su licencia caduca hoy.</p><p><a href="https://portal.micrsofl.example/renovar">Renovar</a></p>',
+        received=_RULES_RCV, auth_results=f"mx01.{VICTIM_DOMAIN}; spf=pass smtp.mailfrom=micrsofl.example; "
+                                          "dmarc=pass header.from=micrsofl.example",
+        message_id="<inert-lookalike-2026@micrsofl.example>")
 
 
 def newsletter_eml() -> bytes:
@@ -2996,6 +3008,7 @@ def build_all() -> dict[str, bytes]:
         "mail/sample_bec_freemail.eml": bec_freemail_eml(), "mail/sample_toad.eml": toad_eml(),
         "mail/sample_phish_kit_links.eml": phish_kit_links_eml(),
         "mail/sample_email_chain.eml": email_chain_eml(),
+        "mail/sample_brand_lookalike.eml": brand_lookalike_eml(),
         "mail/sample_newsletter.eml": newsletter_eml(), "mail/sample_lure_attachments.eml": lure_attachments_eml(),
         "sample_dropper.js": obf_js(), "sample_obfuscatorio.js": obf_obfuscatorio_js(),
         "sample_obf_techniques.js": obf_techniques_js(),
