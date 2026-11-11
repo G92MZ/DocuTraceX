@@ -53,12 +53,14 @@ class _Heap:
 
 
 _OP = {"ldstr": 0x72, "call": 0x28, "callvirt": 0x6F, "newobj": 0x73, "pop": 0x26, "ret": 0x2A, "calldef": 0x28,
-       "xor": 0x61, "ldarg.0": 0x02, "initarray": 0x00, "ldc": 0x20, "shl": 0x62, "shr.un": 0x64, "mul": 0x5A}
+       "xor": 0x61, "ldarg.0": 0x02, "initarray": 0x00, "ldc": 0x20, "shl": 0x62, "shr.un": 0x64, "mul": 0x5A,
+       "brfalse.s": 0x2C, "br.s": 0x2B}
 
 
 def _ops(ops: list[tuple], us: _Heap, rids: dict[str, int] | None = None) -> bytes:
     """Tiny IL from (op, arg): ldstr "text" / call|callvirt|newobj memberref index /
-    calldef "Type::Method" (own method) / ldc int / xor / shl / shr.un / mul / ldarg.0 / pop / ret."""
+    calldef "Type::Method" (own method) / ldc int / xor / shl / shr.un / mul / ldarg.0 / pop / ret /
+    brfalse.s|br.s <signed byte offset from the next instruction>."""
     out = bytearray()
     for op, *arg in ops:
         out.append(_OP[op])
@@ -71,6 +73,8 @@ def _ops(ops: list[tuple], us: _Heap, rids: dict[str, int] | None = None) -> byt
             out[-1:] = b"\x20" + struct.pack("<i", size) + b"\x8d" + struct.pack("<I", 0x01000001) + b"\x25"
             out += b"\xd0" + struct.pack("<I", 0x04000000 | (rids or {})["field:" + name])
             out += b"\x28" + struct.pack("<I", 0x0A000000 | (mr + 1))
+        elif op in ("brfalse.s", "br.s"):
+            out += struct.pack("<b", arg[0])
         elif op == "calldef":
             out += struct.pack("<I", 0x06000000 | (rids or {})[arg[0]])
         elif op in ("call", "callvirt", "newobj"):

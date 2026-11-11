@@ -985,3 +985,55 @@ def go_types_view(analysis_id: str, sha256: str) -> dict:
     if data is None:
         raise HTTPException(status_code=404, detail="no type information for this object")
     return data
+
+
+# --- .NET decompilation on demand (ILSpy CLI; de4dot --strtyp none first when obfuscated)
+
+def _dotnet_ctx(analysis_id: str, sha256: str):
+    import re as _re
+
+    from ..storage import CasePaths, read_json
+    if not _re.fullmatch(r"[0-9a-f]{64}", sha256):
+        raise HTTPException(status_code=400, detail="bad id")
+    try:
+        manifest = case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    paths = CasePaths(analysis_id)
+    objs = (read_json(paths.subresult("dotnet")) or {}).get("objects") or []
+    obj = next((o for o in objs if o.get("sha256") == sha256 and not o.get("duplicate")), None)
+    if obj is None:
+        raise HTTPException(status_code=404, detail="no .NET analysis for this object")
+    return manifest, paths, obj
+
+
+@router.get("/{analysis_id}/dotnet/{sha256}/decompiled")
+def dotnet_decompiled(analysis_id: str, sha256: str) -> dict:
+    """What was decompiled so far, the prioritised methods and the tools' state."""
+    from ..dotnet import decompile as dn_dec
+    _m, paths, obj = _dotnet_ctx(analysis_id, sha256)
+    return {**dn_dec.load(paths.root, sha256), "priority": dn_dec.priority_methods(obj), "tools": dn_dec.status()}
+
+
+@router.post("/{analysis_id}/dotnet/{sha256}/decompile")
+def dotnet_decompile(analysis_id: str, sha256: str, payload: dict = Body(default={})) -> dict:
+    """Decompile one prioritised method (``{"method": "Ns.Type::Name"}``) or the
+    first prioritised methods of the module (``{"module": true}``)."""
+    from ..dotnet import decompile as dn_dec
+    manifest, paths, obj = _dotnet_ctx(analysis_id, sha256)
+    if not dn_dec.ilspy_available():
+        raise HTTPException(status_code=503, detail="ILSpy CLI not provisioned (Diagnostics → Retry ilspy)")
+    prio = dn_dec.priority_methods(obj)
+    if payload.get("module"):
+        methods = prio[:dn_dec.MAX_MODULE]
+    else:
+        method = str(payload.get("method") or "")
+        if method not in prio:
+            raise HTTPException(status_code=400, detail="only prioritised methods are decompiled")
+        methods = [method]
+    target = _code_target(manifest, paths, sha256)
+    try:
+        data = dn_dec.decompile(paths.root, target, obj, methods)
+    except TimeoutError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {**data, "priority": prio, "tools": dn_dec.status()}
