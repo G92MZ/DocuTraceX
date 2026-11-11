@@ -59,12 +59,51 @@ def enabled() -> bool:
         return True
 
 
+_FORMER_KEYS = ("former_domains", "removed_domains", "previous_domains", "historical_domains")
+_FORMER_WORDS = {"removed", "former", "previous", "historical", "deleted"}
+
+
+def _domain_entry(d: Any, former: bool = False) -> dict[str, Any] | None:
+    """One tenant domain, as a string or as an object (``domain`` / ``name``,
+    ``type`` Managed / Federated, ``removed`` / ``status`` / ``current``)."""
+    if isinstance(d, dict):
+        name = d.get("domain") or d.get("name") or d.get("id") or ""
+        typ = str(d.get("type") or d.get("authentication") or d.get("kind") or "")
+        status = str(d.get("status") or d.get("state") or "").lower()
+        former = former or bool(d.get("removed") or d.get("former")) or status in _FORMER_WORDS \
+            or d.get("current") is False
+    else:
+        name, typ = d, ""
+    name = str(name).strip().lower().rstrip(".")
+    if not name or "." not in name:
+        return None
+    return {"domain": name, "type": typ, "current": not former,
+            "microsoft": name.endswith((".onmicrosoft.com", ".mail.onmicrosoft.com"))}
+
+
 def _normalise(raw: Any) -> dict[str, Any]:
+    """AZMap's answer: tenant name, brand, and every domain it lists for the
+    tenant — current ones in ``related_domains`` (as before), former / removed
+    ones in ``former_domains``, all of them with their type in ``domains``."""
     if not isinstance(raw, dict):
         raise ValueError("unexpected answer")
-    doms = [str(d).strip().lower().rstrip(".") for d in raw.get("related_domains") or [] if str(d).strip()][:500]
+    entries: list[dict[str, Any]] = []
+    for d in raw.get("related_domains") or raw.get("domains") or []:
+        if (e := _domain_entry(d)) is not None:
+            entries.append(e)
+    for k in _FORMER_KEYS:
+        for d in raw.get(k) or []:
+            if (e := _domain_entry(d, former=True)) is not None:
+                entries.append(e)
+    seen: dict[str, dict[str, Any]] = {}
+    for e in entries:
+        if e["domain"] not in seen or (e["current"] and not seen[e["domain"]]["current"]):
+            seen[e["domain"]] = e
+    entries = list(seen.values())[:500]
+    cur = [e["domain"] for e in entries if e["current"]]
     return {"tenant_name": raw.get("tenant_name") or "", "brand_name": raw.get("brand_name") or "",
-            "related_domains": doms, "related_count": raw.get("related_count", len(doms))}
+            "related_domains": cur, "former_domains": [e["domain"] for e in entries if not e["current"]],
+            "domains": entries, "related_count": raw.get("related_count", len(cur))}
 
 
 def lookup(tid: str, proxy: str | None = None, timeout: int = TIMEOUT) -> dict[str, Any]:

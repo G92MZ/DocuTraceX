@@ -1719,7 +1719,8 @@ function msHeadersBox(ms, tenant) {
       return `<tr><td class="mono"><a href="${escapeHtml(t.source || `https://azmap.dev/?tenant_id=${b.tenant_id}`)}" target="_blank" rel="noopener noreferrer">${escapeHtml(b.tenant_id)}</a></td>
         <td>${escapeHtml(t.role || b.role || "")}</td><td>${escapeHtml([b.auth_as, b.from_entity].filter(Boolean).join(" / "))}</td>
         <td>${org}${t.cached ? ' <span class="muted">(cached)</span>' : ""}</td>
-        <td class="mono">${rel.slice(0, 12).map((x) => (t.matched_domains || []).includes(x) ? `<b>${escapeHtml(x)}</b>` : escapeHtml(x)).join(", ")}${rel.length > 12 ? ` … (${rel.length})` : ""}</td>
+        <td class="mono">${rel.slice(0, 12).map((x) => (t.matched_domains || []).includes(x) ? `<b>${escapeHtml(x)}</b>` : escapeHtml(x)).join(", ")}${rel.length > 12 ? ` … (${rel.length})` : ""}${
+          (d.former_domains || []).length ? `<div class="muted">removed: ${escapeHtml(d.former_domains.slice(0, 12).join(", "))}${d.former_domains.length > 12 ? ` … (${d.former_domains.length})` : ""}</div>` : ""}</td>
         <td>${addMarkCell("tenant", `Tenant ${b.tenant_id}${d.brand_name ? ` (${d.brand_name})` : ""}`, "microsoft", rel.join(", "))}</td></tr>`;
     }).join(""));
   }

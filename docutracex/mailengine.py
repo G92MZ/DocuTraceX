@@ -240,23 +240,84 @@ def ms_extra_facts(ms: dict[str, Any], sender_domain: str, date_hdr: str, subjec
     return out
 
 
-def tenant_facts(t: dict[str, Any], sender_domain: str) -> dict[str, Any]:
-    """The sender's tenant as AZMap knows it, and whether the sender's domain is one of it."""
+def _shares_name(label: str, names: list[str], n: int = 5) -> bool:
+    """``label`` shares a run of ``n`` letters with one of ``names`` (or equals a short one)."""
+    for w in names:
+        if label == w or (len(w) < n and w and w in label):
+            return True
+        if any(w[i:i + n] in label for i in range(len(w) - n + 1)):
+            return True
+    return False
+
+
+def _lookalike_of(host: str, own: list[str], brands: list[str]) -> str:
+    """Why ``host`` looks like one of your domains or brands (domainsim), or ""."""
+    from . import domainsim, similarity
+    from .parsers.mail_rules import BRANDS
+    th = similarity.thresholds()
+    refs = [(d, "own", ()) for d in own] + [(b, "brand", ()) for b in brands] + \
+           [(b, "brand", tuple(v)) for b, v in BRANDS.items()]
+    for ref, kind, legit in refs:
+        if (m := domainsim.compare(host, ref, kind, th, legit)):
+            return f"{host} looks like {ref} ({m['algorithm']}, distance {m['distance']})"
+    return ""
+
+
+def tenant_facts(t: dict[str, Any], sender_domain: str, own: list[str] | None = None,
+                 brands: list[str] | None = None) -> dict[str, Any]:
+    """The sender's Microsoft 365 tenant as AZMap knows it, read against the sender.
+
+    - ``sender_domain_unrelated``: the From domain is not a current domain of the
+      tenant that sent the message (spoofed From, or someone else's tenant).
+    - ``sender_lookalike``: the From domain imitates one of your domains / brands —
+      whether the tenant verified it (Managed) or not: verifying a domain only
+      proves the attacker controls it.
+    - ``tenant_lookalikes``: other domains of that tenant (current or removed)
+      that imitate yours.
+    - ``domain_sprawl``: the tenant holds many domains unrelated to its own name,
+      and / or has removed several (rotation of throw-away domains)."""
     tenants = t.get("tenants") or []
     sender_t = next((x for x in tenants if x.get("role") == "sender" and x.get("status") == "ok"), None)
     out = {"looked_up": bool(tenants), "brand": "", "name": "", "related": [], "sender_domain_unrelated": "",
-           "id": ""}
+           "id": "", "sender_lookalike": "", "tenant_lookalikes": [], "domain_sprawl": "", "former": []}
     if not sender_t:
         return out
     data = sender_t.get("data") or {}
     rel = data.get("related_domains") or []
+    former = data.get("former_domains") or []
     out.update(id=sender_t.get("tenant_id", ""), brand=data.get("brand_name", ""), name=data.get("tenant_name", ""),
-               related=rel[:50])
-    if rel and sender_domain and not sender_t.get("own_tenant"):
-        reg = _registrable(sender_domain)
-        if reg not in {_registrable(d) for d in rel}:
-            out["sender_domain_unrelated"] = (f"{sender_domain} not among the {len(rel)} domain(s) of tenant "
-                                              f"{out['brand'] or out['name'] or out['id']}")
+               related=rel[:50], former=former[:50])
+    who = out["brand"] or out["name"] or out["id"]
+    if sender_t.get("own_tenant"):
+        return out
+    reg = _registrable(sender_domain) if sender_domain else ""
+    if rel and reg and reg not in {_registrable(d) for d in rel}:
+        out["sender_domain_unrelated"] = (
+            f"{sender_domain} was removed from tenant {who} (now {len(rel)} domain(s))"
+            if reg in {_registrable(d) for d in former} else
+            f"{sender_domain} not among the {len(rel)} domain(s) of tenant {who}")
+    own, brands = own or [], brands or []
+    entries = data.get("domains") or [{"domain": d, "type": "", "current": True} for d in rel] + \
+        [{"domain": d, "type": "", "current": False} for d in former]
+    if reg:
+        why = _lookalike_of(reg, own, brands)
+        if why:
+            e = next((x for x in entries if _registrable(x["domain"]) == reg), None)
+            state = (f"{'current' if e['current'] else 'removed'}{', ' + e['type'] if e.get('type') else ''} domain of"
+                     if e else "sent from")
+            out["sender_lookalike"] = f"{why} — {state} tenant {who}"
+    for e in entries:
+        d = _registrable(e["domain"])
+        if d != reg and not e.get("microsoft") and not d.endswith("onmicrosoft.com") and (why := _lookalike_of(d, own, brands)):
+            out["tenant_lookalikes"].append(f"{why} ({'current' if e['current'] else 'removed'})")
+    names = [w for w in re.split(r"[^a-z0-9]+", f"{out['name']} {out['brand']}".lower()) if len(w) >= 3]
+    cur = [_registrable(e["domain"]) for e in entries if e["current"] and not e.get("microsoft")
+           and not e["domain"].endswith("onmicrosoft.com")]
+    unrelated = [d for d in dict.fromkeys(cur) if not _shares_name(d.split(".")[0], names)]
+    gone = [e["domain"] for e in entries if not e["current"]]
+    if len(gone) >= 3 or len(unrelated) + len(gone) >= 6:
+        out["domain_sprawl"] = (f"tenant {who}: {len(unrelated)} current domain(s) unrelated to its name "
+                                f"({', '.join(unrelated[:8])}) and {len(gone)} removed ({', '.join(gone[:8])})")
     return out
 
 
@@ -547,7 +608,7 @@ def facts(email: dict[str, Any], mailrules: dict[str, Any], case_root: Path | No
         "ms": {**ms_facts(email.get("microsoft") or {}),
                **ms_extra_facts(email.get("microsoft") or {}, sdom, addrs.get("date") or "", subject,
                                 (mailrules or {}).get("tenant") or {})},
-        "tenant": tenant_facts((mailrules or {}).get("tenant") or {}, sdom),
+        "tenant": tenant_facts((mailrules or {}).get("tenant") or {}, sdom, own, cfg["brands"]),
         "thread": {"subject": subject, "reply_prefix": bool(_REPLY.match(subject)),
                    "has_in_reply_to": any(h.get("name", "").lower() == "in-reply-to" for h in email.get("headers") or []),
                    "has_references": any(h.get("name", "").lower() == "references" for h in email.get("headers") or []),
