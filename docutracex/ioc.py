@@ -1005,6 +1005,8 @@ _MODULE_SKIP_PATHS = {
                             r"|^tenant(?:[/\[].*)?$"
                             r"|^engine/facts/(?:thread|tenant)(?:[/\[].*)?$"
                             r"|^engine/matched\[\d+\]/evidence$"
+                            # the Verdict tab: a summary of signals whose values were mined at their source
+                            r"|^(?:engine/)?verdict(?:[/\[].*)?$"
                             # the Message-ID and its host: an identifier, not an indicator
                             r"|^findings\[\d+\]/message_id$|^fingerprint/message_id_(?:domain|provider)$"),
     # olevba's description of each indicator ("May run PowerShell commands")

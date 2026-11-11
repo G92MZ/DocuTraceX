@@ -276,6 +276,7 @@ def test_microsoft_says_which_tenant_the_sender_domain_belongs_to(tmp_path, monk
         orig = opener.open
         monkeypatch.setattr(opener, "open", lambda req, timeout=None, o=orig: (seen.append(req.full_url), o(req))[1])
         monkeypatch.setattr("docutracex.mailintel._routes", lambda proxy, op=opener: [("direct", op)])
+        tenantintel._save_cache({})                                   # each scenario starts uncached
         _e, r = _analyse(ms.tenant_typosquat_eml())
         got = {m["id"]: m for m in r["engine"]["matched"]}
         assert expect in got["tenant_sender_domain_unrelated"]["evidence"]
@@ -284,11 +285,24 @@ def test_microsoft_says_which_tenant_the_sender_domain_belongs_to(tmp_path, monk
     assert mailengine.tenant_facts({}, "x.example")["sender_domain_unrelated"] == ""
 
 
-def test_domain_lookups_are_never_cached(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_domain_lookups_are_cached_seven_days(monkeypatch: pytest.MonkeyPatch) -> None:
     owners = {"moved.example": "11111111-0000-4000-8000-000000000000"}
     monkeypatch.setattr("docutracex.mailintel._routes", lambda proxy: [("direct", _Opener({}, [], owners))])
     assert tenantintel.domain_lookup("moved.example")["tenant_id"].startswith("11111111")
     owners["moved.example"] = "22222222-0000-4000-8000-000000000000"            # moved to another tenant
     again = tenantintel.domain_lookup("moved.example")
-    assert again["tenant_id"].startswith("22222222") and not again["cached"]
+    assert again["cached"] and again["tenant_id"].startswith("11111111")       # within 7 days: the cached answer
+    c = tenantintel._load_cache()
+    c["dom:moved.example"]["ts"] -= tenantintel.TTL_OK + 1                      # 7 days later: asked again
+    tenantintel._save_cache(c)
+    fresh = tenantintel.domain_lookup("moved.example")
+    assert fresh["tenant_id"].startswith("22222222") and not fresh["cached"]
     assert tenantintel.MAX_DOMAINS == 10
+
+
+def test_verdict_tab_is_not_mined_for_iocs() -> None:
+    res = {"verdict": {"score": 60, "verdict": "phishing",
+                       "raised": [{"id": "x", "score": 50, "why": "lookalike-corp.example looks like corp.example"}]},
+           "findings": [{"rule": "y", "detail": "", "evidence": "https://payload.example/a"}]}
+    vals = {i["value"] for i in ioc.extract(ioc.sources_from_modules({"mailrules": res}))["iocs"]}
+    assert "lookalike-corp.example" not in vals and "payload.example" in vals

@@ -6,8 +6,8 @@ Automatic (the owner's decision), and only these values leave the machine:
 - to AZMap: the tenant ID from ``X-MS-Exchange-CrossTenant-Id`` (its brand and
   current domains);
 - to Microsoft (login.microsoftonline.com, no account, no token): the sender's
-  domains (From / Reply-To / Return-Path / Sender, never your own; at most 10, asked
-  fresh every time, never cached), to learn
+  domains (From / Reply-To / Return-Path / Sender, never your own; at most 10;
+  answers cached 7 days like AZMap's), to learn
   which tenant each one is registered to (OpenID configuration) and whether it
   is a Managed or Federated domain (``getuserrealm``, with a made-up user).
 
@@ -188,12 +188,16 @@ def _get_json(url: str, proxy: str | None, timeout: int) -> tuple[Any, str, str]
 def domain_lookup(domain: str, proxy: str | None = None, timeout: int = TIMEOUT) -> dict[str, Any]:
     """Which Microsoft 365 / Entra tenant ``domain`` is registered to, straight
     from Microsoft. {domain, status: ok|not_in_entra|error, tenant_id,
-    namespace (Managed / Federated), brand, cached (always False), source}."""
+    namespace (Managed / Federated), brand, cached, source} — cached 7 days like AZMap."""
     dom = (domain or "").strip().lower().rstrip(".")
     base = {"domain": dom, "source": MS_OPENID.format(dom=dom)}
     if not dom or "." not in dom or "/" in dom:
         return {**base, "status": "invalid", "cached": False}
-    # Never cached: a domain can be moved to another tenant (or dropped) at any time.
+    cache = _load_cache()
+    key = "dom:" + dom
+    hit = cache.get(key)
+    if hit and time.time() - hit.get("ts", 0) < (TTL_OK if hit.get("status") in ("ok", "not_in_entra") else TTL_FAIL):
+        return {**hit, "cached": True}
     oid, route, err = _get_json(MS_OPENID.format(dom=dom), proxy, timeout)
     if oid is None:
         rec = {**base, "status": "error", "error": err}
@@ -207,6 +211,8 @@ def domain_lookup(domain: str, proxy: str | None = None, timeout: int = TIMEOUT)
                        brand=str(realm.get("FederationBrandName") or ""),
                        federation=str(realm.get("AuthURL") or "").split("/")[2] if realm.get("AuthURL") else "")
     rec["ts"] = time.time()
+    cache[key] = rec
+    _save_cache(cache)
     return {**rec, "cached": False}
 
 
