@@ -224,7 +224,7 @@ def test_sender_domain_outside_its_tenant_is_phishing_on_its_own() -> None:
 TYPOSQUAT_TENANT_ANSWER = {   # shaped like AZMap's page for a throw-away tenant (current + removed domains)
     "tenant_name": "nwcollege0", "brand_name": "Northwind Community College",
     "related_domains": [{"domain": d, "type": "Managed"} for d in
-                        ("lumenfold.example", "grupoejernplo.example", "nwcollege1.example", "sarps.example",
+                        ("lumenfold.example", "grupoejernplo.example", "nwcollege1.example", "brisketa.example",
                          "nwcollege0.example", "quorvane.example")] + [{"domain": "nwcollege0.onmicrosoft.com"}],
     "former_domains": ["pelmaris.example", "oxbrinte.example", "verdalune.example", "fenwickery.example"]}
 
@@ -257,7 +257,7 @@ def test_former_domain_and_unverified_typosquat() -> None:
     assert f["sender_domain_unrelated"].startswith("verdalune.example was removed from tenant")
     f = mailengine.tenant_facts(t, "grupoejemplo-pagos.example", ["grupoejemplo.example"], [])   # not in the tenant
     assert f["sender_domain_unrelated"] and "sent from tenant" in f["sender_lookalike"]
-    f = mailengine.tenant_facts(t, "sarps.example", ["grupoejemplo.example"], [])
+    f = mailengine.tenant_facts(t, "brisketa.example", ["grupoejemplo.example"], [])
     assert any("grupoejernplo.example looks like grupoejemplo.example" in x for x in f["tenant_lookalikes"])
 
 
