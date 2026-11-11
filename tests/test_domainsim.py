@@ -28,9 +28,9 @@ def test_algorithms() -> None:
     assert similarity.levenshtein("docusing", "docusign") == 2 and similarity.damerau("docusing", "docusign") == 1
     assert _cmp("xn--pypal-4ve.example", "paypal") == ("homoglyph", 0)
     assert _cmp("login.rnicrosoft-online.example", "microsoft", legit=("microsoft.com",)) == ("embedded name + homoglyph", 0)
-    assert _cmp("secure-massimodutti.example", "massimodutti.com", "own") == ("embedded name", 0)
-    assert _cmp("massimodutti.co", "massimodutti.com", "own") == ("same name, other TLD", 0)
-    assert _cmp("masimoduti.example", "massimodutti.com", "own") == ("Levenshtein", 2)
+    assert _cmp("secure-pellizzaroti.test", "pellizzaroti.example", "own") == ("embedded name", 0)
+    assert _cmp("pellizzaroti.co", "pellizzaroti.example", "own") == ("same name, other TLD", 0)
+    assert _cmp("pelizaroti.example", "pellizzaroti.example", "own") == ("Levenshtein", 2)
     assert _cmp("www.microsoft.com", "microsoft", legit=("microsoft.com",)) is None      # the real one
     assert _cmp("pineapple.example", "apple") is None                                   # not a combosquat
     assert _cmp("https://user@docusing.example:8443/x?y", "docusign") == ("Damerau-Levenshtein", 1)
@@ -38,8 +38,8 @@ def test_algorithms() -> None:
 
 def test_thresholds_from_settings() -> None:
     appsettings.set_email_settings([], [], {"short_len": 4, "short_dist": 1, "long_dist": 1, "min_len": 4})
-    assert _cmp("masimoduti.example", "massimodutti.com", "own") is None
-    assert _cmp("masimodutti.example", "massimodutti.com", "own") == ("Levenshtein", 1)
+    assert _cmp("pelizaroti.example", "pellizzaroti.example", "own") is None
+    assert _cmp("pelizzaroti.example", "pellizzaroti.example", "own") == ("Levenshtein", 1)
 
 
 def _iocs(*values: tuple[str, str, str]) -> dict:
