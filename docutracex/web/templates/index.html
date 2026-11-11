@@ -21,27 +21,32 @@
     <div class="tab-group tab-group-cases" role="group" aria-label="Cases">
       <span class="tab-group-label" title="Upload, follow and find your analyses">Cases</span>
       <div class="tab-group-items">
-      <button class="tab is-active" type="button" data-view="new"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 15v5h16v-5"/></svg><span>New analysis</span></button>
+      <button class="tab is-active" type="button" data-view="new"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path class="duo" d="M4 15v5h16v-5z"/><path d="M12 16V4M7 9l5-5 5 5"/></svg><span>New analysis</span></button>
       <button class="tab" type="button" data-view="tasks"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3 6 1.5 1.5L7 5M3 12l1.5 1.5L7 11M3 18l1.5 1.5L7 17"/></svg><span>Tasks</span></button>
-      <button class="tab" type="button" data-view="cases"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18v14H3z"/><path d="M3 6l2-3h5l2 3"/><path d="M7 11h10M7 15h6"/></svg><span>Cases</span> <span id="cases-active-dot" class="cases-active-dot" hidden title="Analyses queued or running"></span></button>
+      <button class="tab" type="button" data-view="cases"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path class="duo" d="M3 6h18v14H3z"/><path d="M3 6l2-3h5l2 3"/><path d="M7 11h10M7 15h6" class="thin"/></svg><span>Cases</span> <span id="cases-active-dot" class="cases-active-dot" hidden title="Analyses queued or running"></span></button>
       </div>
     </div>
     <div class="tab-group tab-group-main" role="group" aria-label="Analysis">
       <span class="tab-group-label" title="What the sample is and does, your marks and the report">Analysis</span>
       <div class="tab-group-items">
-      <button class="tab" type="button" data-view="components"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 3 7l9 5 9-5-9-5z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg><span>Components</span></button>
-      <button class="tab" type="button" data-view="marks"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z"/></svg><span>Marks</span></button>
-      <button class="tab" type="button" data-view="reports"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6v20h12V6z"/><path d="M14 2v4h4M9 13h6M9 17h6M9 9h2"/></svg><span>Reports</span></button>
+      <button class="tab" type="button" data-view="components"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path class="duo" d="M12 2 3 7l9 5 9-5-9-5z"/><path d="m3 12 9 5 9-5"/><path d="m3 17 9 5 9-5"/></svg><span>Components</span></button>
+      <button class="tab" type="button" data-view="marks"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path class="duo" d="M6 3h12v18l-6-4-6 4z"/></svg><span>Marks</span></button>
+      <button class="tab" type="button" data-view="reports"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path class="duo" d="M14 2H6v20h12V6z"/><path d="M14 2v4h4M9 13h6M9 17h6M9 9h2"/></svg><span>Reports</span></button>
       </div>
     </div>
-    <div class="tab-group tab-group-extra" role="group" aria-label="Complementary">
-      <span class="tab-group-label" title="Extra engines and views over the same case">Complementary</span>
+    <div class="tab-group tab-group-engines" role="group" aria-label="Engines">
+      <span class="tab-group-label" title="Raw analysis engines — on a case, or on a loose file (quick analysis)">Engines</span>
       <div class="tab-group-items">
-      <button class="tab" type="button" data-view="yara"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg><span>YARA</span></button>
-      <button class="tab" type="button" data-view="ml"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/><path d="M10 10h4v4h-4z"/></svg><span>Machine Learning</span></button>
-      <button class="tab" type="button" data-view="c2"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2"/><path d="M8.5 15.5a5 5 0 0 1 0-7M15.5 8.5a5 5 0 0 1 0 7"/><path d="M5.6 18.4a9 9 0 0 1 0-12.8M18.4 5.6a9 9 0 0 1 0 12.8"/></svg><span>C2 / Beacons</span></button>
-      <button class="tab" type="button" data-view="hex"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z"/><path d="M7 9h2M11 9h2M15 9h2M7 13h2M11 13h2M15 13h2"/></svg><span>Hex</span></button>
-      <button class="tab" type="button" data-view="ai"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg><span>AI</span></button>
+      <button class="tab" type="button" data-view="yara"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle class="duo" cx="10.5" cy="10.5" r="6.5"/><path d="m20.5 20.5-5.2-5.2"/><path d="M8 8.2a3.3 3.3 0 0 1 4.6 0" class="thin"/></svg><span>YARA</span></button>
+      <button class="tab" type="button" data-view="ml"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect class="duo" x="6" y="6" width="12" height="12" rx="2.5"/><path d="M9.5 2.5v3.5M14.5 2.5v3.5M9.5 18v3.5M14.5 18v3.5M2.5 9.5H6M2.5 14.5H6M18 9.5h3.5M18 14.5h3.5"/><circle cx="12" cy="12" r="2" class="dot"/></svg><span>Machine Learning</span></button>
+      <button class="tab" type="button" data-view="c2"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="2.2" class="dot"/><path d="M8.6 15.4a4.8 4.8 0 0 1 0-6.8M15.4 8.6a4.8 4.8 0 0 1 0 6.8"/><path d="M5.6 18.4a9 9 0 0 1 0-12.8M18.4 5.6a9 9 0 0 1 0 12.8" class="thin"/></svg><span>C2 / Beacons</span></button>
+      <button class="tab" type="button" data-view="hex"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect class="duo" x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M7 9.5h2M11 9.5h2M15 9.5h2M7 14.5h2M11 14.5h2" /><path d="M15 14.5h2" class="thin"/></svg><span>Hex</span></button>
+      </div>
+    </div>
+    <div class="tab-group tab-group-ai" role="group" aria-label="AI">
+      <span class="tab-group-label" title="Ask about a case in natural language (API, local model or MCP)">AI</span>
+      <div class="tab-group-items">
+      <button class="tab" type="button" data-view="ai"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path class="duo" d="M11 3l1.9 5.1L18 10l-5.1 1.9L11 17l-1.9-5.1L4 10l5.1-1.9z"/><path class="duo" d="M18.5 14.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg><span>AI</span></button>
       </div>
     </div>
     <div class="tab-group tab-group-system" role="group" aria-label="System">
@@ -187,7 +192,7 @@
           <h2>YARA rules</h2>
           <span id="yara-summary" class="status"></span>
         </div>
-        <p class="hint-line">Nothing runs automatically: register a path or upload rules, press Recompile, then scan a case. Compilation and scans use the portable Python. Every hit is a finding you mark (True positive, False positive, …); only True positives reach the report.</p>
+        <p class="hint-line">Nothing runs automatically: register a path or upload rules, press Recompile, then scan a case — or a loose file (quick analysis). Compilation and scans use the portable Python. Every hit is a finding you mark (True positive, False positive, …); only True positives reach the report.</p>
         <div class="yara-add">
           <form id="yara-upload-form" class="upload">
             <input type="file" id="yara-file" class="file-native" accept=".yar,.yara,.rule,.rules,.zip,.tar,.gz,.tgz" />
@@ -209,6 +214,16 @@
           <button id="yara-scan" class="btn btn-primary" type="button">Scan case</button>
           <span id="yara-scan-status" class="status"></span>
         </div>
+        <form id="yara-quick-form" class="upload quick-form">
+          <span class="hint-line"><b>Or a loose file</b> (quick analysis, no full case):</span>
+          <input type="file" id="yara-quick-file" class="file-native" />
+          <label for="yara-quick-file" class="btn btn-ghost btn-sm">Choose file</label>
+          <span class="file-name">No file selected</span>
+          <label class="hint-line quick-extract" title="Runs the full analysis first, so the engine also sees what the file carries (attachments, resources, decrypted stages)"><input type="checkbox" name="extract"> also its contents</label>
+          <button type="submit" class="btn btn-primary btn-sm">Analyse</button>
+          <span class="status"></span>
+        </form>
+        <div id="yara-quick-note" class="hint-line quick-note"></div>
         <details class="disclose obj-picker" id="yara-objs"><summary>Objects to scan: all</summary><div class="obj-list"></div></details>
         <!-- trace: gmzpt -->
         <div id="yara-results"></div>
@@ -227,6 +242,16 @@
           <button id="ml-run" class="btn btn-primary" type="button">Run Machine Learning</button>
           <span id="ml-run-status" class="status"></span>
         </div>
+        <form id="ml-quick-form" class="upload quick-form">
+          <span class="hint-line"><b>Or a loose file</b> (quick analysis, no full case):</span>
+          <input type="file" id="ml-quick-file" class="file-native" />
+          <label for="ml-quick-file" class="btn btn-ghost btn-sm">Choose file</label>
+          <span class="file-name">No file selected</span>
+          <label class="hint-line quick-extract" title="Runs the full analysis first, so the engine also sees what the file carries (attachments, resources, decrypted stages)"><input type="checkbox" name="extract"> also its contents</label>
+          <button type="submit" class="btn btn-primary btn-sm">Analyse</button>
+          <span class="status"></span>
+        </form>
+        <div id="ml-quick-note" class="hint-line quick-note"></div>
         <details class="disclose obj-picker" id="ml-objs"><summary>Objects to scan: all</summary><div class="obj-list"></div></details>
         <div id="ml-body"></div>
       </section>
@@ -242,6 +267,16 @@
           <button id="c2-run" class="btn btn-primary" type="button">Search C2 configurations</button>
           <span id="c2-run-status" class="status"></span>
         </div>
+        <form id="c2-quick-form" class="upload quick-form">
+          <span class="hint-line"><b>Or a loose file</b> (quick analysis, no full case):</span>
+          <input type="file" id="c2-quick-file" class="file-native" />
+          <label for="c2-quick-file" class="btn btn-ghost btn-sm">Choose file</label>
+          <span class="file-name">No file selected</span>
+          <label class="hint-line quick-extract" title="Runs the full analysis first, so the engine also sees what the file carries (attachments, resources, decrypted stages)"><input type="checkbox" name="extract"> also its contents</label>
+          <button type="submit" class="btn btn-primary btn-sm">Analyse</button>
+          <span class="status"></span>
+        </form>
+        <div id="c2-quick-note" class="hint-line quick-note"></div>
         <details class="disclose obj-picker" id="c2-objs"><summary>Objects to scan: all</summary><div class="obj-list"></div></details>
         <div id="c2-body"></div>
       </section>
@@ -255,6 +290,16 @@
           <span class="hint-line">Case:</span>
           <select id="hex-case" class="ai-case-select"></select>
         </div>
+        <form id="hex-quick-form" class="upload quick-form">
+          <span class="hint-line"><b>Or a loose file</b> (quick analysis, no full case):</span>
+          <input type="file" id="hex-quick-file" class="file-native" />
+          <label for="hex-quick-file" class="btn btn-ghost btn-sm">Choose file</label>
+          <span class="file-name">No file selected</span>
+          
+          <button type="submit" class="btn btn-primary btn-sm">Open in Hex</button>
+          <span class="status"></span>
+        </form>
+        <div id="hex-quick-note" class="hint-line quick-note"></div>
         <div id="hex-body"></div>
       </section>
     </div>

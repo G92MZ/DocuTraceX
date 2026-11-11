@@ -69,10 +69,15 @@ def _declared_extension(name: str) -> str:
     return os.path.splitext(name or "")[1].lower()
 
 
+QUICK_TOOLS = ("yara", "ml", "c2", "hex")
+
+
 def create_case(
-    src: BinaryIO, original_filename: str, cases_dir: Path | None = None
+    src: BinaryIO, original_filename: str, cases_dir: Path | None = None, quick: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Create a new case from an open binary stream. Returns the manifest."""
+    """Create a new case from an open binary stream. Returns the manifest.
+    ``quick`` = {tool, extract}: a quick analysis from one engine tab (YARA,
+    ML, C2, Hex) that runs only that engine, not the full pipeline."""
     analysis_id = new_analysis_id()
     paths = CasePaths(analysis_id, cases_dir=cases_dir)
     if paths.root.exists():  # astronomically unlikely, but never clobber
@@ -131,6 +136,8 @@ def create_case(
         "limits": {},
         "errors": [],
     }
+    if quick:
+        manifest["quick"] = {"tool": quick.get("tool"), "extract": bool(quick.get("extract"))}
     write_json(paths.manifest, manifest)
     # ref: gmzpt
     write_json(paths.summary, _summary_from_manifest(manifest))
@@ -157,7 +164,22 @@ def _summary_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         "detected_name": detected.get("name"),
         "discrepancy": discrepancy.get("status"),
         "counts": {"components": 0, "findings": 0, "iocs": 0},
+        "quick": (manifest.get("quick") or {}).get("tool") or "",
     }
+
+
+def clear_quick(analysis_id: str, cases_dir: Path | None = None) -> None:
+    """A quick case turned into a full one (its full analysis was queued)."""
+    paths = CasePaths(analysis_id, cases_dir=cases_dir)
+    m = read_json(paths.manifest)
+    if not m or "quick" not in m:
+        return
+    m.pop("quick", None)
+    write_json(paths.manifest, m)
+    summ = read_json(paths.summary) or {}
+    if summ:
+        summ["quick"] = ""
+        write_json(paths.summary, summ)
 
 
 def get_case(analysis_id: str, cases_dir: Path | None = None) -> dict[str, Any]:

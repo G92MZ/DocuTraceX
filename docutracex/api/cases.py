@@ -62,6 +62,31 @@ async def create_case(file: UploadFile = File(...), password: str = Form("")) ->
     return JSONResponse(status_code=201, content=manifest)
 
 
+@router.post("/quick")
+async def create_quick_case(file: UploadFile = File(...), tool: str = Form(...),
+                            extract: bool = Form(False)) -> JSONResponse:
+    """Quick analysis from an engine tab (YARA, Machine Learning, C2, Hex): a
+    light case that runs only that engine — not the full pipeline. ``extract``
+    first runs the full analysis so the engine also sees what the file carries
+    (attachments, resources, decrypted stages). Hex runs nothing: it only
+    stores the file to view it."""
+    from ..tasks import manager
+
+    if tool not in case_service.QUICK_TOOLS:
+        raise HTTPException(status_code=400, detail=f"tool must be one of {', '.join(case_service.QUICK_TOOLS)}")
+    manifest = case_service.create_case(file.file, file.filename or "upload.bin",
+                                        quick={"tool": tool, "extract": extract and tool != "hex"})
+    aid, name = manifest["analysis_id"], manifest["original"]["filename"]
+    tasks = []
+    if extract and tool != "hex":
+        tasks.append(manager.submit("analyze", aid, name, target="full", cases_dir=settings.cases_dir))
+    if tool != "hex":
+        tasks.append(manager.submit("rerun_module", aid, name, target=tool, cases_dir=settings.cases_dir))
+    manifest["tasks"] = [t.public() for t in tasks]
+    manifest["task"] = manifest["tasks"][-1] if tasks else None
+    return JSONResponse(status_code=201, content=manifest)
+
+
 @router.get("")
 async def list_cases() -> list[dict]:
     """List case summaries, newest first."""
@@ -598,6 +623,8 @@ async def rerun_case(analysis_id: str, payload: dict = Body(default={})) -> dict
         if objs is not None and (not isinstance(objs, list) or not all(isinstance(x, str) for x in objs)):
             raise HTTPException(status_code=400, detail="objects must be a list of object ids")
         save_selection(CasePaths(analysis_id), module, objs if objs else None)
+    if not module:                                  # a full analysis: a quick case becomes a full one
+        case_service.clear_quick(analysis_id)
     task = manager.submit(
         "rerun_module" if module else "rerun", analysis_id,
         manifest["original"]["filename"], target=module or "full",
