@@ -275,11 +275,13 @@ def thread_facts(chain: dict[str, Any]) -> dict[str, Any]:
     mid, irt, refs = root.get("message_id") or "", root.get("in_reply_to") or [], root.get("references") or []
     earlier = [m for m in msgs if m is not root and m.get("index", 0) < root.get("index", 0)]
     chrono = []
-    from .mailchain import later        # noqa: PLC0415
+    from .mailchain import in_zone, later        # noqa: PLC0415
+    zone = chain.get("zone") or {}
+    note = f" (times in {zone['offset']}, from the {zone['source']})" if zone else ""
     for a, b in zip(msgs, msgs[1:]):
-        if a.get("date") and b.get("date") and later(a["date"], b["date"]):
-            chrono.append(f"message {b['index']} ({b['date'][:16]}) is older than message {a['index']} "
-                          f"({a['date'][:16]}) it follows")
+        if a.get("date") and b.get("date") and later(a["date"], b["date"], zone):
+            chrono.append(f"message {b['index']} ({in_zone(b['date'], zone)[:16]}) is older than message "
+                          f"{a['index']} ({in_zone(a['date'], zone)[:16]}) it follows{note}")
     newcomer = ""
     if earlier and (refs or irt):
         seen = {(p.get("address") or "").lower() for m in earlier for r in ("from", "sender", "to", "cc", "bcc", "reply_to")

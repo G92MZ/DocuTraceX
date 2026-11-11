@@ -333,15 +333,61 @@ def _dt(iso: str) -> datetime:
         return datetime.min
 
 
-def later(a: str, b: str) -> bool:
-    """``a`` is later than ``b``. Quoted dates carry no zone: when either side
-    has none, compare wall-clock times (converting one zone would invent hours)."""
+def local_zone(headers: list[dict[str, str]]) -> dict[str, Any]:
+    """The time zone quoted dates (which carry none) are most likely written in.
+
+    Mail clients write quoted "Sent:" lines in the reader's local time, while
+    Exchange Online / Gmail often stamp ``Date`` in UTC (+0000). The receiving
+    side's zone is taken from the Received hops, newest (last hop, the topmost
+    header) first, then from ``Date``: the first offset that is not +0000.
+    {offset: "+01:00", minutes, source} — or {} when every stamp is UTC / absent
+    (then quoted and header dates are compared as written)."""
+    cands: list[tuple[str, str]] = []
+    rec = [h.get("value", "") for h in headers or [] if (h.get("name") or "").lower() == "received"]
+    for i, v in enumerate(rec):
+        if ";" in v:
+            cands.append((v.rsplit(";", 1)[1].strip(), "last Received hop" if i == 0 else f"Received hop {i + 1} from the top"))
+    cands += [(h.get("value", ""), "Date header") for h in headers or [] if (h.get("name") or "").lower() == "date"][:1]
+    for raw, src in cands:
+        try:
+            d = parsedate_to_datetime(raw)
+        except (TypeError, ValueError, IndexError):
+            continue
+        off = d.utcoffset() if d and d.tzinfo else None
+        if off and off.total_seconds():
+            mins = int(off.total_seconds() // 60)
+            return {"offset": f"{'+' if mins >= 0 else '-'}{abs(mins) // 60:02d}:{abs(mins) % 60:02d}",
+                    "minutes": mins, "source": src}
+    return {}
+
+
+def _tz(zone: dict[str, Any] | None) -> timezone | None:
+    from datetime import timedelta
+    return timezone(timedelta(minutes=zone["minutes"])) if zone and "minutes" in zone else None
+
+
+def in_zone(iso: str, zone: dict[str, Any] | None) -> str:
+    """A date as the reader saw it: a zoned date converted to ``zone`` (naive
+    ISO), a zone-less (quoted) date as written."""
+    try:
+        d = datetime.fromisoformat(iso)
+    except (TypeError, ValueError):
+        return iso or ""
+    tz = _tz(zone)
+    return (d.astimezone(tz) if d.tzinfo and tz else d).replace(tzinfo=None).isoformat()
+
+
+def later(a: str, b: str, zone: dict[str, Any] | None = None) -> bool:
+    """``a`` is later than ``b``. Quoted dates carry no zone: when one side has
+    none, the zoned one is first converted to the reader's zone (``local_zone``)
+    and the wall-clock times are compared; without a known zone, as written."""
     try:
         da, db = datetime.fromisoformat(a), datetime.fromisoformat(b)
     except ValueError:
         return False
     if (da.tzinfo is None) != (db.tzinfo is None):
-        da, db = da.replace(tzinfo=None), db.replace(tzinfo=None)
+        tz = _tz(zone)
+        da, db = ((x.astimezone(tz) if x.tzinfo and tz else x).replace(tzinfo=None) for x in (da, db))
     return da > db
 
 
@@ -367,6 +413,7 @@ def _linked(m: dict[str, Any], others: list[dict[str, Any]]) -> bool:
 
 
 def build(root: dict[str, Any], attached: list[dict[str, Any]], quoted: list[dict[str, Any]]) -> dict[str, Any]:
+    zone = local_zone(root.get("headers") or [{"name": "Date", "value": root.get("date_raw") or ""}])
     # quoted blocks appear newest first: the oldest is the deepest
     thread = list(reversed(quoted[:MAX_MESSAGES])) + [root]
     related, apart = [], []
@@ -384,12 +431,14 @@ def build(root: dict[str, Any], attached: list[dict[str, Any]], quoted: list[dic
             continue
         pos = None
         if m.get("date") and any(t.get("date") for t in thread):
-            pos = next((i for i, t in enumerate(thread) if t.get("date") and later(t["date"], m["date"])), None)
+            pos = next((i for i, t in enumerate(thread) if t.get("date") and later(t["date"], m["date"], zone)), None)
         if pos is None and m.get("message_id") in ref_order:
             pos = min(ref_order.index(m["message_id"]), len(thread) - 1)
         thread.insert(len(thread) - 1 if pos is None else min(pos, len(thread) - 1), m)
     for n, m in enumerate(thread, 1):
         m["index"] = n
+        if m.get("date"):
+            m["date_local"] = in_zone(m["date"], zone)     # what the reader's client showed
         m["related"] = True
         m["changes"] = compare(thread[n - 2], m) if n > 1 else []
         m["change_count"] = sum(1 for c in m["changes"] if not c.get("expected"))
@@ -424,4 +473,5 @@ def build(root: dict[str, Any], attached: list[dict[str, Any]], quoted: list[dic
         "incomplete": bool(missing),
         "participants": sorted(participants.values(), key=lambda p: (p["address"] == "", p["address"] or p["name"])),
         "changes": sum(m["change_count"] for m in thread),
+        "zone": zone,
     }
