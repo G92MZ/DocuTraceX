@@ -18,6 +18,7 @@ its evidence, and its values feed the common IOC extractor.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -32,17 +33,59 @@ FAMILIES = ("Cobalt Strike", "Metasploit / Meterpreter", "Remcos", "AsyncRAT", "
             "Raccoon Stealer v2", "Warzone / AveMaria", "DarkGate")
 
 
-def _targets(original: Path, extracted_dir: Path):
+# Files other analyses derived from the sample (managed resources, pixels,
+# decrypted stages, hidden payloads, unpacked code): scanned first, so a big
+# extraction (an MSI with hundreds of files) never pushes them past MAX_FILES.
+_DERIVED_DIRS = ("dotnet_resources", "stages", "decrypted", "hidden", "unpacked", "go_embed", "code_streams")
+_DERIVED_SOURCES = ("code-resources", "decrypted", "stage", "hidden", "unpacked")
+
+
+def _targets(original: Path, extracted_dir: Path, prov: dict[str, dict[str, Any]] | None = None):
     yield original.name, original, ""
     if extracted_dir.is_dir():
-        n = 0
-        for p in sorted(extracted_dir.rglob("*")):
+        prov = prov or {}
+        files = [p for p in extracted_dir.rglob("*") if p.is_file()]
+
+        def rank(p: Path) -> tuple[int, str]:
+            rel = p.relative_to(extracted_dir.parent).as_posix()
+            derived = (any(part in _DERIVED_DIRS for part in p.relative_to(extracted_dir).parts[:-1])
+                       or (prov.get(rel) or {}).get("source") in _DERIVED_SOURCES)
+            return (0 if derived else 1, rel)
+        for n, p in enumerate(sorted(files, key=rank)):
             if n >= MAX_FILES:
                 break
-            if p.is_file():
-                n += 1
-                rel = p.relative_to(extracted_dir.parent).as_posix()
-                yield rel, p, rel
+            rel = p.relative_to(extracted_dir.parent).as_posix()
+            yield rel, p, rel
+
+
+def provenance(case_root: Path | None, root_name: str = "") -> dict[str, dict[str, Any]]:
+    """stored_path → how the object was obtained from the sample: the chain of
+    objects above it and each step (".NET resource X", "bitmap pixels: XOR key …",
+    "decrypted: AES …"), from the nested tree."""
+    if case_root is None:
+        return {}
+    try:
+        tree = (json.loads((case_root / "results" / "nested.json").read_text(encoding="utf-8")) or {}).get("tree") or []
+    except (OSError, ValueError):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+
+    def step(n: dict[str, Any]) -> str:
+        rec = [r for r in (n.get("recipe") or []) if r and r != "dotnet-resource"]
+        how = " › ".join(rec[-2:]) if rec else (n.get("origin") or n.get("decrypted_from") or "")
+        return f"{n.get('filename', '?')}" + (f" ({how})" if how else "")
+
+    def walk(nodes: list[dict[str, Any]], chain: list[str], depth: int = 0) -> None:
+        if depth > 16:
+            return
+        for n in nodes:
+            here = chain + [step(n)]
+            if n.get("stored_path"):
+                out[n["stored_path"]] = {"chain": here, "source": n.get("source", ""),
+                                         "text": " › ".join(here)}
+            walk(n.get("children") or [], here, depth + 1)
+    walk(tree, [root_name] if root_name else [])
+    return out
 
 
 def scan_object(path: Path, data: bytes) -> list[dict[str, Any]]:
@@ -134,6 +177,8 @@ def _finding(cfg: dict[str, Any]) -> dict[str, Any]:
     detail = f"{cfg['family']} configuration ({cfg['kind']})" + (f": C2 {', '.join(c2[:4])}" if c2 else "")
     evidence = "; ".join(f"{k}: {', '.join(map(str, v)) if isinstance(v, list) else v}"
                          for k, v in s.items())[:1500]
+    if cfg.get("provenance"):                   # evidence, not detail: the finding id stays the same
+        evidence = (f"from: {cfg['provenance']}; " + evidence)[:1800]
     sev = "high" if c2 and cfg.get("confidence") != "low" else "medium"
     return {"tool": "c2", "rule": "c2:" + cfg["family"].split(" /")[0].split(" ")[0].lower(),
             "severity": sev, "detail": detail, "location": cfg.get("object", ""), "evidence": evidence}
@@ -209,7 +254,8 @@ def analyze(original: Path, extracted_dir: Path, only: set[str] | None = None) -
     seen: dict[tuple[str, str], dict[str, Any]] = {}
     from ..progress import ObjectProgress
     todo = []
-    for label, path, stored in _targets(original, extracted_dir):
+    prov = provenance(case_root, original.name)
+    for label, path, stored in _targets(original, extracted_dir, prov):
         if only is not None and (stored or "original") not in only:
             continue
         try:
@@ -254,6 +300,8 @@ def analyze(original: Path, extracted_dir: Path, only: set[str] | None = None) -
             seen[key] = cfg
             cfg["object"] = label
             cfg["stored_path"] = stored
+            if stored and prov.get(stored):
+                cfg["provenance"] = prov[stored]["text"]
             f = _finding(cfg)
             cfg["finding_id"] = finding_id(f["tool"], f["rule"], f["location"], f["detail"])
             result["configs"].append(cfg)

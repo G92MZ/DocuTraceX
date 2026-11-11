@@ -6627,6 +6627,7 @@ function paneC2(c2, findings, caseId) {
       </summary>
       <div style="padding:8px 10px">
         ${rel}
+        ${c.provenance ? `<div class="hint-line">Found in a derived object: <span class="mono">${escapeHtml(c.provenance)}</span></div>` : ""}
         <div class="hint-line">Read with: ${escapeHtml(c.method || "")} · confidence ${escapeHtml(c.confidence || "")}${rawLink}
           ${c.also_in ? ` · also in ${escapeHtml(c.also_in.join(", "))}` : ""}
           ${c.stored_path ? fileActions(c.stored_path) : ""}</div>
