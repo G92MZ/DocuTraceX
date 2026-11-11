@@ -376,7 +376,8 @@
         <div class="hint-line"><label><input id="tenant-lookup" type="checkbox"> Resolve Microsoft 365 tenants
           (<span class="mono">X-MS-Exchange-CrossTenant-Id</span>) with <a href="https://azmap.dev/" target="_blank"
           rel="noopener noreferrer">AZMap</a> (only the tenant ID is sent), and the sender's domains to their tenant with Microsoft's
-          public sign-in endpoints (only the From / Reply-To / Return-Path domains are sent, never yours); cached; never blocks the analysis</label>
+          public sign-in endpoints (only the From / Reply-To / Return-Path domains are sent, never yours; asked fresh every time);
+          AZMap answers are cached; never blocks the analysis</label>
           <span id="tenant-lookup-msg" class="status"></span></div>
         <div class="hint-line">Allowed countries for sending servers (ISO codes, e.g. <span class="mono">ES PT FR</span>; empty = no check —
           compared with the country Microsoft 365 stamps for the connecting IP):
