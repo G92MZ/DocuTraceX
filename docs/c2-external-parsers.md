@@ -18,6 +18,7 @@ Every C2 extractor dependency is **optional, with a warning** (`docutracex/c2/re
 | njRAT / XWorm / NanoCore / RedLine / Snake / DarkGate… | `cryptography` | — |
 | AgentTesla-style stealers | — | `pefile`, `cryptography` |
 | Go implants | — | the Go module's results |
+| RMM / remote-access tools | — | the LOLRMM catalogue (downloaded; built-in list without it) |
 
 ## Licence review of third-party parser collections
 
@@ -58,3 +59,9 @@ The project rule: only permissive code goes into the repo. GPL tools are downloa
 - **Coverage:** AsyncRAT, DcRAT, QuasarRAT, VenomRAT and other .NET RATs.
 - **Dependencies:** `dnfile`, `pycryptodomex`, `yara-python`.
 - **Integrated** as the **optional second engine** of the .NET RAT extractor (`docutracex/c2/ratking.py`), in the same way `dissect.cobaltstrike` sits next to `1768.py`: a child process with a timeout, one sub-tab per engine, hosts compared (*agree / partial / differ*). `DOCUTRACEX_RATKING=0` disables it. It needs the real `.cctor` of the settings class, so the inert samples only show its *nothing found* view; validating it is part of the real-sample phase.
+
+### LOLRMM (magicsword-io) — integrated as a feed
+
+- **Licence:** **Apache-2.0** (data and code).
+- **What it is:** the community catalogue of RMM and remote-access tools (~360): names, PE metadata, installation paths, network domains, code-signing signers.
+- **Integration:** `docutracex/lolrmm.py` downloads `rmm_tools.json` (lolrmm.io, falling back to its GitHub copy) into `tools/lolrmm/` on install and every 7 days in the background; Settings → C2 has *Refresh now*. Only the catalogue is downloaded: nothing about a sample is sent. The C2 `rmm` extractor matches its file names, descriptions, signers and domains as whole strings of the file; generic installer names, cloud domains and shared signers are dropped, and a vendor's domain alone never names a product. Without the file the built-in list (~20 products, with the instance parsers) is used.

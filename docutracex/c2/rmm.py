@@ -8,6 +8,11 @@ carries it, the instance it is bound to — the ScreenConnect relay, the Atera
 account, the NetSupport gateway, the MeshCentral server, the Tactical RMM API —
 the "C2" of a deployment. Static only: nothing is installed or run.
 
+The product list is the built-in one below plus the LOLRMM catalogue
+(``docutracex.lolrmm``, refreshed weekly) when it has been downloaded: its file
+names, PE metadata, code-signing signers and network domains, matched as whole
+strings of the file (so hundreds of products cost one pass).
+
 A product name on its own is reported as *indicators* (an RMM client is no
 proof of an intrusion); the instance it is bound to is a configuration.
 """
@@ -96,10 +101,70 @@ def identify(low: str) -> list[tuple[str, list[str]]]:
     return out
 
 
+_STR = re.compile(r"[\x20-\x7e]{6,}")
+_SPLIT = re.compile(r"[\\/\s\"'=,;()<>|*?&\[\]{}]+")
+
+
+def _tokens(text: str) -> tuple[set[str], set[str]]:
+    """(whole printable strings, their pieces), lower-case — for exact lookups."""
+    whole = {m.group(0).strip().lower() for m in _STR.finditer(text)}
+    pieces = set()
+    for w in whole:
+        pieces.update(x.strip(".:") for x in _SPLIT.split(w) if len(x) >= 4)
+    return whole, pieces
+
+
+def _builtin_for(name: str) -> str | None:
+    low = name.lower()
+    for k in PRODUCTS:
+        short = k.split(" (")[0].split(" /")[0].lower()
+        if low == short or low.startswith(short + " ") or short.startswith(low + " "):
+            return k
+    return None
+
+
+def identify_lolrmm(whole: set[str], pieces: set[str], catalogue: dict[str, dict[str, Any]]) -> list[tuple[str, list[str], dict[str, Any]]]:
+    """Products of the LOLRMM catalogue: a code-signing signer of the product, a file
+    name that carries the product's name, or two of its file names / descriptions /
+    domains."""
+    out = []
+    for name, c in catalogue.items():
+        tok = {t for t in re.split(r"[^a-z0-9]+", name.lower()) if len(t) >= 4}
+        files = [f for f in c["files"] if f in pieces]
+        descs = [d for d in c["descriptions"] if d in whole]
+        signers = [x for x in c["signers"] if x.lower() in whole]
+        doms = [d for d in c["domains"] if d in pieces or any(p.endswith("." + d) for p in pieces if d in p)]
+        # a vendor's domain alone is weak: it shows up in any mail or page that links to the vendor
+        strong = signers or [f for f in files if any(t in f for t in tok)]
+        if strong or len(set(files) | set(descs) | set(doms)) >= 2:
+            out.append((name, [*signers, *doms, *files, *descs][:8], c))
+    return out
+
+
 def extract(data: bytes, filename: str = "") -> list[dict[str, Any]]:
     low, text = _texts(data)
     low_name = filename.lower()
     hits = identify(low + "\n" + low_name)
+    lol: dict[str, dict[str, Any]] = {}
+    try:
+        from .. import lolrmm
+        cat = lolrmm.products()
+    except Exception:  # noqa: BLE001  (catalogue unreadable: built-in list only)
+        cat = None
+    if cat:
+        whole, pieces = _tokens(text + "\n" + filename)
+        for name, why, c in identify_lolrmm(whole, pieces, cat):
+            key = _builtin_for(name)
+            if key:                                    # a built-in product: its config regexes stay
+                cur = next((h for h in hits if h[0] == key), None)
+                if cur is None:
+                    hits.append((key, why))
+                else:
+                    cur[1].extend(w for w in why if w not in cur[1])
+                lol[key] = {"name": name, **c}
+            else:
+                hits.append((name, why))
+                lol[name] = {"name": name, **c}
     res = []
     for name, why in hits[:4]:
         fields: dict[str, str] = {}
@@ -114,8 +179,11 @@ def extract(data: bytes, filename: str = "") -> list[dict[str, Any]]:
             if field_port := fields.get("Relay port") if s == fields.get("Relay") else "":
                 h = f"{h}:{field_port}"
             hosts.append(h)
-        summary: dict[str, Any] = {"Product": name, "Vendor": PRODUCTS[name][2], **fields,
+        lc = lol.get(name) or {}
+        vendor = PRODUCTS[name][2] if name in PRODUCTS else (lc.get("website") or "")
+        summary: dict[str, Any] = {"Product": name, "Vendor": vendor, **fields,
                                    "Seen": ", ".join(why[:6]),
+                                   **({"LOLRMM": f"{lc['name']} ({lc.get('category') or 'RMM'})"} if lc else {}),
                                    "Note": ("legitimate remote-access software: who deployed it, and to whose "
                                             "instance it connects, decides whether it is an intrusion")}
         if hosts:
