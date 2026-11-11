@@ -59,6 +59,19 @@ EXTRACTORS: dict[str, dict[str, Any]] = {
         "dependencies": ["cryptography"], "fields": ["C2", "campaign", "mutex", "install", "exfiltration"],
         "output": "configuration", "limits": "NanoCore: identification only",
     },
+    "rmm": {
+        "name": "RMM / remote-access tools", "version": "1.0",
+        "families": ["ScreenConnect", "AnyDesk", "TeamViewer", "Atera", "NetSupport Manager", "Splashtop",
+                     "Remote Utilities", "MeshCentral", "Tactical RMM", "SimpleHelp", "RustDesk", "Level", "NinjaOne",
+                     "Datto RMM", "N-able", "Kaseya VSA", "Zoho Assist", "GoTo / LogMeIn", "PDQ Connect",
+                     "ManageEngine"],
+        "formats": ["MSI / setup EXE", "the client itself", "scripts / launch parameters", "client32.ini"],
+        "engines": ["product strings (ASCII / UTF-16)", "installer and launch parameters"], "dependencies": [],
+        "fields": ["product", "relay / server / gateway / API", "account / company / site", "session type"],
+        "output": "configuration (the instance it is bound to), or indicators (product only)",
+        "limits": "legitimate software: the product alone is no proof of an intrusion; an instance set at run time "
+                  "(typed by the victim, downloaded later) is not in the file",
+    },
     "go": {
         "name": "Go implants", "families": ["Sliver", "Merlin", "Mythic (Go agent)", "Go implant"], "version": "1.0",
         "formats": ["Go PE / ELF / Mach-O"],
@@ -93,6 +106,7 @@ REQUIRES: dict[str, list[tuple[str, str, bool, str]]] = {
     "dotnet_more": [("python", "cryptography", True, "AES / DES / RC4 settings")],
     "stealers": [("python", "pefile", False, "PE resources"), ("python", "cryptography", False, "3DES-encrypted strings")],
     "go": [],
+    "rmm": [],
 }
 
 
