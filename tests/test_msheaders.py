@@ -167,3 +167,43 @@ def test_reply_subject_with_new_conversation_index() -> None:
     f = mailengine.ms_extra_facts({"thread_index": {"start": "2026-10-01T00:00:00+00:00", "replies": 0}},
                                   "a.example", "Mon, 05 Oct 2026 10:00:00 +0000", "RE: Factura", {})
     assert f["thread_index_new_for_reply"] and not f["thread_index_after_date"]
+
+
+def test_tool_bookkeeping_is_not_mined_for_iocs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The AZMap lookup (its URL and the tenant's related domains), the thread
+    Message-IDs / References and the rules' evidence are the app's own
+    bookkeeping: none of it becomes an IOC. The message's real indicators stay."""
+    answer = {"tenant_name": "Attacker Tenant", "brand_name": "Attacker",
+              "related_domains": ["attacker-tenant.example", "unrelated-subsidiary.example"], "related_count": 2}
+    monkeypatch.setattr("docutracex.mailintel._routes", lambda proxy: [("direct", _Opener(answer, []))])
+    monkeypatch.setattr(tenantintel, "enabled", lambda: True)
+    import docutracex.parsers.mail_rules as mr
+    src = mr._tenant
+    def _tenant(email, res):  # noqa: ANN001, ANN202  (force the lookup under tests)
+        res["tenant"] = tenantintel.resolve(email.get("microsoft") or {}, ["attacker-tenant.example"], [])
+    monkeypatch.setattr(mr, "_tenant", _tenant)
+    e, r = _analyse(ms.m365_headers_eml())
+    assert r["tenant"]["tenants"] and r["tenant"]["tenants"][0]["source"].startswith("https://azmap.dev/")
+    monkeypatch.setattr(mr, "_tenant", src)
+    e2, r2 = _analyse(ms.email_chain_eml())
+    vals = {(i["type"], i["value"]) for i in ioc.extract(ioc.sources_from_modules(
+        {"email": e, "mailrules": r}))["iocs"]}
+    vals2 = {(i["type"], i["value"]) for i in ioc.extract(ioc.sources_from_modules(
+        {"email": e2, "mailrules": r2}))["iocs"]}
+    flat = {v for _t, v in vals | vals2}
+    assert not any("azmap.dev" in v for v in flat)
+    assert "unrelated-subsidiary.example" not in flat                     # a tenant's other domains
+    assert not any(v.startswith("msg-") for v in flat)                    # Message-IDs are not mailboxes
+    assert ("email", "facturacion@proveedor-pagos.example") in vals2      # real participants stay
+    assert ("ipv4", "198.51.100.23") in vals
+
+
+def test_sender_domain_outside_its_tenant_is_phishing_on_its_own() -> None:
+    from docutracex import mailengine
+    t = {"tenants": [{"tenant_id": "x", "role": "sender", "status": "ok",
+                      "data": {"brand_name": "St. Mary's Catholic School",
+                               "related_domains": ["stmarys-school.example"]}}]}
+    f = {"tenant": mailengine.tenant_facts(t, "indltex.example")}
+    hit = next(r for r in mailengine.run(f, "email", {}) if r["id"] == "tenant_sender_domain_unrelated")
+    assert hit["severity"] == "high" and hit["score"] >= 40
+    assert mailengine.verdict([{"id": hit["id"], "score": hit["score"]}])["verdict"] == "phishing"
