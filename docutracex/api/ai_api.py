@@ -30,17 +30,29 @@ async def ai_chat(payload: dict = Body(...)) -> dict:
         raise HTTPException(status_code=502, detail=f"AI endpoint error: {exc}") from exc
 
 
+def _mcp_version(python: str) -> str | None:
+    """The ``mcp`` version in the interpreter the MCP client will launch (the
+    portable Python), probed in that interpreter as Diagnostics does — not in the
+    web server's own process, which may run on another Python."""
+    from ..deps import Dependency, check_in_interpreter
+    got = check_in_interpreter(python, [Dependency("mcp", "mcp", "MCP server", False)])
+    if got is not None:
+        st = next((d for d in got[1] if d.import_name == "mcp"), None)
+        return (st.version or "installed") if st and st.installed else None
+    try:                                              # the probe could not run: this process
+        import importlib.metadata as md
+        return md.version("mcp")
+    except Exception:  # noqa: BLE001
+        return None
+
+
 @router.get("/mcp/info")
 async def mcp_info() -> dict:
     """Everything needed to connect an MCP client to this installation."""
     from .. import ai_tools
 
     python = settings.portable_python() or sys.executable
-    try:
-        import importlib.metadata as md
-        mcp_version = md.version("mcp")
-    except Exception:  # noqa: BLE001
-        mcp_version = None
+    mcp_version = _mcp_version(python)
     env = {"PYTHONPATH": str(APP_ROOT), "DOCUTRACEX_CASES_DIR": str(settings.cases_dir)}
     desktop = {"mcpServers": {"docutracex": {"command": str(python), "args": ["-m", "docutracex.mcp_server"],
                                               "env": env}}}
