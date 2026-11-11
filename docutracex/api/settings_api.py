@@ -153,6 +153,41 @@ async def tenant_lookup_put(body: dict = Body(...)) -> dict:
     return {"enabled": data["tenant_lookup"]}
 
 
+@router.get("/c2-shared")
+async def c2_shared_get() -> dict:
+    """Cobalt Strike watermarks / public-key SHA-256 known to be shared (leaked, cracked):
+    shown with their note, never used to link cases. One per line: ``value note``."""
+    from ..c2.cobalt import KNOWN_WATERMARKS
+    st = appsettings.load().get("c2_shared") or {}
+    lines = [f"{k} {v}".strip() for k, v in (st.get("watermarks") or {}).items()]
+    lines += [f"{k} {v}".strip() for k, v in (st.get("pubkeys") or {}).items()]
+    return {"text": "\n".join(lines), "builtin": {str(k): v for k, v in KNOWN_WATERMARKS.items()}}
+
+
+@router.put("/c2-shared")
+async def c2_shared_put(body: dict = Body(...)) -> dict:
+    import re as _re
+    wms: dict[str, str] = {}
+    keys: dict[str, str] = {}
+    bad = []
+    for ln in str(body.get("text") or "").splitlines()[:1000]:
+        ln = ln.strip()
+        if not ln or ln.startswith("#"):
+            continue
+        val, _, note = ln.partition(" ")
+        note = note.strip()[:200]
+        if val.isdigit() and len(val) <= 10:
+            wms[val] = note
+        elif _re.fullmatch(r"[0-9a-fA-F]{64}", val):
+            keys[val.lower()] = note
+        else:
+            bad.append(val[:80])
+    data = appsettings.load()
+    data["c2_shared"] = {"watermarks": wms, "pubkeys": keys}
+    appsettings.save(data)
+    return {"watermarks": len(wms), "pubkeys": len(keys), "ignored": bad[:20]}
+
+
 @router.get("/allowed-countries")
 async def allowed_countries_get() -> dict:
     """ISO country codes the organisation expects mail servers in (empty = no check)."""

@@ -4977,6 +4977,28 @@ async function loadTenantLookup() {
   });
 }
 
+async function loadC2Shared() {
+  const ta = document.getElementById("c2-shared-text");
+  if (!ta) return;
+  try {
+    const j = await (await fetch("/api/settings/c2-shared")).json();
+    ta.value = j.text || "";
+    document.getElementById("c2-shared-builtin").textContent = Object.keys(j.builtin || {}).join(", ");
+  } catch (_) { /* optional */ }
+  const btn = document.getElementById("c2-shared-save");
+  if (btn.dataset.wired) return;
+  btn.dataset.wired = "1";
+  btn.addEventListener("click", async () => {
+    const msg = document.getElementById("c2-shared-msg");
+    try {
+      const j = await (await fetch("/api/settings/c2-shared", { method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: ta.value }) })).json();
+      msg.className = "status ok-text";
+      msg.textContent = `Saved: ${j.watermarks} watermark(s), ${j.pubkeys} key(s)${(j.ignored || []).length ? ` — ignored: ${j.ignored.join(", ")}` : ""}. Applies to new searches.`;
+    } catch (err) { msg.className = "status bad-text"; msg.textContent = String(err); }
+  });
+}
+
 async function loadAllowedCountries() {
   const inp = document.getElementById("allowed-countries");
   if (!inp) return;
@@ -6788,7 +6810,9 @@ function paneC2(c2, findings, caseId) {
       return `<details class="disclose"><summary>${escapeHtml(t.tool || name)} <span class="badge ${st}">${escapeHtml(t.status || "")}</span></summary>
         ${t.method ? `<div class="hint-line">${escapeHtml(t.method)}</div>` : ""}${t.note ? `<div class="hint-line">${escapeHtml(t.note)}</div>` : ""}
         ${t.summary ? `<table class="cases c2-kv"><tbody>${kv(t.summary)}</tbody></table>` : ""}
-        ${t.profile ? `<details class="disclose"><summary>Malleable C2 profile (rebuilt)</summary><pre class="mono c2-pre">${escapeHtml(t.profile)}</pre></details>` : ""}</details>`;
+        ${t.profile ? `<details class="disclose"><summary>Malleable C2 profile (rebuilt)</summary>
+          <button type="button" class="btn btn-ghost btn-sm" data-c2-profile="${escapeHtml(encodeURIComponent(t.profile))}">Download .profile</button>
+          <pre class="mono c2-pre">${escapeHtml(t.profile)}</pre></details>` : ""}</details>`;
     }).join("");
     const rel = (c.related || []).length ? `<div class="hint-line"><b>Seen in other cases:</b> ${c.related.map((r) =>
       `<span class="badge ${r.strength === "strong" ? "badge-bad" : "badge-warn"}">${escapeHtml(r.match)}</span> <button type="button" class="cx-link c2-rel" data-case="${escapeHtml(r.case)}">${escapeHtml(r.case)}</button> <span class="mono">${escapeHtml(r.object || "")}</span>`).join(" · ")}</div>` : "";
@@ -6859,6 +6883,7 @@ async function loadC2View(caseId) {
   const sel = document.getElementById("c2-case");
   const body = document.getElementById("c2-body");
   if (!sel || !body) return;
+  loadC2Shared();
   const id = await fillCaseSelect(sel, caseId || _c2Case || _openCaseId);
   _c2Case = id;
   if (!id) { body.innerHTML = '<p class="hint-line">Analyse a file first; implant configurations found in it show up here.</p>'; return; }
@@ -6923,6 +6948,15 @@ function setupMlHex() {
     const sel = document.getElementById("ml-case");
     await runModuleOnCase("ml", sel && sel.value, document.getElementById("ml-run-status"), mlRun, "Scoring");
     loadMlView(sel && sel.value);
+  });
+  document.addEventListener("click", (ev) => {
+    const b = ev.target.closest && ev.target.closest("[data-c2-profile]");
+    if (!b) return;
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([decodeURIComponent(b.dataset.c2Profile)], { type: "text/plain" }));
+    a.download = "beacon.profile";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   });
   const c2Run = document.getElementById("c2-run");
   if (c2Run) c2Run.addEventListener("click", async () => {

@@ -508,13 +508,39 @@ KNOWN_WATERMARKS: dict[int, str] = {
 }
 
 
+def shared() -> dict[str, dict[Any, str]]:
+    """Licences and keys known to be shared (C2 view → *Shared watermarks and keys*):
+    the built-in watermarks plus the analyst's own list. Shared values are shown
+    with their note and never link cases."""
+    wms: dict[Any, str] = dict(KNOWN_WATERMARKS)
+    keys: dict[Any, str] = {}
+    try:
+        from .. import appsettings
+        st = appsettings.load().get("c2_shared") or {}
+        for k, v in (st.get("watermarks") or {}).items():
+            if str(k).isdigit():
+                wms[int(k)] = f"{v or 'shared'} (your list)"
+        for k, v in (st.get("pubkeys") or {}).items():
+            keys[str(k).lower()] = f"{v or 'shared'} (your list)"
+    except Exception:  # noqa: BLE001  (settings unreadable: built-ins only)
+        pass
+    return {"watermarks": wms, "pubkeys": keys}
+
+
+def pubkey_note(value: Any) -> str:
+    s = str(value).strip()
+    head = s.split(" ", 1)[0].lower()
+    note = shared()["pubkeys"].get(head) if len(head) == 64 and "—" not in s else None
+    return f"{head} — {note}" if note else s
+
+
 def watermark_note(value: Any) -> str:
     """'1359593325 — leaked / cracked builds…' for a known watermark; as is otherwise."""
     s = str(value).strip()
     head = s.split(" ", 1)[0]
     if not head.isdigit() or "—" in s:
         return s
-    note = KNOWN_WATERMARKS.get(int(head))
+    note = shared()["watermarks"].get(int(head))
     return f"{head} — {note}" if note else s
 
 
@@ -793,6 +819,8 @@ def combine(v1768: dict[str, Any], vdis: dict[str, Any], ind: list[str]) -> dict
         summary.pop("Version (guess)", None)              # dissect's version is exact, 1768's a guess
     if summary.get("Watermark") not in (None, ""):
         summary["Watermark"] = watermark_note(summary["Watermark"])
+    if summary.get("Public key SHA-256"):
+        summary["Public key SHA-256"] = pubkey_note(summary["Public key SHA-256"])
     method = " + ".join(v["method"] for v in found)
     p2p = str(summary.get("Type") or "").upper().startswith(("SMB", "TCP"))
     partial = ([k for k in ("C2", "Sleep / jitter") if k not in summary and not (k == "C2" and p2p)]

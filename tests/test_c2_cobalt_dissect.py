@@ -182,3 +182,32 @@ def test_version_guess_says_it_is_a_guess(monkeypatch: pytest.MonkeyPatch, tmp_p
     v = cobalt._view_1768(tmp_path / "x", b"")
     if v["status"] == "found":
         assert "not read from the beacon" in v["summary"]["Version (guess)"]
+
+
+def test_shared_pubkey_and_watermark_from_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_1768: None) -> None:
+    from docutracex import appsettings
+    from docutracex.c2 import correlate
+    monkeypatch.setattr(appsettings, "load", lambda: {"c2_shared": {"watermarks": {"12345678": "seen in a cracked kit"},
+                                                                   "pubkeys": {"ab" * 32: "leaked key"}}})
+    _dissect_returns(monkeypatch, FOUND)
+    p = tmp_path / "packed.exe"
+    p.write_bytes(b"MZ" + b"\x00" * 0x3A + b"\x40\x00\x00\x00" + b"PE\x00\x00" + bytes(range(256)) * 4)
+    s = cobalt.extract(p, p.read_bytes())["summary"]
+    assert s["Watermark"] == "12345678 — seen in a cracked kit (your list)"
+    assert s["Public key SHA-256"] == "ab" * 32 + " — leaked key (your list)"
+    fp = correlate.fingerprints({"summary": s})
+    assert fp["watermark"] == "" and fp["pubkey"] == ""                 # shared: never links cases
+
+
+def test_shared_settings_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    from docutracex import appsettings
+    from docutracex.api import settings_api
+    store: dict = {}
+    monkeypatch.setattr(appsettings, "load", lambda: dict(store))
+    monkeypatch.setattr(appsettings, "save", lambda d: store.update(d))
+    r = asyncio.run(settings_api.c2_shared_put({"text": "# comment\n1234 cracked kit\n" + "CD" * 32 + " leaked\nnot-a-value x"}))
+    assert r == {"watermarks": 1, "pubkeys": 1, "ignored": ["not-a-value"]}
+    got = asyncio.run(settings_api.c2_shared_get())
+    assert "1234 cracked kit" in got["text"] and "cd" * 32 + " leaked" in got["text"] and "0" in got["builtin"]

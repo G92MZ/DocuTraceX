@@ -278,6 +278,13 @@
         </form>
         <div id="c2-quick-note" class="hint-line quick-note"></div>
         <details class="disclose obj-picker" id="c2-objs"><summary>Objects to scan: all</summary><div class="obj-list"></div></details>
+        <details class="disclose" id="c2-shared"><summary>Shared watermarks and keys</summary>
+          <div class="hint-line">Cobalt Strike watermarks (licence IDs) and public-key SHA-256 known to be <b>shared</b> —
+            leaked or cracked builds used by unrelated people. They are shown with your note and never link cases.
+            One per line: <span class="mono">value note</span>. Built in: <span id="c2-shared-builtin" class="mono"></span></div>
+          <textarea id="c2-shared-text" rows="5" spellcheck="false" class="mono" style="width:100%"></textarea>
+          <button id="c2-shared-save" class="btn btn-ghost btn-sm" type="button">Save</button>
+          <span id="c2-shared-msg" class="status"></span></details>
         <div id="c2-body"></div>
       </section>
     </div>

@@ -34,10 +34,12 @@ def _index(cases_dir: Path) -> Path:
 def fingerprints(cfg: dict[str, Any]) -> dict[str, Any]:
     s = cfg.get("summary") or {}
     pub = str(s.get("Public key SHA-256") or "")
+    if "—" in pub:                                    # listed as shared (leaked / cracked key): no fingerprint
+        pub = ""
     wm = str(s.get("Watermark") or "").split(" ", 1)[0]
     if wm.isdigit():                                  # shared (trial / leaked) licences are no fingerprint
-        from .cobalt import KNOWN_WATERMARKS
-        if int(wm) in KNOWN_WATERMARKS:
+        from .cobalt import shared
+        if int(wm) in shared()["watermarks"]:
             wm = ""
     hosts = sorted({str(h).split(":", 1)[0].lower() for h in cfg.get("c2") or [] if h})
     return {"pubkey": pub, "watermark": "" if wm in _NO_WATERMARK else wm, "hosts": hosts}
