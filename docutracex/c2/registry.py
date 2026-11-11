@@ -56,6 +56,15 @@ EXTRACTORS: dict[str, dict[str, Any]] = {
         "dependencies": ["dnfile", "pycryptodome"], "fields": ["C2", "campaign", "mutex", "install", "exfiltration"],
         "output": "configuration", "limits": "NanoCore: identification only",
     },
+    "go": {
+        "name": "Go implants", "families": ["Sliver", "Merlin", "Mythic (Go agent)", "Go implant"], "version": "1.0",
+        "formats": ["Go PE / ELF / Mach-O"],
+        "engines": ["own Go parser (BuildInfo, pclntab)", "Go module: code strings per function, go:embed, crypto, Garble"],
+        "dependencies": ["the Go module's results when it ran (optional)"],
+        "fields": ["C2 (with provenance)", "framework", "Go version", "module", "network functions", "crypto"],
+        "output": "configuration, or indicators (framework without endpoints)",
+        "limits": "a bare literal is never taken as the C2 on its own; endpoints built at run time are not seen",
+    },
     "stealers": {
         "name": "AgentTesla-style stealers", "families": ["AgentTesla"], "version": "1.0",
         "formats": [".NET assembly", "PE", "memory dump"], "engines": ["strings"], "dependencies": [],

@@ -11,6 +11,8 @@ the implants it recognises, without running anything:
 * njRAT (plain settings), XWorm (AES-ECB, key from the mutex), AgentTesla-style
   stealers (exfiltration channel in clear), NanoCore (identification only)
 * RedLine / META, Snake Keylogger, Raccoon v2, Warzone / AveMaria, DarkGate
+* Go implants (Sliver, Merlin, Mythic Go agents, generic): framework and C2
+  endpoints from the Go analysis, when it ran (``golang_c2``)
 
 Each configuration becomes a high-severity finding with the C2 endpoints in
 its evidence, and its values feed the common IOC extractor.
@@ -30,7 +32,8 @@ MAX_FILES = 500
 MAX_SIZE = 64 * 1024 * 1024
 FAMILIES = ("Cobalt Strike", "Metasploit / Meterpreter", "Remcos", "AsyncRAT", "DcRAT", "QuasarRAT",
             "njRAT", "XWorm", "AgentTesla", "NanoCore", "RedLine / META", "Snake Keylogger",
-            "Raccoon Stealer v2", "Warzone / AveMaria", "DarkGate")
+            "Raccoon Stealer v2", "Warzone / AveMaria", "DarkGate", "Sliver", "Merlin", "Mythic (Go agent)",
+            "Go implant")
 
 
 # Files other analyses derived from the sample (managed resources, pixels,
@@ -104,6 +107,9 @@ def _applicable(name: str, data: bytes) -> bool:
     if name == "dotnet":
         from . import dotnet_rats
         return dotnet_rats.prefilter(data)
+    if name == "go":
+        from . import golang_c2
+        return golang_c2.prefilter(data)
     return True                       # string-based extractors read any object
 
 
@@ -151,6 +157,9 @@ def scan_object_detailed(path: Path, data: bytes) -> tuple[list[dict[str, Any]],
         out += run("dotnet_more", lambda: dotnet_more.extract_all(data))
     if not any(r.get("kind") in ("RAT", "stealer") and r.get("c2") for r in out):
         out += run("stealers", lambda: stealers.extract_all(data))
+    if not any(r.get("c2") and r.get("kind") != "indicators" for r in out):
+        from . import golang_c2
+        out += run("go", lambda: golang_c2.extract(path, data))
     # settings the .NET analysis decrypted statically (CIL decryptors, .resources)
     if out and data[:2] == b"MZ" and b"BSJB" in data:
         try:
