@@ -51,7 +51,7 @@ def test_enrich_keeps_original_and_flows_to_csv_and_report(tmp_path, monkeypatch
     from docutracex.app import create_app
     from docutracex.config import settings
 
-    item = {"label": "4489a0ba.exe", "status": "ok", "file_type": "Dot_Net", "format": ".NET", "model": "EMBER2024_Dot_Net",
+    item = {"label": "9d2f6b1e.exe", "status": "ok", "file_type": "Dot_Net", "format": ".NET", "model": "EMBER2024_Dot_Net",
             "score": 0.999995, "threshold": 0.9330, "calibrated": True, "verdict": "above threshold", "finding_id": "f1",
             "labels": {"family": [{"name": "wacatac", "prob": 0.33, "confidence": "high"},
                                   {"name": "darktortilla", "prob": 0.30, "confidence": "high"},

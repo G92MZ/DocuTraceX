@@ -26,10 +26,10 @@ def _scan(tmp_path: Path, name: str, data: bytes) -> list[dict]:
 
 def test_helpers() -> None:
     assert cobalt_dissect.host_header("Host: group.example\r\n") == "group.example"
-    assert cobalt_dissect.idn("kçi.com") == "xn--ki-4ia.com" and cobalt_dissect.idn("a.example") == ""
+    assert cobalt_dissect.idn("façade.example") == "xn--faade-zra.example" and cobalt_dissect.idn("a.example") == ""
     assert "domain fronting" in cobalt_dissect.fronting(["cdn.example.net"], "billing-portal.example")
     assert cobalt_dissect.fronting(["billing-portal.example"], "billing-portal.example") == ""
-    assert cobalt._demojibake("kÃ§i.com") == "kçi.com"
+    assert cobalt._demojibake("faÃ§ade.example") == "façade.example"
     assert cobalt.channel("windows-beacon_https-reverse_https") == "HTTPS"
     assert cobalt.channel("windows-beacon_dns-reverse_http") == "DNS"
     assert cobalt.channel("windows-beacon_smb-bind_pipe") == "SMB"

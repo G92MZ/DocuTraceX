@@ -228,7 +228,7 @@ def test_phish_url_patterns_and_legit_links() -> None:
 
 def test_report_phish_button_is_infrastructure() -> None:
     from docutracex import ioc, urlwrap
-    u = "https://us-phishalarm-ewt.proofpoint.com/EWT/v1/BvtVhh717i4!WfzB-ABkywa3$"
+    u = "https://us-phishalarm-ewt.proofpoint.com/EWT/v1/AbCdEf012345!XyZ-0000aaaa$"
     assert urlwrap.is_opaque_infrastructure(u)
     assert not urlwrap.is_opaque_infrastructure("https://urldefense.com/v3/__https://evil.example/__;!!x$")
     got = ioc.extract([{"module": "email", "location": "email/body_html_link", "text": u}])["iocs"]

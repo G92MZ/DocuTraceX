@@ -112,8 +112,8 @@ def test_olevba_descriptions_are_not_commands_but_real_commands_are() -> None:
 
 def test_code_member_assignments_are_not_domains() -> None:
     got = _text("var a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = 'F.zip'; "
-                "b.download('x'); if (r.status == 200) {} ; visit cdn.facturas.download or evil.download")
-    assert {v for t, v in got if t == "domain"} == {"cdn.facturas.download", "evil.download"}
+                "b.download('x'); if (r.status == 200) {} ; visit cdn.facturas-demo.download or evil.download")
+    assert {v for t, v in got if t == "domain"} == {"cdn.facturas-demo.download", "evil.download"}
 
 
 def test_digests_printed_by_a_tool_are_not_hashes_but_sample_hashes_are() -> None:

@@ -1,7 +1,7 @@
 """Cobalt Strike stager inside a PE: 1768.py reports it as messages (and a hex dump of the
 decoded shellcode), not as ``config``.
 
-Fixture: the stager of sample 224aec5f… as printed by 1768.py, with the C2 address replaced by
+Fixture: the stager of sample 7c3e9a51… as printed by 1768.py, with the C2 address replaced by
 an RFC 5737 documentation address (198.51.100.77) so no live indicator is kept in the repo.
 """
 

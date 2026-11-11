@@ -715,7 +715,7 @@ def test_vbs_and_python_stages_are_nested(client) -> None:
 def test_ioc_sources_skip_app_text_and_enrichment() -> None:
     from docutracex import ioc
     mods = {
-        "netcheck": {"checks": [{"data": {"rdap": {"abuse_email": "anti-spam@chinatelecom.cn"}}}]},
+        "netcheck": {"checks": [{"data": {"rdap": {"abuse_email": "anti-spam@isp-rdap.example"}}}]},
         "unlock": {"original_sha256": "a" * 64, "decrypted_sha256": "b" * 64},
         "archive": {"entries": [{"name": "visor.py", "stored_path": "extracted/notas.one"}]},
         "rtf": {"tools": {"rtfdump": {"command": "python rtfdump.py x", "error": "see rtfdump.py",
@@ -726,5 +726,5 @@ def test_ioc_sources_skip_app_text_and_enrichment() -> None:
     }
     vals = {i["value"] for i in ioc.extract(ioc.sources_from_modules(mods))["iocs"]}
     assert {"http://evil.example/a", "http://cdn.example/x"} <= vals
-    for noise in ("anti-spam@chinatelecom.cn", "a" * 64, "b" * 64, "visor.py", "notas.one", "rtfdump.py", "java.io"):
+    for noise in ("anti-spam@isp-rdap.example", "a" * 64, "b" * 64, "visor.py", "notas.one", "rtfdump.py", "java.io"):
         assert noise not in vals

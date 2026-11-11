@@ -176,7 +176,7 @@ def parse_1768(out: dict[str, Any], text_report: list[str] | None = None) -> dic
 
 
 def _demojibake(s: str) -> str:
-    """1768.py prints UTF-8 names (an IDN C2: ``kçi.com``) byte by byte: "kÃ§i.com"."""
+    """1768.py prints UTF-8 names (an IDN C2: ``façade.example``) byte by byte: "faÃ§ade.example"."""
     try:
         return s.encode("latin-1").decode("utf-8") if not s.isascii() else s
     except (UnicodeEncodeError, UnicodeDecodeError):
