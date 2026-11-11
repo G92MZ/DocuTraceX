@@ -579,10 +579,13 @@ rules:
     when: {fact: ms.country_not_allowed}
     evidence: "{ms.country_not_allowed}"
 
+  # The From domain is not verified in the Microsoft 365 tenant the message was
+  # sent from (per AZMap): a clear phishing sign (spoofed From, or another
+  # organisation's / a throw-away tenant). Alone it reaches "phishing".
   - id: tenant_sender_domain_unrelated
-    title: The sender's domain is not one of its Microsoft 365 tenant's domains (attribution clue)
-    severity: medium
-    score: 8
+    title: The sender's domain is not one of its Microsoft 365 tenant's domains
+    severity: high
+    score: 40
     attack: [T1566, T1586.002]
     when: {fact: tenant.sender_domain_unrelated}
     evidence: "{tenant.sender_domain_unrelated}"
