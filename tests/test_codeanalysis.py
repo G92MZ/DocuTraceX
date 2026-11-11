@@ -538,3 +538,55 @@ def test_decompile_many_real(tmp_path: Path) -> None:
     exe.write_bytes(bk.pe(bits=32, gui=False))
     r = ca.decompile_many(exe, [0x401000], mode="native", names=None, lock_path=tmp_path / ".lock")
     assert set(r) == {0x401000} and r[0x401000]["status"] in ("ok", "failed")
+
+
+# --- Go phase 2 / 5: source lines, build paths, func values ------------------------------
+
+def test_go_source_lines_from_pclntab() -> None:
+    data = CODE["go/sample_go_code.exe"]
+    names = {n["name"]: n for n in code_case.go_names(data, detect.identify(data))}
+    assert names["main.main"]["file"] == f"{ms.GO_CODE_PROJECT}/main.go" and names["main.main"]["line"] == 12
+    assert names["main.decryptConfig"]["file"].endswith("/crypto.go")
+    assert names["crypto/aes.NewCipher"]["file"].startswith("C:/Program Files/Go/src/crypto/aes/")
+
+
+def test_go_build_paths() -> None:
+    from docutracex.golang import types as go_types
+    data = CODE["go/sample_go_code.exe"]
+    bp = go_types.build({}, code_case.go_names(data, detect.identify(data)))["build_paths"]
+    assert bp == {"users": ["facturacion"], "project_dirs": [ms.GO_CODE_PROJECT], "trimpath": False}
+    assert go_types.build_paths(["fmt/print.go", "example.com/invoicesync/main.go"])["trimpath"] is True
+
+
+@pytest.mark.skipif(not importlib.util.find_spec("shutil") or not __import__("shutil").which("go"),
+                    reason="Go toolchain not installed")
+def test_go_source_lines_real_build(tmp_path: Path) -> None:
+    import subprocess
+    (tmp_path / "go.mod").write_text("module example.com/invoicesync\n\ngo 1.21\n")
+    (tmp_path / "main.go").write_text('package main\n\nimport "fmt"\n\nfunc main() {\n\tfmt.Println("factura 2026-0187")\n}\n')
+    subprocess.run(["go", "build", "-o", "inv"], cwd=tmp_path, check=True, capture_output=True,
+                   env={**__import__("os").environ, "CGO_ENABLED": "0", "GOFLAGS": ""})
+    data = (tmp_path / "inv").read_bytes()
+    names = {n["name"]: n for n in code_case.go_names(data, detect.identify(data))}
+    assert names["main.main"]["file"] == f"{tmp_path.as_posix()}/main.go" and names["main.main"]["line"] == 5
+
+
+@needs_rizin
+def test_func_value_call_resolved(tmp_path: Path) -> None:
+    from docutracex.codeanalysis import _Reader
+    data = CODE["go/sample_go_code.exe"]
+    p = tmp_path / "agent.exe"
+    p.write_bytes(data)
+    names = code_case.go_names(data, detect.identify(data))
+    out = tmp_path / "go.json"
+    ca.analyze(p, mode="go", names=names, out_file=out, lock_path=tmp_path / "lock")
+    full = json.loads(out.read_text())
+    full["closure_calls"] = code_case.closure_calls(full, _Reader(data), names)
+    full["interface_calls"] = code_case.itab_calls(full, _Reader(data), names)
+    by = {f["name"]: f for f in full["functions"]}
+    hook, beacon = by["main.runHook"]["addr"], by["main.beacon"]["addr"]
+    assert full["closure_calls"] == [{"from": hook, "targets": [beacon], "names": ["main.beacon"]}]
+    assert [ic["methods"] for ic in full["interface_calls"]] == [["main.(*Config).load"]]   # funcval not an itab slot
+    assert {"from": hook, "to": beacon, "kind": "closure"} in code_case.graph(full)["edges"]
+    fv = code_case.function_view(full, hook)
+    assert fv["closure_targets"] == [{"addr": beacon, "name": "main.beacon"}] and fv["file"].endswith("/main.go")

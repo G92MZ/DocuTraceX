@@ -94,17 +94,46 @@ def build(goresym_raw: dict[str, Any] | None, names: list[dict[str, Any]], main_
     _implementations(types)
     ordered = sorted(types.values(), key=lambda t: (not t["user"], t["package"], t["name"]))[:MAX_TYPES]
     files = [f for f in raw.get("Files") or [] if isinstance(f, str)]
+    if not files:                                        # GoReSym missing / refused: the own pclntab reader
+        files = list(dict.fromkeys(n["file"] for n in names if n.get("file") and not n["file"].startswith("<")))
     user_files = [f for f in files if not _STD_FILE.search(f.replace("\\", "/")) and "/pkg/mod/" not in f.replace("\\", "/")]
     kinds: dict[str, int] = {}
     for t in ordered:
         if t["user"]:
             kinds[t["kind"] or "?"] = kinds.get(t["kind"] or "?", 0) + 1
     return {"types": ordered, "files": files[:5000], "user_files": user_files[:2000],
+            "build_paths": build_paths(files),
             "summary": {"types": len(ordered), "user_types": sum(1 for t in ordered if t["user"]),
                         "interfaces": sum(1 for t in ordered if t["kind"] == "Interface"),
                         "with_methods": sum(1 for t in ordered if t["methods"]), "user_kinds": kinds,
                         "files": len(files), "user_files": len(user_files),
                         "goresym": bool(raw.get("Types") or raw.get("Interfaces"))}}
+
+
+_HOME = re.compile(r"^(?:[A-Za-z]:)?/(?:home|Users|users)/([^/]+)/|^/root/", re.IGNORECASE)
+
+
+def build_paths(files: list[str]) -> dict[str, Any]:
+    """Where the program was built, from the source paths Go keeps (no -trimpath):
+    the accounts (``/home/<user>/``, ``C:/Users/<user>/``) and the project
+    directories of the program's own files. The same user / project path across
+    samples is a lead to link them; it says nothing on its own."""
+    users: dict[str, int] = {}
+    roots: dict[str, int] = {}
+    for f in files:
+        g = f.replace("\\", "/")
+        m = _HOME.match(g)
+        if m:
+            u = m.group(1) if m.lastindex else "root"
+            users[u] = users.get(u, 0) + 1
+        if not re.match(r"^(?:[A-Za-z]:)?/", g) or _STD_FILE.search(g) or "/pkg/mod/" in g:
+            continue
+        d = g.rsplit("/", 1)[0]
+        roots[d] = roots.get(d, 0) + 1
+    return {"users": sorted(users, key=lambda u: -users[u])[:10],
+            "project_dirs": sorted(roots, key=lambda d: -roots[d])[:10],
+            "trimpath": bool(files) and not any(re.match(r"^(?:[A-Za-z]:)?/", f.replace("\\", "/"))
+                                                 and not _STD_FILE.search(f.replace("\\", "/")) for f in files)}
 
 
 _IFACE_METHOD = re.compile(r"^\s*([A-Za-z_]\w*)\(", re.MULTILINE)

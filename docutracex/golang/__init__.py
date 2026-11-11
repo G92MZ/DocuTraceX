@@ -136,6 +136,14 @@ def _types_phase(root: Path, res: dict[str, Any], go: list[dict[str, Any]], raw_
             if t["types"] or t["files"]:
                 go_types.write(root, o["sha256"], t)
                 o["types"] = t["summary"]
+            bp = t.get("build_paths") or {}
+            if bp.get("users") or bp.get("project_dirs"):
+                o["build_paths"] = bp
+                res["findings"].append({
+                    "tool": "golang", "rule": "go:build_paths", "severity": "info", "location": o.get("label", ""),
+                    "detail": "Go binary built without -trimpath: it keeps the developer's source paths"
+                              + (f" (account(s): {', '.join(bp['users'][:3])})" if bp.get("users") else ""),
+                    "evidence": "; ".join(bp.get("project_dirs") or [])[:1500]})
         except Exception as exc:  # noqa: BLE001  (never breaks the case)
             log.warning("Go types step failed on %s: %s", o.get("label"), exc)
 

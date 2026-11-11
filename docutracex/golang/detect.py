@@ -262,7 +262,7 @@ def function_table(data: bytes, h: dict[str, Any], binf: binfmt.Binary | None = 
                 eoff, foff = ents[k]
                 fstart = ftab + foff
                 nameoff = struct.unpack_from(en + "i", data, fstart + 4)[0]
-                out.append((text + eoff, text + ents[k + 1][0], nameoff))
+                out.append((text + eoff, text + ents[k + 1][0], nameoff, fstart, 4))
         else:                                            # 1.16–1.17: uintptr entry / funcoff
             word = en + ("Q" if ps == 8 else "I")
             ents = [(struct.unpack_from(word, data, ftab + 2 * ps * k)[0],
@@ -270,17 +270,74 @@ def function_table(data: bytes, h: dict[str, Any], binf: binfmt.Binary | None = 
             for k in range(n):
                 entry, foff = ents[k]
                 nameoff = struct.unpack_from(en + "i", data, ftab + foff + ps)[0]
-                out.append((entry, ents[k + 1][0], nameoff))
+                out.append((entry, ents[k + 1][0], nameoff, ftab + foff, ps))
     except struct.error:
         return []
     res = []
-    for start, end, nameoff in out:
+    for start, end, nameoff, fstart, entsz in out:
         a = names_at + nameoff
         e = data.find(b"\x00", a, a + 1024)
         if nameoff < 0 or e < 0:
             continue
-        res.append({"name": data[a:e].decode("utf-8", "replace"), "start": start, "end": max(end, start)})
+        rec = {"name": data[a:e].decode("utf-8", "replace"), "start": start, "end": max(end, start)}
+        src = _source(data, h, fstart, entsz)
+        if src:
+            rec.update(src)
+        res.append(rec)
     return res
+
+
+def _pcvalues(data: bytes, at: int, quantum: int, limit: int = 4096) -> list[int]:
+    """Values of a pc-value table (zig-zag value delta, pc delta) — Go's runtime.pcvalue."""
+    vals, val, first = [], -1, True
+    i = at
+    for _ in range(limit):
+        if i >= len(data):
+            break
+        uv, i = _uvarint(data, i)
+        if uv == 0 and not first:
+            break
+        first = False
+        val += -((uv >> 1) + 1) if uv & 1 else uv >> 1
+        _pcd, i = _uvarint(data, i)
+        vals.append(val)
+    return vals
+
+
+def _source(data: bytes, h: dict[str, Any], fstart: int, entsz: int) -> dict[str, Any] | None:
+    """{file, line} of one function, from its _func pcfile / pcln tables
+    (the same tables the runtime prints in a panic trace). Go 1.16+."""
+    if "pctab_offset" not in h:
+        return None
+    en, off = h.get("_en", "<"), h["offset"]
+    try:
+        base = fstart + entsz + 4 + 4 + 4                  # after entry, nameoff, args, deferreturn
+        pcfile, pcln, _npcdata, cuoff = struct.unpack_from(en + "4I", data, base + 4)
+        start_line = (struct.unpack_from(en + "i", data, base + 20)[0]
+                      if h.get("magic") == "0xfffffff1" else 0)
+        if not pcfile or not pcln:
+            return None
+        pct = off + h["pctab_offset"]
+        files = _pcvalues(data, pct + pcfile, h["quantum"])
+        lines = [x for x in _pcvalues(data, pct + pcln, h["quantum"]) if 0 < x < 10_000_000]
+        if not files or files[0] < 0:
+            return None
+        foff = struct.unpack_from(en + "I", data, off + h["cu_offset"] + 4 * (cuoff + files[0]))[0]
+        if foff == 0xFFFFFFFF:
+            return None
+        a = off + h["filetab_offset"] + foff
+        e = data.find(b"\x00", a, a + 1024)
+        if e <= a:
+            return None
+        name = data[a:e].decode("utf-8", "replace")
+    except (struct.error, IndexError):
+        return None
+    out: dict[str, Any] = {"file": name}
+    # the declaration line (Go 1.20+), else the line at the entry; inlined code
+    # brings other files' lines into pcln, so no end line is derived from it
+    if start_line > 0 or lines:
+        out["line"] = start_line if start_line > 0 else lines[0]
+    return out
 
 
 # --- moduledata ------------------------------------------------------------------------

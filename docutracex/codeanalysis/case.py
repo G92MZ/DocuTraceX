@@ -95,8 +95,11 @@ def go_names(data: bytes, ident: dict[str, Any], goresym_raw: Path | None = None
     out = []
     for f in fns:
         n = f["name"]
-        out.append({"name": n, "start": f["start"], "end": f["end"],
-                    "user": "." in n and not n.startswith(detect.NOT_USER), "named": True})
+        rec = {"name": n, "start": f["start"], "end": f["end"],
+               "user": "." in n and not n.startswith(detect.NOT_USER), "named": True}
+        if f.get("file"):
+            rec["file"], rec["line"] = f["file"], f.get("line")
+        out.append(rec)
     return out
 
 
@@ -286,6 +289,9 @@ def function_view(full: dict[str, Any], addr: int) -> dict[str, Any] | None:
     known = [{"addr": a, "name": by_addr[a]["name"]} for a in f.get("calls") or [] if a in by_addr]
     out["callees"] = known
     out["callee_names"] = f.get("callee_names") or []
+    out["closure_targets"] = [{"addr": t, "name": by_addr[t]["name"] if t in by_addr else f"{t:#x}"}
+                              for cc in full.get("closure_calls") or [] if cc["from"] == addr
+                              for t in cc["targets"]][:100]
     out["interface_targets"] = [{"addr": t, "name": by_addr[t]["name"] if t in by_addr else n}
                                 for ic in full.get("interface_calls") or [] if ic["from"] == addr
                                 for t, n in zip(ic["targets"], ic["methods"])][:100]
@@ -506,6 +512,31 @@ def itab_calls(full: dict[str, Any], reader, names: list[dict[str, Any]]) -> lis
     return out[:2000]
 
 
+def closure_calls(full: dict[str, Any], reader, names: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Go closures / function values resolved statically. A ``func`` value is a
+    pointer to a funcval {fn, captured vars…}; calling it loads ``fn`` and calls
+    through a register. When a function with indirect calls references static
+    data whose first word is the entry of a known function, that function is a
+    possible target (closures without captures, method values, callbacks in
+    tables)."""
+    starts = {n["start"]: n["name"] for n in names}
+    out = []
+    for f in full.get("functions") or []:
+        if not f.get("indirect_calls"):
+            continue
+        targets = []
+        for a, _n in f.get("data_refs") or []:
+            if a in starts:                                # the code itself, not a funcval
+                continue
+            w = reader.at(a, 8)
+            v = int.from_bytes(w, "little") if len(w) == 8 else 0
+            if v in starts and v != f["addr"] and v not in targets:
+                targets.append(v)
+        if targets:
+            out.append({"from": f["addr"], "targets": targets[:32], "names": [starts[t] for t in targets[:32]]})
+    return out[:2000]
+
+
 def graph(full: dict[str, Any], max_paths: int = 25) -> dict[str, Any]:
     """The program call graph: analysed functions as nodes, direct calls and
     goroutine launches as edges, the calls into sensitive library code as leaf
@@ -537,6 +568,10 @@ def graph(full: dict[str, Any], max_paths: int = 25) -> dict[str, Any]:
         for t in ic["targets"]:
             if t in by and t != ic["from"]:
                 edges.append({"from": ic["from"], "to": t, "kind": "interface"})
+    for cc in full.get("closure_calls") or []:                # possible targets of a func value call
+        for t in cc["targets"]:
+            if t in by and t != cc["from"]:
+                edges.append({"from": cc["from"], "to": t, "kind": "closure"})
     for f in fns:
         known = {by[c]["name"] for c in f.get("calls") or [] if c in by}
         for n in f.get("callee_names") or []:
@@ -878,6 +913,7 @@ def enrich(root: Path, path: Path, data: bytes, sha256: str, mode: str, item: di
         try:
             from . import _Reader
             full["interface_calls"] = itab_calls(full, _Reader(data), names or [])
+            full["closure_calls"] = closure_calls(full, _Reader(data), names or [])
         except Exception as exc:  # noqa: BLE001
             log.warning("interface resolution failed on %s: %s", label, exc)
     # phase 8: the call-graph route from an entry point to every crypto function

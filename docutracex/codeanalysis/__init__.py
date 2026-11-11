@@ -307,6 +307,7 @@ def analyze(path: Path, *, mode: str, names: list[dict[str, Any]] | None, out_fi
                            and a <= op["jump"] < (op.get("offset") or 0))       # backward branches = loops
                 functions[a] = {
                     "addr": a, "name": n["name"], "named": n.get("named", True), "user": n.get("user", True),
+                    "file": n.get("file") or "", "line": n.get("line"),
                     "size": info.get("size") or info.get("realsz"), "blocks": info.get("nbbs"),
                     "complexity": info.get("cc"), "loops": max(info.get("loops") or 0, back), "stack": info.get("stackframe"),
                     "calls": sorted({c["to"] for c in info.get("callrefs") or [] if c.get("type") == "CALL"}),

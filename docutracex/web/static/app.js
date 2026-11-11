@@ -6035,12 +6035,13 @@ function cxFnView(k, d, f) {
     : `<p class="hint-line">${dec.status === "failed" ? `Not decompiled: ${e(dec.detail || "")}` : e(f.decompile_note || "Not decompiled in the automatic pass.")}</p>
        <button type="button" class="btn btn-ghost btn-sm" data-cx-decompile="${f.addr}">Decompile now</button>`;
   return `<div class="cx-fnhead">
-      <div><span class="mono cx-title">${e(f.name)}</span> <span class="hint-line">${cxHex(f.addr)} · ${f.size || 0} bytes · ${f.blocks || 0} blocks
+      <div><span class="mono cx-title">${e(f.name)}</span> <span class="hint-line">${f.file ? `<span class="mono">${e(f.file.split("/").slice(-2).join("/"))}${f.line ? `:${f.line}` : ""}</span> · ` : ""}${cxHex(f.addr)} · ${f.size || 0} bytes · ${f.blocks || 0} blocks
         · complexity ${f.complexity ?? "?"}${f.loops ? ` · ${f.loops} loop(s)` : ""}${f.xor_ops ? ` · ${f.xor_ops} XOR` : ""} · score ${f.score || 0} (#${f.rank || "?"})</span></div>
       <div>${cxCats(f.categories)} ${cxTraits(f.traits)} ${(f.reasons || []).map((r) => `<span class="hint-line">· ${e(r)}</span>`).join(" ")}</div>
       ${(f.spawns || []).length ? `<div class="hint-line">launches goroutine(s): ${f.spawns.map((x) => `<button type="button" class="cx-link" data-cx-open="${x.addr}">${e(x.name)}</button>`).join(" ")}</div>` : ""}
       ${(f.interface_targets || []).length ? `<div class="hint-line">interface call(s) resolved from the itab it loads: ${f.interface_targets.map((x) => `<button type="button" class="cx-link" data-cx-open="${x.addr}">${e(x.name)}</button>`).join(" ")}</div>` : ""}
-      ${f.indirect_calls ? `<div class="hint-line">${f.indirect_calls} indirect call(s) whose target is computed at run time${(f.interface_targets || []).length ? " (see the interface targets above)" : ": not resolved statically"}</div>` : ""}
+      ${(f.closure_targets || []).length ? `<div class="hint-line">func value / closure call(s) resolved from the funcval it loads: ${f.closure_targets.map((x) => `<button type="button" class="cx-link" data-cx-open="${x.addr}">${e(x.name)}</button>`).join(" ")}</div>` : ""}
+      ${f.indirect_calls ? `<div class="hint-line">${f.indirect_calls} indirect call(s) whose target is computed at run time${(f.interface_targets || []).length || (f.closure_targets || []).length ? " (see the resolved targets above)" : ": not resolved statically"}</div>` : ""}
     </div>
     <div class="cx-split">
       <div><h4 class="formats-title">Pseudocode <span class="hint-line">rz-ghidra${dec.on_demand ? " · on demand" : ""}</span></h4>${pseudo}</div>
@@ -6339,7 +6340,7 @@ function cgEgoSvg(g, center, depth) {
     const x1 = a.x + W, y1 = a.y + H / 2, x2 = b.x, y2 = b.y + H / 2;
     if (x2 < x1) return;
     const mx = (x1 + x2) / 2;
-    edges += `<path class="cg-edge${e.kind === "goroutine" ? " cg-go" : e.kind === "interface" ? " cg-if" : ""}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" marker-end="url(#cg-arrow)"/>`;
+    edges += `<path class="cg-edge${e.kind === "goroutine" ? " cg-go" : e.kind === "interface" || e.kind === "closure" ? " cg-if" : ""}" d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" marker-end="url(#cg-arrow)"/>`;
   });
   let boxes = "";
   pos.forEach((p, id) => {
@@ -6533,6 +6534,8 @@ async function gtRender(el, caseId) {
     <div class="gt-list">${gtRows(d, f, k)}</div>
     ${(d.files || []).length ? `<h4 class="formats-title">Source files (${(d.user_files || []).length} of the program, ${d.files.length} in total)</h4>
       <p class="hint-line">Paths recorded at build time: they can reveal the build machine, user name and project layout.</p>
+      ${(d.build_paths || {}).users?.length || (d.build_paths || {}).project_dirs?.length ? `<p class="hint-line"><b>Built by</b> ${(d.build_paths.users || []).map((u) => `<span class="mono">${escapeHtml(u)}</span>`).join(", ") || "?"}
+        ${(d.build_paths.project_dirs || []).length ? ` · project: ${d.build_paths.project_dirs.slice(0, 3).map((x) => `<span class="mono">${escapeHtml(x)}</span>`).join(", ")}` : ""} — the same account or path in another sample is a lead to link them.</p>` : (d.build_paths || {}).trimpath ? '<p class="hint-line">Built with <span class="mono">-trimpath</span>: no build-machine paths kept.</p>' : ""}
       <div class="cx-scroll cx-small">${(d.user_files || []).map((x) => `<div class="mono">${escapeHtml(x)}</div>`).join("") || '<span class="hint-line">Only Go toolchain / module-cache files.</span>'}</div>` : ""}`;
   const redraw = () => {
     el.querySelector(".gt-list").innerHTML = gtRows(d, f, k);
