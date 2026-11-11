@@ -245,7 +245,8 @@ def pe(*, bits: int = 32, dll: bool = False, gui: bool = True,
        timestamp: int = 0x6713A2C0, code: bytes = b"\xc3", text_name: str = ".text",
        text_flags: int = 0x60000020, pdb: str | None = None, version: dict[str, str] | None = None,
        manifest: bool = False, rich: bool = False, reloc: bool = False, checksum: bool = False,
-       rcdata: list[tuple[str, bytes]] | None = None, dotnet_md: dict | None = None) -> bytes:
+       rcdata: list[tuple[str, bytes]] | None = None, dotnet_md: dict | None = None,
+       resources: list[tuple[int, bytes, str]] | None = None) -> bytes:
     """An inert PE32 / PE32+. ``sections`` are extra (name, data, characteristics).
     ``pdb`` / ``version`` / ``manifest`` / ``rich`` / ``reloc`` / ``checksum`` add
     what a normal MSVC build carries (debug directory, version resource, Rich
@@ -323,6 +324,7 @@ def pe(*, bits: int = 32, dll: bool = False, gui: bool = True,
         va = _al(va + max(len(data), 1), SA)
     rsrc_dir = (0, 0)
     res_items: list[tuple] = [(10, data, name) for name, data in (rcdata or [])]   # RT_RCDATA
+    res_items += [(typ, data, name) for typ, data, name in (resources or [])]       # any type: RT_BITMAP, RT_ICON…
     if version:
         res_items.append((16, _version_info(version, (1, 4, 2, 0))))
     if manifest:

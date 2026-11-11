@@ -1198,8 +1198,9 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     # native resources of its PEs, with the case's strings as keys → nested.
     try:
         from . import hidden
-        code_children += hidden.sweep(paths, original, (read_json(paths.subresult("nested")) or {}).get("tree") or [],
-                                      code_children)
+        tree_now = (read_json(paths.subresult("nested")) or {}).get("tree") or []
+        code_children += hidden.sweep(paths, original, tree_now, code_children)
+        code_children += hidden.images(paths, original, tree_now, code_children)
     except Exception as exc:  # noqa: BLE001  (never fails the case)
         log.warning("hidden-payload sweep skipped for %s: %s", paths.root.name, exc)
 
