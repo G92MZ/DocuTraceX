@@ -317,7 +317,8 @@ def tenant_facts(t: dict[str, Any], sender_domain: str, own: list[str] | None = 
     gone = [e["domain"] for e in entries if not e["current"]]
     if len(gone) >= 3 or len(unrelated) + len(gone) >= 6:
         out["domain_sprawl"] = (f"tenant {who}: {len(unrelated)} current domain(s) unrelated to its name "
-                                f"({', '.join(unrelated[:8])}) and {len(gone)} removed ({', '.join(gone[:8])})")
+                                f"({', '.join(unrelated[:8])})"
+                                + (f" and {len(gone)} removed ({', '.join(gone[:8])})" if gone else ""))
     return out
 
 
