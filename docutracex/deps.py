@@ -690,6 +690,39 @@ def run_checks() -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
 
+    # ILSpy CLI + portable .NET runtime (.NET decompilation on demand) and
+    # de4dot (--strtyp none clean-up first, Windows / Mono) — both optional.
+    try:
+        from .dotnet import decompile as _dnd
+        ok = _dnd.ilspy_available()
+        checks.append(Check(
+            category="External tools",
+            name="ILSpy CLI (.NET decompiler)",
+            status="ok" if ok else "warn",
+            detail="ilspycmd + .NET runtime present" if ok else
+                   ("ilspycmd missing" if _dnd.dotnet_executable() else "portable .NET runtime missing"),
+            remedy="" if ok else
+                   "press Retry (downloads the .NET 8 runtime into tools/dotnet/ and ilspycmd into tools/ilspy/); "
+                   "without it the .NET view shows the IL listing only",
+            purpose="Decompiles the prioritised .NET methods to C# when you press Decompile (separate process)",
+            retry="ilspy",
+        ))
+        ok = _dnd.de4dot_available()
+        checks.append(Check(
+            category="External tools",
+            name="de4dot (.NET clean-up, --strtyp none)",
+            status="ok" if ok else "warn",
+            detail="de4dot-cex present" if ok else "not provisioned (Windows, or Mono elsewhere)",
+            remedy="" if ok else
+                   "press Retry (downloads de4dot-cex, GPL-3, into tools/de4dot/); optional: ILSpy decompiles "
+                   "without it, only obfuscated names / control flow stay as they are",
+            purpose="Renames and un-flattens obfuscated .NET before ILSpy; never decrypts strings "
+                    "(no delegate / emulate)",
+            retry="de4dot",
+        ))
+    except Exception:  # noqa: BLE001
+        pass
+
     # CFR (.class decompiler) — optional; the Java engine degrades to
     # constant-pool mining when it, or a JVM, is absent.
     try:

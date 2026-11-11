@@ -16,7 +16,7 @@ The **Diagnostics** tab shows which ones are available; a **Retry** button on a 
 | Email | extract-msg, dkimpy |
 | Didier Stevens Suite | oledump (+ plugins), zipdump, pdfid, pdf-parser, emldump, rtfdump, decode-vbe, 1768 (Cobalt Strike configurations) |
 | Shortcuts | LnkParse3 |
-| .NET | dnfile and dncil (MIT) — CLR metadata and CIL |
+| .NET | dnfile and dncil (MIT) — CLR metadata, CIL and the readable IL listing; ILSpy CLI `ilspycmd` (MIT) on a portable .NET 8 runtime (MIT) — C# of the prioritised methods, on demand; de4dot-cex (GPL-3.0) — renaming + control-flow clean-up of obfuscated assemblies before ILSpy, only as `-p un --strtyp none --preserve-tokens` (never decrypts strings, so it never invokes or emulates the sample's methods) |
 | Go | GoReSym (Mandiant, MIT) — contrast for the own Go parser; Unicorn (GPL-2) — emulates only Garble's string-decoding closures, in a separate process |
 | Code analysis | Rizin (LGPL-3.0) with rz-ghidra (LGPL-3.0, embedding the Ghidra decompiler, Apache-2.0), taken from the Cutter release bundle (GPL-3.0) — functions, pseudocode and disassembly of Go and native binaries. On Windows the Microsoft Visual C++ runtime DLLs that ship inside that same bundle (`vc_redist.x64.exe`) are unpacked next to `rizin.exe` (app-local, as Microsoft's redistribution terms allow), so nothing is installed system-wide |
 | Binaries | pefile, LIEF, debloat, FLOSS, capa, UPX, AutoIt-Ripper, innoextract, 7-Zip, nuitka-extractor, evbunpack, Detect It Easy |
@@ -31,7 +31,7 @@ The **Diagnostics** tab shows which ones are available; a **Retry** button on a 
 ## Licences
 
 DocuTraceX is Apache-2.0 and ships no GPL code. GPL/LGPL tools (pcodedmp,
-peepdf-3, py7zr, box-ps and pycdc — GPL-3.0 —, UPX, 7-Zip, Rizin / rz-ghidra, Unicorn) are installed into
+peepdf-3, py7zr, box-ps, pycdc and de4dot-cex — GPL-3.0 —, UPX, 7-Zip, Rizin / rz-ghidra, Unicorn) are installed into
 the portable at provisioning time or picked up from `tools/`, and invoked as
 separate processes, never shipped in this repository. PowerShell Core, Node and
 webcrack are MIT. webcrack pulls `isolated-vm`, which ships prebuilt binaries
@@ -50,7 +50,15 @@ Studio Build Tools are needed.
 
 ## Optional components
 
-FLOSS, capa, pycdc, CFR, webcrack, box-ps, the PE unpackers and
+ILSpy CLI and the .NET runtime it runs on (`--component ilspy`, ~30 MB in
+`tools/dotnet/` + `tools/ilspy/`, the runtime checked against Microsoft's
+SHA-512 and ilspycmd against the nuget.org catalog) and de4dot-cex
+(`--component de4dot`, `tools/de4dot/`; a .NET Framework program, so Windows
+only, or wherever Mono is installed) run only when you press **Decompile** in
+the .NET view, each in its own process with a time limit (120 s) and a memory
+cap (1 GB: a Job Object on Windows, the .NET GC heap limit for ILSpy).
+
+FLOSS, capa, pycdc, CFR, ILSpy, de4dot, webcrack, box-ps, the PE unpackers and
 the Machine Learning family model (459 MB, `DOCUTRACEX_EMBER_FAMILY=1` at
 install or the button in the Machine Learning tab) are optional: provisioned
 when possible, skipped cleanly when absent.
@@ -73,6 +81,7 @@ when possible, skipped cleanly when absent.
 | `DOCUTRACEX_EMBER_FAMILY` | `1` downloads the optional ML family model at install |
 | `DOCUTRACEX_AUTO_MODULES` | YARA, Machine Learning and C2 run on demand (their tabs); list any of `yara,ml,c2` to run them in every full analysis too |
 | `DOCUTRACEX_RIZIN` | an existing `rizin` (with the rz-ghidra plugin) for the code analysis |
+| `DOCUTRACEX_DOTNET`, `DOCUTRACEX_ILSPYCMD`, `DOCUTRACEX_DE4DOT` | an existing `dotnet` host, `ilspycmd.dll` and `de4dot.exe` for the .NET decompilation |
 | `DOCUTRACEX_CODE_AUTO` | `0` turns the automatic code analysis off (default on) |
 | `DOCUTRACEX_CODE_BUDGET_MIN`, `DOCUTRACEX_CODE_MAX_MIN`, `DOCUTRACEX_CODE_MEM_MB` | code analysis limits per binary: budget (30 min), hard limit while still producing (40 min), memory (3072 MB) |
 | `DOCUTRACEX_CODE_CACHE`, `DOCUTRACEX_CODE_CACHE_MB` | reuse the code analysis of a binary already analysed in another case (on; `0` turns it off) and the cache size (2048 MB, oldest out first; under the cases folder, `.code-cache/`) |
