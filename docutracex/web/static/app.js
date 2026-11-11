@@ -5808,14 +5808,19 @@ function cxCrypto(d) {
       `<span class="badge badge-muted" title="${e(x.detail)}">${e(x.kind)}</span> <span class="hint-line">${e(x.detail)}</span>`).join("<br>")}</td></tr>`).join("");
   const plains = (c.plaintexts || []).map((p) => `<div class="cx-plain">
       <div>${cxStatus(p.status)} <b>${e(p.method)}</b> in ${fn(p.function)} <span class="hint-line">data @${cxHex(p.data_va)} · ${p.size} bytes${
-        p.key_va ? ` · key @${cxHex(p.key_va)}` : ""}${p.nonce_va ? ` · nonce @${cxHex(p.nonce_va)}` : ""}</span>
+        p.key_va ? ` · key @${cxHex(p.key_va)}` : ""}${p.nonce_va ? ` · nonce @${cxHex(p.nonce_va)}` : ""}${
+        (p.layers || []).length ? ` · layers: ${e(p.layers.join(" → "))} (${p.wrapped_size} → ${p.size} bytes)` : ""}</span>
         ${p.stored_path ? fileActions(p.stored_path) : ""}</div>
       <pre class="cx-code">${p.text ? e(p.text) : e((p.hex || "").replace(/(..)/g, "$1 ").slice(0, 3000))}</pre></div>`).join("");
   const keys = (c.keys || []).map((k) => `<tr><td>${fn(k.function)}</td><td>${e(k.label)}</td><td class="mono">${e(k.hex)}</td>
       <td>${k.entropy}</td><td class="mono">${cxHex(k.va)}</td><td>${cxStatus(k.status)}</td></tr>`).join("");
   const funcs = (c.functions || []).map((f) => `<tr><td>${fn(f.name)}</td><td>${(f.algorithms || []).map(e).join(", ")}</td>
       <td>${(f.roles || []).map((r) => `<span class="badge badge-muted">${e(r)}</span>`).join(" ")}</td>
-      <td class="mono">${(f.calls || []).slice(0, 4).map(e).join("<br>")}</td></tr>`).join("");
+      <td class="mono">${(f.calls || []).slice(0, 4).map(e).join("<br>")}</td>
+      <td class="mono cx-small">${f.path ? f.path.map(e).join(" → ") : '<span class="hint-line">not reached from an entry point</span>'}</td></tr>`).join("");
+  const kdfs = (c.kdf || []).map((k) => `<tr><td>${fn(k.function)}</td><td>${e(k.parameters || k.kdf)}</td>
+      <td class="mono">${e(k.password || (k.passwords || []).join(", "))}</td><td class="mono">${e(k.salt != null ? k.salt : (k.salts || []).join(", "))}</td>
+      <td class="mono">${e(k.key || "")}</td><td>${cxStatus(k.status)} <span class="hint-line">${e(k.detail || "")}</span></td></tr>`).join("");
   const notes = (c.not_recoverable || []).map((n) => `<div>${cxStatus(n.status)} ${fn(n.function)} <span class="hint-line">— ${e(n.detail)}</span></div>`).join("");
   const consts = (c.constants || []).map((k) => `<tr><td>${e(k.algorithm)}</td><td class="mono">${e(k.constant)}</td>
       <td class="mono">${cxHex(k.offset)}</td><td class="mono">${cxHex(k.va)}</td></tr>`).join("");
@@ -5823,8 +5828,9 @@ function cxCrypto(d) {
   return `<p class="hint-line">Static only: algorithms come from constants, Go packages and imports; decryption re-implements the algorithm on bytes read from the file (nothing of the sample runs).
       ${cxStatus("recovered")} read from the file · ${cxStatus("reconstructed")} computed statically · ${cxStatus("inferred")} deduced · ${cxStatus("not recoverable")} data missing.</p>
     ${plains ? `<h4 class="formats-title">Decrypted data</h4>${plains}` : ""}
+    ${kdfs ? `<h4 class="formats-title">Key derivation (KDF)</h4><p class="hint-line">Password / salt candidates the function references; a key is kept only when it opens data the same code references.</p><table class="cases"><thead><tr><th>Function</th><th>KDF</th><th>Password</th><th>Salt</th><th>Derived key</th><th>Status</th></tr></thead><tbody>${kdfs}</tbody></table>` : ""}
     ${algos ? `<h4 class="formats-title">Algorithms</h4><table class="cases"><thead><tr><th>Algorithm</th><th>Evidence</th></tr></thead><tbody>${algos}</tbody></table>` : ""}
-    ${funcs ? `<h4 class="formats-title">Functions using cryptography</h4><table class="cases"><thead><tr><th>Function</th><th>Algorithms</th><th>Role</th><th>Calls</th></tr></thead><tbody>${funcs}</tbody></table>` : ""}
+    ${funcs ? `<h4 class="formats-title">Functions using cryptography</h4><table class="cases"><thead><tr><th>Function</th><th>Algorithms</th><th>Role</th><th>Calls</th><th>Path from the entry point</th></tr></thead><tbody>${funcs}</tbody></table>` : ""}
     ${keys ? `<h4 class="formats-title">Key material</h4><table class="cases"><thead><tr><th>Used by</th><th>Looks like</th><th>Bytes</th><th>Entropy</th><th>Address</th><th></th></tr></thead><tbody>${keys}</tbody></table>` : ""}
     ${notes ? `<h4 class="formats-title">Not recoverable</h4>${notes}` : ""}
     ${consts ? `<details class="disclose"><summary>Constants (${(c.constants || []).length})</summary><table class="cases"><thead><tr><th>Algorithm</th><th>Constant</th><th>Offset</th><th>Address</th></tr></thead><tbody>${consts}</tbody></table></details>` : ""}`;

@@ -316,7 +316,7 @@ def test_crypto_on_the_go_sample(tmp_path: Path) -> None:
     fn = next(f for f in r["functions"] if f["name"] == "main.openConfig")
     assert fn["roles"] == ["decrypt"]
     assert {k["size"] for k in r["keys"] if k["function"] == "main.openConfig"} == {32, 12}
-    plain = {x["method"].split(" ")[0]: x for x in r["plaintexts"]}
+    plain = {x["method"].split(" ")[0]: x for x in r["plaintexts"] if x["function"] != "main.loadSecret"}   # phase 8: KDF
     assert plain["AES-GCM"]["plaintext"] == ms.CODE_CONFIG and plain["AES-GCM"]["status"] == "reconstructed"
     assert plain["XOR"]["plaintext"] == ms.CODE_SECRET and plain["XOR"]["function"] == "main.decryptConfig"
 

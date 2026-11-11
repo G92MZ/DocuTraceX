@@ -587,6 +587,38 @@ def graph(full: dict[str, Any], max_paths: int = 25) -> dict[str, Any]:
             "unresolved": sum(f.get("indirect_calls", 0) for f in fns)}
 
 
+def crypto_paths(full: dict[str, Any]) -> list[dict[str, Any]]:
+    """For every crypto function (and every function whose data was decrypted):
+    the shortest call path from an entry point, as names, or why there is none.
+    Stored in ``full["crypto"]["paths"]`` and on each crypto function."""
+    cr = full.get("crypto") or {}
+    names = {f["addr"]: f["name"] for f in full.get("functions") or []}
+    wanted = {x["name"] for x in cr.get("functions") or []} | {x["function"] for x in cr.get("plaintexts") or []} \
+        | {x["function"] for x in cr.get("kdf") or []}
+    if not wanted:
+        cr["paths"] = []
+        return []
+    g = graph(full, max_paths=10_000)
+    by_name = {}
+    for pth in g["paths"]:
+        t = pth["target"]
+        n = names.get(t) if not isinstance(t, str) else None
+        if n in wanted and n not in by_name:
+            by_name[n] = ([names.get(x, str(x).removeprefix("ext:")) for x in pth["path"]] if pth.get("path") else None,
+                          pth.get("note", ""))
+    out = []
+    for n in sorted(wanted):
+        path, note = by_name.get(n, (None, "not reached from an entry point (indirect call, callback or interface method?)"))
+        out.append({"function": n, "path": path, "note": "" if path else note})
+    cr["paths"] = out
+    for x in cr.get("functions") or []:
+        hit = next((o for o in out if o["function"] == x["name"]), None)
+        if hit:
+            x["path"] = hit["path"]
+    full["crypto"] = cr
+    return out
+
+
 # --- phase 6: FLOSS strings per function, embedded resources, IOCs ---------------
 
 def _paths(root: Path):
@@ -848,6 +880,11 @@ def enrich(root: Path, path: Path, data: bytes, sha256: str, mode: str, item: di
             full["interface_calls"] = itab_calls(full, _Reader(data), names or [])
         except Exception as exc:  # noqa: BLE001
             log.warning("interface resolution failed on %s: %s", label, exc)
+    # phase 8: the call-graph route from an entry point to every crypto function
+    try:
+        crypto_paths(full)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("crypto paths failed on %s: %s", label, exc)
     # phase 7: Garble literal strings, rebuilt by emulating only their decoding closures
     try:
         from . import garble as _garble
@@ -877,6 +914,8 @@ def enrich(root: Path, path: Path, data: bytes, sha256: str, mode: str, item: di
                "compressed": len(res["compressed"]), "scripts": len(res.get("scripts") or []),
                "crypto_algorithms": len(full["crypto"]["algorithms"]), "crypto_functions": len(full["crypto"]["functions"]),
                "keys": len(full["crypto"]["keys"]), "decrypted": len(full["crypto"]["plaintexts"]),
+               "kdf": len(full["crypto"].get("kdf") or []),
+               "derived_keys": sum(1 for k in full["crypto"].get("kdf") or [] if k.get("status") == "reconstructed"),
                "capabilities": len(full["capabilities"].get("capabilities") or []),
                "garble_strings": len((full.get("garble") or {}).get("strings") or []),
                "capabilities_high": sum(1 for c in full["capabilities"].get("capabilities") or []
