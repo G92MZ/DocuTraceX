@@ -64,6 +64,32 @@ def _owners(t: Any) -> dict[int, str]:
     return {rid: by_id[id(m)] for rid, m in enumerate(t.MethodDef or [], 1) if id(m) in by_id}
 
 
+def _ldc(op: str, operand: Any) -> int | None:
+    """Value of an ldc.i4 / ldc.i4.s / ldc.i4.N / ldc.i4.m1, as an unsigned 32-bit int."""
+    if op == "ldc.i4.m1":
+        v = -1
+    elif op in ("ldc.i4", "ldc.i4.s"):
+        try:
+            v = int(operand)
+        except (TypeError, ValueError):
+            return None
+    else:
+        try:
+            v = int(op.rsplit(".", 1)[1])
+        except ValueError:
+            return None
+    return v & 0xFFFFFFFF
+
+
+def _spec_target(t: Any, rid: int, def_rid: dict[int, int]) -> int:
+    """MethodSpec (a generic instantiation, e.g. Get<string>) → the MethodDef rid it instantiates."""
+    try:
+        row = t.MethodSpec[rid - 1]
+        return def_rid.get(id(row.Method.row), 0)
+    except (AttributeError, IndexError, TypeError):
+        return 0
+
+
 def static_fields(pe: Any) -> dict[int, bytes]:
     """Field rid → initial bytes of the static arrays (FieldRVA + the size of
     their ``__StaticArrayInitTypeSize=N`` value type, from ClassLayout)."""
@@ -122,6 +148,7 @@ def disassemble(pe: Any) -> dict[str, Any]:
     us = pe.net.user_strings
     owners = _owners(t)
     fields = static_fields(pe)
+    def_rid = {id(m): i for i, m in enumerate(t.MethodDef or [], 1)}
     methods: list[dict[str, Any]] = []
     done = errors = 0
     for rid, m in enumerate(t.MethodDef or [], 1):
@@ -141,10 +168,25 @@ def disassemble(pe: Any) -> dict[str, Any]:
         sites: list[tuple[int, list[Any]]] = []        # (own method rid, args)
         arrays: list[bytes] = []                       # static byte[] initialised here (keys, blobs)
         ops: set[str] = set()
+        ints: list[int] = []                            # ldc.i4 constants (keys, seeds, sizes)
+        int_sites: list[tuple[int, int]] = []           # (own method rid, the int passed right before)
+        prev_int: int | None = None
         token_field = 0
         for insn in body.instructions:
             op = insn.opcode.name
             ops.add(op)
+            if op.startswith("ldc.i4"):
+                v = _ldc(op, insn.operand)
+                if v is not None:
+                    if len(ints) < 4000:
+                        ints.append(v)
+                    prev_int = v
+                    continue
+            if op in CALL_OPS and prev_int is not None and getattr(insn.operand, "table", None) in (0x06, 0x2B):
+                target = insn.operand.rid if insn.operand.table == 0x06 else _spec_target(t, insn.operand.rid, def_rid)
+                if target:
+                    int_sites.append((target, prev_int))
+            prev_int = None
             if op == "ldstr" and us is not None:
                 try:
                     s = us.get(insn.operand.rid)
@@ -192,6 +234,7 @@ def disassemble(pe: Any) -> dict[str, Any]:
         methods.append({"method": owners.get(rid, f"#{rid}"), "rid": rid, "size": int(body.code_size or 0),
                         "calls": calls[:MAX_CALLS], "strings": strings[:40], "categories": sorted(cats), "score": score,
                         "_ops": ops, "_sites": sites, "_all_strings": strings, "_arrays": arrays,
+                        "_ints": ints, "_int_sites": int_sites,
                         "arrays": [f"byte[{len(a)}] {a[:16].hex()}" for a in arrays[:10]]})
     # own methods a loader calls (the decoder behind Assembly.Load) are worth reading too
     own = set(owners.values())
@@ -204,7 +247,8 @@ def disassemble(pe: Any) -> dict[str, Any]:
                     callee["score"] += 3
                     if "called by a loader" not in callee["categories"]:
                         callee["categories"] = sorted(callee["categories"] + ["called by a loader"])
-    internal = [{k: m.pop(k) for k in ("_ops", "_sites", "_all_strings", "_arrays")} | {"method": m["method"], "rid": m["rid"],
+    internal = [{k: m.pop(k) for k in ("_ops", "_sites", "_all_strings", "_arrays", "_ints", "_int_sites")}
+                | {"method": m["method"], "rid": m["rid"],
                  "calls": m["calls"]} for m in methods]
     interesting = sorted((m for m in methods if m["score"] > 0), key=lambda m: -m["score"])[:MAX_INTERESTING]
     return {"methods": done, "errors": errors, "interesting": interesting,

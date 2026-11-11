@@ -224,6 +224,17 @@ def parse(data: bytes) -> dict[str, Any]:
                 c["decrypted"] = decrypt(meths)
             except Exception as exc:  # noqa: BLE001
                 c["decrypted_error"] = f"string decryption: {exc}"[:200]
+            try:
+                from .confuser import constants
+                cx = constants(meths, any(o["name"] == "ConfuserEx" for o in out["obfuscators"]))
+                if cx:
+                    c["confuser_constants"] = {"initializer": cx["initializer"], "mode": cx["mode"], "how": cx["how"],
+                                               "records_bytes": cx["records"], "strings": len(cx["strings"])}
+                    c.setdefault("decrypted", []).extend(
+                        {"decryptor": f"ConfuserEx constants ({cx['initializer']})", "caller": x["caller"] or cx["initializer"],
+                         "input": x["id"], "output": x["output"][:4000], "how": cx["how"]} for x in cx["strings"])
+            except Exception as exc:  # noqa: BLE001
+                c["confuser_error"] = f"ConfuserEx constants: {exc}"[:200]
             out["cil"] = c
         except Exception as exc:  # noqa: BLE001  (CIL is best effort)
             out["cil"] = {"error": f"CIL disassembly: {exc}"[:200]}
@@ -272,6 +283,14 @@ def _findings(item: dict[str, Any]) -> list[dict[str, Any]]:
                         "tool": "dotnet", "location": loc,
                         "detail": f"encrypted resource {x['name']} decrypted statically → {x['decrypted']['type']} "
                                   f"({x['decrypted']['size']} bytes)", "evidence": x["decrypted"]["how"], "attack": "T1140"})
+    cx = cil.get("confuser_constants")
+    if cx:
+        ok = cx.get("mode") == "Normal"
+        out.append({"rule": "dotnet:confuser_constants", "severity": "medium" if ok else "low", "tool": "dotnet",
+                    "location": loc, "attack": "T1027",
+                    "detail": (f"ConfuserEx constants protection decrypted statically: {cx['strings']} literal(s) recovered"
+                               if ok else f"ConfuserEx constants protection ({cx['mode']})"),
+                    "evidence": f"{cx['how']} — initializer {cx['initializer']}"})
     dec = cil.get("decrypted") or []
     if dec:
         out.append({"rule": "dotnet:strings_decrypted", "severity": "medium", "tool": "dotnet", "location": loc,
