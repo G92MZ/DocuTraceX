@@ -119,13 +119,19 @@ def scan_object_detailed(path: Path, data: bytes) -> tuple[list[dict[str, Any]],
     import time as _time
 
     from . import cobalt, dotnet_more, dotnet_rats, metasploit, remcos, stealers
-    from .registry import EXTRACTORS, status_of
+    from .registry import EXTRACTORS, dependency_status, status_of
 
     out: list[dict[str, Any]] = []
     runs: list[dict[str, Any]] = []
 
     def run(name: str, fn) -> list[dict[str, Any]]:  # noqa: ANN001
         t0 = _time.perf_counter()
+        deps = dependency_status(name)
+        if deps["missing_required"]:                  # switched off, never a crash: the others still run
+            runs.append({"extractor": name, "version": EXTRACTORS.get(name, {}).get("version", ""),
+                         "status": "missing_dependency", "seconds": 0.0,
+                         "error": "needs " + "; ".join(deps["missing_required"]), "raw": []})
+            return []
         applicable = _applicable(name, data)
         found: list[dict[str, Any]] = []
         err = ""
@@ -146,7 +152,7 @@ def scan_object_detailed(path: Path, data: bytes) -> tuple[list[dict[str, Any]],
             c["extractor_version"] = EXTRACTORS.get(name, {}).get("version", "")
         runs.append({"extractor": name, "version": EXTRACTORS.get(name, {}).get("version", ""),
                      "status": status_of(found, applicable, err), "seconds": round(_time.perf_counter() - t0, 3),
-                     "error": err, "raw": raw})
+                     "error": err, "raw": raw, **({"degraded": deps["missing_optional"]} if deps["missing_optional"] else {})})
         return found
 
     out += run("cobalt", lambda: cobalt.extract(path, data))
@@ -252,14 +258,20 @@ def analyze(original: Path, extracted_dir: Path, only: set[str] | None = None) -
     import time as _time
 
     from .normalize import normalize
-    from .registry import descriptors
+    from .registry import EXTRACTORS, dependency_status, descriptors
 
     run_id = f"{_time.strftime('%Y%m%d-%H%M%S')}-{secrets.token_hex(3)}"
     case_root = _case_root(extracted_dir)
     run_dir = case_root / "results" / RUNS_DIR / run_id if case_root else None
     result: dict[str, Any] = {"module": "c2", "objects_scanned": 0, "configs": [], "findings": [],
                               "families": list(FAMILIES), "status": "ok", "run_id": run_id,
-                              "registry": descriptors(), "extractor_status": {}}
+                              "registry": descriptors(), "extractor_status": {}, "warnings": []}
+    for ex in EXTRACTORS:                              # dependency policy: optional, with a warning
+        d = dependency_status(ex, refresh=True)
+        if d["missing_required"]:
+            result["warnings"].append(f"{EXTRACTORS[ex]['name']}: switched off — needs {'; '.join(d['missing_required'])}")
+        elif d["missing_optional"]:
+            result["warnings"].append(f"{EXTRACTORS[ex]['name']}: works with less — missing {'; '.join(d['missing_optional'])}")
     seen: dict[tuple[str, str], dict[str, Any]] = {}
     from ..progress import ObjectProgress
     todo = []
