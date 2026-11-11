@@ -3,20 +3,31 @@
 
 Thresholds live in Settings → *Email rules: your organisation* and are read only
 here: a name of up to ``short_len`` letters may differ by ``short_dist`` edits,
-a longer one by ``long_dist``; names shorter than ``min_len`` are not compared
-(``ups`` / ``ing`` at distance 1 would match half the internet).
+one of up to ``long_len`` by ``long_dist`` and a longer one by ``xlong_dist``;
+names shorter than ``min_len`` are not compared (``ups`` / ``ing`` at distance 1
+would match half the internet). A distance is a maximum: 2 also catches 1.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-DEFAULTS: dict[str, int] = {"short_len": 4, "short_dist": 1, "long_dist": 2, "min_len": 4}
-LIMITS: dict[str, tuple[int, int]] = {"short_len": (1, 30), "short_dist": (0, 5), "long_dist": (0, 5), "min_len": (1, 30)}
+DEFAULTS: dict[str, int] = {"short_len": 4, "short_dist": 1, "long_len": 9, "long_dist": 2, "xlong_dist": 3,
+                            "min_len": 4}
+LIMITS: dict[str, tuple[int, int]] = {"short_len": (1, 30), "short_dist": (0, 5), "long_len": (1, 60),
+                                      "long_dist": (0, 5), "xlong_dist": (0, 6), "min_len": (1, 30)}
+EMBED_LEN = 6            # brands this long are looked for anywhere in a name, and as a word with EMBED_DIST
+                         # edits (shorter: whole word / prefix only — pineapple is not apple)
+EMBED_DIST = 1           # edits allowed for a brand written inside a longer name
+FUZZY_INSIDE_LEN = 7     # brands this long also match with EMBED_DIST edits glued to other text (myoutlok365);
+                         # shorter ones would hit words (amazing → amazon)
 
 
 def clean(values: dict[str, Any] | None) -> dict[str, int]:
     out = dict(DEFAULTS)
+    values = dict(values or {})
+    if "long_dist" in values and "xlong_dist" not in values and str(values["long_dist"]) != "2":
+        values["xlong_dist"] = values["long_dist"]     # saved before the third tier with a custom distance: keep it
     for k, (lo, hi) in LIMITS.items():
         try:
             v = int((values or {}).get(k, out[k]))
@@ -40,7 +51,23 @@ def max_distance(name: str, th: dict[str, int] | None = None) -> int:
     n = len(name)
     if n < th["min_len"]:
         return 0
-    return th["short_dist"] if n <= th["short_len"] else th["long_dist"]
+    if n <= th["short_len"]:
+        return th["short_dist"]
+    return th["long_dist"] if n <= th.get("long_len", DEFAULTS["long_len"]) else th.get("xlong_dist", th["long_dist"])
+
+
+def embedded_distance(ref: str, text: str) -> int:
+    """Fewest edits that turn some piece of ``text`` into ``ref`` (approximate
+    substring match): 0 when ``ref`` is inside ``text`` as written."""
+    if not ref:
+        return 0
+    prev = [0] * (len(text) + 1)                      # the match may start anywhere in text
+    for i, c in enumerate(ref, 1):
+        cur = [i]
+        for j, t in enumerate(text, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (c != t)))
+        prev = cur
+    return min(prev)
 
 
 def levenshtein(a: str, b: str, cap: int = 9) -> int:

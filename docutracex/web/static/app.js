@@ -5008,7 +5008,8 @@ document.getElementById("abusech-save").addEventListener("click", async () => {
   } catch (err) { msg.className = "status bad-text"; msg.textContent = String(err.message || err); }
 });
 
-const SIM_FIELDS = [["sim-short-len", "short_len"], ["sim-short-dist", "short_dist"], ["sim-long-dist", "long_dist"], ["sim-min-len", "min_len"]];
+const SIM_FIELDS = [["sim-short-len", "short_len"], ["sim-short-dist", "short_dist"], ["sim-long-len", "long_len"],
+  ["sim-long-dist", "long_dist"], ["sim-xlong-dist", "xlong_dist"], ["sim-min-len", "min_len"]];
 
 async function loadEmailOrg() {
   try {
@@ -5017,10 +5018,32 @@ async function loadEmailOrg() {
     const sim = e.similarity || {}, dft = e.similarity_defaults || {};
     for (const [id, k] of SIM_FIELDS) document.getElementById(id).value = sim[k] ?? "";
     document.getElementById("sim-defaults").textContent = dft.short_len
-      ? `(default: ≤${dft.short_len} → ${dft.short_dist}, longer → ${dft.long_dist}, min ${dft.min_len})` : "";
+      ? `(default: ≤${dft.short_len} → ${dft.short_dist}, ≤${dft.long_len} → ${dft.long_dist}, longer → ${dft.xlong_dist}, min ${dft.min_len})` : "";
     document.getElementById("email-brands").value = (e.brands || []).join("\n");
   } catch (_) { /* optional */ }
+  try { renderTrusted(await (await fetch("/api/settings/trusted-domains")).json()); } catch (_) { /* optional */ }
 }
+
+function renderTrusted(t) {
+  document.getElementById("trusted-services").value = (t.services || []).join("\n");
+  document.getElementById("trusted-platforms").value = (t.platforms || []).join("\n");
+}
+
+async function saveTrusted(body) {
+  const msg = document.getElementById("trusted-msg");
+  try {
+    const r = await fetch("/api/settings/trusted-domains", { method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    renderTrusted(j);
+    msg.className = "status ok-text";
+    msg.textContent = `Saved (${j.services.length} service(s), ${j.platforms.length} platform(s)); applies to new analyses.`;
+  } catch (err) { msg.className = "status bad-text"; msg.textContent = String(err.message || err); }
+}
+document.getElementById("trusted-save").addEventListener("click", () => saveTrusted({
+  services: document.getElementById("trusted-services").value, platforms: document.getElementById("trusted-platforms").value }));
+document.getElementById("trusted-restore").addEventListener("click", () => saveTrusted({ restore: true }));
 
 document.getElementById("mailintel-refresh").addEventListener("click", async (ev) => {
   const btn = ev.currentTarget, msg = document.getElementById("mailintel-msg");
