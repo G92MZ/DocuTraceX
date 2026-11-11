@@ -276,10 +276,19 @@ def test_microsoft_says_which_tenant_the_sender_domain_belongs_to(tmp_path, monk
         orig = opener.open
         monkeypatch.setattr(opener, "open", lambda req, timeout=None, o=orig: (seen.append(req.full_url), o(req))[1])
         monkeypatch.setattr("docutracex.mailintel._routes", lambda proxy, op=opener: [("direct", op)])
-        tenantintel._save_cache({})
         _e, r = _analyse(ms.tenant_typosquat_eml())
         got = {m["id"]: m for m in r["engine"]["matched"]}
         assert expect in got["tenant_sender_domain_unrelated"]["evidence"]
         assert "tenant_sender_lookalike" in got
         assert not any("grupoejemplo.example" in u for u in seen if "microsoftonline" in u)   # never your domain
     assert mailengine.tenant_facts({}, "x.example")["sender_domain_unrelated"] == ""
+
+
+def test_domain_lookups_are_never_cached(monkeypatch: pytest.MonkeyPatch) -> None:
+    owners = {"moved.example": "11111111-0000-4000-8000-000000000000"}
+    monkeypatch.setattr("docutracex.mailintel._routes", lambda proxy: [("direct", _Opener({}, [], owners))])
+    assert tenantintel.domain_lookup("moved.example")["tenant_id"].startswith("11111111")
+    owners["moved.example"] = "22222222-0000-4000-8000-000000000000"            # moved to another tenant
+    again = tenantintel.domain_lookup("moved.example")
+    assert again["tenant_id"].startswith("22222222") and not again["cached"]
+    assert tenantintel.MAX_DOMAINS == 10
