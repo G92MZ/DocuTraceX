@@ -13,6 +13,16 @@
   tried on the data those functions reference. Nothing of the sample runs:
   the algorithms are re-implemented by ``cryptography`` on extracted bytes.
 
+* Layers: a decrypted payload that is itself compressed (gzip / zlib / xz /
+  bzip2 / zstd) or Base64 is unwrapped (up to 3 layers) and the chain is kept
+  ("AES-GCM → gzip").
+* Derived keys (KDF): functions that call PBKDF2 / scrypt / HKDF get their
+  password / salt candidates (strings and byte slices they reference); keys are
+  derived with the usual parameters and kept only when an authenticated
+  decryption (GCM / ChaCha20-Poly1305) or a checked CBC one succeeds.
+* Paths: the call-graph route from the entry point to each crypto function
+  (computed by the caller with the graph).
+
 Every item carries a status: ``recovered`` (read directly from the file),
 ``reconstructed`` (computed statically), ``inferred`` (from evidence) or
 ``not recoverable``.
@@ -28,6 +38,54 @@ from typing import Any
 
 MAX_TRIES = 4000
 MAX_PLAIN = 64 * 1024
+MAX_LAYERS = 3
+KDF_BUDGET_S = 6.0                       # wall-clock budget for key derivation per binary
+KDF_ITERATIONS = (1000, 2048, 4096, 10000, 20000, 65536, 100000)
+KDF_HASHES = ("sha256", "sha1", "sha512")
+KDF_LENGTHS = (32, 16, 24)
+_B64_ONLY = re.compile(rb"^[A-Za-z0-9+/\r\n]+={0,2}\s*$")
+
+
+def unwrap(b: bytes) -> tuple[bytes, list[str]]:
+    """Compression / Base64 layers around a payload: (innermost, ["gzip", …])."""
+    import base64
+    import bz2
+    import gzip
+    import lzma
+    import zlib
+    chain: list[str] = []
+    for _ in range(MAX_LAYERS):
+        nxt, how = None, ""
+        try:
+            if b[:2] == b"\x1f\x8b":
+                nxt, how = gzip.decompress(b), "gzip"
+            elif b[:1] == b"\x78" and b[1:2] in (b"\x01", b"\x5e", b"\x9c", b"\xda"):
+                nxt, how = zlib.decompress(b), "zlib"
+            elif b[:6] == b"\xfd7zXZ\x00":
+                nxt, how = lzma.decompress(b), "xz"
+            elif b[:3] == b"BZh":
+                nxt, how = bz2.decompress(b), "bzip2"
+            elif b[:4] == b"\x28\xb5\x2f\xfd":
+                try:
+                    import zstandard
+                    nxt, how = zstandard.ZstdDecompressor().decompress(b, max_output_size=MAX_PLAIN * 16), "zstd"
+                except ImportError:
+                    nxt = None
+            elif len(b) >= 16 and len(b.strip()) % 4 == 0 and _B64_ONLY.match(b):
+                d = base64.b64decode(b, validate=False)
+                if d and (d[:2] in (b"\x1f\x8b", b"MZ") or _printable(d) >= 0.9 or d[:1] == b"\x78"):
+                    nxt, how = d, "Base64"
+        except Exception:  # noqa: BLE001  (not that layer)
+            nxt = None
+        if not nxt:
+            break
+        b, chain = nxt[:MAX_PLAIN * 16], chain + [how]
+    return b, chain
+
+
+def _plausible_plain(b: bytes) -> bool:
+    inner, chain = unwrap(b)
+    return bool(chain) and (_printable(inner) >= 0.9 or inner[:2] == b"MZ" or inner[:4] == b"\x7fELF")
 
 
 def _dw(*v: int, be: bool = False) -> bytes:
@@ -155,17 +213,18 @@ def _try_decrypt(alg: str, key: bytes, nonce: bytes | None, ct: bytes) -> tuple[
             d = Cipher(algorithms.AES(key), modes.CBC(nonce)).decryptor()
             pt = d.update(ct) + d.finalize()
             pad = pt[-1]
-            if 1 <= pad <= 16 and pt.endswith(bytes([pad]) * pad) and _printable(pt[:-pad]) >= 0.9:
-                return pt[:-pad], "AES-CBC (PKCS#7 padding and text check)"
+            if 1 <= pad <= 16 and pt.endswith(bytes([pad]) * pad) and (_printable(pt[:-pad]) >= 0.9
+                                                                       or _plausible_plain(pt[:-pad])):
+                return pt[:-pad], "AES-CBC (PKCS#7 padding and text / layer check)"
         if alg == "AES-CTR" and nonce is not None and len(nonce) == 16 and len(ct) >= 8:
             d = Cipher(algorithms.AES(key), modes.CTR(nonce)).decryptor()
             pt = d.update(ct) + d.finalize()
-            if _printable(pt) >= 0.95:
-                return pt, "AES-CTR (text check)"
+            if _printable(pt) >= 0.95 or _plausible_plain(pt):
+                return pt, "AES-CTR (text / layer check)"
         if alg == "RC4" and 5 <= len(key) <= 256 and len(ct) >= 8:
             pt = _rc4(key, ct)
-            if _printable(pt) >= 0.95:
-                return pt, "RC4 (text check)"
+            if _printable(pt) >= 0.95 or _plausible_plain(pt):
+                return pt, "RC4 (text / layer check)"
     except Exception:  # noqa: BLE001  (wrong key / nonce / tag: not this combination)
         return None
     return None
@@ -309,11 +368,135 @@ def analyze(full: dict[str, Any], data: bytes, binf, reader, names: list[dict[st
                     plains.append({"function": f["name"], "method": f"XOR with 0x{k:02x} (decoding loop)",
                                    "key_va": None, "nonce_va": None, "data_va": a, "data_size": len(b),
                                    "plaintext": pt, "status": "reconstructed"})
+    kdfs, derived = _kdf(cfuncs, by_addr, reader, refs_of, seen_plain, plains)
+    keys += derived
+    for p in plains:                                   # compression / Base64 around the decrypted payload
+        inner, chain = unwrap(p["plaintext"])
+        if chain:
+            p["layers"] = chain
+            p["wrapped_size"] = len(p["plaintext"])
+            p["plaintext"] = inner[:MAX_PLAIN * 16]
+            p["method"] = f"{p['method']} → {' → '.join(chain)}"
     for p in plains:
         add(p["method"].split(" ")[0], "decrypted", f"{p['function']}: {len(p['plaintext'])} bytes")
     return {"algorithms": sorted(algos.values(), key=lambda a: a["algorithm"]), "constants": consts[:200],
             "functions": cfuncs[:300], "keys": keys[:200], "plaintexts": plains[:100], "not_recoverable": notes[:100],
-            "tries": tries}
+            "kdf": kdfs[:50], "tries": tries}
+
+
+_KDF_ALGOS = {"PBKDF2", "scrypt", "HKDF", "Argon2", "CNG KDF", "CryptoAPI KDF"}
+
+
+def _derive(kdf: str, pw: bytes, salt: bytes, it: int, h: str, n: int) -> bytes | None:
+    import hashlib
+    try:
+        if kdf == "PBKDF2":
+            return hashlib.pbkdf2_hmac(h, pw, salt, it, n)
+        if kdf == "scrypt":
+            return hashlib.scrypt(pw, salt=salt, n=it, r=8, p=1, dklen=n, maxmem=256 * 1024 * 1024)
+        if kdf == "HKDF":
+            from cryptography.hazmat.primitives import hashes
+            from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+            algo = {"sha256": hashes.SHA256(), "sha1": hashes.SHA1(), "sha512": hashes.SHA512()}[h]
+            return HKDF(algorithm=algo, length=n, salt=salt or None, info=None).derive(pw)
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
+def _kdf(cfuncs: list[dict[str, Any]], by_addr: dict[int, dict[str, Any]], reader, refs_of,
+         seen_plain: set[bytes], plains: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Key-derivation functions: their parameters, and keys derived statically
+    (kept only when they open data the same code references)."""
+    import time
+    t0 = time.perf_counter()
+    out: list[dict[str, Any]] = []
+    derived: list[dict[str, Any]] = []
+    for cf in cfuncs:
+        algs = set(cf["algorithms"]) & _KDF_ALGOS
+        if not algs and "KDF" not in cf["roles"]:
+            continue
+        kdf = next(iter(sorted(algs)), "KDF")
+        f = by_addr[cf["addr"]]
+        refs = refs_of(f)
+        pws: list[bytes] = []
+        for s in (f.get("strings") or []):
+            v = (s.get("value") or "").encode()
+            if 4 <= len(v) <= 128 and v not in pws:
+                pws.append(v)
+        salts: list[bytes] = []
+        for a, n in refs:
+            if n and 4 <= n <= 64:
+                b = reader.at(a, n)
+                if len(b) == n:
+                    if _printable(b) == 1.0 and b not in pws:
+                        pws.append(b)
+                    if n in (8, 16, 32) and b not in salts:
+                        salts.append(b)
+        rec = {"function": cf["name"], "kdf": kdf, "status": "inferred",
+               "passwords": [p.decode("latin-1") for p in pws[:5]], "salts": [x.hex() for x in salts[:5]]}
+        if kdf in ("Argon2", "CNG KDF", "CryptoAPI KDF"):
+            rec["detail"] = f"{kdf}: parameters listed, the derivation is not re-implemented"
+            out.append(rec)
+            continue
+        blobs = [(a, n) for a, n in refs if n and 16 < n <= MAX_PLAIN]
+        nonces = [reader.at(a, n) for a, n in refs if n in (12, 16)]
+        found = None
+        iters = (16384, 32768, 1024) if kdf == "scrypt" else ((0,) if kdf == "HKDF" else KDF_ITERATIONS)
+        for pw in pws[:4]:
+            for salt in (salts[:4] or [b""]) + ([b""] if kdf == "HKDF" else []):
+                if salt == pw:
+                    continue
+                for it in iters:
+                    for h in (KDF_HASHES if kdf != "scrypt" else ("-",)):
+                        for n in KDF_LENGTHS:
+                            if time.perf_counter() - t0 > KDF_BUDGET_S:
+                                rec["detail"] = "time budget reached before a key opened the data"
+                                break
+                            key = _derive(kdf, pw, salt, it, h, n)
+                            if key is None:
+                                continue
+                            for ba, bn in blobs[:8]:
+                                ct = reader.at(ba, bn)
+                                for alg in ("AES-GCM", "ChaCha20-Poly1305", "AES-CBC"):
+                                    for nonce in nonces[:4] + [None]:
+                                        r = (_try_decrypt(alg, key, nonce, ct) if nonce is not None else
+                                             _try_decrypt(alg, key, ct[:12], ct[12:]) if alg != "AES-CBC" else None)
+                                        if r and r[0] not in seen_plain:
+                                            found = (pw, salt, it, h, n, key, ba, bn, r)
+                                            break
+                                    if found:
+                                        break
+                                if found:
+                                    break
+                            if found:
+                                break
+                        if found or time.perf_counter() - t0 > KDF_BUDGET_S:
+                            break
+                    if found or time.perf_counter() - t0 > KDF_BUDGET_S:
+                        break
+                if found or time.perf_counter() - t0 > KDF_BUDGET_S:
+                    break
+            if found or time.perf_counter() - t0 > KDF_BUDGET_S:
+                break
+        if found:
+            pw, salt, it, h, n, key, ba, bn, r = found
+            params = (f"{kdf}" + (f"-HMAC-{h.upper()}" if kdf == "PBKDF2" else f"-{h.upper()}" if kdf == "HKDF" else "")
+                      + (f", {it} iterations" if kdf == "PBKDF2" else f", N={it}" if kdf == "scrypt" else "")
+                      + f", {n}-byte key")
+            rec.update(status="reconstructed", password=pw.decode("latin-1"), salt=salt.hex(), parameters=params,
+                       key=key.hex())
+            derived.append({"function": cf["name"], "va": None, "size": n, "hex": key.hex(),
+                            "label": f"derived key ({params})", "entropy": round(_entropy(key), 2),
+                            "printable": False, "status": "reconstructed"})
+            seen_plain.add(r[0])
+            plains.append({"function": cf["name"], "method": f"{r[1]} with a {kdf}-derived key", "key_va": None,
+                           "nonce_va": None, "data_va": ba, "data_size": bn, "plaintext": r[0][:MAX_PLAIN],
+                           "status": "reconstructed"})
+        elif "detail" not in rec:
+            rec["detail"] = "no tried password / salt / parameters opened the data it references"
+        out.append(rec)
+    return out, derived
 
 
 def jsonable(res: dict[str, Any]) -> dict[str, Any]:
