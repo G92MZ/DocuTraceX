@@ -13,7 +13,7 @@ Every C2 extractor dependency is **optional, with a warning** (`docutracex/c2/re
 |---|---|---|
 | Cobalt Strike | — | `dissect.cobaltstrike`, `1768.py` (built-in fallback) |
 | Remcos | `pefile` | — |
-| AsyncRAT / DcRAT / QuasarRAT | `pefile`, `cryptography` | — |
+| AsyncRAT / DcRAT / QuasarRAT | `pefile`, `cryptography` | `rat-king-parser` (second engine) |
 | Metasploit / Meterpreter | — | — |
 | njRAT / XWorm / NanoCore / RedLine / Snake / DarkGate… | `cryptography` | — |
 | AgentTesla-style stealers | — | `pefile`, `cryptography` |
@@ -52,9 +52,9 @@ The project rule: only permissive code goes into the repo. GPL tools are downloa
 - **Dependencies:** heavy (`pandas`, `lief`, `malstruct`, `dynaconf`, pytest plugins…).
 - **Decision:** do not add it as a dependency. Our contract (`c2/normalize.py`) already covers its report model. Its field names can inform `normalize` when useful.
 
-### rat-king-parser (jeFF0Falltrades) — candidate
+### rat-king-parser (jeFF0Falltrades) — integrated
 
 - **Licence:** **MIT**. Actively maintained.
 - **Coverage:** AsyncRAT, DcRAT, QuasarRAT, VenomRAT and other .NET RATs.
 - **Dependencies:** `dnfile`, `pycryptodomex`, `yara-python`.
-- **Recommendation:** add it as an **optional second engine** for the .NET RAT extractor, in the same way `dissect.cobaltstrike` sits next to `1768.py`. This would be a separate task, validated with real samples.
+- **Integrated** as the **optional second engine** of the .NET RAT extractor (`docutracex/c2/ratking.py`), in the same way `dissect.cobaltstrike` sits next to `1768.py`: a child process with a timeout, one sub-tab per engine, hosts compared (*agree / partial / differ*). `DOCUTRACEX_RATKING=0` disables it. It needs the real `.cctor` of the settings class, so the inert samples only show its *nothing found* view; validating it is part of the real-sample phase.

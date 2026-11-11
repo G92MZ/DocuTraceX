@@ -157,7 +157,14 @@ def scan_object_detailed(path: Path, data: bytes) -> tuple[list[dict[str, Any]],
 
     out += run("cobalt", lambda: cobalt.extract(path, data))
     out += run("remcos", lambda: remcos.extract(data))
-    out += run("dotnet", lambda: dotnet_rats.extract(data))
+    def dotnet_both() -> dict[str, Any] | None:
+        own = dotnet_rats.extract(data)
+        from . import ratking
+        from .registry import _available
+        if not _available("python", "rat_king_parser"):
+            return own
+        return ratking.combine(own, ratking.extract(path))
+    out += run("dotnet", dotnet_both)
     out += run("metasploit", lambda: metasploit.extract(data))
     if not any(r.get("kind") == "RAT" for r in out):
         out += run("dotnet_more", lambda: dotnet_more.extract_all(data))

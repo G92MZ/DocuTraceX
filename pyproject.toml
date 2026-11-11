@@ -47,6 +47,9 @@ tools = [
     # C2 / Beacons: Cobalt Strike beacon configs + malleable profile (Fox-IT, MIT), the second
     # parser next to Didier Stevens' 1768.py. Only static parsing is used (no client / pcap).
     "dissect.cobaltstrike>=1.3.0",
+    # C2 / Beacons: second engine for the .NET RATs (AsyncRAT, DcRAT, VenomRAT, QuasarRAT, XWorm clones),
+    # jeFF0Falltrades (MIT). Optional: runs in a child process; the own decoder works without it.
+    "rat-king-parser>=4.2",
     # AES / DES for the .NET RAT and stealer extractors (docutracex/c2): was only pulled in transitively.
     "cryptography>=42",
     # Deep binary parsing (PE: imphash, Rich header, PDB, Authenticode verified,

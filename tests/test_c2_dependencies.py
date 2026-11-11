@@ -57,3 +57,45 @@ def test_case_warns_and_diagnostics_lists_it(tmp_path: Path, monkeypatch: pytest
     assert "Cobalt Strike: works with less — missing 1768.py" in w
     chk = next(x for x in deps.run_checks()["checks"] if x["name"] == "C2 extractors")
     assert chk["status"] == "warn" and "switched off" in chk["detail"] and "works with less" in chk["detail"]
+
+
+# --- rat-king-parser: second .NET RAT engine ------------------------------------------------
+
+def _rk_found(hosts: str = "198.51.100.23", ports: str = "6606,7707") -> dict:
+    from docutracex.c2 import ratking
+    return ratking.view({"status": "found", "lib": "4.2.4", "report": {
+        "yara_possible_family": "AsyncRAT", "key": "k", "config": {"Hosts": hosts, "Ports": ports,
+                                                                    "Version": "0.5.8", "Mutex": "AsyncMutex_inv"}}})
+
+
+def test_ratking_view_and_only_ratking() -> None:
+    from docutracex.c2 import ratking
+    v = _rk_found()
+    assert v["summary"]["C2"] == ["198.51.100.23:6606", "198.51.100.23:7707"] and v["hosts"] == ["198.51.100.23"]
+    r = ratking.combine(None, v)
+    assert r["family"] == "AsyncRAT" and r["agreement"] == "only rat-king-parser" and r["c2"] == ["198.51.100.23"]
+    assert r["tools"]["own"]["status"] == "nothing"
+
+
+def test_ratking_agree_and_differ() -> None:
+    from docutracex.c2 import ratking
+    own = {"family": "AsyncRAT", "kind": "RAT", "method": "AES", "confidence": "high", "summary": {"C2": ["198.51.100.23"]},
+           "c2": ["198.51.100.23"], "fields": {}}
+    assert ratking.combine(own, _rk_found())["agreement"] == "agree"
+    d = ratking.combine(own, _rk_found(hosts="203.0.113.9"))
+    assert d["agreement"] == "differ" and d["confidence"] == "medium" and set(d["c2"]) == {"198.51.100.23", "203.0.113.9"}
+    nothing = ratking.view({"status": "nothing", "report": {"file_path": "/x/y.exe",
+                                                            "config": "Exception encountered for /x/y.exe: No .cctor"}})
+    assert ratking.combine(own, nothing)["agreement"] == "only own decoder" and "/x/y.exe" not in nothing["note"]
+    assert ratking.combine(None, nothing) is None
+
+
+def test_ratking_worker_runs_on_inert_sample(tmp_path: Path) -> None:
+    import importlib.util
+    if importlib.util.find_spec("rat_king_parser") is None:
+        pytest.skip("rat-king-parser not installed")
+    from docutracex.c2 import ratking
+    p = tmp_path / "s.exe"
+    p.write_bytes(b"MZ" + b"\x00" * 200 + b"BSJB")
+    v = ratking.extract(p)
+    assert v["status"] in ("nothing", "error") and v["tool"] == "rat-king-parser"
