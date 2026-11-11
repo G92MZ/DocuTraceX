@@ -65,3 +65,29 @@ def test_sample_hijack_rules() -> None:
     assert {"thread_hijack_injected_participant", "thread_references_missing"} <= ids
     assert "thread_chronology_inverted" not in ids
     assert r["verdict"]["verdict"] == "phishing"
+
+
+def test_utc_date_header_is_read_in_the_last_hop_zone() -> None:
+    """Exchange stamps Date in UTC (15:03 +0000) while the quoted "Sent:" line is the
+    reader's local time (15:08, Madrid): the reply at 16:03 local is not older."""
+    q = mailchain.from_people("quoted", "", "Pedido", "martes, 10 de noviembre de 2026 15:08",
+                              {"from": P("b@prov.example"), "to": P("a@corp.example")})
+    root = _root(irt=["<q@prov.example>"], refs=["<q@prov.example>"], frm="a@corp.example",
+                 date="Tue, 10 Nov 2026 15:03:40 +0000", to=P("b@prov.example"))
+    root["headers"] = [
+        {"name": "Received", "value": "from AM0PR.prod.outlook.example by mx.corp.example; Tue, 10 Nov 2026 16:03:45 +0100"},
+        {"name": "Received", "value": "from client by AM0PR.prod.outlook.example; Tue, 10 Nov 2026 15:03:41 +0000"},
+        {"name": "Date", "value": "Tue, 10 Nov 2026 15:03:40 +0000"}]
+    ch = mailchain.build(root, [], [q])
+    assert ch["zone"] == {"offset": "+01:00", "minutes": 60, "source": "last Received hop"}
+    assert mailengine.thread_facts(ch)["chronology"] == []
+    assert ch["messages"][-1]["date_local"].startswith("2026-11-10T16:03")       # shown as the reader saw it
+    # without any zone in the headers the dates are compared as written (and flagged)
+    root["headers"] = [{"name": "Date", "value": "Tue, 10 Nov 2026 15:03:40 +0000"}]
+    f = mailengine.thread_facts(mailchain.build(root, [], [dict(q)]))
+    assert f["chronology"] and "older than" in f["chronology"][0]
+    # a genuinely older reply is still reported, with the zone named
+    root["headers"][0:0] = [{"name": "Received", "value": "by mx.corp.example; Tue, 10 Nov 2026 15:00:00 +0100"}]
+    root["date"] = "2026-11-10T13:50:00+00:00"
+    f = mailengine.thread_facts(mailchain.build(root, [], [dict(q)]))
+    assert "14:50" in f["chronology"][0] and "times in +01:00, from the last Received hop" in f["chronology"][0]

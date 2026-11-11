@@ -372,6 +372,30 @@ def _is_private(ip: str) -> bool:
         return False
 
 
+# Mail infrastructure that hands a message between its own differently named
+# domains: Exchange Online receives on …prod.exchangelabs.com / …prod.outlook.com
+# and relays from …outbound.protection.outlook.com — one provider, not a break.
+_MAIL_INFRA: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Microsoft 365", ("outlook.com", "exchangelabs.com", "office365.com", "outlook.office365.com", "microsoft.com",
+                       "office.com", "hotmail.com", "live.com")),
+    ("Google", ("google.com", "gmail.com", "googlemail.com", "1e100.net")),
+    ("Amazon SES", ("amazonses.com", "amazonaws.com")),
+    ("Yahoo / AOL", ("yahoo.com", "yahoodns.net", "aol.com")),
+    ("Proofpoint", ("pphosted.com", "proofpoint.com", "ppe-hosted.com")),
+    ("Mimecast", ("mimecast.com", "mimecast-offshore.com", "mimecastprotect.com")),
+    ("Zoho", ("zoho.com", "zohomail.com", "zoho.eu", "zohomail.eu")),
+)
+
+
+def same_provider(a: str, b: str) -> str:
+    """The provider both hosts belong to (subdomains, label boundary), or ""."""
+    on = lambda h, d: h == d or h.endswith("." + d)  # noqa: E731
+    for name, doms in _MAIL_INFRA:
+        if any(on(a, d) for d in doms) and any(on(b, d) for d in doms):
+            return name
+    return ""
+
+
 def _received(email: dict[str, Any], res: dict[str, Any]) -> None:
     hops = email.get("received_chain") or []
     for i, h in enumerate(hops):
@@ -396,7 +420,7 @@ def _received(email: dict[str, Any], res: dict[str, Any]) -> None:
     # gmzpt
     for i in range(len(hops) - 1):
         by, nxt = (hops[i].get("by") or "").lower(), (hops[i + 1].get("from") or "").lower()
-        if by and nxt and by != nxt and by.split(".")[-2:] != nxt.split(".")[-2:]:
+        if by and nxt and by != nxt and by.split(".")[-2:] != nxt.split(".")[-2:] and not same_provider(by, nxt):
             res["findings"].append(_finding("received_chain_break", "low",
                                             f"Hop {i + 1} was received by {by} but hop {i + 2} claims to come from {nxt}",
                                             "received", f"{by} -> {nxt}"))
