@@ -791,7 +791,7 @@ def enrich(root: Path, path: Path, data: bytes, sha256: str, mode: str, item: di
         res = resources.scan(data, binf, mode)
     except Exception as exc:  # noqa: BLE001
         log.warning("resource scan failed on %s: %s", label, exc)
-        res = {"embed": [], "certificates": [], "compressed": []}
+        res = {"embed": [], "certificates": [], "compressed": [], "scripts": []}
     out_dir = root / "extracted" / RES_DIR / sha256[:12]
     children: list[dict[str, Any]] = []
 
@@ -819,6 +819,12 @@ def enrich(root: Path, path: Path, data: bytes, sha256: str, mode: str, item: di
         if raw and c["decompressed_size"] >= 1024:
             c["stored_path"] = keep(raw, f"{c['type']}_{c['offset']:x}.bin",
                                     f"{c['type']} stream at 0x{c['offset']:x} in {label}", ["decompress", c["type"]])
+    for sc in res.get("scripts") or []:
+        raw = sc.pop("data", b"")
+        if raw:
+            sc["stored_path"] = keep(raw, f"script_{sc['offset']:x}{sc['ext']}",
+                                     f"{sc['language']} literal at 0x{sc['offset']:x} in {label}",
+                                     ["string-literal", sc["language"]])
     full["resources"] = res
     # phase 8: algorithms, crypto functions, key material, static decryption
     try:
@@ -868,7 +874,7 @@ def enrich(root: Path, path: Path, data: bytes, sha256: str, mode: str, item: di
                "embed_files": sum(len(fs["files"]) for fs in res["embed"]),
                "certificates": sum(1 for c in res["certificates"] if not c.get("private")),
                "private_keys": sum(1 for c in res["certificates"] if c.get("private")),
-               "compressed": len(res["compressed"]),
+               "compressed": len(res["compressed"]), "scripts": len(res.get("scripts") or []),
                "crypto_algorithms": len(full["crypto"]["algorithms"]), "crypto_functions": len(full["crypto"]["functions"]),
                "keys": len(full["crypto"]["keys"]), "decrypted": len(full["crypto"]["plaintexts"]),
                "capabilities": len(full["capabilities"].get("capabilities") or []),
@@ -880,7 +886,16 @@ def enrich(root: Path, path: Path, data: bytes, sha256: str, mode: str, item: di
         fnames = [x["name"] for x in names or []]
         full["dependencies"] = _r.go_dependencies(buildinfo, fnames)
         summary["deps_without_code"] = len(full["dependencies"]["without_code"])
+        summary["std_notable"] = len(full["dependencies"].get("std_notable") or [])
         summary["undeclared_packages"] = len(full["dependencies"]["undeclared"])
+    scripts = [x for x in res.get("scripts") or [] if x["language"] != "Go template"]
+    if scripts:
+        langs = sorted({x["language"] for x in scripts})
+        item.setdefault("findings", []).append({
+            "tool": "golang" if mode == "go" else "code", "rule": "code:embedded_script", "severity": "medium",
+            "detail": f"Script text held as a string literal ({', '.join(langs)}): carved and analysed as a nested child",
+            "location": label,
+            "evidence": "; ".join(f"{x['language']} @0x{x['offset']:x}: {x['preview'][:120]}" for x in scripts[:5])})
     result_file(root, sha256, mode).write_text(json.dumps(full), encoding="utf-8")
     item.setdefault("code", {})["resources"] = summary
     # strings the code uses (and FLOSS recovered) → the IOC extractor, with their function

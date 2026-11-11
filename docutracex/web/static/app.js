@@ -5726,7 +5726,7 @@ function cxSlot(c, sha, mode, part, group) {
 
 function cxResLabel(c) {
   const r = (c && c.resources) || {};
-  const n = (r.embed_files || 0) + (r.certificates || 0) + (r.private_keys || 0) + (r.compressed || 0);
+  const n = (r.embed_files || 0) + (r.certificates || 0) + (r.private_keys || 0) + (r.compressed || 0) + (r.scripts || 0);
   return n ? `Resources (${n})` : "Resources";
 }
 
@@ -5744,10 +5744,14 @@ function cxResources(d) {
       <td class="mono">${cxHex(c.offset)}</td></tr>`).join("");
   const comp = (r.compressed || []).map((c) => `<tr><td>${e(c.type)}</td><td class="mono">${cxHex(c.offset)}</td><td>${sz(c.size)} → ${sz(c.decompressed_size)}</td>
       <td class="mono">${e(c.head)}</td><td>${c.stored_path ? fileActions(c.stored_path) : '<span class="hint-line">small: not extracted</span>'}</td></tr>`).join("");
-  if (!emb && !certs && !comp) return '<p class="hint-line">No embedded files, certificates, keys or compressed data found.</p>';
+  const scr = (r.scripts || []).map((c) => `<tr><td><span class="badge badge-${c.language === "Go template" ? "muted" : "warn"}">${e(c.language)}</span></td>
+      <td class="mono">${cxHex(c.offset)}</td><td>${sz(c.size)}</td><td class="mono cx-small">${e(c.preview)}</td>
+      <td>${c.stored_path ? fileActions(c.stored_path) : ""}</td></tr>`).join("");
+  if (!emb && !certs && !comp && !scr) return '<p class="hint-line">No embedded files, scripts, certificates, keys or compressed data found.</p>';
   return `<p class="hint-line">Found statically in the binary. Embedded files and decompressed streams are analysed as nested children (Nested panel).</p>
     ${emb}
     ${certs ? `<h4 class="formats-title">Certificates and keys</h4><table class="cases"><thead><tr><th>Type</th><th>Subject</th><th>Validity</th><th>Offset</th></tr></thead><tbody>${certs}</tbody></table>` : ""}
+    ${scr ? `<h4 class="formats-title">Scripts and templates in string literals</h4><p class="hint-line">Go keeps literals back to back: a run can carry neighbouring strings.</p><table class="cases"><thead><tr><th>Language</th><th>Offset</th><th>Size</th><th>Start</th><th></th></tr></thead><tbody>${scr}</tbody></table>` : ""}
     ${comp ? `<h4 class="formats-title">Compressed data</h4><table class="cases"><thead><tr><th>Format</th><th>Offset</th><th>Size</th><th>First bytes</th><th></th></tr></thead><tbody>${comp}</tbody></table>` : ""}`;
 }
 
@@ -5837,6 +5841,7 @@ function cxDepsCheck(d) {
       <tr><th>Declared, with code</th><td>${(x.with_code || []).map((m) => `<div class="mono">${e(m)} <span class="hint-line">${per[m] || 0} function(s)</span></div>`).join("") || "—"}</td></tr>
       <tr><th>Declared, no code found</th><td>${(x.without_code || []).map((m) => `<div class="mono">${e(m)}</div>`).join("") || "—"}</td></tr>
       <tr><th>Worth a look</th><td>${(x.notable || []).map((m) => `<div class="mono">${e(m.module)} <span class="hint-line">${e(m.why)}</span></div>`).join("") || "—"}</td></tr>
+      <tr><th>Standard library that says what it can do</th><td>${(x.std_notable || []).map((m) => `<div class="mono">${e(m.package)} <span class="hint-line">${e(m.why)} · ${m.functions} function(s)</span></div>`).join("") || "—"}</td></tr>
       <tr><th>Code from undeclared packages</th><td>${(x.undeclared || []).map(([m, n]) => `<div class="mono">${e(m)} <span class="hint-line">${n} function(s)</span></div>`).join("") || "—"}</td></tr>
     </tbody></table>`;
 }

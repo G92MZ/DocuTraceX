@@ -192,7 +192,7 @@ def test_go_embed_certificates_and_compressed_data() -> None:
     assert [c["type"] for c in res["compressed"]] == ["gzip"] and b"INV-2026-0413" in res["compressed"][0]["data"]
     # nothing in the native sample, and random bytes do not make an embed.FS
     plain = CODE["code/sample_code_loader.exe"]
-    assert resources.scan(plain, binfmt.parse(plain), "go") == {"embed": [], "certificates": [], "compressed": []}
+    assert resources.scan(plain, binfmt.parse(plain), "go") == {"embed": [], "certificates": [], "compressed": [], "scripts": []}
 
 
 def test_go_dependencies_declared_vs_code() -> None:
