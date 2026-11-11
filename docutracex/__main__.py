@@ -51,11 +51,36 @@ def _prefetch_free_proxies() -> None:
         log.warning("Free proxy list prefetch failed: %s", exc)
 
 
+def access_urls(host: str, port: int) -> list[str]:
+    """The addresses to open: this machine, plus its LAN IPs when listening on all interfaces."""
+    if host not in ("0.0.0.0", "::", ""):
+        return [f"http://{host}:{port}"]
+    import socket
+    ips: list[str] = []
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if not ip.startswith("127.") and ip not in ips:
+                ips.append(ip)
+    except OSError:
+        pass
+    try:                                     # the interface of the default route (no packet is sent)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("192.0.2.1", 9))
+            ip = s.getsockname()[0]
+            if not ip.startswith("127.") and ip not in ips:
+                ips.insert(0, ip)
+    except OSError:
+        pass
+    return [f"http://127.0.0.1:{port}  (this computer)"] + [f"http://{ip}:{port}  (other computers)" for ip in ips]
+
+
 def main() -> None:
     configure_logging(settings.log_level)
     _ensure_portable()
     _prefetch_free_proxies()
-    log.info("Starting DocuTraceX on http://%s:%s", settings.host, settings.port)
+    for url in access_urls(settings.host, settings.port):
+        log.info("DocuTraceX: %s", url)
     uvicorn.run(
         "docutracex.app:app",
         host=settings.host,

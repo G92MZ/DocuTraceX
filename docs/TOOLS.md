@@ -67,7 +67,7 @@ when possible, skipped cleanly when absent.
 
 | Variable | What it sets |
 |---|---|
-| `DOCUTRACEX_HOST`, `DOCUTRACEX_PORT` | where the web service listens (default `127.0.0.1:8000`) |
+| `DOCUTRACEX_HOST`, `DOCUTRACEX_PORT` | where the web service listens (default `0.0.0.0:8000`: every interface, so other computers reach it at `http://<IP>:8000`; `127.0.0.1` keeps it local) |
 | `DOCUTRACEX_CASES_DIR`, `DOCUTRACEX_YARA_DIR`, `DOCUTRACEX_CONFIG_DIR` | where cases, YARA rules and settings live |
 | `DOCUTRACEX_MAX_CONCURRENCY` | analyses run at once (1–8) |
 | `DOCUTRACEX_TIMEOUT_FACTOR` | multiplier for every analysis time limit (default 5) |

@@ -25,7 +25,9 @@ class Settings:
     # Uploaded/registered YARA rules + config.
     yara_dir: Path = Path(os.environ.get("DOCUTRACEX_YARA_DIR") or APP_ROOT / "yara")
     # gmzpt
-    host: str = os.environ.get("DOCUTRACEX_HOST", "127.0.0.1")
+    # All interfaces by default: reachable as http://<this machine's IP>:<port> from
+    # other computers (the owner's choice). DOCUTRACEX_HOST=127.0.0.1 keeps it local.
+    host: str = os.environ.get("DOCUTRACEX_HOST", "0.0.0.0")
     port: int = int(os.environ.get("DOCUTRACEX_PORT", "8000"))
     log_level: str = os.environ.get("DOCUTRACEX_LOG_LEVEL", "INFO")
     # Fallback for how many analyses run at once (the live value is the
