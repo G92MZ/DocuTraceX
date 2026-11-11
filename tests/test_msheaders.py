@@ -36,11 +36,23 @@ def _analyse(data: bytes) -> tuple[dict, dict]:
 
 
 class _Opener:
-    def __init__(self, answer: object, calls: list) -> None:
-        self.answer, self.calls = answer, calls
+    """AZMap answers ``answer``; Microsoft's endpoints answer from ``ms``
+    ({domain: tenant_id or None}; unknown domains: not in Microsoft 365)."""
+
+    def __init__(self, answer: object, calls: list, ms: dict | None = None) -> None:
+        self.answer, self.calls, self.ms = answer, calls, ms or {}
 
     def open(self, req, timeout=None):  # noqa: ANN001
-        self.calls.append(req.full_url)
+        url = req.full_url
+        if "login.microsoftonline.com" in url:
+            dom = url.split("login=user@")[1].split("&")[0] if "getuserrealm" in url else url.split("/")[3]
+            tid = self.ms.get(dom)
+            if "getuserrealm" in url:
+                return io.BytesIO(json.dumps({"NameSpaceType": "Managed" if tid else "Unknown",
+                                              "FederationBrandName": "Brand" if tid else None}).encode())
+            body = {"issuer": f"https://login.microsoftonline.com/{tid}/v2.0"} if tid else {"error": "invalid_tenant"}
+            return io.BytesIO(json.dumps(body).encode())
+        self.calls.append(url)
         if isinstance(self.answer, Exception):
             raise self.answer
         return io.BytesIO(json.dumps(self.answer).encode())
@@ -207,3 +219,76 @@ def test_sender_domain_outside_its_tenant_is_phishing_on_its_own() -> None:
     hit = next(r for r in mailengine.run(f, "email", {}) if r["id"] == "tenant_sender_domain_unrelated")
     assert hit["severity"] == "high" and hit["score"] >= 40
     assert mailengine.verdict([{"id": hit["id"], "score": hit["score"]}])["verdict"] == "phishing"
+
+
+TYPOSQUAT_TENANT_ANSWER = {   # shaped like AZMap's page for a throw-away tenant (current + removed domains)
+    "tenant_name": "smsftscott", "brand_name": "St. Mary's Catholic School",
+    "related_domains": [{"domain": d, "type": "Managed"} for d in
+                        ("artificess.example", "grupoejernplo.example", "mqaftscott.example", "sarps.example",
+                         "smsftscott.example", "stowlay.example")] + [{"domain": "smsftscott.onmicrosoft.com"}],
+    "former_domains": ["afadispensings.example", "earthlighttecch.example", "gelaphar.example", "xinhaigroups.example"]}
+
+
+def test_typosquat_verified_in_a_throwaway_tenant(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: ANN001
+    from docutracex import appsettings
+    monkeypatch.setenv("DOCUTRACEX_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("DOCUTRACEX_TENANT_LOOKUP", "1")
+    monkeypatch.setattr("docutracex.mailintel._routes", lambda proxy: [("direct", _Opener(
+        TYPOSQUAT_TENANT_ANSWER, [], {"grupoejernplo.example": ms.M365_TYPOSQUAT_TENANT}))])
+    appsettings.set_email_settings(["grupoejemplo.example"], [], None)
+    _e, r = _analyse(ms.tenant_typosquat_eml())
+    data = r["tenant"]["tenants"][0]["data"]
+    assert "grupoejernplo.example" in data["related_domains"] and len(data["former_domains"]) == 4
+    got = {m["id"]: m for m in r["engine"]["matched"]}
+    assert "tenant_sender_domain_unrelated" not in got                  # it IS a domain of that tenant…
+    ev = got["tenant_sender_lookalike"]["evidence"]                     # …and still detected: it imitates yours
+    assert "grupoejernplo.example looks like grupoejemplo.example" in ev and "Managed domain of" in ev
+    doms = r["tenant"]["domains"]
+    assert doms[0]["domain"] == "grupoejernplo.example" and doms[0]["tenant_id"] == ms.M365_TYPOSQUAT_TENANT
+    assert "4 removed" in got["tenant_domain_sprawl"]["evidence"]
+    assert r["verdict"]["verdict"] == "phishing"
+
+
+def test_former_domain_and_unverified_typosquat() -> None:
+    from docutracex import mailengine
+    data = tenantintel._normalise(TYPOSQUAT_TENANT_ANSWER)
+    t = {"tenants": [{"tenant_id": "x", "role": "sender", "status": "ok", "data": data}]}
+    f = mailengine.tenant_facts(t, "gelaphar.example", ["grupoejemplo.example"], [])
+    assert f["sender_domain_unrelated"].startswith("gelaphar.example was removed from tenant")
+    f = mailengine.tenant_facts(t, "grupoejemplo-pagos.example", ["grupoejemplo.example"], [])   # not in the tenant
+    assert f["sender_domain_unrelated"] and "sent from tenant" in f["sender_lookalike"]
+    f = mailengine.tenant_facts(t, "sarps.example", ["grupoejemplo.example"], [])
+    assert any("grupoejernplo.example looks like grupoejemplo.example" in x for x in f["tenant_lookalikes"])
+
+
+def test_microsoft_says_which_tenant_the_sender_domain_belongs_to(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: ANN001
+    """Microsoft's answer (domain → tenant now) decides before AZMap's list: a
+    domain registered to another tenant, or to none, is unrelated even if AZMap
+    still lists it; only the sender's domains are sent, never your own."""
+    from docutracex import appsettings, mailengine
+    monkeypatch.setenv("DOCUTRACEX_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("DOCUTRACEX_TENANT_LOOKUP", "1")
+    appsettings.set_email_settings(["grupoejemplo.example"], [], None)
+    for owner, expect in (("11111111-0000-4000-8000-000000000000", "registered to another Microsoft 365 tenant"),
+                          (None, "not registered to any Microsoft 365 tenant")):
+        opener = _Opener(TYPOSQUAT_TENANT_ANSWER, [], {"grupoejernplo.example": owner})
+        seen: list = []
+        orig = opener.open
+        monkeypatch.setattr(opener, "open", lambda req, timeout=None, o=orig: (seen.append(req.full_url), o(req))[1])
+        monkeypatch.setattr("docutracex.mailintel._routes", lambda proxy, op=opener: [("direct", op)])
+        _e, r = _analyse(ms.tenant_typosquat_eml())
+        got = {m["id"]: m for m in r["engine"]["matched"]}
+        assert expect in got["tenant_sender_domain_unrelated"]["evidence"]
+        assert "tenant_sender_lookalike" in got
+        assert not any("grupoejemplo.example" in u for u in seen if "microsoftonline" in u)   # never your domain
+    assert mailengine.tenant_facts({}, "x.example")["sender_domain_unrelated"] == ""
+
+
+def test_domain_lookups_are_never_cached(monkeypatch: pytest.MonkeyPatch) -> None:
+    owners = {"moved.example": "11111111-0000-4000-8000-000000000000"}
+    monkeypatch.setattr("docutracex.mailintel._routes", lambda proxy: [("direct", _Opener({}, [], owners))])
+    assert tenantintel.domain_lookup("moved.example")["tenant_id"].startswith("11111111")
+    owners["moved.example"] = "22222222-0000-4000-8000-000000000000"            # moved to another tenant
+    again = tenantintel.domain_lookup("moved.example")
+    assert again["tenant_id"].startswith("22222222") and not again["cached"]
+    assert tenantintel.MAX_DOMAINS == 10
