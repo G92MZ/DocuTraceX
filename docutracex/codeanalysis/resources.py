@@ -7,8 +7,13 @@
   ``cryptography`` is available).
 * Compressed data: gzip / zlib / xz / zstd / bzip2 streams that really
   decompress.
+* Scripts and templates held as string literals (not in an embed.FS):
+  PowerShell, batch, shell, VBScript, JScript, Python, AppleScript and Go
+  ``text/template`` / ``html/template`` text in the read-only data, carved so
+  the nested analysis runs the script engines on them.
 * Go dependencies: modules declared in BuildInfo versus the packages that
-  actually have functions in pclntab.
+  actually have functions in pclntab, notable third-party modules and the
+  standard-library packages that say what the binary can do.
 
 Nothing is executed; every item keeps its file offset (Hex tab) and source.
 """
@@ -203,6 +208,79 @@ def compressed(data: bytes, skip: list[tuple[int, int]] | None = None) -> list[d
     return out
 
 
+MAX_SCRIPTS = 50
+MIN_SCRIPT = 120
+_RUN = re.compile(rb"[\t\n\r\x20-\x7e]{%d,}" % MIN_SCRIPT)
+# language → (extension, markers); a run is that language when ≥ 2 distinct markers match
+SCRIPT_MARKERS: dict[str, tuple[str, list[re.Pattern[str]]]] = {k: (ext, [re.compile(m, re.I | re.M) for m in ms]) for k, (ext, ms) in {
+    "PowerShell": (".ps1", [r"\$env:\w+", r"\bInvoke-(?:Expression|WebRequest|RestMethod|Command)\b", r"\bNew-Object\s",
+                           r"-(?:EncodedCommand|ExecutionPolicy)\b", r"\[System\.[\w.]+\]", r"\bSet-ItemProperty\b",
+                           r"\bStart-Process\b", r"\bIEX\b", r"\bAdd-Type\b", r"\bGet-(?:WmiObject|CimInstance|Process)\b",
+                           r"\$PSScriptRoot\b"]),
+    "Batch": (".bat", [r"^\s*@echo off\b", r"%~dp0", r"\bset /a\b", r"\bgoto :?\w+", r"\breg add\b",
+                       r"\bschtasks\s+/create\b", r"%errorlevel%", r"\bstart \"\"", r"\btimeout /t\b"]),
+    "Shell": (".sh", [r"^#!/(?:usr/)?bin/(?:env )?(?:ba|z|da)?sh\b", r"\bchmod \+x\b", r"\|\s*(?:ba)?sh\b", r"2>/dev/null",
+                      r"\bcrontab\b", r"\bnohup\b", r"\bsystemctl (?:enable|start)\b", r"\bexport [A-Z_]{2,}=",
+                      r"\b(?:curl|wget) (?:-\w+ )*https?://"]),
+    "VBScript": (".vbs", [r"\bCreateObject\(", r"\bWScript\.(?:Shell|CreateObject|Sleep)\b", r"^\s*Dim\s+\w+",
+                          r"\bEnd (?:Sub|Function)\b", r"\bOn Error Resume Next\b", r"\bSet \w+ = "]),
+    "JScript / JavaScript": (".js", [r"\bnew ActiveXObject\(", r"\bWScript\.(?:Shell|CreateObject)\b",
+                                     r"\bfunction\s*\w*\s*\([^)]*\)\s*\{", r"\bvar\s+\w+\s*=", r"\beval\(",
+                                     r"\bString\.fromCharCode\("]),
+    "Python": (".py", [r"^import (?:os|sys|subprocess|socket|base64)\b", r"^from \w+ import ", r"^def \w+\(",
+                       r"\bsubprocess\.(?:Popen|run|call)\(", r"if __name__ == ['\"]__main__['\"]"]),
+    "AppleScript": (".applescript", [r"\btell application\b", r"\bdo shell script\b", r"\bend tell\b",
+                                     r"\bdisplay dialog\b"]),
+    "Go template": (".tmpl", [r"\{\{-?\s*\.\w+", r"\{\{-?\s*range\b", r"\{\{-?\s*if\b", r"\{\{-?\s*end\s*-?\}\}",
+                              r"\{\{-?\s*(?:define|template|with|block)\b"]),
+}.items()}
+
+
+def script_literals(data: bytes, binf) -> list[dict[str, Any]]:
+    """Scripts and templates held as string literals in the read-only data.
+
+    Go keeps literals back to back without separators, so a text run can carry
+    neighbours: the run is kept whole (capped) and named by the language whose
+    markers it matches (≥ 2 distinct ones). [{language, ext, offset, size,
+    markers, preview, data}]"""
+    secs = [x for x in binf.sections if x.offset and x.size and
+            (x.name in (".rdata", ".rodata", "__rodata", "__const", "__cstring") or "rodata" in x.name)]
+    regions = [(x.offset, min(len(data), x.offset + x.size)) for x in secs] or [(0, len(data))]
+    out: list[dict[str, Any]] = []
+    for a, b in regions:
+        for m in _RUN.finditer(data, a, b):
+            raw = m.group(0)[:256 * 1024]
+            text = raw.decode("ascii", "replace")
+            best, hits = "", []
+            for lang, (_ext, pats) in SCRIPT_MARKERS.items():
+                got = [p.pattern for p in pats if p.search(text)]
+                if len(got) >= 2 and len(got) > len(hits):
+                    best, hits = lang, got
+            if not best:
+                continue
+            out.append({"language": best, "ext": SCRIPT_MARKERS[best][0], "offset": m.start(), "size": len(raw),
+                        "markers": len(hits), "preview": text.strip()[:240], "data": raw})
+            if len(out) >= MAX_SCRIPTS:
+                return out
+    return out
+
+
+# Standard-library packages that say what a Go binary can do (functions present in pclntab).
+STD_NOTABLE: list[tuple[str, str]] = [
+    ("os/exec", "runs commands"), ("syscall", "raw system calls"), ("plugin", "loads Go plugins at run time"),
+    ("runtime/cgo", "C code linked in (cgo)"), ("debug/pe", "parses PE files (loader / injector?)"),
+    ("debug/elf", "parses ELF files (loader?)"), ("net/http", "HTTP client / server"), ("net/smtp", "sends mail (exfiltration?)"),
+    ("net/rpc", "RPC channel"), ("net/mail", "builds / parses mail"), ("crypto/tls", "TLS"), ("crypto/aes", "AES"),
+    ("crypto/cipher", "block cipher modes (GCM, CTR, CBC…)"), ("crypto/rc4", "RC4"), ("crypto/des", "DES / 3DES"),
+    ("crypto/rsa", "RSA"), ("crypto/ecdh", "key exchange (ECDH)"), ("crypto/x509", "certificates"),
+    ("compress/gzip", "gzip"), ("compress/zlib", "zlib"), ("compress/flate", "DEFLATE"), ("archive/zip", "ZIP archives"),
+    ("encoding/base64", "Base64"), ("encoding/hex", "hex encoding"), ("text/template", "text templates"),
+    ("html/template", "HTML templates (phishing pages / panels?)"), ("image/png", "PNG (screenshots / steganography?)"),
+    ("image/jpeg", "JPEG (screenshots?)"), ("os/user", "user enumeration"), ("os/signal", "signal handling"),
+    ("net", "raw sockets / DNS"),
+]
+
+
 NOTABLE_MODULES: list[tuple[str, str]] = [
     ("github.com/gorilla/websocket", "WebSocket channel"), ("nhooyr.io/websocket", "WebSocket channel"),
     ("github.com/miekg/dns", "DNS client / server (DNS C2?)"), ("github.com/hashicorp/yamux", "connection multiplexing"),
@@ -221,6 +299,24 @@ NOTABLE_MODULES: list[tuple[str, str]] = [
     ("golang.org/x/crypto", "extra cryptography"), ("filippo.io/age", "file encryption (age)"),
     ("github.com/tidwall/gjson", "JSON parsing (config?)"), ("github.com/go-resty/resty", "HTTP client"),
     ("github.com/valyala/fasthttp", "HTTP client / server"), ("github.com/elazarl/goproxy", "HTTP proxy"),
+    ("golang.org/x/sys/windows", "Windows API (syscalls)"), ("github.com/lxn/win", "Windows API"),
+    ("github.com/Microsoft/go-winio", "named pipes / Windows I/O"), ("github.com/mitchellh/go-ps", "process listing"),
+    ("github.com/fsnotify/fsnotify", "file system watching"), ("github.com/robfig/cron", "scheduled jobs"),
+    ("github.com/go-telegram-bot-api/", "Telegram bot (C2 / exfiltration?)"), ("gopkg.in/telebot", "Telegram bot (C2 / exfiltration?)"),
+    ("github.com/bwmarrin/discordgo", "Discord bot (C2 / exfiltration?)"), ("github.com/slack-go/slack", "Slack API (C2 / exfiltration?)"),
+    ("github.com/aws/aws-sdk-go", "AWS SDK (cloud exfiltration?)"), ("cloud.google.com/go/storage", "cloud storage"),
+    ("github.com/jlaffaye/ftp", "FTP client (exfiltration?)"), ("github.com/pkg/sftp", "SFTP (exfiltration?)"),
+    ("github.com/emersion/go-smtp", "SMTP (exfiltration?)"), ("github.com/xtaci/kcp-go", "KCP / UDP tunnelling"),
+    ("github.com/fatedier/frp", "frp reverse proxy (tunnelling)"), ("github.com/jpillora/chisel", "chisel tunnel"),
+    ("github.com/cretz/bine", "Tor"), ("github.com/ipsn/go-libtor", "Tor"),
+    ("github.com/vmihailenco/msgpack", "MessagePack (C2 protocol?)"), ("google.golang.org/grpc", "gRPC (C2 channel?)"),
+    ("github.com/quic-go/quic-go", "QUIC transport"), ("github.com/lucas-clemente/quic-go", "QUIC transport"),
+    ("github.com/pion/webrtc", "WebRTC channel"), ("github.com/alexmullins/zip", "password-protected ZIP"),
+    ("github.com/yeka/zip", "password-protected ZIP"), ("github.com/vova616/screenshot", "screen capture"),
+    ("github.com/gordonklaus/portaudio", "microphone / audio"), ("github.com/blackjack/webcam", "webcam"),
+    ("github.com/google/gopacket", "packet capture / crafting"), ("github.com/denisbrodbeck/machineid", "machine ID (fingerprinting)"),
+    ("github.com/zalando/go-keyring", "OS keyring (credentials)"), ("github.com/danieljoos/wincred", "Windows Credential Manager"),
+    ("github.com/billgraziano/dpapi", "DPAPI (browser secrets)"), ("github.com/awgh/rawreader", "raw memory reading"),
 ]
 
 
@@ -266,7 +362,13 @@ def go_dependencies(buildinfo: dict[str, Any] | None, function_names: list[str])
             used[o] = used.get(o, 0) + c
         elif p != "main" and "." in p.split("/")[0]:
             undeclared[p] = c
-    return {"declared": len(deps), "notable": notable(sorted(set(deps) | set(undeclared))),
+    std: dict[str, int] = {}
+    for n in function_names:
+        base = go_package(n)
+        if base and "." not in base.split("/")[0]:
+            std[base] = std.get(base, 0) + 1
+    std_notable = [{"package": p, "functions": std[p], "why": why} for p, why in STD_NOTABLE if std.get(p)]
+    return {"declared": len(deps), "notable": notable(sorted(set(deps) | set(undeclared))), "std_notable": std_notable,
             "with_code": sorted(m for m in deps if m in used),
             "without_code": sorted(m for m in deps if m not in used),
             "undeclared": sorted(undeclared.items(), key=lambda x: -x[1])[:100],
@@ -276,7 +378,7 @@ def go_dependencies(buildinfo: dict[str, Any] | None, function_names: list[str])
 def scan(data: bytes, binf, mode: str) -> dict[str, Any]:
     """Every resource kind for one binary (the raw bytes stay under ``data``
     keys for the caller to write out, never into JSON)."""
-    res: dict[str, Any] = {"embed": [], "certificates": [], "compressed": []}
+    res: dict[str, Any] = {"embed": [], "certificates": [], "compressed": [], "scripts": []}
     if mode == "go":
         try:
             res["embed"] = go_embed(data, binf)
@@ -288,4 +390,9 @@ def scan(data: bytes, binf, mode: str) -> dict[str, Any]:
     skip += [(x.offset, x.offset + x.size) for x in binf.sections
              if x.offset and x.name.startswith((".debug", ".zdebug", "__debug", "__zdebug"))]
     res["compressed"] = compressed(data, skip)
+    try:
+        res["scripts"] = [x for x in script_literals(data, binf)
+                          if not any(a <= x["offset"] < b for a, b in skip)]
+    except (re.error, ValueError):
+        pass
     return res
