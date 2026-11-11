@@ -2861,6 +2861,7 @@ function renderSubtabs() {
   wireFind(bodyEl);
   wireInnerTabs(bodyEl);
   wireCodeExplorers(bodyEl, _openCaseId);
+  wireDotnetDecompile(bodyEl, _openCaseId);
   applyFind();
 }
 
@@ -6497,14 +6498,71 @@ function dnObject(o, i) {
           en.value !== undefined ? e(String(en.value).slice(0, 300)) : ""}${en.pe ? ' <span class="badge badge-bad">PE</span>' : ""}${
           en.carved ? ` <span class="badge badge-muted">carved ${e(en.carved)}</span>` : ""}${
           en.stego ? ` <span class="badge badge-bad" title="${e(en.stego.how)}">hidden ${e(en.stego.type)} in pixels</span>${en.stego.stored_path ? fileActions(en.stego.stored_path) : ""}` : ""}${en.stored_path ? fileActions(en.stored_path) : ""}</td></tr>`).join("")}</tbody></table>`).join("");
+  const withIl = (cil.interesting || []).filter((m) => (m.il || []).length);
+  const codeHtml = withIl.length ? `<div class="dnd" data-dnd-sha="${e(o.sha256)}">
+      <p class="hint-line">Readable IL of the methods worth reading first (dncil, decoded statically). <b>Decompile</b> runs
+      ILSpy CLI in a separate process on the prioritised methods only (network, crypto, Process.Start, Assembly.Load,
+      registry…); when an obfuscator was detected, de4dot cleans the assembly first with <span class="mono">--strtyp none</span>
+      (renaming + control flow, strings untouched: nothing of the sample runs).</p>
+      <p><button class="btn btn-sm" data-dnd-module="1">Decompile module (prioritised methods)</button>
+      <span class="hint-line dnd-status"></span></p>
+      ${withIl.map((m) => `<details class="disclose"><summary><span class="mono"><b>${e(m.method)}</b></span> ${cxCats(m.categories)}</summary>
+        <p><button class="btn btn-sm" data-dnd-method="${e(m.method)}">Decompile</button></p>
+        <div class="dnd-cs" data-dnd-for="${e(m.method)}"></div>
+        <pre class="mono cx-small cx-scroll">${e(m.il.join("\n"))}</pre></details>`).join("")}</div>`
+    : '<p class="hint-line">No method of interest to list.</p>';
   return innerTabs(g, [
     { id: "summary", label: "Summary", html: summary },
     { id: "types", label: `Types & methods (${types.length})`, html: typesHtml || '<p class="hint-line">No types.</p>' },
     { id: "cil", label: `Methods of interest (${(cil.interesting || []).length})`, html: cilHtml },
+    { id: "code", label: `Code (IL / C#)`, html: codeHtml },
     { id: "apis", label: `P/Invoke & APIs (${(r.pinvoke || []).length + (r.apis || []).length})`, html: apiHtml.trim() || '<p class="hint-line">No P/Invoke and no notable framework API.</p>' },
     { id: "resources", label: `Resources (${(r.resources || []).length})`, html: res ? `<table class="cases"><thead><tr><th>Name</th><th>Size</th><th>Entropy</th><th>First bytes</th><th>SHA-256</th><th></th></tr></thead><tbody>${res}</tbody></table><p class="hint-line">Every resource is also analysed as a nested child (Nested panel); <span class="mono">.resources</span> files are opened and each binary entry becomes the child.</p>${entries}` : '<p class="hint-line">No managed resources.</p>' },
     { id: "strings", label: `Strings (${(r.strings || []).length}${(cil.decrypted || []).length ? ` + ${cil.decrypted.length} decrypted` : ""})`, html: strs || decHtml ? `${decHtml}<p class="hint-line">User strings (#US heap): the literals the code uses.</p><div class="cx-scroll cx-small">${strs}</div>` : '<p class="hint-line">No user strings (encrypted by an obfuscator?).</p>' },
   ]);
+}
+
+// On-demand decompilation (ILSpy CLI; de4dot --strtyp none first when obfuscated)
+function dndShow(box, data) {
+  const e = (x) => escapeHtml(String(x ?? ""));
+  const st = box.querySelector(".dnd-status");
+  const t = data.tools || {};
+  if (st) st.textContent = !t.ilspy ? "ILSpy CLI not provisioned (Diagnostics → Retry ilspy): IL listing only."
+    : `${data.source ? `Read from the ${data.source}.` : ""} ${data.de4dot ? `de4dot: ${data.de4dot}.` : ""}`;
+  box.querySelectorAll(".dnd-cs[data-dnd-for]").forEach((slot) => {
+    const r = (data.methods || {})[slot.getAttribute("data-dnd-for")];
+    if (!r) return;
+    slot.innerHTML = r.code ? `<div class="hint-line">C# (ILSpy)${r.renamed ? ` — renamed by de4dot to <span class="mono">${e(r.renamed)}</span>` : ""}${
+        r.status === "partial" ? ` — ${e(r.detail)}` : ""}</div><pre class="mono cx-small cx-scroll">${e(r.code)}</pre>`
+      : `<div class="hint-line">⚠ ${e(r.detail || r.status)}</div>`;
+  });
+}
+
+function wireDotnetDecompile(root, caseId) {
+  if (!caseId) return;
+  root.querySelectorAll(".dnd[data-dnd-sha]").forEach((box) => {
+    const sha = box.getAttribute("data-dnd-sha");
+    const base = `/api/cases/${encodeURIComponent(caseId)}/dotnet/${sha}`;
+    fetch(`${base}/decompiled`).then((r) => (r.ok ? r.json() : null)).then((d) => { if (d) dndShow(box, d); }).catch(() => {});
+    const run = async (btn, payload) => {
+      const st = box.querySelector(".dnd-status");
+      btn.disabled = true;
+      if (st) st.textContent = "Decompiling…";
+      try {
+        const r = await fetch(`${base}/decompile`, { method: "POST", headers: { "Content-Type": "application/json" },
+                                                    body: JSON.stringify(payload) });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || r.statusText);
+        dndShow(box, d);
+      } catch (err) {
+        if (st) st.textContent = `⚠ ${err.message}`;
+      } finally {
+        btn.disabled = false;
+      }
+    };
+    box.querySelectorAll("[data-dnd-method]").forEach((b) => b.addEventListener("click", () => run(b, { method: b.getAttribute("data-dnd-method") })));
+    box.querySelectorAll("[data-dnd-module]").forEach((b) => b.addEventListener("click", () => run(b, { module: true })));
+  });
 }
 
 function paneDotnet(dm) {

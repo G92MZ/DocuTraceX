@@ -1973,6 +1973,8 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
     _clear_mark("capa")
     _clear_mark("goresym")
     _clear_mark("rizin")
+    _clear_mark("ilspy")
+    _clear_mark("de4dot")
     install_webcrack()   # portable Node + webcrack (JS deobfuscation)
     install_boxps()      # PowerShell Core + box-ps (PowerShell sandbox)
     install_pycdc()      # pycdc (.pyc decompiler, built from source)
@@ -1981,6 +1983,8 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
     install_capa()       # Mandiant capa standalone (PE capabilities/ATT&CK; Windows)
     install_goresym()    # Mandiant GoReSym (Go metadata recovery; Go Malware Intelligence)
     install_rizin()      # Rizin + rz-ghidra (code analysis: functions, disassembly, pseudocode)
+    install_ilspy()      # ILSpy CLI + portable .NET runtime (.NET decompilation, on demand)
+    install_de4dot()     # de4dot-cex, --strtyp none only (Windows / Mono)
     # PE packer / installer unpackers. Each is optional and independently guarded.
     for _name in ("upx", "7zip", "die", "innoextract", "nuitka-extractor",
                   "autoit-ripper", "evbunpack"):
@@ -2027,6 +2031,172 @@ def _tool_deps_ok(py: Path) -> bool:
         return r.returncode == 0
     except Exception:  # noqa: BLE001
         return False
+
+
+# --- .NET decompilation: ILSpy CLI (MIT) on a portable .NET runtime (MIT), and
+# de4dot-cex (GPL-3) used ONLY with ``--strtyp none``. Both run in a separate
+# process, on demand. Nothing is installed globally: everything under tools/.
+DOTNET_DIR = TOOLS / "dotnet"
+DOTNET_CHANNEL = "8.0"                           # ilspycmd 9.x targets net8.0
+DOTNET_META = f"https://builds.dotnet.microsoft.com/dotnet/release-metadata/{DOTNET_CHANNEL}/releases.json"
+ILSPY_DIR = TOOLS / "ilspy"
+ILSPY_VERSION = "9.1.0.7988"                     # ilspycmd (MIT), from nuget.org
+ILSPY_NUPKG = f"https://api.nuget.org/v3-flatcontainer/ilspycmd/{ILSPY_VERSION}/ilspycmd.{ILSPY_VERSION}.nupkg"
+ILSPY_REG = f"https://api.nuget.org/v3/registration5-semver1/ilspycmd/{ILSPY_VERSION}.json"
+DE4DOT_DIR = TOOLS / "de4dot"
+DE4DOT_REPO, DE4DOT_TAG = "ViRb3/de4dot-cex", "v4.0.0"   # GPL-3: downloaded here, never in the repo
+
+
+def _dotnet_exe() -> Path | None:
+    for c in (DOTNET_DIR / "dotnet.exe", DOTNET_DIR / "dotnet"):
+        if c.is_file():
+            return c
+    return None
+
+
+def _dotnet_ok() -> bool:
+    exe = _dotnet_exe()
+    return exe is not None and any((DOTNET_DIR / "shared" / "Microsoft.NETCore.App").glob(f"{DOTNET_CHANNEL}.*"))
+
+
+def _ilspy_dll() -> Path | None:
+    found = sorted(ILSPY_DIR.glob("tools/net*/any/ilspycmd.dll")) if ILSPY_DIR.is_dir() else []
+    return found[-1] if found else None
+
+
+def _ilspy_ok() -> bool:
+    return _dotnet_ok() and _ilspy_dll() is not None
+
+
+def _dotnet_rid() -> str | None:
+    osname = "win" if sys.platform.startswith("win") else ("osx" if sys.platform == "darwin" else "linux")
+    try:
+        arch = {"x86_64": "x64", "aarch64": "arm64"}[_arch()]
+    except (KeyError, SystemExit):
+        return None
+    return f"{osname}-{arch}"
+
+
+def install_dotnet_runtime() -> bool:
+    """The latest .NET 8 runtime (MIT) into tools/dotnet/, verified with the
+    SHA-512 Microsoft publishes in its release metadata."""
+    import hashlib
+    import io
+    import os
+
+    if _dotnet_ok():
+        return True
+    rid = _dotnet_rid()
+    if rid is None:
+        print("[!] .NET runtime: unsupported architecture; .NET decompilation stays disabled.")
+        return False
+    try:
+        meta = json.loads(_get(DOTNET_META))
+        rel = next(r for r in meta["releases"] if r.get("runtime", {}).get("files"))
+        ext = "zip" if rid.startswith("win") else "tar.gz"
+        f = next(x for x in rel["runtime"]["files"]
+                 if x.get("rid") == rid and x.get("name") == f"dotnet-runtime-{rid}.{ext}")
+        print(f"[>] Downloading the .NET {rel['runtime']['version']} runtime (~30 MB) into tools/dotnet/")
+        data = _get(f["url"])
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] Could not download the .NET runtime ({exc}); .NET decompilation stays disabled.")
+        return False
+    if hashlib.sha512(data).hexdigest().lower() != str(f.get("hash", "")).lower():
+        print("[!] .NET runtime: SHA-512 mismatch — NOT installed.")
+        return False
+    shutil.rmtree(DOTNET_DIR, ignore_errors=True)
+    try:
+        if ext == "zip":
+            _safe_extract_zip(data, DOTNET_DIR)
+        else:
+            DOTNET_DIR.mkdir(parents=True, exist_ok=True)
+            with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as t:
+                try:
+                    t.extractall(DOTNET_DIR, filter="tar")
+                except TypeError:
+                    t.extractall(DOTNET_DIR)
+            if (DOTNET_DIR / "dotnet").is_file():
+                os.chmod(DOTNET_DIR / "dotnet", 0o755)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] .NET runtime: could not extract ({exc}).")
+        return False
+    ok = _dotnet_ok()
+    print(f"[+] .NET runtime at {DOTNET_DIR}" if ok else "[!] .NET runtime extracted but dotnet was not found.")
+    return ok
+
+
+def install_ilspy() -> bool:
+    """ilspycmd (ILSpy command line, MIT) into tools/ilspy/ from its nuget
+    package (checked against the SHA-512 in the nuget.org catalog), plus the
+    portable .NET runtime it runs on. Optional: without it the .NET view keeps
+    the IL listing and the Decompile buttons say it is not provisioned."""
+    import base64
+    import hashlib
+
+    if _ilspy_ok():
+        return True
+    if not install_dotnet_runtime():
+        return False
+    if _ilspy_dll() is None:
+        print(f"[>] Downloading ilspycmd {ILSPY_VERSION} into tools/ilspy/")
+        try:
+            data = _get(ILSPY_NUPKG)
+            reg = json.loads(_get(ILSPY_REG))
+            entry = reg.get("catalogEntry")
+            cat = json.loads(_get(entry)) if isinstance(entry, str) else (entry or {})
+            want = cat.get("packageHash", "")
+            if cat.get("packageHashAlgorithm", "SHA512").upper() != "SHA512" or not want:
+                raise ValueError("no SHA-512 in the nuget catalog")
+            if base64.b64encode(hashlib.sha512(data).digest()).decode() != want:
+                print("[!] ilspycmd: SHA-512 mismatch with the nuget catalog — NOT installed.")
+                return False
+        except Exception as exc:  # noqa: BLE001
+            print(f"[!] Could not download ilspycmd ({exc}); .NET decompilation stays disabled.")
+            return False
+        shutil.rmtree(ILSPY_DIR, ignore_errors=True)
+        _safe_extract_zip(data, ILSPY_DIR)
+    ok = _ilspy_ok()
+    print(f"[+] ILSpy CLI at {ILSPY_DIR}" if ok else "[!] ilspycmd extracted but its dll was not found.")
+    return ok
+
+
+def _de4dot_exe() -> Path | None:
+    if not DE4DOT_DIR.is_dir():
+        return None
+    found = sorted(DE4DOT_DIR.rglob("de4dot*.exe"), key=lambda p: ("x64" not in p.name, "net4" not in str(p), len(str(p))))
+    return found[0] if found else None
+
+
+def _de4dot_ok() -> bool:
+    return _de4dot_exe() is not None and (sys.platform.startswith("win") or shutil.which("mono") is not None)
+
+
+def install_de4dot() -> bool:
+    """de4dot-cex (GPL-3) into tools/de4dot/ — optional, downloaded here and
+    never shipped in the repo. It is a .NET Framework program: it runs with the
+    Framework built into Windows (elsewhere only if Mono is installed).
+    DocuTraceX runs it ONLY with ``--strtyp none`` (renaming + control-flow
+    cleanup; it never executes or emulates the sample's methods)."""
+    if _de4dot_ok():
+        return True
+    if not sys.platform.startswith("win") and shutil.which("mono") is None:
+        print("[=] de4dot: .NET Framework tool; needs Windows (or Mono). Skipped; ILSpy decompiles without it.")
+        return False
+    print(f"[>] Downloading de4dot-cex {DE4DOT_TAG} (GPL-3) into tools/de4dot/")
+    try:
+        _asset, data = _github_asset(DE4DOT_REPO, lambda n: n.endswith(".zip"), tag=DE4DOT_TAG)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] Could not download de4dot ({exc}); ILSpy decompiles without the cleanup step.")
+        return False
+    shutil.rmtree(DE4DOT_DIR, ignore_errors=True)
+    try:
+        _safe_extract_zip(data, DE4DOT_DIR, flatten_root=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] de4dot: could not extract ({exc}).")
+        return False
+    ok = _de4dot_ok()
+    print(f"[+] de4dot at {_de4dot_exe()}" if ok else "[!] de4dot extracted but de4dot.exe was not found.")
+    return ok
 
 
 # Optional runtimes healed on start (webcrack, box-ps). A failed attempt writes
@@ -2090,9 +2260,11 @@ def _ensure_optional() -> None:
                               ("nuitka-extractor", _nuitka_extractor_ok, install_nuitka_extractor),
                               ("autoit-ripper", lambda: _portable_import_ok("autoit_ripper"), install_autoit_ripper),
                               ("evbunpack", lambda: _portable_import_ok("evbunpack"), install_evbunpack),
-                              ("ember", _ember_ok, install_ember)):
+                              ("ember", _ember_ok, install_ember),
+                              ("ilspy", _ilspy_ok, install_ilspy),
+                              ("de4dot", _de4dot_ok, install_de4dot)):
         if name in ("floss", "capa", "upx", "7zip", "die", "innoextract",
-                    "nuitka-extractor") and not sys.platform.startswith("win"):
+                    "nuitka-extractor", "de4dot") and not sys.platform.startswith("win"):
             continue  # Windows-only standalone builds provisioned by this installer
         try:
             if ok():
@@ -2217,6 +2389,8 @@ COMPONENTS: dict = {
     "autoit-ripper": lambda: bool(install_autoit_ripper()) and _portable_import_ok("autoit_ripper"),
     "evbunpack": lambda: bool(install_evbunpack()) and _portable_import_ok("evbunpack"),
     "ember": lambda: bool(install_ember()) and _ember_ok(),
+    "ilspy": lambda: bool(install_ilspy()) and _ilspy_ok(),
+    "de4dot": lambda: bool(install_de4dot()) and _de4dot_ok(),
 }
 
 
