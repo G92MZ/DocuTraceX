@@ -66,7 +66,8 @@ EXTRACTORS: dict[str, dict[str, Any]] = {
                      "Datto RMM", "N-able", "Kaseya VSA", "Zoho Assist", "GoTo / LogMeIn", "PDQ Connect",
                      "ManageEngine"],
         "formats": ["MSI / setup EXE", "the client itself", "scripts / launch parameters", "client32.ini"],
-        "engines": ["product strings (ASCII / UTF-16)", "installer and launch parameters"], "dependencies": [],
+        "engines": ["product strings (ASCII / UTF-16)", "LOLRMM catalogue (magicsword-io, Apache-2.0)",
+                    "installer and launch parameters"], "dependencies": ["LOLRMM catalogue (downloaded, optional)"],
         "fields": ["product", "relay / server / gateway / API", "account / company / site", "session type"],
         "output": "configuration (the instance it is bound to), or indicators (product only)",
         "limits": "legitimate software: the product alone is no proof of an intrusion; an instance set at run time "
@@ -106,7 +107,7 @@ REQUIRES: dict[str, list[tuple[str, str, bool, str]]] = {
     "dotnet_more": [("python", "cryptography", True, "AES / DES / RC4 settings")],
     "stealers": [("python", "pefile", False, "PE resources"), ("python", "cryptography", False, "3DES-encrypted strings")],
     "go": [],
-    "rmm": [],
+    "rmm": [("feed", "LOLRMM catalogue", False, "current product list (Settings → C2: Refresh; built-in list without it)")],
 }
 
 
@@ -116,6 +117,12 @@ def _available(kind: str, name: str) -> bool:
         try:
             return importlib.util.find_spec(name) is not None
         except (ImportError, ValueError):
+            return False
+    if kind == "feed" and name == "LOLRMM catalogue":
+        try:
+            from .. import lolrmm
+            return lolrmm.products() is not None
+        except Exception:  # noqa: BLE001
             return False
     if kind == "file" and name == "1768.py":
         try:

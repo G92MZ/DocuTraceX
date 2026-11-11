@@ -456,6 +456,37 @@ def install_tlds(force: bool = False) -> bool:
         return dest.is_file()
 
 
+LOLRMM_DIR = TOOLS / "lolrmm"
+LOLRMM_URLS = ("https://lolrmm.io/api/rmm_tools.json",
+               "https://raw.githubusercontent.com/magicsword-io/LOLRMM/main/website/public/api/rmm_tools.json")
+
+
+def install_lolrmm(force: bool = False) -> bool:
+    """LOLRMM catalogue (Apache-2.0) into tools/lolrmm/: RMM / remote-access product
+    names, PE metadata, signers and domains for the C2 "rmm" extractor. Refreshed
+    when older than 7 days (the app also refreshes it in the background); without
+    it the extractor uses its built-in list, so this never blocks the install."""
+    import json as _json
+    import time as _time
+
+    dest = LOLRMM_DIR / "rmm_tools.json"
+    if dest.is_file() and not force and _time.time() - dest.stat().st_mtime < 7 * 86400:
+        return True
+    for url in LOLRMM_URLS:
+        try:
+            print(f"[>] Downloading the LOLRMM catalogue ({url.split('/')[2]})")
+            data = _get(url)
+            if len(_json.loads(data)) < 50:
+                raise ValueError("catalogue looks incomplete")
+            LOLRMM_DIR.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(data)
+            return True
+        except Exception as exc:  # noqa: BLE001
+            print(f"[!] LOLRMM catalogue: {exc}")
+    print("[!] LOLRMM catalogue not downloaded (the RMM extractor uses its built-in list)")
+    return dest.is_file()
+
+
 def _ipdb_ok() -> bool:
     return all((IPDB_DIR / f"dbip-{k}-lite.mmdb").is_file() for k in ("asn", "country"))
 
@@ -1964,6 +1995,7 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
     install_vipermonkey()
     install_ipdb()
     install_tlds()
+    install_lolrmm()
     install_chromium()
     _clear_mark("webcrack")   # an explicit full setup always retries these
     _clear_mark("boxps")
@@ -2299,6 +2331,7 @@ def ensure(version: str = DEFAULT_VERSION) -> bool:
             chromium_ok = _chromium_ok()
             _ensure_optional()   # webcrack + box-ps (optional; marker-guarded)
             install_tlds()       # no-op while the cached IANA list is fresh
+            install_lolrmm()     # no-op while the cached LOLRMM catalogue is fresh
             if deps_ok and didier_ok and oms_ok and vm_ok and ipdb_ok and chromium_ok:
                 print(f"[=] Portable Python present with tools OK at {PY_DIR}")
                 return True

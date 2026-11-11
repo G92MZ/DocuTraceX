@@ -153,6 +153,26 @@ async def tenant_lookup_put(body: dict = Body(...)) -> dict:
     return {"enabled": data["tenant_lookup"]}
 
 
+@router.get("/lolrmm")
+async def lolrmm_status() -> dict:
+    """The LOLRMM catalogue the RMM extractor uses: source, size, date."""
+    from .. import lolrmm
+    return lolrmm.status()
+
+
+@router.post("/lolrmm/refresh")
+async def lolrmm_refresh() -> dict:
+    """Download the LOLRMM catalogue again (through the HTTP proxy if one is set)."""
+    from .. import lolrmm
+    from ..c2 import registry
+    try:
+        st = await asyncio.to_thread(lolrmm.download, appsettings.proxy_url())
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Could not download the LOLRMM catalogue: {exc}") from exc
+    registry.dependency_status("rmm", refresh=True)
+    return st
+
+
 @router.get("/c2-shared")
 async def c2_shared_get() -> dict:
     """Cobalt Strike watermarks / public-key SHA-256 known to be shared (leaked, cracked):

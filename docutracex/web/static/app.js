@@ -4977,6 +4977,33 @@ async function loadTenantLookup() {
   });
 }
 
+function renderLolrmm(t) {
+  const el = document.getElementById("lolrmm-line");
+  if (!el) return;
+  t = t || {};
+  el.innerHTML = t.source === "lolrmm"
+    ? `<a href="https://lolrmm.io" target="_blank" rel="noopener noreferrer">LOLRMM</a> catalogue, ${t.tools} tools (${t.usable} with names, signers or domains to match), updated ${escapeHtml(t.updated || "")} — refreshed weekly in the background.`
+    : 'LOLRMM catalogue not downloaded yet: the built-in list of ~20 products is used.';
+}
+
+async function loadLolrmm() {
+  try { renderLolrmm(await (await fetch("/api/settings/lolrmm")).json()); } catch (_) { /* optional */ }
+  const btn = document.getElementById("lolrmm-refresh");
+  if (!btn || btn.dataset.wired) return;
+  btn.dataset.wired = "1";
+  btn.addEventListener("click", async () => {
+    const msg = document.getElementById("lolrmm-msg");
+    btn.disabled = true; msg.className = "status"; msg.textContent = "Downloading…";
+    try {
+      const r = await fetch("/api/settings/lolrmm/refresh", { method: "POST" });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.detail || r.statusText);
+      renderLolrmm(j); msg.className = "status ok-text"; msg.textContent = "Updated; applies to new searches.";
+    } catch (err) { msg.className = "status bad-text"; msg.textContent = String(err.message || err); }
+    btn.disabled = false;
+  });
+}
+
 async function loadC2Shared() {
   const ta = document.getElementById("c2-shared-text");
   if (!ta) return;
@@ -6885,6 +6912,7 @@ async function loadC2View(caseId) {
   const body = document.getElementById("c2-body");
   if (!sel || !body) return;
   loadC2Shared();
+  loadLolrmm();
   const id = await fillCaseSelect(sel, caseId || _c2Case || _openCaseId);
   _c2Case = id;
   if (!id) { body.innerHTML = '<p class="hint-line">Analyse a file first; implant configurations found in it show up here.</p>'; return; }

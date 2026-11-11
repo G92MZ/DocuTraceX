@@ -54,6 +54,11 @@ def create_app() -> FastAPI:
             mailintel.refresh_in_background(appsettings.proxy_url())
         except Exception as exc:  # noqa: BLE001
             log.warning("email reputation lists not refreshed: %s", exc)
+        try:                                       # RMM catalogue: weekly, in the background
+            from . import appsettings, lolrmm
+            lolrmm.refresh_in_background(appsettings.proxy_url())
+        except Exception as exc:  # noqa: BLE001
+            log.warning("LOLRMM catalogue not refreshed: %s", exc)
 
     app = FastAPI(title="DocuTraceX", version=__version__)
 

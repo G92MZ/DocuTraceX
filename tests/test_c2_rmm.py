@@ -42,3 +42,55 @@ def test_product_only_is_indicators_and_low() -> None:
 def test_utf16_at_odd_offset() -> None:
     data = b"\x00\x01" + b"X" + "rutserv.exe".encode("utf-16-le") + b"\x00" * 10
     assert rmm.extract(data, "x")[0]["family"] == "RMM: Remote Utilities"
+
+
+# --- LOLRMM catalogue ------------------------------------------------------------------------
+
+def _catalogue(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    import json
+
+    from docutracex import lolrmm
+    tools = [{"Name": "GetScreen", "Category": "RMM", "Details": {"Website": "https://getscreen.me/",
+              "PEMetadata": [{"Filename": "getscreen.exe", "OriginalFileName": "", "Description": ""}],
+              "InstallationPaths": ["C:\\Program Files\\Getscreen\\getscreen.exe", "*\\setup.exe"]},
+              "Artifacts": {"Network": [{"Domains": ["*.getscreen.me", "*.amazonaws.com"]}]},
+              "CodeSigning": {"certificates": [{"signer_name": "Kopetra Ltd."}]}},
+             {"Name": "Sophos-Remote Management System", "Category": "RMM", "Details": {"PEMetadata": []},
+              "Artifacts": {"Network": [{"Domains": ["*.sophos.com"]}]}},
+             {"Name": "ScreenConnect", "Category": "RMM", "Details": {"PEMetadata": [],
+              "InstallationPaths": ["screenconnect.windowsclient.exe"]}, "Artifacts": {}}]
+    tools += [{"Name": f"Filler {i}", "Details": {}} for i in range(60)]
+    p = tmp_path / "lolrmm" / "rmm_tools.json"
+    p.parent.mkdir()
+    p.write_text(json.dumps(tools))
+    monkeypatch.setattr(lolrmm, "path", lambda: p)
+
+
+def test_lolrmm_only_product(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    from docutracex import lolrmm
+    _catalogue(tmp_path, monkeypatch)
+    cat = lolrmm.products()
+    assert cat["GetScreen"]["domains"] == ["getscreen.me"]               # generic cloud domains dropped
+    assert "setup.exe" not in cat["GetScreen"]["files"]                   # generic installer names dropped
+    r = rmm.extract(ms.rmm_lolrmm_only_exe(), "soporte.exe")
+    assert [(x["family"], x["kind"], x["summary"]["LOLRMM"]) for x in r] == [("RMM: GetScreen", "indicators", "GetScreen (RMM)")]
+    assert lolrmm.status()["source"] == "lolrmm"
+
+
+def test_lolrmm_vendor_domain_alone_is_not_a_product(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    _catalogue(tmp_path, monkeypatch)
+    assert rmm.extract(b"see https://www.sophos.com/support for help", "mail.eml") == []
+
+
+def test_lolrmm_merges_into_builtin(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    _catalogue(tmp_path, monkeypatch)
+    r = rmm.extract(ms.rmm_screenconnect_msi(), "x.msi")
+    assert len(r) == 1 and r[0]["family"] == "RMM: ScreenConnect (ConnectWise Control)"
+    assert r[0]["summary"]["Relay"] == ms.RMM_RELAY and r[0]["summary"]["LOLRMM"] == "ScreenConnect (RMM)"
+
+
+def test_without_catalogue_builtin_only(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    from docutracex import lolrmm
+    monkeypatch.setattr(lolrmm, "path", lambda: tmp_path / "missing.json")
+    assert lolrmm.status()["source"] == "builtin"
+    assert rmm.extract(ms.rmm_lolrmm_only_exe(), "x.exe") == []
