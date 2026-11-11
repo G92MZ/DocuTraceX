@@ -590,6 +590,36 @@ rules:
     when: {fact: tenant.sender_domain_unrelated}
     evidence: "{tenant.sender_domain_unrelated}"
 
+  # The sender's domain imitates one of your domains / brands and the message came
+  # from a Microsoft 365 tenant: whether the tenant verified that domain (Managed)
+  # or not, verifying it only proves the attacker controls it.
+  - id: tenant_sender_lookalike
+    title: The sender's domain imitates yours / a brand and was sent from a Microsoft 365 tenant
+    severity: high
+    score: 50
+    attack: [T1566, T1583.001]
+    when: {fact: tenant.sender_lookalike}
+    evidence: "{tenant.sender_lookalike}"
+
+  - id: tenant_holds_lookalikes
+    title: The sender's Microsoft 365 tenant holds other domains that imitate yours / a brand
+    severity: high
+    score: 25
+    attack: [T1583.001]
+    when: {fact: tenant.tenant_lookalikes}
+    evidence: "{tenant.tenant_lookalikes}"
+
+  # Many domains unrelated to the tenant's own name and / or several removed:
+  # throw-away domains rotated through one tenant. Context: a group with many
+  # brands also has unrelated domains, so on its own it stays below "suspicious".
+  - id: tenant_domain_sprawl
+    title: The sender's Microsoft 365 tenant rotates many domains unrelated to its name
+    severity: medium
+    score: 10
+    attack: [T1583.001]
+    when: {fact: tenant.domain_sprawl}
+    evidence: "{tenant.domain_sprawl}"
+
   - id: dmarc_fail_policy_none
     title: "DMARC fails and the domain's policy is none (nothing stops spoofing it)"
     severity: low

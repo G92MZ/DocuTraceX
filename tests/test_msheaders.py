@@ -207,3 +207,41 @@ def test_sender_domain_outside_its_tenant_is_phishing_on_its_own() -> None:
     hit = next(r for r in mailengine.run(f, "email", {}) if r["id"] == "tenant_sender_domain_unrelated")
     assert hit["severity"] == "high" and hit["score"] >= 40
     assert mailengine.verdict([{"id": hit["id"], "score": hit["score"]}])["verdict"] == "phishing"
+
+
+TYPOSQUAT_TENANT_ANSWER = {   # shaped like AZMap's page for a throw-away tenant (current + removed domains)
+    "tenant_name": "nwcollege0", "brand_name": "Northwind Community College",
+    "related_domains": [{"domain": d, "type": "Managed"} for d in
+                        ("lumenfold.example", "grupoejernplo.example", "nwcollege1.example", "sarps.example",
+                         "nwcollege0.example", "quorvane.example")] + [{"domain": "nwcollege0.onmicrosoft.com"}],
+    "former_domains": ["pelmaris.example", "oxbrinte.example", "verdalune.example", "fenwickery.example"]}
+
+
+def test_typosquat_verified_in_a_throwaway_tenant(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: ANN001
+    from docutracex import appsettings
+    monkeypatch.setenv("DOCUTRACEX_CONFIG_DIR", str(tmp_path / "cfg"))
+    monkeypatch.setenv("DOCUTRACEX_TENANT_LOOKUP", "1")
+    monkeypatch.setattr("docutracex.mailintel._routes",
+                        lambda proxy: [("direct", _Opener(TYPOSQUAT_TENANT_ANSWER, []))])
+    appsettings.set_email_settings(["grupoejemplo.example"], [], None)
+    _e, r = _analyse(ms.tenant_typosquat_eml())
+    data = r["tenant"]["tenants"][0]["data"]
+    assert "grupoejernplo.example" in data["related_domains"] and len(data["former_domains"]) == 4
+    got = {m["id"]: m for m in r["engine"]["matched"]}
+    assert "tenant_sender_domain_unrelated" not in got                  # it IS a domain of that tenant…
+    ev = got["tenant_sender_lookalike"]["evidence"]                     # …and still detected: it imitates yours
+    assert "grupoejernplo.example looks like grupoejemplo.example" in ev and "current, Managed" in ev
+    assert "4 removed" in got["tenant_domain_sprawl"]["evidence"]
+    assert r["verdict"]["verdict"] == "phishing"
+
+
+def test_former_domain_and_unverified_typosquat() -> None:
+    from docutracex import mailengine
+    data = tenantintel._normalise(TYPOSQUAT_TENANT_ANSWER)
+    t = {"tenants": [{"tenant_id": "x", "role": "sender", "status": "ok", "data": data}]}
+    f = mailengine.tenant_facts(t, "verdalune.example", ["grupoejemplo.example"], [])
+    assert f["sender_domain_unrelated"].startswith("verdalune.example was removed from tenant")
+    f = mailengine.tenant_facts(t, "grupoejemplo-pagos.example", ["grupoejemplo.example"], [])   # not in the tenant
+    assert f["sender_domain_unrelated"] and "sent from tenant" in f["sender_lookalike"]
+    f = mailengine.tenant_facts(t, "sarps.example", ["grupoejemplo.example"], [])
+    assert any("grupoejernplo.example looks like grupoejemplo.example" in x for x in f["tenant_lookalikes"])
