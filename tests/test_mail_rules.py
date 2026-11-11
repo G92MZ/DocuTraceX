@@ -216,6 +216,23 @@ def test_sample_exchange_messageid_is_clean(tmp_path: Path) -> None:
     res = mail_rules.analyze(p, ".eml", em, tmp_path)
     f = next(x for x in res["findings"] if x["rule"] == "messageid_domain_mismatch")
     assert f["severity"] == "info" and "Exchange Online" in f["detail"]
+    assert "received_chain_break" not in {x["rule"] for x in res["findings"]}       # Exchange's own hops
     assert res["verdict"]["verdict"] == "clean"
     vals = {i["value"].lower() for i in ioc.extract(ioc.sources_from_modules({"email": em, "mailrules": res}))["iocs"]}
     assert not any("exchangelabs" in v for v in vals)
+
+
+def test_hops_inside_one_mail_provider_are_no_chain_break() -> None:
+    def run(*pairs: tuple[str, str]) -> set:
+        res = {"findings": []}
+        mail_rules._received({"received_chain": [{"from": f, "by": b} for f, b in pairs]}, res)
+        return {f["rule"] for f in res["findings"]}
+    # by Exchange Online's mailbox server, then from its outbound relay: one provider
+    assert "received_chain_break" not in run(("x.example", "am0pr00mb0001.eurprd00.prod.exchangelabs.com"),
+                                             ("am0pr00cu000.outbound.protection.outlook.com", "mx.corp.example"))
+    assert mail_rules.same_provider("mail-wr1-f41.google.com", "x.1e100.net") == "Google"
+    # a real break (and a look-alike of the provider) is still reported
+    assert "received_chain_break" in run(("x.example", "am0pr00mb0001.eurprd00.prod.exchangelabs.com"),
+                                         ("relay.attacker.example", "mx.corp.example"))
+    assert "received_chain_break" in run(("x.example", "mx.evil-outlook.com"),
+                                         ("am0pr00cu000.outbound.protection.outlook.com", "mx.corp.example"))
