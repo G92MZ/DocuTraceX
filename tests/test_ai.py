@@ -131,3 +131,26 @@ def test_api_mcp_info_and_chat_errors(case, llm: str) -> None:
     assert client.post("/api/ai/chat", json={"message": "x", "base_url": "", "model": "m"}).status_code == 400
     r = client.post("/api/ai/chat", json={"message": "x", "base_url": llm, "model": "m", "case_id": case[1]})
     assert r.status_code == 200 and "high findings" in r.json()["reply"]
+
+
+def test_mcp_info_checks_the_interpreter_the_client_launches(monkeypatch) -> None:  # noqa: ANN001
+    """The web server may run on another Python than the portable one the MCP
+    client launches: mcp is probed in that interpreter, as Diagnostics does."""
+    from fastapi.testclient import TestClient
+
+    from docutracex import deps
+    from docutracex.api import ai_api
+    from docutracex.app import create_app
+    client = TestClient(create_app())
+    seen = []
+
+    def fake(executable, ds):  # noqa: ANN001, ANN202
+        seen.append(str(executable))
+        return {}, [deps.DepStatus("mcp", "mcp", "MCP server", False, True, "1.9.0", None)]
+    monkeypatch.setattr(deps, "check_in_interpreter", fake)
+    monkeypatch.setattr(ai_api.settings, "portable_python", lambda: "/portable/python")
+    info = client.get("/api/mcp/info").json()
+    assert seen == ["/portable/python"] and info["mcp_installed"] and info["mcp_version"] == "1.9.0"
+    monkeypatch.setattr(deps, "check_in_interpreter",
+                        lambda e, d: ({}, [deps.DepStatus("mcp", "mcp", "MCP server", False, False, None, "No module")]))
+    assert client.get("/api/mcp/info").json()["mcp_installed"] is False
