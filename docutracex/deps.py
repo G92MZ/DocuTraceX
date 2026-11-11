@@ -690,6 +690,28 @@ def run_checks() -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
 
+    # C2 extractors: their dependencies are optional with a warning (registry.REQUIRES)
+    try:
+        from .c2 import registry as _c2r
+        off, less = [], []
+        for ex, desc in _c2r.EXTRACTORS.items():
+            d = _c2r.dependency_status(ex, refresh=True)
+            off += [f"{desc['name']}: {m}" for m in d["missing_required"]]
+            less += [f"{desc['name']}: {m}" for m in d["missing_optional"]]
+        checks.append(Check(
+            category="External tools",
+            name="C2 extractors",
+            status="ok" if not off and not less else "warn",
+            detail=("all dependencies present" if not off and not less else
+                    "; ".join([f"switched off — {x}" for x in off] + [f"works with less — {x}" for x in less]))[:600],
+            remedy="" if not off and not less else
+                   "install the missing Python packages in the app's Python (pip install …) or run install.py; "
+                   "1768.py comes with the toolchain (Diagnostics → Retry didier)",
+            purpose="Implant configurations (C2 tab); a missing dependency only switches off / limits that extractor",
+        ))
+    except Exception:  # noqa: BLE001
+        pass
+
     # ILSpy CLI + portable .NET runtime (.NET decompilation on demand) and
     # de4dot (--strtyp none clean-up first, Windows / Mono) — both optional.
     try:

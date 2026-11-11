@@ -6750,18 +6750,22 @@ function paneC2(c2, findings, caseId) {
   }).join("");
   const empty = `<p class="hint-line">No implant configuration found in this case.</p>`;
   const labels = { extracted: "extracted", partial: "partial", indicators: "indicators", not_found: "not found",
-                   not_applicable: "not applicable", unsupported_format: "unsupported", error: "error" };
+                   not_applicable: "not applicable", unsupported_format: "unsupported", missing_dependency: "missing dependency",
+                   error: "error" };
   const exStatus = c2.extractor_status || {};
   const exRows = (c2.registry || []).map((x) => {
     const st = exStatus[x.id] || {};
     return `<tr><td><b>${escapeHtml(x.name)}</b> <span class="hint-line">v${escapeHtml(x.version)}</span><div class="hint-line">${escapeHtml((x.formats || []).join(", "))}</div></td>
-      <td>${escapeHtml((x.fields || []).join(", "))}${x.limits ? `<div class="hint-line">${escapeHtml(x.limits)}</div>` : ""}</td>
-      <td>${Object.entries(st).map(([k, n]) => `<span class="badge ${k === "extracted" ? "badge-bad" : k === "error" ? "badge-warn" : "badge-muted"}">${escapeHtml(labels[k] || k)} ${n}</span>`).join(" ")}</td></tr>`;
+      <td>${escapeHtml((x.fields || []).join(", "))}${x.limits ? `<div class="hint-line">${escapeHtml(x.limits)}</div>` : ""}${
+        ((x.dependency_status || {}).missing_required || []).length ? `<div class="bad-text">switched off — needs ${escapeHtml(x.dependency_status.missing_required.join("; "))}</div>` : ""}${
+        ((x.dependency_status || {}).missing_optional || []).length ? `<div class="warn-text">works with less — missing ${escapeHtml(x.dependency_status.missing_optional.join("; "))}</div>` : ""}</td>
+      <td>${Object.entries(st).map(([k, n]) => `<span class="badge ${k === "extracted" ? "badge-bad" : k === "error" || k === "missing_dependency" ? "badge-warn" : "badge-muted"}">${escapeHtml(labels[k] || k)} ${n}</span>`).join(" ")}</td></tr>`;
   }).join("");
   const interp = (c2.interpretations || []).slice(-5).map((i) => `${escapeHtml(i.at)} (${i.changed} changed)`).join(", ");
   const extractors = `<div class="ml-pane"><p class="hint-line">Every registered extractor runs on every object and says what happened.
       Run <span class="mono">${escapeHtml(c2.run_id || "—")}</span>${(c2.runs || []).length > 1 ? ` · earlier runs kept: ${(c2.runs || []).length - 1}` : ""}.
       Its RAW output (what each tool printed) is stored per object and never overwritten.</p>
+    ${(c2.warnings || []).length ? `<ul class="hint-list">${c2.warnings.map((w) => `<li class="warn-text">${escapeHtml(w)}</li>`).join("")}</ul>` : ""}
     ${c2.registry ? `<table class="cases"><thead><tr><th>Extractor</th><th>Recovers</th><th>This run (objects)</th></tr></thead><tbody>${exRows}</tbody></table>` :
       '<p class="hint-line">Re-run the C2 search to see the extractors\' statuses.</p>'}
     ${caseId && c2.run_id ? `<p class="hint-line"><button class="btn btn-ghost btn-sm c2-reint" type="button">Re-interpret the RAW</button>
