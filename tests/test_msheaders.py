@@ -196,3 +196,14 @@ def test_tool_bookkeeping_is_not_mined_for_iocs(monkeypatch: pytest.MonkeyPatch)
     assert not any(v.startswith("msg-") for v in flat)                    # Message-IDs are not mailboxes
     assert ("email", "facturacion@proveedor-pagos.example") in vals2      # real participants stay
     assert ("ipv4", "198.51.100.23") in vals
+
+
+def test_sender_domain_outside_its_tenant_is_phishing_on_its_own() -> None:
+    from docutracex import mailengine
+    t = {"tenants": [{"tenant_id": "x", "role": "sender", "status": "ok",
+                      "data": {"brand_name": "St. Mary's Catholic School",
+                               "related_domains": ["stmarys-school.example"]}}]}
+    f = {"tenant": mailengine.tenant_facts(t, "indltex.example")}
+    hit = next(r for r in mailengine.run(f, "email", {}) if r["id"] == "tenant_sender_domain_unrelated")
+    assert hit["severity"] == "high" and hit["score"] >= 40
+    assert mailengine.verdict([{"id": hit["id"], "score": hit["score"]}])["verdict"] == "phishing"
