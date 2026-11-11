@@ -35,7 +35,7 @@ fetched for the purpose, and a portable Java runtime is downloaded when there is
 
 ```bash
 python install.py             # once: sets everything up
-python run.py                 # from then on — open http://127.0.0.1:8000
+python run.py                 # from then on — open http://127.0.0.1:8000, or http://<this IP>:8000 from another computer
 ```
 
 ```bash

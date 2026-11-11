@@ -7,9 +7,9 @@ portable Python under tools/. On startup it checks for a newer version
 (``install.py``) so new tools are installed; then the portable is ensured and
 the app starts.
 
-    python run.py                       # http://127.0.0.1:8000
+    python run.py                       # http://<this IP>:8000 (all interfaces)
     python run.py --port 8001           # another port (e.g. next to WinHound)
-    python run.py --host 0.0.0.0 --port 9000
+    python run.py --host 127.0.0.1      # this computer only
     python run.py --no-update           # skip the update check (offline / CI)
 
 HOST / PORT environment variables work too (arguments take priority).
@@ -63,7 +63,7 @@ def _auto_update() -> None:
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(prog="run.py", description="DocuTraceX web service")
-    ap.add_argument("--host", default=None, help="listen interface (default 127.0.0.1)")
+    ap.add_argument("--host", default=None, help="listen interface (default 0.0.0.0: reachable from other computers; 127.0.0.1: this one only)")
     ap.add_argument("--port", type=int, default=None,
                     help="port (default 8000; change it to run several apps at once)")
     ap.add_argument("--no-update", action="store_true",

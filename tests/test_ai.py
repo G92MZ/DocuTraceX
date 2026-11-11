@@ -154,3 +154,12 @@ def test_mcp_info_checks_the_interpreter_the_client_launches(monkeypatch) -> Non
     monkeypatch.setattr(deps, "check_in_interpreter",
                         lambda e, d: ({}, [deps.DepStatus("mcp", "mcp", "MCP server", False, False, None, "No module")]))
     assert client.get("/api/mcp/info").json()["mcp_installed"] is False
+
+
+def test_listens_on_all_interfaces_by_default() -> None:
+    from docutracex.__main__ import access_urls
+    from docutracex.config import Settings
+    assert Settings().host == "0.0.0.0" or __import__("os").environ.get("DOCUTRACEX_HOST")
+    urls = access_urls("0.0.0.0", 8123)
+    assert urls[0].startswith("http://127.0.0.1:8123") and all(":8123" in u for u in urls)
+    assert access_urls("127.0.0.1", 8123) == ["http://127.0.0.1:8123"]
