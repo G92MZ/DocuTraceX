@@ -2690,6 +2690,7 @@ function originBadge(n) {
   const t = escapeHtml(n.decrypted_from || "");
   if (n.source === "code-resources") return `<span class="badge badge-warn" title="Recovered from the binary: ${t}">📦 embedded resource</span>`;
   if (n.source === "unpacked") return `<span class="badge badge-muted" title="${t}">📦 extracted (installer / unpacker)</span>`;
+  if (n.source === "images") return `<span class="badge badge-muted" title="${t}">🖼 image (${escapeHtml((n.decrypted_from || "").startsWith("Office media") ? "Office media" : "PE resource")})</span>`;
   if (n.source === "hidden") return `<span class="badge badge-warn" title="${t}">🕵 hidden payload</span>`;
   if (n.source === "hex") return `<span class="badge badge-muted" title="${t}">✂ hex selection</span>`;
   return `<span class="badge badge-warn" title="Recovered by decrypting/decoding: ${t}">🔓 decrypted stage</span>`;
