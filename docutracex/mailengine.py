@@ -277,12 +277,13 @@ def tenant_facts(t: dict[str, Any], sender_domain: str, own: list[str] | None = 
     - ``domain_sprawl``: the tenant holds many domains unrelated to its own name,
       and / or has removed several (rotation of throw-away domains)."""
     tenants = t.get("tenants") or []
-    sender_t = next((x for x in tenants if x.get("role") == "sender" and x.get("status") == "ok"), None)
+    sender_t = next((x for x in tenants if x.get("role") == "sender"), None)
     out = {"looked_up": bool(tenants), "brand": "", "name": "", "related": [], "sender_domain_unrelated": "",
-           "id": "", "sender_lookalike": "", "tenant_lookalikes": [], "domain_sprawl": "", "former": []}
+           "id": "", "sender_lookalike": "", "tenant_lookalikes": [], "domain_sprawl": "", "former": [],
+           "sender_domain_tenant": "", "sender_domain_type": ""}
     if not sender_t:
         return out
-    data = sender_t.get("data") or {}
+    data = (sender_t.get("data") or {}) if sender_t.get("status") == "ok" else {}
     rel = data.get("related_domains") or []
     former = data.get("former_domains") or []
     out.update(id=sender_t.get("tenant_id", ""), brand=data.get("brand_name", ""), name=data.get("tenant_name", ""),
@@ -291,7 +292,20 @@ def tenant_facts(t: dict[str, Any], sender_domain: str, own: list[str] | None = 
     if sender_t.get("own_tenant"):
         return out
     reg = _registrable(sender_domain) if sender_domain else ""
-    if rel and reg and reg not in {_registrable(d) for d in rel}:
+    # Microsoft's own answer for the sender's domain (which tenant it is registered
+    # to *now*) decides first; AZMap's domain list is the fallback.
+    ms = next((d for d in t.get("domains") or [] if d.get("domain") == reg), {})
+    out["sender_domain_tenant"] = ms.get("tenant_id", "")
+    out["sender_domain_type"] = ms.get("namespace", "") if ms.get("namespace") not in ("Unknown",) else ""
+    if reg and ms.get("status") == "ok" and ms.get("tenant_id") and out["id"]:
+        if ms["tenant_id"] != out["id"].lower():
+            out["sender_domain_unrelated"] = (f"{sender_domain} is registered to another Microsoft 365 tenant "
+                                              f"({ms['tenant_id']}) than the one that sent the message ({who}) — "
+                                              "per Microsoft")
+    elif reg and ms.get("status") == "not_in_entra" and out["id"]:
+        out["sender_domain_unrelated"] = (f"{sender_domain} is not registered to any Microsoft 365 tenant, yet the "
+                                          f"message was sent from tenant {who} — per Microsoft")
+    elif rel and reg and reg not in {_registrable(d) for d in rel}:
         out["sender_domain_unrelated"] = (
             f"{sender_domain} was removed from tenant {who} (now {len(rel)} domain(s))"
             if reg in {_registrable(d) for d in former} else
@@ -303,8 +317,10 @@ def tenant_facts(t: dict[str, Any], sender_domain: str, own: list[str] | None = 
         why = _lookalike_of(reg, own, brands)
         if why:
             e = next((x for x in entries if _registrable(x["domain"]) == reg), None)
-            state = (f"{'current' if e['current'] else 'removed'}{', ' + e['type'] if e.get('type') else ''} domain of"
-                     if e else "sent from")
+            typ = out["sender_domain_type"] or (e or {}).get("type") or ""
+            mine = (out["sender_domain_tenant"] and out["sender_domain_tenant"] == out["id"].lower()) or (e and e["current"])
+            state = (f"{typ + ' ' if typ else ''}domain of" if mine else
+                     f"removed{', ' + typ if typ else ''} domain of" if e else "sent from")
             out["sender_lookalike"] = f"{why} — {state} tenant {who}"
     for e in entries:
         d = _registrable(e["domain"])

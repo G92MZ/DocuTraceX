@@ -1723,6 +1723,16 @@ function msHeadersBox(ms, tenant) {
           (d.former_domains || []).length ? `<div class="muted">removed: ${escapeHtml(d.former_domains.slice(0, 12).join(", "))}${d.former_domains.length > 12 ? ` … (${d.former_domains.length})` : ""}</div>` : ""}</td>
         <td>${addMarkCell("tenant", `Tenant ${b.tenant_id}${d.brand_name ? ` (${d.brand_name})` : ""}`, "microsoft", rel.join(", "))}</td></tr>`;
     }).join(""));
+    const doms = (tenant && tenant.domains) || [];
+    if (doms.length) {
+      const tenantIds = new Set(ids.map((b) => (b.tenant_id || "").toLowerCase()));
+      h += `<h4>Sender domains → tenant (Microsoft)</h4><p class="hint-line">Which Microsoft 365 tenant each of the sender's domains
+        is registered to right now, and whether it is Managed or Federated (login.microsoftonline.com, public endpoints).</p>`;
+      h += table(["Domain", "Tenant", "Type", "Brand", "Matches a tenant above"], doms.map((d) => `<tr><td class="mono">${escapeHtml(d.domain)}</td>
+        <td class="mono">${d.status === "ok" ? escapeHtml(d.tenant_id) : `<span class="muted">${escapeHtml(d.status === "not_in_entra" ? "not in Microsoft 365" : `${d.status}${d.error ? `: ${d.error}` : ""}`)}</span>`}</td>
+        <td>${escapeHtml(d.namespace || "")}</td><td>${escapeHtml(d.brand || "")}</td>
+        <td>${d.status === "ok" ? (tenantIds.has(d.tenant_id) ? '<span class="badge badge-ok">yes</span>' : '<span class="badge badge-bad">no</span>') : ""}</td></tr>`).join(""));
+    }
   }
   if ((ms.notes || []).length) h += `<ul class="hint-list">${ms.notes.map((n) => `<li>${escapeHtml(n)}</li>`).join("")}</ul>`;
   return h;
