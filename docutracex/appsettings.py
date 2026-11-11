@@ -168,6 +168,22 @@ def set_email_settings(own_domains: list[str], brands: list[str],
     return email_settings()
 
 
+def trusted_domains() -> dict[str, Any]:
+    """Generic legitimate domains in force (defaults ± the user's changes)."""
+    from . import trusted
+    cur = trusted.lists(load().get("trusted_domains") or {})
+    return {**cur, "defaults": {"services": list(trusted.SERVICES), "platforms": list(trusted.PLATFORMS)}}
+
+
+def set_trusted_domains(services: list[str] | None, platforms: list[str] | None,
+                        restore: bool = False) -> dict[str, Any]:
+    from . import trusted
+    data = load()
+    data["trusted_domains"] = {} if restore else trusted.to_stored(services or [], platforms or [])
+    save(data)
+    return trusted_domains()
+
+
 def abusech_key() -> str:
     """abuse.ch Auth-Key (free, auth.abuse.ch) for the URLhaus export; env
     ``DOCUTRACEX_ABUSECH_KEY`` wins. Kept locally, never shown back in full."""

@@ -332,14 +332,21 @@ def own_lookalike(host: str, own: list[str]) -> str:
     if not host or not own:
         return ""
     h = host.lower().strip(".")
-    reg = _registrable(h)
     for d in own:
         if h == d or h.endswith("." + d):
             return ""
+    from . import trusted
+    view, platform = trusted.matcher().view(h)
+    if view is None:                              # a generic legitimate service (Settings)
+        return ""
+    h = view                                      # on a platform only the tenant part is judged
+    reg = _registrable(h)
     from . import similarity
     th = similarity.thresholds()
     for d in own:
         label, dl = reg.split(".")[0], d.split(".")[0]
+        if platform and label == dl:
+            continue                              # contoso.sharepoint.com for contoso.com: its own tenant
         dist = similarity.lookalike_distance(label, dl, th)
         if dist:
             return f"{host} ≈ {d} ({dist} edit{'s' if dist > 1 else ''})"
