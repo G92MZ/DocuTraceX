@@ -1004,7 +1004,9 @@ _MODULE_SKIP_PATHS = {
     "mailrules": re.compile(r"tools/emldump part \d+ \((?!text/)[^)]*\)/output$"
                             r"|^tenant(?:[/\[].*)?$"
                             r"|^engine/facts/(?:thread|tenant)(?:[/\[].*)?$"
-                            r"|^engine/matched\[\d+\]/evidence$"),
+                            r"|^engine/matched\[\d+\]/evidence$"
+                            # the Message-ID and its host: an identifier, not an indicator
+                            r"|^findings\[\d+\]/message_id$|^fingerprint/message_id_(?:domain|provider)$"),
     # olevba's description of each indicator ("May run PowerShell commands")
     "oletools": re.compile(r"tools/olevba/analysis\[\d+\]/description$"),
 }
