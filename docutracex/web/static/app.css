@@ -52,7 +52,7 @@ body {
   flex-wrap: wrap;
   row-gap: 10px;
 }
-/* groups: case management · main analysis · complementary · system */
+/* groups: cases · analysis · engines (YARA, ML, C2, Hex) · AI · system */
 .tab-group {
   --g: #4ea1d3;
   display: flex;
@@ -66,7 +66,8 @@ body {
 }
 .tab-group-cases { --g: #5fb7e8; }
 .tab-group-main { --g: #7ee2a8; }
-.tab-group-extra { --g: #c9a6f0; }
+.tab-group-engines { --g: #ff9f5a; }
+.tab-group-ai { --g: #e98bf2; }
 .tab-group-system { --g: #8b98a9; margin-left: auto; }
 .tab-group-label {
   display: flex;
@@ -106,12 +107,34 @@ body {
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
+/* every tab has its own colour; the icon sits on a tinted tile, duotone (.duo = soft fill) */
+.tab { --ic: var(--g); }
+.tab[data-view="new"] { --ic: #5fb7e8; }
+.tab[data-view="tasks"] { --ic: #f0b35a; }
+.tab[data-view="cases"] { --ic: #8fb4ff; }
+.tab[data-view="components"] { --ic: #7ee2a8; }
+.tab[data-view="marks"] { --ic: #f27a9b; }
+.tab[data-view="reports"] { --ic: #6fd3c4; }
+.tab[data-view="yara"] { --ic: #f5c84c; }
+.tab[data-view="ml"] { --ic: #b48cff; }
+.tab[data-view="c2"] { --ic: #ff7a59; }
+.tab[data-view="hex"] { --ic: #59c3ff; }
+.tab[data-view="ai"] { --ic: #e98bf2; }
+.tab[data-view="settings"] { --ic: #9aa7b8; }
+.tab[data-view="diagnostics"] { --ic: #7ee2a8; }
 .tab-icon {
-  width: 18px; height: 18px; flex: none;
+  width: 18px; height: 18px; flex: none; box-sizing: content-box; padding: 4px; border-radius: 8px;
+  color: var(--ic);
+  background: color-mix(in srgb, var(--ic) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ic) 22%, transparent);
   fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+  transition: background 0.15s, box-shadow 0.15s, transform 0.15s;
 }
+.tab-icon .duo { fill: color-mix(in srgb, currentColor 22%, transparent); }
+.tab-icon .dot { fill: currentColor; stroke: none; }
+.tab-icon .thin { stroke-width: 1.6; opacity: 0.75; }
 .tab:hover { color: var(--text); background: #1b2330; border-color: #33415a; }
-.tab:hover .tab-icon { color: var(--g); }
+.tab:hover .tab-icon { background: color-mix(in srgb, var(--ic) 24%, transparent); transform: translateY(-1px); }
 .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .tab.is-active {
   color: #fff;
@@ -119,10 +142,11 @@ body {
   border-color: #3b88b8;
   box-shadow: 0 2px 10px rgba(78, 161, 211, 0.25), inset 0 -2px 0 var(--g);
 }
-.tab.is-active .tab-icon { color: #fff; }
+.tab.is-active .tab-icon { color: #fff; background: color-mix(in srgb, var(--ic) 45%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ic) 70%, transparent), 0 0 10px color-mix(in srgb, var(--ic) 35%, transparent); }
 .tab-group:has(.tab.is-active) { border-color: color-mix(in srgb, var(--g) 35%, #1f2836); }
 .tab-group:has(.tab.is-active) .tab-group-label { color: var(--text); }
-@media (max-width: 1720px) {
+@media (max-width: 1960px) {
   .tab-group-system .tab { min-width: 0; padding-left: 12px; padding-right: 12px; }
   .tab-group-system .tab > span:not(.diag-dot) { display: none; }
 }
@@ -918,3 +942,15 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 .chain-rules { border: 1px solid var(--panel-border); border-radius: 8px; padding: 8px 10px; margin: 8px 0; font-size: 13px; }
 .chain-rules ul { margin: 6px 0 0; padding-left: 4px; list-style: none; }
 .chain-rules li { margin: 3px 0; overflow-wrap: anywhere; }
+
+/* quick analysis (loose file from an engine tab) */
+.quick-form { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--panel-border); flex-wrap: wrap; }
+.quick-extract { display: inline-flex; align-items: center; gap: 4px; }
+.quick-note:empty { display: none; }
+.quick-note { margin: 6px 0; display: flex; align-items: center; gap: 8px; }
+.quick-ic { display: inline-flex; vertical-align: middle; }
+.quick-ic .tab-icon { width: 14px; height: 14px; padding: 2px; border-radius: 5px; }
+.quick-ic[data-tool="yara"] { --ic: #f5c84c; }
+.quick-ic[data-tool="ml"] { --ic: #b48cff; }
+.quick-ic[data-tool="c2"] { --ic: #ff7a59; }
+.quick-ic[data-tool="hex"] { --ic: #59c3ff; }

@@ -215,7 +215,7 @@ function renderCases() {
     return `
       <tr class="case-row" data-id="${escapeHtml(c.analysis_id)}" title="Open components">
         <td>${escapeHtml(c.created_utc || "")}</td>
-        <td class="file">${escapeHtml(c.filename || "")}</td>
+        <td class="file">${c.quick ? `${quickIconSvg(c.quick)} ` : ""}${escapeHtml(c.filename || "")}${c.quick ? ` <span class="badge badge-muted" title="Quick analysis from the ${escapeHtml(QUICK_NAMES[c.quick] || c.quick)} tab: only that engine ran">quick</span>` : ""}</td>
         <td>${escapeHtml(c.declared_extension || "")}</td>
         <td class="mono" title="${escapeHtml(c.detected_name || "")}">${escapeHtml(c.detected_mime || "")}</td>
         <td>${discrepancyBadge(c.discrepancy)}</td>
@@ -3772,7 +3772,7 @@ async function loadYaraCases() {
     const cases = await fetch("/api/cases").then((r) => r.json());
     const current = sel.value || _openCaseId || "";
     sel.innerHTML = cases.length
-      ? cases.map((c) => `<option value="${escapeHtml(c.analysis_id)}"${c.analysis_id === current ? " selected" : ""}>${escapeHtml(c.filename || "")} · ${escapeHtml(c.analysis_id)}</option>`).join("")
+      ? cases.map((c) => `<option value="${escapeHtml(c.analysis_id)}"${c.analysis_id === current ? " selected" : ""}>${caseLabel(c)} · ${escapeHtml(c.analysis_id)}</option>`).join("")
       : '<option value="">(no cases)</option>';
   } catch (err) { /* keep previous options */ }
 }
@@ -5516,7 +5516,7 @@ async function loadAiCases() {
     const cases = await fetch("/api/cases").then((r) => r.json());
     const current = _openCaseId || sel.value || (cases[0] && cases[0].analysis_id) || "";
     sel.innerHTML = '<option value="">(no case — the AI will list them)</option>' + cases.map((c) =>
-      `<option value="${escapeHtml(c.analysis_id)}"${c.analysis_id === current ? " selected" : ""}>${escapeHtml(c.filename || "")} · ${escapeHtml(c.analysis_id)}</option>`).join("");
+      `<option value="${escapeHtml(c.analysis_id)}"${c.analysis_id === current ? " selected" : ""}>${caseLabel(c)} · ${escapeHtml(c.analysis_id)}</option>`).join("");
   } catch (err) { /* keep previous options */ }
 }
 
@@ -5561,11 +5561,85 @@ function setupAi() {
 }
 
 // --- Main tabs "Machine Learning" and "Hex": pick a case, see its ML results / bytes.
+// --- quick analysis: a loose file analysed from an engine tab (YARA, ML, C2, Hex) ---
+const QUICK_EMOJI = { yara: "🔍", ml: "🧠", c2: "📡", hex: "🔢" };
+const QUICK_NAMES = { yara: "YARA", ml: "Machine Learning", c2: "C2 / Beacons", hex: "Hex" };
+function caseLabel(c) {
+  return `${c.quick ? `${QUICK_EMOJI[c.quick] || "⚡"} ` : ""}${escapeHtml(c.filename || "")}`;
+}
+function quickIconSvg(tool) {
+  const tab = document.querySelector(`.tab[data-view="${tool}"] svg.tab-icon`);
+  return tab ? `<span class="quick-ic" data-tool="${escapeHtml(tool)}" title="Quick analysis (${escapeHtml(QUICK_NAMES[tool] || tool)})">${tab.outerHTML}</span>` : "";
+}
+
+async function quickAnalyse(tool, form, onDone) {
+  const fileEl = form.querySelector("input[type=file]");
+  const status = form.querySelector(".status");
+  const btn = form.querySelector("button[type=submit]");
+  const f = fileEl && fileEl.files && fileEl.files[0];
+  if (!f) { status.textContent = "Choose a file first."; return; }
+  const fd = new FormData();
+  fd.append("file", f);
+  fd.append("tool", tool);
+  const ex = form.querySelector("input[name=extract]");
+  fd.append("extract", ex && ex.checked ? "true" : "false");
+  btn.disabled = true;
+  status.textContent = "Uploading…";
+  try {
+    const r = await fetch("/api/cases/quick", { method: "POST", body: fd });
+    const m = await r.json();
+    if (!r.ok) throw new Error(m.detail || r.statusText);
+    const ids = (m.tasks || []).map((t) => t.id);
+    startTaskPoller();
+    for (let i = 0; i < 7200 && ids.length; i++) {
+      const all = (await fetch("/api/tasks").then((x) => x.json())).tasks;
+      const mine = ids.map((id) => all.find((x) => x.id === id) || {});
+      if (mine.every((t) => ["completed", "failed", "cancelled"].includes(t.state))) {
+        status.textContent = mine.every((t) => t.state === "completed") ? "Done." : `Finished: ${mine.map((t) => t.state).join(", ")}.`;
+        break;
+      }
+      status.textContent = `${QUICK_NAMES[tool]}… (${mine.map((t) => t.state || "queued").join(" → ")})`;
+      await new Promise((res) => setTimeout(res, 1000));
+    }
+    if (!ids.length) status.textContent = "Stored.";
+    await onDone(m.analysis_id);
+  } catch (err) {
+    status.textContent = `⚠ ${err.message || err}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function wireQuick(tool, onDone) {
+  const form = document.getElementById(`${tool}-quick-form`);
+  if (!form) return;
+  const fileEl = form.querySelector("input[type=file]");
+  const name = form.querySelector(".file-name");
+  if (fileEl && name) fileEl.addEventListener("change", () => { name.textContent = fileEl.files[0] ? fileEl.files[0].name : "No file selected"; });
+  form.addEventListener("submit", (ev) => { ev.preventDefault(); quickAnalyse(tool, form, onDone); });
+}
+
+async function quickNote(tool, sel) {
+  const el = document.getElementById(`${tool}-quick-note`);
+  if (!el || !sel) return;
+  const cases = await fetch("/api/cases").then((r) => r.json()).catch(() => []);
+  const c = cases.find((x) => x.analysis_id === sel.value);
+  if (!c || !c.quick) { el.innerHTML = ""; return; }
+  el.innerHTML = `${quickIconSvg(c.quick)} Quick analysis: only ${escapeHtml(QUICK_NAMES[c.quick] || c.quick)} ran on this file.
+    <button class="btn btn-ghost btn-sm" type="button">Run the full analysis</button>`;
+  el.querySelector("button").addEventListener("click", async (ev) => {
+    ev.target.disabled = true;
+    await fetch(`/api/cases/${encodeURIComponent(c.analysis_id)}/rerun`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    startTaskPoller();
+    el.innerHTML = '<span class="hint-line">Full analysis queued (Tasks tab); the case is now a full one.</span>';
+  });
+}
+
 async function fillCaseSelect(sel, current) {
   const cases = await fetch("/api/cases").then((r) => r.json()).catch(() => []);
   const pick = current || sel.value || _openCaseId || (cases[0] && cases[0].analysis_id) || "";
   sel.innerHTML = cases.length
-    ? cases.map((c) => `<option value="${escapeHtml(c.analysis_id)}"${c.analysis_id === pick ? " selected" : ""}>${escapeHtml(c.filename || "")} · ${escapeHtml(c.analysis_id)}</option>`).join("")
+    ? cases.map((c) => `<option value="${escapeHtml(c.analysis_id)}"${c.analysis_id === pick ? " selected" : ""}>${caseLabel(c)} · ${escapeHtml(c.analysis_id)}</option>`).join("")
     : '<option value="">(no cases yet)</option>';
   return sel.value;
 }
@@ -6853,7 +6927,15 @@ function setupMlHex() {
     loadC2View(cs && cs.value);
   });
   const hs = document.getElementById("hex-case");
-  if (hs) hs.addEventListener("change", () => { hexResetCase(hs.value); renderHexView(); });
+  if (hs) hs.addEventListener("change", () => { hexResetCase(hs.value); renderHexView(); quickNote("hex", hs); });
+  if (ms) ms.addEventListener("change", () => quickNote("ml", ms));
+  if (cs) cs.addEventListener("change", () => quickNote("c2", cs));
+  if (ys) ys.addEventListener("change", () => quickNote("yara", ys));
+  // a loose file: quick case, only that engine; the tab then shows it
+  wireQuick("yara", async (id) => { await loadYaraCases(); ys.value = id; quickNote("yara", ys); await showYaraResults(id); });
+  wireQuick("ml", async (id) => { _mlCase = id; await loadMlView(id); quickNote("ml", ms); });
+  wireQuick("c2", async (id) => { _c2Case = id; await loadC2View(id); quickNote("c2", cs); });
+  wireQuick("hex", async (id) => { await fillCaseSelect(hs, id); hexResetCase(id); renderHexView(); quickNote("hex", hs); });
 }
 
 // --- Tab navigation ----------------------------------------------------------
@@ -6870,10 +6952,10 @@ function setupTabs() {
       if (target === "tasks") loadTasks();
       if (target === "cases") loadCases();
       if (target === "reports") loadReports(_openCaseId);
-      if (target === "yara") loadYara();
-      if (target === "ml") loadMlView();
-      if (target === "c2") loadC2View();
-      if (target === "hex") loadHexView();
+      if (target === "yara") loadYara().then(() => quickNote("yara", document.getElementById("yara-case")));
+      if (target === "ml") loadMlView().then(() => quickNote("ml", document.getElementById("ml-case")));
+      if (target === "c2") loadC2View().then(() => quickNote("c2", document.getElementById("c2-case")));
+      if (target === "hex") loadHexView().then(() => quickNote("hex", document.getElementById("hex-case")));
       if (target === "settings") loadSettings();
       if (target === "ai") loadAiCases();
     });
