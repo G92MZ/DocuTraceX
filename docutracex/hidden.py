@@ -214,3 +214,138 @@ def sweep(paths: Any, original: Path, tree: list[dict[str, Any]],
                 sev = "medium" if how == "stored as it is" else "high"   # installers do store files as they are
                 add(f"{Path(name).stem}.{label}", f"the resource {label} of {name}", how, payload, kind, sev)
     return list(found.values())
+
+
+# --- images as objects of their own ---------------------------------------------
+# The sweep above only reports an image that hides something. The analyst also
+# wants to *see* the images a document or a binary carries (a logo, a lure
+# screenshot, an icon imitating a PDF): the Office media and the images in the
+# native resources of each PE become children too, with where they came from.
+IMG_DIR = "images"
+MAX_IMAGES = 200
+_IMG_EXT = {b"\x89PNG": "png", b"\xff\xd8\xff": "jpg", b"GIF8": "gif", b"BM": "bmp", b"RIFF": "webp",
+            b"\x00\x00\x01\x00": "ico", b"II*\x00": "tif", b"MM\x00*": "tif"}
+
+
+def _ext(data: bytes) -> str:
+    return next((e for m, e in _IMG_EXT.items() if data.startswith(m)), "")
+
+
+def _ico_from_icon(raw: bytes) -> bytes | None:
+    """RT_ICON holds one image (a PNG, or a DIB without file header): wrap it as a .ico."""
+    if raw.startswith(b"\x89PNG"):
+        return raw
+    if len(raw) < 40 or struct.unpack_from("<I", raw)[0] != 40:
+        return None
+    w, h2 = struct.unpack_from("<ii", raw, 4)
+    bpp = struct.unpack_from("<H", raw, 14)[0]
+    if not (0 < w <= 1024 and 0 < h2 <= 2048):
+        return None
+    entry = struct.pack("<BBBBHHII", w & 0xFF, (h2 // 2) & 0xFF, 0, 0, 1, bpp, len(raw), 22)
+    return struct.pack("<HHH", 0, 1, 1) + entry + raw
+
+
+def _pe_images(data: bytes) -> list[tuple[str, bytes]]:
+    """(label, image file) of every image in the native resources of a PE."""
+    try:
+        import pefile
+        pe = pefile.PE(data=data, fast_load=True)
+        pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_RESOURCE"]])
+    except Exception:  # noqa: BLE001
+        return []
+    out: list[tuple[str, bytes]] = []
+    for t in getattr(getattr(pe, "DIRECTORY_ENTRY_RESOURCE", None), "entries", []) or []:
+        tid = t.id if t.id is not None else str(t.name)
+        if tid in (4, 5, 6, 9, 11, 14, 16, 24):              # menus, dialogs, strings, accelerators, groups, version, manifest
+            continue
+        tname = {2: "RT_BITMAP", 3: "RT_ICON", 10: "RT_RCDATA", 23: "RT_HTML"}.get(tid, str(tid))
+        for n in getattr(t, "directory", None) and t.directory.entries or []:
+            for lang in getattr(n, "directory", None) and n.directory.entries or []:
+                d = getattr(lang, "data", None)
+                if d is None:
+                    continue
+                try:
+                    raw = pe.get_data(d.struct.OffsetToData, d.struct.Size)
+                except Exception:  # noqa: BLE001
+                    continue
+                name = n.id if n.id is not None else str(n.name)
+                img = (_bmp_from_dib(raw) if tid == 2 else _ico_from_icon(raw) if tid == 3
+                       else raw if _ext(raw) else None)
+                if img and len(img) >= 32:
+                    out.append((f"{tname}/{name}", img))
+                if len(out) >= MAX_IMAGES:
+                    return out
+    return out
+
+
+def images(paths: Any, original: Path, tree: list[dict[str, Any]],
+           pending: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Children for the images of the case that are not objects yet: Office
+    media (``word/media/…``, ``ppt/media/…``, ``xl/media/…``) and the images in
+    the native resources of every PE (bitmaps, icons, images in RCDATA or custom
+    resources). Duplicates (same SHA-256) and images already in the tree are skipped."""
+    allsh, _done = _nested_shas(tree)
+    for it in pending or []:
+        try:
+            allsh.add(hashlib.sha256(Path(it["path"]).read_bytes()).hexdigest())
+        except (OSError, KeyError):
+            continue
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add(path: Path, filename: str, origin: str, recipe: list[str]) -> None:
+        try:
+            sha = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            return
+        if sha in allsh or sha in seen or len(out) >= MAX_IMAGES:
+            return
+        seen.add(sha)
+        out.append({"path": str(path), "filename": filename, "origin": origin, "recipe": recipe, "source": "images"})
+
+    # 1. Office media already extracted by the OOXML engine
+    ox = read_json(paths.subresult("ooxml")) or {}
+    for e in ox.get("extracted") or []:
+        sp = e.get("stored_path") or ""
+        if "/media/" not in sp:
+            continue
+        p = paths.root / sp
+        try:
+            with p.open("rb") as fh:
+                head = fh.read(16)
+        except OSError:
+            continue
+        if _ext(head) or head.startswith((b"\xd7\xcd\xc6\x9a", b"\x01\x00\x00\x00")):   # + WMF / EMF
+            part = sp.split("/", 1)[1] if sp.startswith("extracted/") else sp
+            add(p, Path(sp).name, f"Office media {part} of {original.name}", ["office-media", part])
+    # 2. images in the native resources of every PE of the case
+    pes: list[tuple[str, bytes]] = []
+    try:
+        od = original.read_bytes()
+        if od[:2] == b"MZ":
+            pes.append((original.name, od))
+    except OSError:
+        pass
+    if paths.extracted_dir.is_dir():
+        for p in sorted(paths.extracted_dir.rglob("*")):
+            if len(pes) >= MAX_PES:
+                break
+            try:
+                if p.is_file() and p.stat().st_size <= MAX_SIZE and IMG_DIR not in p.relative_to(paths.extracted_dir).parts[:1]:
+                    with p.open("rb") as fh:
+                        if fh.read(2) == b"MZ":
+                            pes.append((p.name, p.read_bytes()))
+            except OSError:
+                continue
+    for name, data in pes:
+        sha = hashlib.sha256(data).hexdigest()
+        for label, img in _pe_images(data):
+            dest = paths.extracted_dir / IMG_DIR / sha[:12] / (label.replace("/", "_") + "." + (_ext(img) or "img"))
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(img)
+            except OSError:
+                continue
+            add(dest, dest.name, f"image in the resource {label} of {name}", ["pe-resource", label])
+    return out
+
