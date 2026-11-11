@@ -123,10 +123,12 @@ def static_fields(pe: Any) -> dict[int, bytes]:
     return out
 
 
-def disassemble(pe: Any) -> dict[str, Any]:
-    from dncil.cil.body import CilMethodBody
+MAX_IL_METHODS = 60
+MAX_IL_LINES = 400
+
+
+def _reader_class(pe: Any) -> Any:
     from dncil.cil.body.reader import CilMethodBodyReaderBase
-    from dncil.cil.error import MethodBodyFormatError
 
     class _Reader(CilMethodBodyReaderBase):
         def __init__(self, rva: int):
@@ -143,6 +145,82 @@ def disassemble(pe: Any) -> dict[str, Any]:
         def seek(self, off: int) -> int:
             self.off = off
             return off
+
+    return _Reader
+
+
+def _token_name(t: Any, tok: Any, owners: dict[int, str]) -> str:
+    """A metadata token as a readable name (methods, fields, types)."""
+    table, rid = getattr(tok, "table", None), getattr(tok, "rid", 0)
+    try:
+        if table == 0x06:
+            return owners.get(rid, f"::#{rid}")
+        if table in (0x0A, 0x2B):
+            tbl = t.MemberRef if table == 0x0A else t.MethodSpec
+            return _name(table, tbl[rid - 1])
+        if table == 0x04:
+            return f"field {t.Field[rid - 1].Name}"
+        if table in (0x01, 0x02):
+            row = (t.TypeRef if table == 0x01 else t.TypeDef)[rid - 1]
+            return f"{row.TypeNamespace}.{row.TypeName}".strip(".")
+    except (AttributeError, IndexError, TypeError):
+        pass
+    return f"token 0x{(table or 0):02x}{rid:06x}"
+
+
+def _quote(s: str, n: int = 200) -> str:
+    s = s if len(s) <= n else s[:n] + "…"
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\r", "\\r").replace("\n", "\\n") + '"'
+
+
+def il_listing(pe: Any, rid: int, owners: dict[int, str] | None = None) -> list[str]:
+    """Readable IL of one method (``IL_0000: call System.Convert::FromBase64String``):
+    calls, fields and types by name, ``ldstr`` quoted, branches as labels. Decoded
+    from the method body with dncil, never run. At most MAX_IL_LINES lines."""
+    from dncil.cil.body import CilMethodBody
+
+    t = pe.net.mdtables
+    owners = owners if owners is not None else _owners(t)
+    us = pe.net.user_strings
+    try:
+        m = t.MethodDef[rid - 1]
+        if not m.Rva:
+            return []
+        body = CilMethodBody(_reader_class(pe)(m.Rva))
+    except Exception:  # noqa: BLE001
+        return []
+    out: list[str] = []
+    insns = list(body.instructions)
+    base = insns[0].offset if insns else 0            # dncil offsets are file offsets: make them IL offsets
+    for insn in insns:
+        if len(out) >= MAX_IL_LINES:
+            out.append(f"// … truncated at {MAX_IL_LINES} instructions")
+            break
+        op, operand = insn.opcode.name, insn.operand
+        arg = ""
+        if op == "ldstr" and us is not None:
+            try:
+                v = us.get(operand.rid)
+                arg = _quote(str(v.value)) if v is not None and v.value is not None else ""
+            except Exception:  # noqa: BLE001
+                arg = ""
+        elif hasattr(operand, "table"):
+            arg = _token_name(t, operand, owners)
+        elif op.startswith(("br", "b", "leave")) and isinstance(operand, int) and op not in ("box",):
+            arg = f"IL_{operand - base:04x}"
+        elif op == "switch" and isinstance(operand, list):
+            arg = "(" + ", ".join(f"IL_{x - base:04x}" for x in operand[:64] if isinstance(x, int)) + ")"
+        elif operand is not None:
+            arg = str(operand)
+        out.append(f"IL_{insn.offset - base:04x}: {op}" + (f" {arg}" if arg else ""))
+    return out
+
+
+def disassemble(pe: Any) -> dict[str, Any]:
+    from dncil.cil.body import CilMethodBody
+    from dncil.cil.error import MethodBodyFormatError
+
+    _Reader = _reader_class(pe)
 
     t = pe.net.mdtables
     us = pe.net.user_strings
@@ -251,5 +329,7 @@ def disassemble(pe: Any) -> dict[str, Any]:
                 | {"method": m["method"], "rid": m["rid"],
                  "calls": m["calls"]} for m in methods]
     interesting = sorted((m for m in methods if m["score"] > 0), key=lambda m: -m["score"])[:MAX_INTERESTING]
+    for m in interesting[:MAX_IL_METHODS]:             # readable IL of the methods worth reading first
+        m["il"] = il_listing(pe, m["rid"], owners)
     return {"methods": done, "errors": errors, "interesting": interesting,
             "_strings": [(m["method"], s) for m in methods for s in m["strings"]], "_methods": internal}
