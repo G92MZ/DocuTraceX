@@ -50,10 +50,36 @@ def _label(reg: str) -> str:
     return reg.split(".")[0]
 
 
+def _embedded(host: str, reg: str, ref_label: str, th: dict[str, int]) -> tuple[str, int] | None:
+    """``ref_label`` written inside the name (subdomains included, TLD excluded):
+    as a whole word or a word's prefix; anywhere in it for names of
+    EMBED_LEN letters or more, and as a word with EMBED_DIST edit
+    (``outloook-outlet``); glued to other text with EMBED_DIST edit from
+    FUZZY_INSIDE_LEN letters (``myoutlok365``). (how, edits) or None."""
+    if len(ref_label) < th["min_len"]:
+        return None
+    body = similarity.homoglyph_fold(host.removesuffix("." + reg.split(".", 1)[1]))
+    words = [w for w in re.split(r"[.-]", body) if w]
+    if any(w == ref_label or w.startswith(ref_label) for w in words):   # microsoft-login; not pineapple
+        return "word", 0
+    if len(ref_label) < similarity.EMBED_LEN:
+        return None
+    joined = re.sub(r"[.-]", "", body)
+    if ref_label in joined:                                             # secureoutlook, loginmicrosoftonline
+        return "inside", 0
+    d = min([similarity.levenshtein(w, ref_label, cap=similarity.EMBED_DIST) for w in words]
+            + ([similarity.embedded_distance(ref_label, joined)] if len(ref_label) >= similarity.FUZZY_INSIDE_LEN
+               else []))
+    return ("inside", d) if 0 < d <= similarity.EMBED_DIST else None
+
+
 def compare(candidate: str, reference: str, kind: str, th: dict[str, int],
-            ref_domains: tuple[str, ...] = ()) -> dict[str, Any] | None:
+            ref_domains: tuple[str, ...] = (), platform: str = "") -> dict[str, Any] | None:
     """Why ``candidate`` (a host) looks like ``reference`` (a domain or a brand
-    name), or None. ``ref_domains`` = the reference's legitimate domains."""
+    name), or None. ``ref_domains`` = the reference's legitimate domains.
+    ``platform`` (see trusted.py): ``candidate`` is ``<tenant>.invalid`` on that
+    platform; the tenant is compared, and a tenant named exactly like the
+    reference is not reported."""
     host = normalise(candidate)
     reg = registrable(host)
     if not reg or "." not in reg:
@@ -64,6 +90,8 @@ def compare(candidate: str, reference: str, kind: str, th: dict[str, int],
     if reg in legit:
         return None                                       # the real thing
     label, ref_label = _label(reg), (_label(ref_reg) if ref_reg else ref)
+    if platform and label == ref_label:
+        return None                                       # contoso.sharepoint.com for contoso.com: its own tenant
     limit = similarity.max_distance(ref_label, th)
     if not limit and len(ref_label) < th["min_len"]:
         return None
@@ -88,13 +116,14 @@ def compare(candidate: str, reference: str, kind: str, th: dict[str, int],
         d = similarity.levenshtein(folded, ref_label, cap=limit)
         m.update(algorithm="homoglyph + Levenshtein", distance=d,
                  reason=f"'{label}' is {d} edit(s) from '{ref_label}' once look-alike characters are folded")
-    elif len(ref_label) >= th["min_len"] and kind != "case" and label != ref_label and any(
-            w == ref_label or w.startswith(ref_label)          # microsoft-login, microsoftonline; not pineapple
-            for w in re.split(r"[.-]", similarity.homoglyph_fold(host.removesuffix("." + reg.split(".", 1)[1]))) if w):
+    elif kind != "case" and label != ref_label and (emb := _embedded(host, reg, ref_label, th)):
+        _how, d = emb
         disguised = ref_label not in host
-        m.update(algorithm="embedded name" + (" + homoglyph" if disguised else ""), distance=0,
-                 reason=f"{host} carries '{ref_label}'{' written with look-alike characters' if disguised else ''} "
-                        f"inside a domain that is not {ref_reg or ref_label}'s")
+        algo = "embedded name" + (f" + {d} edit" if d else "") + (" + homoglyph" if disguised and not d else "")
+        m.update(algorithm=algo, distance=d,
+                 reason=f"{host} carries '{ref_label}'"
+                        + (f" with {d} edit" if d else " written with look-alike characters" if disguised else "")
+                        + f" inside a domain that is not {ref_reg or ref_label}'s")
     else:
         return None
     longest = max(len(label), len(ref_label)) or 1
@@ -118,7 +147,10 @@ def run(iocs: dict[str, Any], own_domains: list[str], brands: list[str],
             loc = f"{o.get('module', '')}/{o.get('location', '')}"
             if loc not in locs and len(locs) < 8:
                 locs.append(loc)
+    from . import trusted
+    tm = trusted.matcher()
     hosts = sorted(where)[:MAX_DOMAINS]
+    skipped_trusted = 0
     refs: list[tuple[str, str, tuple[str, ...]]] = [(d.lower(), "own", ()) for d in own_domains]
     refs += [(b.lower(), "brand", tuple(BRANDS.get(b.lower(), ()))) for b in list(BRANDS) + list(brands)]
     already = " ".join(f"{f.get('detail', '')} {f.get('evidence', '')}" for f in mail_findings or []
@@ -129,8 +161,17 @@ def run(iocs: dict[str, Any], own_domains: list[str], brands: list[str],
         reg = registrable(h)
         if any(reg == registrable(d) for d in own_domains):
             continue
+        view, platform = tm.view(normalise(h))
+        if view is None:
+            skipped_trusted += 1                         # a generic legitimate service (Settings)
+            continue
         for ref, kind, legit in refs:
-            m = compare(h, ref, kind, th, legit)
+            m = compare(view if platform else h, ref, kind, th, legit, platform)
+            if m and platform:                           # show the real host, not the tenant view
+                m["candidate"] = normalise(h)
+                m["candidate_registrable"] = view.removesuffix(".invalid") + "." + platform
+                m["reason"] = m["reason"].replace(".invalid", "." + platform)
+                m["platform"] = platform
             if m and (m["candidate_registrable"], ref) not in seen:
                 seen.add((m["candidate_registrable"], ref))
                 m["candidate_sources"] = where[h]
@@ -138,7 +179,7 @@ def run(iocs: dict[str, Any], own_domains: list[str], brands: list[str],
                 matches.append(m)
                 break
     # near-identical domains inside the case (shared infrastructure, typo-squats of each other)
-    regs = sorted({registrable(h) for h in hosts})
+    regs = sorted({registrable(h) for h in hosts if tm.match(normalise(h)) is None})
     pairs = 0
     for i, a in enumerate(regs):
         if pairs >= MAX_CASE_PAIRS:
@@ -170,5 +211,5 @@ def run(iocs: dict[str, Any], own_domains: list[str], brands: list[str],
                            if m.get("reference_sources") else ""),
         })
     return {"module": "domainsim", "status": "ok_with_findings" if findings else "ok", "thresholds": th,
-            "compared": len(hosts), "references": {"own": len(own_domains), "brands": len(refs) - len(own_domains)},
+            "compared": len(hosts), "trusted_skipped": skipped_trusted, "references": {"own": len(own_domains), "brands": len(refs) - len(own_domains)},
             "matches": matches, "findings": findings, "counts": {"findings": len(findings), "matches": len(matches)}}

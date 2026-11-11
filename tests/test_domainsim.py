@@ -86,6 +86,8 @@ def test_sample_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     res = c.get(f"/api/cases/{r['analysis_id']}/components").json()
     ds = res["modules"]["domainsim"]
     algos = {m["algorithm"] for m in ds["matches"]}
-    assert {"Damerau-Levenshtein", "homoglyph", "embedded name + homoglyph", "Levenshtein"} <= algos
+    assert {"Damerau-Levenshtein", "homoglyph", "embedded name + homoglyph", "Levenshtein",
+            "embedded name + 1 edit"} <= algos
+    assert "outlook.office.com" not in {m["candidate"] for m in ds["matches"]}     # a generic legitimate service
     rules = {f["rule"] for f in res["findings"] if f.get("source") == "domainsim"}
     assert {"domain_lookalike_brand", "domain_similar_in_case"} <= rules

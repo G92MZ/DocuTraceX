@@ -189,6 +189,23 @@ async def email_settings_put(body: dict = Body(...)) -> dict:
                                           sim if isinstance(sim, dict) else None)
 
 
+@router.get("/trusted-domains")
+async def trusted_domains_get() -> dict:
+    return appsettings.trusted_domains()
+
+
+@router.put("/trusted-domains")
+async def trusted_domains_put(body: dict = Body(...)) -> dict:
+    """Generic legitimate domains: ``services`` and ``platforms`` (lists or one
+    per line), or ``{"restore": true}`` for the built-in defaults."""
+    def norm(v):  # noqa: ANN001
+        if isinstance(v, str):
+            v = v.splitlines()
+        return [str(x).strip() for x in v or [] if str(x).strip()]
+    return appsettings.set_trusted_domains(norm(body.get("services")), norm(body.get("platforms")),
+                                           restore=bool(body.get("restore")))
+
+
 @router.get("/ml/family")
 async def ml_family_status() -> dict:
     """Optional EMBER2024 family model (Machine Learning tab): download state."""

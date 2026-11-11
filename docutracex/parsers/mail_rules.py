@@ -277,6 +277,11 @@ def check_domain(host: str) -> list[tuple[str, str, str]]:
             out.append(("homoglyph_domain", "high", f"Domain mixes look-alike characters from several scripts: {uni}"))
     except Exception:  # noqa: BLE001
         pass
+    from .. import trusted
+    view, platform = trusted.matcher().view(host)
+    if view is None:                              # a generic legitimate service (Settings)
+        return out
+    host = view                                   # on a platform only the tenant part is judged
     reg = _registrable(host)
     if reg in _OFFICIAL:
         return out
@@ -289,7 +294,7 @@ def check_domain(host: str) -> list[tuple[str, str, str]]:
     sub = host[: -len(reg)].rstrip(".")           # subdomains also carry brands
     words = set(re.split(r"[-_.]", f"{sub}.{norm}")) - {""}
     for brand, official in BRANDS.items():
-        if reg in official:
+        if reg in official or platform and label == brand:
             continue
         hit = None
         if norm == brand and label != brand:
@@ -300,6 +305,8 @@ def check_domain(host: str) -> list[tuple[str, str, str]]:
             how = " with look-alike characters" if brand not in label and brand in norm else ""
             hit = f"uses the brand '{brand}'{how} in a domain that is not {brand}'s ({reg})"
         if hit:
+            if platform:
+                hit = hit.replace(".invalid", "." + platform) + f" (a tenant on {platform})"
             out.append(("lookalike_domain", "high", f"Look-alike of {brand}: {hit}"))
             break
     return out
