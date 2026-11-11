@@ -1538,7 +1538,7 @@ function chainCard(m, prevIds) {
     ${!hs.length ? `<p class="hint-line">${m.kind === "quoted" ? "Quoted in the body: only the fields the quote shows (no Message-ID, no transport headers)." : "No headers."}</p>` : ""}
   </details>`;
   return `<li class="chain-item ${tone}${m.related === false ? " chain-apart" : ""}">
-    <div class="chain-when"><span class="chain-dot">${m.index}</span><div><b>${escapeHtml(m.date ? m.date.replace("T", " ").slice(0, 19) : (m.date_raw || "no date"))}</b>
+    <div class="chain-when"><span class="chain-dot">${m.index}</span><div><b>${escapeHtml((m.date_local || m.date) ? (m.date_local || m.date).replace("T", " ").slice(0, 19) : (m.date_raw || "no date"))}</b>
       <div class="mono muted">${escapeHtml(m.message_id || "(no Message-ID)")}</div></div></div>
     <div class="chain-card"><div class="chain-head"><b>Message ${m.index}</b> <span class="muted">· ${escapeHtml(CHAIN_KIND[m.kind] || m.kind)}${
       m.also_quoted ? " · also quoted in the body" : ""}</span> ${badge}</div>
@@ -1558,7 +1558,8 @@ function paneEmailChain(email, mr) {
   const miss = c.missing_references || [];
   let h = `<p class="hint-line">The conversation as this file shows it: the message, the messages attached to it and the ones quoted in its body,
     oldest first. Each message is compared with the previous one: <span class="ok-text">new</span>, <span class="bad-text">removed</span>,
-    <span class="warn-text">moved / changed</span>. ${thread.length} message(s)${c.quoted ? `, ${c.quoted} quoted` : ""}, ${c.changes || 0} change(s).</p>`;
+    <span class="warn-text">moved / changed</span>. ${thread.length} message(s)${c.quoted ? `, ${c.quoted} quoted` : ""}, ${c.changes || 0} change(s).
+    ${c.zone && c.zone.offset ? `Times shown in <b>${escapeHtml(c.zone.offset)}</b> (the reader's zone, from the ${escapeHtml(c.zone.source)}); quoted dates carry no zone and are shown as written.` : ""}</p>`;
   if (miss.length) {
     h += `<div class="chain-banner"><b>Incomplete chain:</b> ${miss.length} referenced message(s) are not available as messages here${
       c.quoted ? ` (${c.quoted} message(s) are quoted in the body, without identifiers — they may be some of these)` : ""}:
