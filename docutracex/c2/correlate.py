@@ -35,6 +35,10 @@ def fingerprints(cfg: dict[str, Any]) -> dict[str, Any]:
     s = cfg.get("summary") or {}
     pub = str(s.get("Public key SHA-256") or "")
     wm = str(s.get("Watermark") or "").split(" ", 1)[0]
+    if wm.isdigit():                                  # shared (trial / leaked) licences are no fingerprint
+        from .cobalt import KNOWN_WATERMARKS
+        if int(wm) in KNOWN_WATERMARKS:
+            wm = ""
     hosts = sorted({str(h).split(":", 1)[0].lower() for h in cfg.get("c2") or [] if h})
     return {"pubkey": pub, "watermark": "" if wm in _NO_WATERMARK else wm, "hosts": hosts}
 
