@@ -329,6 +329,7 @@ _TOOL_HOSTS = (  # hosts that belong to a tool (subdomains included)
     "eternal-todo.com", "virustotal.github.io", "webcrack.netlify.app",
     "oletools.readthedocs.io", "yara.readthedocs.io", "pypdf.readthedocs.io",
     "msoffcrypto-tool.readthedocs.io", "pefile.readthedocs.io",
+    "azmap.dev",                       # the Microsoft 365 tenant lookup the app links to
 )
 _TOOL_PYPI = {
     "oletools", "olefile", "colorlog", "vipermonkey", "pefile", "pdfid", "peepdf",
@@ -995,7 +996,15 @@ _MODULE_SKIP_PATHS = {
     # emldump's dump of a non-text MIME part (an RTF / Office / binary
     # attachment) is markup and hex, not prose: the attachment itself is
     # analysed as a nested child, which is where its IOCs come from.
-    "mailrules": re.compile(r"tools/emldump part \d+ \((?!text/)[^)]*\)/output$"),
+    # Also the app's own email bookkeeping: Message-IDs / References / In-Reply-To
+    # (msg-001@corp.example is an identifier, not a mailbox), the AZMap tenant
+    # lookup (its URL and every domain registered to a Microsoft 365 tenant —
+    # context about the tenant, not indicators of this message) and the rules'
+    # evidence text, which only echoes facts already mined at their source.
+    "mailrules": re.compile(r"tools/emldump part \d+ \((?!text/)[^)]*\)/output$"
+                            r"|^tenant(?:[/\[].*)?$"
+                            r"|^engine/facts/(?:thread|tenant)(?:[/\[].*)?$"
+                            r"|^engine/matched\[\d+\]/evidence$"),
     # olevba's description of each indicator ("May run PowerShell commands")
     "oletools": re.compile(r"tools/olevba/analysis\[\d+\]/description$"),
 }
