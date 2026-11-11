@@ -1078,8 +1078,9 @@ function paneIocs(iocs, net) {
     const where = (i.occurrences || []).map((o) => `${o.module}/${o.location}`);
     const uniq = [...new Set(where)].slice(0, 4).join(", ");
     const hay = `${i.value} ${where.join(" ")}`.toLowerCase();
-    return `<tr data-ioc-row data-hay="${escapeHtml(hay)}">
-      <td class="mono">${escapeHtml(i.value)}</td>
+    const rmmTag = i.rmm ? ` <span class="badge badge-warn" title="${escapeHtml(`Remote-access / RMM tool (${i.rmm.category}): ${i.rmm.why}${i.rmm.lolrmm ? ` — LOLRMM: ${i.rmm.lolrmm}` : ""}. Context only: legitimate software, judged by who deployed it.`)}">RMM: ${escapeHtml(i.rmm.product)}</span>` : "";
+    return `<tr data-ioc-row data-hay="${escapeHtml(hay + (i.rmm ? " rmm " + i.rmm.product.toLowerCase() : ""))}">
+      <td class="mono">${escapeHtml(i.value)}${rmmTag}</td>
       <td>${i.count}</td>
       <td class="mono" title="${escapeHtml(where.join(", "))}">${escapeHtml(uniq)}</td>
       <td>${addMarkCell("ioc", `${IOC_TYPE_LABEL[i.type] || i.type}: ${i.value}`, "iocs",

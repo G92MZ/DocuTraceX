@@ -180,8 +180,9 @@ def extract(data: bytes, filename: str = "") -> list[dict[str, Any]]:
                 h = f"{h}:{field_port}"
             hosts.append(h)
         lc = lol.get(name) or {}
-        vendor = PRODUCTS[name][2] if name in PRODUCTS else (lc.get("website") or "")
-        summary: dict[str, Any] = {"Product": name, "Vendor": vendor, **fields,
+        # LOLRMM-only products: no vendor line (its website would become an IOC of the sample)
+        vendor = PRODUCTS[name][2] if name in PRODUCTS else ""
+        summary: dict[str, Any] = {"Product": name, **({"Vendor": vendor} if vendor else {}), **fields,
                                    "Seen": ", ".join(why[:6]),
                                    **({"LOLRMM": f"{lc['name']} ({lc.get('category') or 'RMM'})"} if lc else {}),
                                    "Note": ("legitimate remote-access software: who deployed it, and to whose "

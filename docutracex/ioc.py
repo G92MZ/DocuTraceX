@@ -967,7 +967,7 @@ def _email_sources(
 # visited) describes infrastructure, it is not content of the sample. file /
 # unlock / findings / iocs: metadata and derived views the app computes.
 _SKIP_MODULES = {"yara", "ml", "golang", "code", "dotnet", "netcheck", "file", "unlock", "findings", "iocs", "summary",
-                 "domainsim"}
+                 "domainsim", "rmm"}
 # Per-module paths that hold names/metadata, not content (archive member
 # names like "visor.py" or "notas.one" are not domains).
 _MODULE_SKIP_PATHS = {
@@ -989,7 +989,7 @@ _MODULE_SKIP_PATHS = {
     "c2": re.compile(r"^(?:timings(?:[/\[].*)?|registry(?:[/\[].*)?|extractor_status(?:/.*)?|runs(?:\[\d+\])?"
                      r"|run_id|interpretations(?:[/\[].*)?"
                      r"|configs\[\d+\]/(?:tools/[^/]+/tool|indicators(?:\[\d+\])?"
-                     r"|summary/Indicators(?:\[\d+\])?|public_key|sections/[^/]+/Note|note|status"
+                     r"|summary/(?:Indicators(?:\[\d+\])?|Vendor|LOLRMM|Note|Seen)|public_key|sections/[^/]+/Note|note|status"
                      r"|run_id|raw_ref|extractor|extractor_version|related(?:[/\[].*)?"
                      r"|normalized\[\d+\]/(?:name|type|status|extractor|extractor_version|run_id|raw_ref"
                      r"|evidence|confidence)))$"),
