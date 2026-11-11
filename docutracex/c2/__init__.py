@@ -170,7 +170,9 @@ def scan_object_detailed(path: Path, data: bytes) -> tuple[list[dict[str, Any]],
         out += run("dotnet_more", lambda: dotnet_more.extract_all(data))
     if not any(r.get("kind") in ("RAT", "stealer") and r.get("c2") for r in out):
         out += run("stealers", lambda: stealers.extract_all(data))
-    if not any(r.get("c2") and r.get("kind") != "indicators" for r in out):
+    from . import rmm
+    out += run("rmm", lambda: rmm.extract(data, path.name))
+    if not any(r.get("c2") and r.get("kind") not in ("indicators", "rmm") for r in out):
         from . import golang_c2
         out += run("go", lambda: golang_c2.extract(path, data))
     # settings the .NET analysis decrypted statically (CIL decryptors, .resources)
@@ -202,6 +204,12 @@ def _finding(cfg: dict[str, Any]) -> dict[str, Any]:
     if cfg.get("provenance"):                   # evidence, not detail: the finding id stays the same
         evidence = (f"from: {cfg['provenance']}; " + evidence)[:1800]
     sev = "high" if c2 and cfg.get("confidence") != "low" else "medium"
+    if cfg["family"].startswith("RMM: "):         # legitimate software: who deployed it decides
+        sev = "medium" if c2 else "low"
+        detail = (f"{cfg['family'][5:]} (remote-access tool)"
+                  + (f" bound to {', '.join(c2[:4])}" if c2 else ": product only, no instance in the file"))
+        return {"tool": "c2", "rule": "c2:rmm", "severity": sev, "detail": detail,
+                "location": cfg.get("object", ""), "evidence": evidence}
     return {"tool": "c2", "rule": "c2:" + cfg["family"].split(" /")[0].split(" ")[0].lower(),
             "severity": sev, "detail": detail, "location": cfg.get("object", ""), "evidence": evidence}
 

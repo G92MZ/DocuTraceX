@@ -426,6 +426,8 @@ campaign's (`cdn-update.example.net`, `203.0.113.47`).
 | Sample | Family | How it is stored | What comes out |
 | --- | --- | --- | --- |
 | `c2/cobaltstrike/sample_cs_beacon.bin` | Cobalt Strike | TLV config XOR 0x2e (4.x), as in a memory dump | HTTPS beacon to `cdn-update.example.net:443`, GET/POST URIs, user agent, 45 s / 25 % sleep, pipe `\\.\pipe\factura_sync_%x`, spawn-to, watermark `20260187`; Host header `billing-portal.example` → **domain fronting** note; RSA key (inert modulus) for dissect.cobaltstrike |
+| `c2/rmm/sample_rmm_screenconnect.msi` | RMM: ScreenConnect | trojanised-installer shape: an MSI whose CustomAction launches the ScreenConnect client (`Binary.ScreenConnect`, inert stub) with `?e=Access&y=Guest&h=relay.invoice-support.example&p=8041` | **RMM** configuration: product, vendor, relay `relay.invoice-support.example:8041`, session type *Access* — finding `c2:rmm` (medium: legitimate software bound to someone's instance); the relay lands in the IOCs |
+| `c2/rmm/sample_rmm_client32.ini` | RMM: NetSupport Manager | `client32.ini` as fake-update kits drop it | gateway `198.51.100.61:443`, secondary `update-cdn.invoice-support.example:443`, GSK |
 | `c2/cobaltstrike/sample_cs_trial_beacon.bin` | Cobalt Strike | same HTTPS beacon, watermark `0` | **known watermark**: `0 — trial / no licence…` on the card, and it is not used to link cases (a shared licence is no fingerprint); 1768.py's *Version (guess)* is labelled as inferred, not read from the beacon. When dissect.cobaltstrike already reads the configuration, 1768.py runs once (no `-x` / `-e` retries). **Your own shared list** (C2 → *Shared watermarks and keys*): add `20260187 test kit` and search `sample_cs_beacon.bin` again — its watermark shows `— test kit (your list)` and stops linking cases; the same for its *Public key SHA-256* (copy it from the card). The rebuilt malleable profile has a **Download .profile** button |
 | `c2/cobaltstrike/sample_cs_dns_beacon.bin` | Cobalt Strike | same, DNS beacon | C2 `ns1/ns2.billing-portal.example:53`; **DNS channel**: idle IP `198.51.100.9`, DNS sleep, subdomain prefixes `fct.` / `cdn.` / `api.` |
 | `c2/cobaltstrike/sample_cs_smb_beacon.bin` | Cobalt Strike | same, SMB beacon | **peer-to-peer** beacon on `\\.\pipe\factura_sync_%x`: a complete configuration without an internet C2 |
@@ -558,3 +560,14 @@ binary/PDF gets its own row. Results are **not findings until marked**.
   (they are flagged — as they should be).
 - **Highest score of the case** at the top of the tab, and whether it comes from a
   stage (the loader often looks innocent; the hidden stage does not).
+
+## Validating with real samples (`scripts/validate_samples.py`)
+
+`python scripts/validate_samples.py <folder | file.zip> --expected expected.csv --out validation`
+runs the full static pipeline (plus C2) over every sample — zips with the
+`infected` password are opened in memory — and writes `validation.md / .csv /
+.json`: one row per sample with the C2 configuration found, the engines'
+agreement, each extractor's status, Go / .NET identification, findings, IOCs and
+time. `expected.csv` (`name_or_sha256,family`) marks each row OK / MISS / OTHER
+and totals them per family. Try it on the inert samples above; the real ones are
+for the validation phase. Nothing in a sample is ever run.
