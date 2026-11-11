@@ -53,17 +53,19 @@ class _Heap:
 
 
 _OP = {"ldstr": 0x72, "call": 0x28, "callvirt": 0x6F, "newobj": 0x73, "pop": 0x26, "ret": 0x2A, "calldef": 0x28,
-       "xor": 0x61, "ldarg.0": 0x02, "initarray": 0x00}
+       "xor": 0x61, "ldarg.0": 0x02, "initarray": 0x00, "ldc": 0x20, "shl": 0x62, "shr.un": 0x64, "mul": 0x5A}
 
 
 def _ops(ops: list[tuple], us: _Heap, rids: dict[str, int] | None = None) -> bytes:
     """Tiny IL from (op, arg): ldstr "text" / call|callvirt|newobj memberref index /
-    calldef "Type::Method" (own method) / xor / ldarg.0 / pop / ret."""
+    calldef "Type::Method" (own method) / ldc int / xor / shl / shr.un / mul / ldarg.0 / pop / ret."""
     out = bytearray()
     for op, *arg in ops:
         out.append(_OP[op])
         if op == "ldstr":
             out += struct.pack("<I", 0x70000000 | us.us(arg[0]))
+        elif op == "ldc":                           # ldc.i4 <int32>
+            out += struct.pack("<I", arg[0] & 0xFFFFFFFF)
         elif op == "initarray":                     # ldc.i4 n; newarr byte; dup; ldtoken f; call InitializeArray
             name, size, mr = arg
             out[-1:] = b"\x20" + struct.pack("<i", size) + b"\x8d" + struct.pack("<I", 0x01000001) + b"\x25"
@@ -197,9 +199,14 @@ def build(va: int, spec: dict[str, Any]) -> tuple[bytes, int, int, int, int, int
         out.append(0)
     il_rva = []
     for il in il_blobs:
-        assert len(il) < 64
-        il_rva.append(va + len(out))
-        out += bytes([0x02 | (len(il) << 2)]) + il
+        if len(il) < 64:                                          # tiny header
+            il_rva.append(va + len(out))
+            out += bytes([0x02 | (len(il) << 2)]) + il
+        else:                                                     # fat header (12 bytes, 4-aligned)
+            while len(out) % 4:
+                out.append(0)
+            il_rva.append(va + len(out))
+            out += struct.pack("<HHII", 0x3003, 8, len(il), 0) + il
         while len(out) % 4:
             out.append(0)
     field_rva = []
