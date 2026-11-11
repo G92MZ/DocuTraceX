@@ -13,6 +13,11 @@
 
 - When a change is ready, push it and open the pull request directly (no need
   to ask first); the owner reviews it on GitHub.
+- **Never put evidence the owner shares into the repo, commits or PRs**: no
+  real domains, addresses, Message-IDs, hostnames, tenant names / IDs, IPs or
+  screenshots text from his cases. Reproduce the pattern with invented, inert
+  values (`*.example`, RFC 5737 IPs, made-up tenant / server names) and
+  describe the case generically ("a typosquat verified in a throw-away tenant").
 
 ## Samples (always keep them testable)
 

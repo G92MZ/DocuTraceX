@@ -186,7 +186,7 @@ def test_gateway_links_no_finding_and_iocs_are_the_originals(tmp_path: Path) -> 
 
 def test_messageid_from_a_recognised_provider_is_context_only(tmp_path: Path) -> None:
     from docutracex import ioc
-    mid = "<PR3PR01MB6777D4AD4F95390D89CA565CB4722@PR3PR01MB6777.eurprd01.prod.exchangelabs.com>"
+    mid = "<AM0PR00MB0002A0B1C2D3E4F5061728394A5B6@AM0PR00MB0002.eurprd00.prod.exchangelabs.com>"
     p, em = _eml(tmp_path, message_id=mid)
     res = mail_rules.analyze(p, ".eml", em, tmp_path)
     f = next(x for x in res["findings"] if x["rule"] == "messageid_domain_mismatch")      # kept
@@ -228,11 +228,11 @@ def test_hops_inside_one_mail_provider_are_no_chain_break() -> None:
         mail_rules._received({"received_chain": [{"from": f, "by": b} for f, b in pairs]}, res)
         return {f["rule"] for f in res["findings"]}
     # by Exchange Online's mailbox server, then from its outbound relay: one provider
-    assert "received_chain_break" not in run(("x.example", "pa4pr01mb7245.eurprd01.prod.exchangelabs.com"),
-                                             ("as8pr04cu009.outbound.protection.outlook.com", "mx.corp.example"))
+    assert "received_chain_break" not in run(("x.example", "am0pr00mb0001.eurprd00.prod.exchangelabs.com"),
+                                             ("am0pr00cu000.outbound.protection.outlook.com", "mx.corp.example"))
     assert mail_rules.same_provider("mail-wr1-f41.google.com", "x.1e100.net") == "Google"
     # a real break (and a look-alike of the provider) is still reported
-    assert "received_chain_break" in run(("x.example", "pa4pr01mb7245.eurprd01.prod.exchangelabs.com"),
+    assert "received_chain_break" in run(("x.example", "am0pr00mb0001.eurprd00.prod.exchangelabs.com"),
                                          ("relay.attacker.example", "mx.corp.example"))
     assert "received_chain_break" in run(("x.example", "mx.evil-outlook.com"),
-                                         ("as8pr04cu009.outbound.protection.outlook.com", "mx.corp.example"))
+                                         ("am0pr00cu000.outbound.protection.outlook.com", "mx.corp.example"))

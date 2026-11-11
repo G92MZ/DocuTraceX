@@ -213,20 +213,20 @@ def test_tool_bookkeeping_is_not_mined_for_iocs(monkeypatch: pytest.MonkeyPatch)
 def test_sender_domain_outside_its_tenant_is_phishing_on_its_own() -> None:
     from docutracex import mailengine
     t = {"tenants": [{"tenant_id": "x", "role": "sender", "status": "ok",
-                      "data": {"brand_name": "St. Mary's Catholic School",
+                      "data": {"brand_name": "Northwind Community College",
                                "related_domains": ["stmarys-school.example"]}}]}
-    f = {"tenant": mailengine.tenant_facts(t, "indltex.example")}
+    f = {"tenant": mailengine.tenant_facts(t, "lookalike-corp.example")}
     hit = next(r for r in mailengine.run(f, "email", {}) if r["id"] == "tenant_sender_domain_unrelated")
     assert hit["severity"] == "high" and hit["score"] >= 40
     assert mailengine.verdict([{"id": hit["id"], "score": hit["score"]}])["verdict"] == "phishing"
 
 
 TYPOSQUAT_TENANT_ANSWER = {   # shaped like AZMap's page for a throw-away tenant (current + removed domains)
-    "tenant_name": "smsftscott", "brand_name": "St. Mary's Catholic School",
+    "tenant_name": "nwcollege0", "brand_name": "Northwind Community College",
     "related_domains": [{"domain": d, "type": "Managed"} for d in
-                        ("artificess.example", "grupoejernplo.example", "mqaftscott.example", "sarps.example",
-                         "smsftscott.example", "stowlay.example")] + [{"domain": "smsftscott.onmicrosoft.com"}],
-    "former_domains": ["afadispensings.example", "earthlighttecch.example", "gelaphar.example", "xinhaigroups.example"]}
+                        ("lumenfold.example", "grupoejernplo.example", "nwcollege1.example", "brisketa.example",
+                         "nwcollege0.example", "quorvane.example")] + [{"domain": "nwcollege0.onmicrosoft.com"}],
+    "former_domains": ["pelmaris.example", "oxbrinte.example", "verdalune.example", "fenwickery.example"]}
 
 
 def test_typosquat_verified_in_a_throwaway_tenant(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: ANN001
@@ -253,11 +253,11 @@ def test_former_domain_and_unverified_typosquat() -> None:
     from docutracex import mailengine
     data = tenantintel._normalise(TYPOSQUAT_TENANT_ANSWER)
     t = {"tenants": [{"tenant_id": "x", "role": "sender", "status": "ok", "data": data}]}
-    f = mailengine.tenant_facts(t, "gelaphar.example", ["grupoejemplo.example"], [])
-    assert f["sender_domain_unrelated"].startswith("gelaphar.example was removed from tenant")
+    f = mailengine.tenant_facts(t, "verdalune.example", ["grupoejemplo.example"], [])
+    assert f["sender_domain_unrelated"].startswith("verdalune.example was removed from tenant")
     f = mailengine.tenant_facts(t, "grupoejemplo-pagos.example", ["grupoejemplo.example"], [])   # not in the tenant
     assert f["sender_domain_unrelated"] and "sent from tenant" in f["sender_lookalike"]
-    f = mailengine.tenant_facts(t, "sarps.example", ["grupoejemplo.example"], [])
+    f = mailengine.tenant_facts(t, "brisketa.example", ["grupoejemplo.example"], [])
     assert any("grupoejernplo.example looks like grupoejemplo.example" in x for x in f["tenant_lookalikes"])
 
 
