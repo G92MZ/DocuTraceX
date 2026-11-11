@@ -389,14 +389,29 @@
           <label>Own domains<textarea id="email-own" rows="4" placeholder="corp.example&#10;corp-group.example"></textarea></label>
           <label>Brands<textarea id="email-brands" rows="4" placeholder="corpname"></textarea></label>
         </div>
-        <div class="hint-line sim-settings">Look-alike distance (Levenshtein edits), for own domains and brands:
+        <div class="hint-line sim-settings">Look-alike distance (maximum Levenshtein edits, so 2 also catches 1), for own domains and brands:
           names of up to <input id="sim-short-len" type="number" min="1" max="30" style="width:4em"> letters →
-          <input id="sim-short-dist" type="number" min="0" max="5" style="width:4em"> edit(s); longer →
-          <input id="sim-long-dist" type="number" min="0" max="5" style="width:4em"> edit(s); names shorter than
+          <input id="sim-short-dist" type="number" min="0" max="5" style="width:4em"> edit(s); up to
+          <input id="sim-long-len" type="number" min="1" max="60" style="width:4em"> letters →
+          <input id="sim-long-dist" type="number" min="0" max="5" style="width:4em"> edit(s); longer →
+          <input id="sim-xlong-dist" type="number" min="0" max="6" style="width:4em"> edit(s); names shorter than
           <input id="sim-min-len" type="number" min="1" max="30" style="width:4em"> letters are not compared
           <span id="sim-defaults" class="mono"></span></div>
         <div class="hint-line"><button id="email-save" class="btn btn-ghost btn-sm" type="button">Save</button>
           <span id="email-msg" class="status"></span></div>
+        <h3 class="formats-title">Generic legitimate domains</h3>
+        <div class="hint-line">Well-known providers that are never reported as look-alikes of your domains or brands
+          (<span class="mono">outlook.office.com</span> is Microsoft's), without listing them as own domains or brands — one per line.
+          <b>Services</b>: the whole domain is the provider's, never compared. <b>Platforms</b>: anyone picks the subdomain,
+          so only the tenant part is compared (<span class="mono">micros0ft-login.onmicrosoft.com</span> is still reported).
+          Only the look-alike checks use these lists: every other rule still judges these domains.</div>
+        <div class="email-org">
+          <label>Services<textarea id="trusted-services" rows="6" spellcheck="false"></textarea></label>
+          <label>Platforms<textarea id="trusted-platforms" rows="6" spellcheck="false"></textarea></label>
+        </div>
+        <div class="hint-line"><button id="trusted-save" class="btn btn-ghost btn-sm" type="button">Save</button>
+          <button id="trusted-restore" class="btn btn-ghost btn-sm" type="button">Restore defaults</button>
+          <span id="trusted-msg" class="status"></span></div>
       </section>
     </div>
 
