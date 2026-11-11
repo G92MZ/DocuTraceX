@@ -96,13 +96,15 @@ def deep_candidate(data: bytes) -> bool:
             and (_is_pe(data) or _binary_like(data)))
 
 
-def _run_1768(path: Path, data: bytes) -> dict[str, Any] | None:
+def _run_1768(path: Path, data: bytes, deep: bool = True) -> dict[str, Any] | None:
+    """``deep=False``: only the default run — dissect.cobaltstrike already has the
+    configuration, so the -x / -e retries (seconds each on large files) are skipped."""
     script = _script()
     if script is None:
         return None
     base = [] if _is_pe(data) else ["-r"]
     attempts: list[tuple[str, ...]] = [tuple(base)]
-    if deep_candidate(data):
+    if deep and deep_candidate(data):
         attempts += list(_PE_RETRIES if _is_pe(data) else _RAW_RETRIES)
     for extra in attempts:
         res = _run_1768_once(script, path, list(extra))
@@ -495,6 +497,27 @@ def _fallback(data: bytes) -> dict[str, Any] | None:
     return None
 
 
+# Watermarks (licence IDs) with a well-known meaning. A watermark identifies a
+# licence, never an actor: these are shared by unrelated users (trial, or
+# leaked / cracked builds), so they are no fingerprint and get no attribution.
+KNOWN_WATERMARKS: dict[int, str] = {
+    0: "trial / no licence — shared by every trial or cracked build",
+    305419896: "0x12345678 — widely reported in leaked / cracked builds, shared by unrelated users",
+    1359593325: "widely reported in leaked / cracked builds, shared by unrelated users",
+    1580103814: "widely reported in leaked / cracked builds, shared by unrelated users",
+}
+
+
+def watermark_note(value: Any) -> str:
+    """'1359593325 — leaked / cracked builds…' for a known watermark; as is otherwise."""
+    s = str(value).strip()
+    head = s.split(" ", 1)[0]
+    if not head.isdigit() or "—" in s:
+        return s
+    note = KNOWN_WATERMARKS.get(int(head))
+    return f"{head} — {note}" if note else s
+
+
 def summarise(fields: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     """Key fields for the card + C2 endpoints."""
     v = {k: (f.get("value") if isinstance(f, dict) else f) for k, f in fields.items()}
@@ -561,9 +584,9 @@ def indicators(data: bytes) -> list[str]:
     return []
 
 
-def _view_1768(path: Path, data: bytes) -> dict[str, Any]:
+def _view_1768(path: Path, data: bytes, deep: bool = True) -> dict[str, Any]:
     """1768.py (or the built-in decoder) as a view: status, method, summary, fields, hosts."""
-    res = _run_1768(path, data)
+    res = _run_1768(path, data, deep)
     tool = "1768.py"
     if not res and prefilter(data):
         res = _fallback(data)
@@ -590,7 +613,7 @@ def view_1768(res: dict[str, Any] | None, tool: str = "1768.py") -> dict[str, An
     ver = next((m.split(":", 1)[1].strip() for m in res.get("_messages", [])
                 if m.startswith("Guessing Cobalt Strike version")), "")
     if ver:
-        summary["Version (guess)"] = ver
+        summary["Version (guess)"] = f"{ver} — inferred from which settings the configuration has, not read from the beacon"
     return {"tool": tool, "status": "found", "kind": kind, "method": res["method"],
             "experimental": bool(res.get("experimental")), "sanity": res.get("sanity", ""),
             "summary": summary, "hosts": hosts,
@@ -720,8 +743,12 @@ def _extract(path: Path, data: bytes) -> dict[str, Any] | None:
         return None
     from . import cobalt_dissect
 
-    v1768 = _view_1768(path, data)
+    # dissect first: when it already has the configuration, 1768.py runs once
+    # (no -x / -e retries) — it still gives its own view to compare
     vdis = cobalt_dissect.extract(path) if cobalt_dissect.enabled() else cobalt_dissect.view({"status": "disabled"})
+    v1768 = _view_1768(path, data, deep=vdis.get("status") != "found")
+    if vdis.get("status") == "found" and v1768.get("status") != "found":
+        v1768["note"] = "default run only: dissect.cobaltstrike had the configuration, the deep retries were skipped"
     return combine(v1768, vdis, ind)
 
 
@@ -764,6 +791,8 @@ def combine(v1768: dict[str, Any], vdis: dict[str, Any], ind: list[str]) -> dict
         summary.pop("Version")
     elif summary.get("Version"):
         summary.pop("Version (guess)", None)              # dissect's version is exact, 1768's a guess
+    if summary.get("Watermark") not in (None, ""):
+        summary["Watermark"] = watermark_note(summary["Watermark"])
     method = " + ".join(v["method"] for v in found)
     p2p = str(summary.get("Type") or "").upper().startswith(("SMB", "TCP"))
     partial = ([k for k in ("C2", "Sleep / jitter") if k not in summary and not (k == "C2" and p2p)]

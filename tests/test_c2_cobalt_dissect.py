@@ -135,3 +135,50 @@ def test_dissect_worker_real(tmp_path: Path) -> None:
     raw = json.loads(out.stdout.strip().splitlines()[-1])
     assert raw["status"] == "found" and raw["domains"] == [HOST] and raw["port"] == 443
     assert "http-get" in raw["profile"]
+
+
+def test_dissect_found_skips_1768_retries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """dissect already has the configuration → 1768.py runs once, no -x / -e retries."""
+    _dissect_returns(monkeypatch, FOUND)
+    seen: list[bool] = []
+    real = cobalt._run_1768
+    monkeypatch.setattr(cobalt, "_run_1768", lambda p, d, deep=True: (seen.append(deep), real(p, d, deep))[1])
+    monkeypatch.setattr(cobalt, "_script", lambda: None)
+    p = tmp_path / "b.bin"
+    p.write_bytes(_cfg_blob())
+    cobalt.extract(p, p.read_bytes())
+    assert seen and not any(seen)
+
+
+def test_dissect_nothing_keeps_1768_retries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_1768: None) -> None:
+    _dissect_returns(monkeypatch, {"status": "nothing", "lib": "1.3.0", "error": "No valid Beacon configuration found"})
+    seen: list[bool] = []
+    real = cobalt._run_1768
+    monkeypatch.setattr(cobalt, "_run_1768", lambda p, d, deep=True: (seen.append(deep), real(p, d, deep))[1])
+    p = tmp_path / "b.bin"
+    p.write_bytes(_cfg_blob())
+    cobalt.extract(p, p.read_bytes())
+    assert seen and all(seen)
+
+
+@pytest.mark.parametrize("wm,needle", [(0, "trial"), (305419896, "leaked / cracked"), (12345678, None)])
+def test_known_watermarks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_1768: None, wm: int,
+                          needle: str | None) -> None:
+    _dissect_returns(monkeypatch, {**FOUND, "watermark": wm, "is_trial": wm == 0})
+    p = tmp_path / "packed.exe"
+    p.write_bytes(b"MZ" + b"\x00" * 0x3A + b"\x40\x00\x00\x00" + b"PE\x00\x00" + bytes(range(256)) * 4)
+    w = str(cobalt.extract(p, p.read_bytes())["summary"]["Watermark"])
+    assert w.startswith(str(wm))
+    assert (needle in w) if needle else ("—" not in w)          # unknown watermark: no meaning invented
+    from docutracex.c2 import correlate
+    fp = correlate.fingerprints({"summary": {"Watermark": w}})
+    assert fp["watermark"] == ("" if needle else str(wm))       # shared licences are no fingerprint
+
+
+def test_version_guess_says_it_is_a_guess(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    res = {"fields": {"server,get-uri": {"value": "198.51.100.7,/a"}, "port": {"value": 443}},
+           "method": "1768.py", "_messages": ["Guessing Cobalt Strike version: 4.4 (max 0x0049)"]}
+    monkeypatch.setattr(cobalt, "_run_1768", lambda p, d, deep=True: res)
+    v = cobalt._view_1768(tmp_path / "x", b"")
+    if v["status"] == "found":
+        assert "not read from the beacon" in v["summary"]["Version (guess)"]
