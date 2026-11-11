@@ -182,3 +182,40 @@ def test_gateway_links_no_finding_and_iocs_are_the_originals(tmp_path: Path) -> 
                    for t, v in vals)
     assert ("domain", ms.SUPPLIER_DOMAIN) in vals and not any("awstrack" in v for _t, v in vals)
     assert ("url", "https://cdn-update.example.net/inv/remesa_2026-0613.pdf") in vals
+
+
+def test_messageid_from_a_recognised_provider_is_context_only(tmp_path: Path) -> None:
+    from docutracex import ioc
+    mid = "<AM0PR00MB0002A0B1C2D3E4F5061728394A5B6@AM0PR00MB0002.eurprd00.prod.exchangelabs.com>"
+    p, em = _eml(tmp_path, message_id=mid)
+    res = mail_rules.analyze(p, ".eml", em, tmp_path)
+    f = next(x for x in res["findings"] if x["rule"] == "messageid_domain_mismatch")      # kept
+    assert f["severity"] == "info" and f["provider"] == "Exchange Online (Microsoft 365)"
+    assert "not a spoofing sign" in f["detail"]
+    assert all(s["id"] != "messageid_domain_mismatch" for s in res["verdict"]["raised"])   # no score
+    vals = {i["value"] for i in ioc.extract(ioc.sources_from_modules({"mailrules": res}))["iocs"]}
+    assert not any("exchangelabs" in v.lower() for v in vals)                          # never an IOC
+    # an unknown host still weighs (low), and a look-alike of a provider is not one
+    for other in ("<x@bulk.example>", "<x@evil-outlook.com>"):
+        p, em = _eml(tmp_path, message_id=other)
+        res = mail_rules.analyze(p, ".eml", em, tmp_path)
+        f = next(x for x in res["findings"] if x["rule"] == "messageid_domain_mismatch")
+        assert f["severity"] == "low" and not f["provider"]
+    assert mail_rules.messageid_provider("mail.gmail.com") == "Gmail / Google Workspace"
+    assert mail_rules.messageid_provider("eu-west-1.amazonses.com") == "Amazon SES"
+
+
+def test_sample_exchange_messageid_is_clean(tmp_path: Path) -> None:
+    import make_samples as ms
+
+    from docutracex import ioc
+    from docutracex.parsers import mail
+    p = tmp_path / "m.eml"
+    p.write_bytes(ms.exchange_messageid_eml())
+    em = mail.analyze(p, ".eml", tmp_path / "x")
+    res = mail_rules.analyze(p, ".eml", em, tmp_path)
+    f = next(x for x in res["findings"] if x["rule"] == "messageid_domain_mismatch")
+    assert f["severity"] == "info" and "Exchange Online" in f["detail"]
+    assert res["verdict"]["verdict"] == "clean"
+    vals = {i["value"].lower() for i in ioc.extract(ioc.sources_from_modules({"email": em, "mailrules": res}))["iocs"]}
+    assert not any("exchangelabs" in v for v in vals)
