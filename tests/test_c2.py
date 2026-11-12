@@ -189,7 +189,7 @@ def test_stealer_details(tmp_path: Path) -> None:
     assert "SMTP server: mail.billing-portal.example" in sk["Exfiltration"] and "SMTP port: 587" in sk["Exfiltration"]
     assert "SMTP user: facturas.envio@billing-portal.example" in sk["Exfiltration"]
     rc = _scan(tmp_path, "rc.exe", ms.raccoon_exe())[0]["summary"]
-    assert rc["C2"] == ["http://203.0.113.47/"] and rc["RC4 key"] == "edinayarossiya2026"
+    assert rc["C2"] == ["http://203.0.113.47/", "https://cdn-update.example.net/"] and rc["RC4 key"] == "edinayarossiya2026"
     wz = _scan(tmp_path, "wz.exe", ms.warzone_exe())[0]["summary"]
     assert wz["C2"] == ["cdn-update.example.net:5200"]
 
