@@ -646,9 +646,9 @@ function subtabLabel(label) {
   return m ? `${escapeHtml(m[1])}<span class="subtab-count">${escapeHtml(m[2])}</span>` : escapeHtml(label || "");
 }
 
-function table(headers, rowsHtml) {
+function table(headers, rowsHtml, cls = "") {
   const head = headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("");
-  return `<table class="cases"><thead><tr>${head}</tr></thead><tbody>${rowsHtml}</tbody></table>`;
+  return `<table class="cases${cls ? ` ${cls}` : ""}"><thead><tr>${head}</tr></thead><tbody>${rowsHtml}</tbody></table>`;
 }
 
 // Collect all findings (anomalies + semantic + VBA) into one list with source.
@@ -855,7 +855,7 @@ function paneFindings(findings, ids, ctx) {
     </div>`;
   if (_findingsView === "source") return toggle + paneFindingsBySource(findings, ids);
   if (_findingsView !== "tree" || !(ctx.tree || []).length) {
-    return toggle + table(FINDING_HEADERS, findingRowsHtml(findings, ids));
+    return toggle + table(FINDING_HEADERS, findingRowsHtml(findings, ids), "findings-table");
   }
   // group: "nested:<a › b › c>" -> that child; everything else -> the case file
   const byChain = {};
@@ -876,7 +876,7 @@ function paneFindings(findings, ids, ctx) {
   const card = (name, kind, fs, childrenHtml, open, extra) => {
     const body = fs.length
       ? `<details class="ftree-findings"${open ? " open" : ""}><summary><span class="badge badge-${worst(fs)}">${fs.length} finding(s)</span></summary>
-          ${table(FINDING_HEADERS, findingRowsHtml(fs, ids))}</details>`
+          ${table(FINDING_HEADERS, findingRowsHtml(fs, ids), "findings-table")}</details>`
       : `<span class="badge badge-ok">no findings</span>`;
     return `<div class="nested-card nested-${worst(fs)}">
       <div class="nested-row"><b class="mono nested-name">${escapeHtml(name)}</b>
@@ -938,7 +938,7 @@ function paneFindingsBySource(findings, ids) {
     return `<details class="ioc-group fgroup" data-fg-group="${escapeHtml(k)}"${_fgClosed.has(k) ? "" : " open"}>
       <summary><b>${escapeHtml(label(k))}</b> <span class="muted">· <span data-fg-gcount="${escapeHtml(k)}">${fs.length}</span></span>
         <span class="fgroup-sev">${sevChips(fs)}</span> <span class="hint-line fgroup-marks">${escapeHtml(markLine(fs))}</span></summary>
-      ${table(FINDING_HEADERS, findingRowsHtml(fs, ids))}
+      ${table(FINDING_HEADERS, findingRowsHtml(fs, ids), "findings-table")}
     </details>`;
   }).join("");
   return `<div class="fg-pane">
