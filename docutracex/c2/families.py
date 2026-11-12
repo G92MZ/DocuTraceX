@@ -51,6 +51,25 @@ FAMILIES: list[dict[str, Any]] = [
                   "contents*); forks with another salt only give traces.",
     },
     {
+        "id": "remcos",
+        "name": "Remcos",
+        "match": ("Remcos",),
+        "what": "Commercial remote-administration tool sold by Breaking-Security, widely used by criminals as a "
+                "RAT: remote control, keylogging, screenshots, audio and webcam capture, file and process management.",
+        "arrives": "Phishing attachments (invoices, shipping notices) that run a script, an Office document or an "
+                   "ISO / ZIP; often unpacked in memory by a loader (GuLoader and the like) before it runs.",
+        "reads": ["the RC4-encrypted SETTINGS resource (the key travels in the resource itself)",
+                  "C2 host:port entries with their TLS flag, botnet (campaign) name, reconnect interval, version",
+                  "Remcos 3.x / 4.x by field position: install folder and name (hidden), persistence (Run keys, "
+                  "Winlogon), process injection, mutex",
+                  "keylogger (mode, log file, encrypted / hidden) and screenshots (folder, interval)",
+                  "builder defaults flagged; older layouts read generically; traces only when there is no resource"],
+        "next": "Hunt the C2 hosts and ports and the mutex; look for the install path, the Run value and the "
+                "keylog / screenshot folders on the endpoints.",
+        "limits": "A loader that is not unpacked hides the payload; the install folder can be a builder code "
+                  "(shown as such); later positions (audio, anti-analysis, licence) are left as numbered fields.",
+    },
+    {
         "id": "rmm",
         "name": "RMM / remote-access tools",
         "match": ("RMM: ",),
