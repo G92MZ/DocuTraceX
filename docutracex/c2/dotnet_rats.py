@@ -21,6 +21,8 @@ import re
 import struct
 from typing import Any
 
+from . import familyspec
+
 SALTS = (
     ("Quasar / AsyncRAT", bytes.fromhex("bfeb1e56fbcd973bb219022430a57843003d5644d21e62b9d4f180e7e6c33941")),
     ("DcRAT", b"DcRatByqwqdanchun"),
@@ -310,12 +312,8 @@ DEFAULTS: dict[str, dict[str, str]] = {
                        "VenomRAT Server": "VenomRAT builder default certificate",
                        "Quasar Server CA": "Quasar builder default certificate"},
 }
-_ON = ("true", "1", "yes")
-_SPECIAL = {"applicationdata": "%AppData%", "localapplicationdata": "%LocalAppData%",
-            "commonapplicationdata": "%ProgramData%", "programfiles": "%ProgramFiles%",
-            "programfilesx86": "%ProgramFiles(x86)%", "userprofile": "%UserProfile%", "windows": "%WinDir%",
-            "system": "%WinDir%\\System32", "startup": "%AppData%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup",
-            "mydocuments": "%UserProfile%\\Documents", "desktop": "%UserProfile%\\Desktop"}
+_ON = familyspec.ON
+_SPECIAL = familyspec.SPECIAL
 
 
 def _certificate(b64: str) -> dict[str, str]:
@@ -340,89 +338,40 @@ def _certificate(b64: str) -> dict[str, str]:
             "Certificate serial": f"{c.serial_number:x}"}
 
 
+ASYNCRAT = familyspec.Spec(
+    family="AsyncRAT",
+    fields={"hosts": "hosts", "ports": "ports", "pastebin": "dead_drop", "version": "version", "group": "group",
+            "mtx": "mutex", "install": "install", "installfolder": "install_folder", "installfile": "install_name",
+            "certificate": "certificate", "anti": "anti", "bdos": "bdos", "delay": "delay"},
+    options={"anti": ("flag", "anti-analysis: quits on VMs, sandboxes and debuggers"),
+             "bdos": ("flag", "BDOS: marks itself a critical process — killing it blue-screens the machine"),
+             "delay": ("seconds", "waits {v} s before starting")},
+    persistence="install_name",
+    persistence_text=('scheduled task "{name}" at logon, highest privileges (when run as admin)',
+                      familyspec.RUN_KEY + "\\{name} (otherwise)"),
+    defaults={}, traces=(), min_traces=3)
+
+QUASAR = familyspec.Spec(
+    family="QuasarRAT",
+    fields={"hosts": "hosts", "version": "version", "tag": "group", "mutex": "mutex", "install": "install",
+            "directory": "install_folder", "subdirectory": "install_subdir", "installname": "install_name",
+            "hidefile": "install_hidden", "startup": "startup", "startupkey": "startup_name",
+            "servercertificatestr": "certificate", "enablelogger": "keylogger", "logdirectoryname": "log_dir",
+            "hidelogdirectory": "log_hidden", "reconnectdelay": "reconnect", "unattendedmode": "unattended"},
+    options={"keylogger": ("flag", "keylogger on"),
+             "reconnect": ("ms", "reconnects every {v} s"),
+             "unattended": ("flag", "unattended mode: remote actions without asking the user")},
+    persistence="startup_name", defaults={}, traces=(), min_traces=3)
+
+
 def _named(named: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
-    """Settings by field name → card summary + C2 hosts. Two layouts: AsyncRAT / DcRAT /
-    Venom (Hosts, Ports, MTX, Group, Install / InstallFolder / InstallFile…) and Quasar
-    (HOSTS = host:port;…, MUTEX, TAG, DIRECTORY / SUBDIRECTORY / INSTALLNAME, STARTUP…)."""
-    g = {k.lower(): v for k, v in named.items()}
-    quasar = "installname" in g or "subdirectory" in g or "startupkey" in g or "enablelogger" in g
-    summary: dict[str, Any] = {}
-    hosts: list[str] = []
-    pairs: list[str] = []
-    ports = [p.strip() for p in re.split(r"[;,]", g.get("ports", "")) if p.strip().isdigit()]
-    for h in (x.strip() for x in re.split(r"[;,]", g.get("hosts", "")) if x.strip() and x.strip().lower() != "null"):
-        if ":" in h and h.rsplit(":", 1)[1].isdigit():            # Quasar: host:port in HOSTS
-            pairs.append(h)
-            hosts.append(h.rsplit(":", 1)[0])
-        else:
-            hosts.append(h)
-            pairs += [f"{h}:{p}" for p in ports] or [h]
-    if pairs:
-        summary["C2"] = list(dict.fromkeys(pairs))
-    paste = g.get("pastebin", "")
-    if paste and paste.lower() != "null":
-        summary["Dead drop (Pastebin)"] = paste
-        summary["Note"] = ("the C2 host:port is downloaded from this paste when the client starts: "
-                           "the paste is the lead, its content can change")
-        host = re.sub(r"^[a-z]+://", "", paste).split("/", 1)[0]
-        if host:
-            hosts.append(host)
-    for keys, label in ((("version",), "Version"), (("group", "tag"), "Group"), (("mtx", "mutex"), "Mutex")):
-        v = next((g[k] for k in keys if g.get(k)), "")
-        if v:
-            summary[label] = v
-    if quasar:
-        folder = g.get("directory", "") or "%AppData%"
-        if not folder.startswith("%") and "\\" not in folder:    # Environment.SpecialFolder name
-            folder = _SPECIAL.get(folder.lower(), f"<{folder}>")
-        path = "\\".join(x for x in (folder, g.get("subdirectory", ""), g.get("installname", "")) if x)
-        if g.get("install", "").lower() in _ON:
-            summary["Install path"] = path + (" (hidden file)" if g.get("hidefile", "").lower() in _ON else "")
-        elif "install" in g:
-            summary["Install"] = "no (runs from where it is)"
-        if g.get("startup", "").lower() in _ON and g.get("startupkey"):
-            key = g["startupkey"]
-            summary["Persistence"] = [f"scheduled task \"{key}\" at logon (when run as admin)",
-                                      f"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\{key} (otherwise)"]
-    elif g.get("install", "").lower() in _ON:
-        folder, fname = g.get("installfolder", "%AppData%"), g.get("installfile", "")
-        path = f"{folder}\\{fname}" if fname else folder
-        summary["Install path"] = path
-        stem = fname.rsplit(".", 1)[0] if fname else ""
-        if stem:
-            summary["Persistence"] = [f"scheduled task \"{stem}\" at logon, highest privileges (when run as admin)",
-                                      f"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\{stem} (otherwise)"]
-    elif "install" in g:
-        summary["Install"] = "no (runs from where it is)"
-    opts = []
-    if g.get("anti", "").lower() in _ON:
-        opts.append("anti-analysis: quits on VMs, sandboxes and debuggers")
-    if g.get("bdos", "").lower() in _ON:
-        opts.append("BDOS: marks itself a critical process — killing it blue-screens the machine")
-    if g.get("delay", "").isdigit() and int(g["delay"]) > 0:
-        opts.append(f"waits {g['delay']} s before starting")
-    if g.get("enablelogger", "").lower() in _ON:
-        logs = g.get("logdirectoryname", "")
-        opts.append("keylogger on" + (f", logs in the folder \"{logs}\"" if logs else "")
-                    + (" (hidden)" if g.get("hidelogdirectory", "").lower() in _ON else ""))
-    if g.get("reconnectdelay", "").isdigit():
-        opts.append(f"reconnects every {int(g['reconnectdelay']) // 1000} s")
-    if g.get("unattendedmode", "").lower() in _ON:
-        opts.append("unattended mode: remote actions without asking the user")
-    if opts:
-        summary["Options"] = opts
-    cert_b64 = g.get("certificate") or g.get("servercertificatestr") or ""
-    cert = _certificate(cert_b64) if cert_b64 else {}
-    summary.update(cert)
-    checks = (("MTX", summary.get("Mutex", "")), ("Group", summary.get("Group", "")),
-              ("Certificate CN", cert.get("Certificate CN", "")), ("Startup key", g.get("startupkey", "")),
-              ("Install name", g.get("installname", "")))
-    defaults = [f"{v} — {DEFAULTS[k][v]}" for k, v in checks if v in DEFAULTS.get(k, {})]
-    if summary.get("Mutex", "").startswith("QSR_MUTEX_"):
-        defaults.append(f"{summary['Mutex']} — Quasar builder mutex pattern (QSR_MUTEX_ + random)")
-    if defaults:
-        summary["Builder defaults"] = defaults
-    return {k: v for k, v in summary.items() if v not in ("", [], None)}, list(dict.fromkeys(hosts))
+    """Settings by field name → card summary + C2 hosts, through the common family
+    layer. Two layouts: AsyncRAT / DcRAT / Venom (Hosts, Ports, MTX, Group,
+    Install / InstallFolder / InstallFile…) and Quasar (HOSTS = host:port;…,
+    MUTEX, TAG, DIRECTORY / SUBDIRECTORY / INSTALLNAME, STARTUP…)."""
+    low = {k.lower() for k in named}
+    spec = QUASAR if {"installname", "subdirectory", "startupkey", "enablelogger"} & low else ASYNCRAT
+    return familyspec.interpret(spec, named, _certificate)
 
 
 def _result(data: bytes, values: dict[str, str], salt_name: str, method: str, master: bytes,
@@ -460,14 +409,14 @@ _TRACES = ((b"Client.Settings", "settings class Client.Settings"), (b"Anti_Analy
            (b"DcRat", "DcRat"), (b"Serversignature", "field Serversignature"), (b"InstallFolder", "field InstallFolder"))
 
 
+for _spec in (ASYNCRAT, QUASAR):                  # the defaults are shared by the builders' lineage
+    _spec.defaults = {"mutex": DEFAULTS["MTX"], "group": DEFAULTS["Group"], "certificate_cn": DEFAULTS["Certificate CN"],
+                      "startup_name": DEFAULTS["Startup key"], "install_name": DEFAULTS["Install name"]}
+    _spec.default_prefixes = (("mutex", "QSR_MUTEX_", "Quasar builder mutex pattern (QSR_MUTEX_ + random)"),)
+ASYNCRAT.traces = _TRACES
+
+
 def traces(data: bytes) -> dict[str, Any] | None:
     """Indicators only: at least three distinct traces of the AsyncRAT family, no configuration."""
-    hits = list(dict.fromkeys(what for needle, what in _TRACES if needle in data))
-    if len(hits) < 3:
-        return None
-    fam = "DcRAT" if "DcRat" in hits else "AsyncRAT"
-    return {"family": fam, "kind": "indicators", "method": "static indicators", "confidence": "low",
-            "status": "indicators only", "c2": [], "fields": {}, "indicators": hits,
-            "summary": {"Indicators": hits,
-                        "Configuration": "not decrypted (another salt or a modified builder)"},
-            "note": f"{fam} traces without a readable configuration: no C2 recovered."}
+    hits = [what for needle, what in _TRACES if needle in data]
+    return familyspec.traces(ASYNCRAT, data, "DcRAT" if "DcRat" in hits else "AsyncRAT")
