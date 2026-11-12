@@ -54,7 +54,7 @@ class _Heap:
 
 _OP = {"ldstr": 0x72, "call": 0x28, "callvirt": 0x6F, "newobj": 0x73, "pop": 0x26, "ret": 0x2A, "calldef": 0x28,
        "xor": 0x61, "ldarg.0": 0x02, "initarray": 0x00, "ldc": 0x20, "shl": 0x62, "shr.un": 0x64, "mul": 0x5A,
-       "brfalse.s": 0x2C, "br.s": 0x2B, "stsfld": 0x80}
+       "brfalse.s": 0x2C, "br.s": 0x2B, "stsfld": 0x80, "and": 0x5F, "rem": 0x5D}
 
 
 def _ops(ops: list[tuple], us: _Heap, rids: dict[str, int] | None = None) -> bytes:
