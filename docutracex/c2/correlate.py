@@ -33,7 +33,8 @@ def _index(cases_dir: Path) -> Path:
 
 def fingerprints(cfg: dict[str, Any]) -> dict[str, Any]:
     s = cfg.get("summary") or {}
-    pub = str(s.get("Public key SHA-256") or "")
+    # Cobalt Strike: the team server's RSA key; AsyncRAT / DcRAT: the server certificate the client pins
+    pub = str(s.get("Public key SHA-256") or s.get("Certificate SHA-1") or "")
     if "—" in pub:                                    # listed as shared (leaked / cracked key): no fingerprint
         pub = ""
     wm = str(s.get("Watermark") or "").split(" ", 1)[0]

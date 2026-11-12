@@ -219,6 +219,10 @@ def _c2(cid: str) -> str:
     c2 = read_json(paths.subresult("c2")) or {}
     cfgs = c2.get("configs") or []
     out = [f"# C2 / beacon configurations ({len(cfgs)})", ""]
+    from .c2 import families
+    about = families.markdown([c.get("family") or "" for c in cfgs])
+    if about:
+        out += [about, ""]
     for c in cfgs:
         out += [f"## {c.get('family')} ({c.get('kind')}) — {c.get('object')}", "",
                 f"- status: {c.get('status') or 'configuration'} · method: {c.get('method')} · confidence: {c.get('confidence')}",
@@ -259,10 +263,62 @@ def _modules(cid: str) -> str:
     return _cap("\n".join(out), MAX_SECTION * 3)
 
 
+def _yara(cid: str) -> str:
+    paths = ai_tools._paths(cid)
+    y = read_json(paths.subresult("yara")) or {}
+    out = ["# YARA", ""]
+    if not y:
+        return "\n".join(out + ["_(YARA not run on this case)_"])
+    out.append(f"{y.get('rule_count', 0)} rule(s) · {y.get('files_scanned', 0)} object(s) scanned · "
+               f"{y.get('match_count', 0)} match(es). Hits are triage leads: they become findings once marked.")
+    rows = []
+    for h in y.get("scanned") or []:
+        for m in h.get("matches") or []:
+            meta = m.get("meta") or {}
+            strings = "; ".join(f"{x.get('id')}@{x.get('offset')}: {str(x.get('text', ''))[:40]}"
+                                for x in (m.get("strings") or [])[:5])
+            rows.append([m.get("rule"), h.get("file"), meta.get("description") or meta.get("desc") or "",
+                         ", ".join(m.get("tags") or []), strings])
+    out += ["", _table(["rule", "object", "description", "tags", "matched strings"], rows)]
+    if y.get("errors"):
+        out += ["", "**Rule errors:**", ""] + [f"- {_md(e)}" for e in y["errors"][:50]]
+    return _cap("\n".join(out), MAX_SECTION)
+
+
+def _rmm(cid: str) -> str:
+    paths = ai_tools._paths(cid)
+    r = read_json(paths.subresult("rmm")) or {}
+    c2 = read_json(paths.subresult("c2")) or {}
+    out = ["# RMM / remote-access tools", ""]
+    if not r and not c2:
+        return "\n".join(out + ["_(not run on this case)_"])
+    out.append(f"Product list: {r.get('source', 'built-in')} ({r.get('products', '?')} products). "
+               "Legitimate software: who deployed it, and to whose instance it connects, decides.")
+    cfgs = list(r.get("configs") or []) + [x for x in c2.get("configs") or [] if str(x.get("family", "")).startswith("RMM: ")]
+    from .c2 import families
+    about = families.markdown([c.get("family") or "" for c in cfgs])
+    if about:
+        out += ["", about]
+    rows = [[c.get("family", "")[5:], c.get("kind"), ", ".join((c.get("summary") or {}).get("C2") or []) or "—",
+             c.get("object", ""), ", ".join(f"{k}: {v}" for k, v in (c.get("fields") or {}).items())[:300]] for c in cfgs]
+    out += ["", "## Products in the objects", "", _table(["product", "kind", "instance", "object", "settings"], rows)]
+    ms = r.get("mentions") or []
+    out += ["## Named in the text", "", _table(["product", "severity", "why", "where", "context"],
+                                               [[m.get("product"), m.get("severity"), m.get("why"), m.get("location"),
+                                                 str(m.get("snippet", ""))[:200]] for m in ms])]
+    iocs = read_json(paths.subresult("iocs")) or {}
+    tagged = [i for i in iocs.get("iocs") or [] if i.get("rmm")]
+    out += ["## IOCs of a product", "", _table(["type", "value", "product", "why"],
+                                               [[i["type"], i["value"], i["rmm"].get("product"), i["rmm"].get("why")]
+                                                for i in tagged[:300]])]
+    return _cap("\n".join(out), MAX_SECTION)
+
+
 SECTIONS: list[tuple[str, str, Callable[[str], str]]] = [
     ("summary", "Summary", _summary), ("findings", "Findings", _findings), ("iocs", "IOCs", _iocs),
     ("nested", "Nested / stages", _nested), ("decrypted", "Decrypted", _decrypted), ("code", "Code", _code),
-    ("dotnet", ".NET", _dotnet), ("ml", "Machine Learning", _ml), ("c2", "C2", _c2),
+    ("dotnet", ".NET", _dotnet), ("ml", "Machine Learning", _ml), ("yara", "YARA", _yara), ("c2", "C2", _c2),
+    ("rmm", "RMM / remote access", _rmm),
     ("network", "Network checks", _network), ("modules", "Raw modules", _modules),
 ]
 

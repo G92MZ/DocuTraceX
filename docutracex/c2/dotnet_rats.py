@@ -101,6 +101,57 @@ def heap_user_strings(data: bytes) -> list[str]:
     return out
 
 
+def settings_fields(data: bytes) -> tuple[dict[str, list[str]], str]:
+    """(string literal → the static fields a ``.cctor`` stores it in, the class): the
+    names of the settings (``Hosts``, ``Ports``, ``MTX``…) for the values decrypted
+    from them. Read from the IL (``ldstr`` then ``stsfld``) with dnfile + dncil;
+    empty when they are not installed or the assembly is unreadable — the values
+    are then named by what they look like."""
+    try:
+        import dnfile
+        from dncil.cil.body import CilMethodBody
+
+        from ..dotnet.cil import _owners, _reader_class
+    except ImportError:
+        return {}, ""
+    try:
+        pe = dnfile.dnPE(data=data)
+        t = pe.net.mdtables
+        us = pe.net.user_strings
+        fields = [str(f.Name) for f in t.Field or []]
+        owners = _owners(t)
+        reader = _reader_class(pe)
+    except Exception:  # noqa: BLE001
+        return {}, ""
+    best: tuple[dict[str, list[str]], str] = ({}, "")
+    for rid, m in enumerate(t.MethodDef or [], 1):
+        if str(m.Name) != ".cctor" or not m.Rva:
+            continue
+        try:
+            body = CilMethodBody(reader(m.Rva))
+        except Exception:  # noqa: BLE001
+            continue
+        out: dict[str, list[str]] = {}
+        pending = None
+        for insn in body.instructions:
+            op = insn.opcode.name
+            if op == "ldstr" and us is not None:
+                try:
+                    v = us.get(insn.operand.rid)
+                    pending = str(v.value) if v is not None and v.value is not None else None
+                except Exception:  # noqa: BLE001
+                    pending = None
+                continue
+            if op == "stsfld" and pending is not None and getattr(insn.operand, "table", None) == 0x04:
+                rid_f = insn.operand.rid
+                if 0 < rid_f <= len(fields):
+                    out.setdefault(pending, []).append(fields[rid_f - 1])
+            pending = None
+        if sum(map(len, out.values())) > sum(map(len, best[0].values())):
+            best = (out, owners.get(rid, "").split("::", 1)[0])
+    return best
+
+
 def prefilter(data: bytes) -> bool:
     return data[:2] == b"MZ" and b"BSJB" in data
 
@@ -233,22 +284,143 @@ def extract(data: bytes) -> dict[str, Any] | None:
                 if _dec_v14(probe, key, auth) is None:
                     continue
                 values = {s: v for s in enc14 for v in [_dec_v14(blobs[s], key, auth)] if v is not None}
-                return _result(data, values, salt_name, "AES-256-CBC + HMAC-SHA256, PBKDF2 key", master)
+                names, cls_name = settings_fields(data)
+                key_lit = next((lit for lit in strings if lit in names and (blobs.get(lit) == master or
+                                                                               lit.encode() == master)), None)
+                if key_lit:
+                    values[key_lit] = master.decode("latin-1")
+                return _result(data, values, salt_name, "AES-256-CBC + HMAC-SHA256, PBKDF2 key", master,
+                               names, cls_name)
     enc13 = [s for s, b in blobs.items() if len(b) % 16 == 0]
     for master in keys:
         values = {s: v for s in enc13 for v in [_dec_v13(blobs[s], master)] if v is not None}
         if len(values) >= 2:
             return _result(data, values, "", "AES-128-CBC, MD5(key) (Quasar 1.3)", master)
-    return None
+    return traces(data)
 
 
-def _result(data: bytes, values: dict[str, str], salt_name: str, method: str, master: bytes) -> dict[str, Any] | None:
+# Values the public builders write unless the operator changes them: no
+# attribution, only "this was left as it came".
+DEFAULTS: dict[str, dict[str, str]] = {
+    "MTX": {"AsyncMutex_6SI8OkPnk": "AsyncRAT builder default mutex", "DcRatMutex_qwqdanchun": "DcRAT builder default mutex"},
+    "Group": {"Default": "builder default group"},
+    "Certificate CN": {"AsyncRAT Server": "AsyncRAT builder default certificate", "DcRat Server": "DcRAT builder default certificate",
+                       "VenomRAT Server": "VenomRAT builder default certificate"},
+}
+_ON = ("true", "1", "yes")
+
+
+def _certificate(b64: str) -> dict[str, str]:
+    """The server certificate the client pins (base64 X.509): who it claims to be and its fingerprint."""
+    try:
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.x509.oid import NameOID
+        der = base64.b64decode(b64 + "=" * (-len(b64) % 4))
+        c = x509.load_der_x509_certificate(der)
+    except Exception:  # noqa: BLE001
+        return {}
+
+    def cn(n: Any) -> str:
+        v = n.get_attributes_for_oid(NameOID.COMMON_NAME)
+        return str(v[0].value) if v else n.rfc4514_string()
+    nb = getattr(c, "not_valid_before_utc", None) or c.not_valid_before
+    na = getattr(c, "not_valid_after_utc", None) or c.not_valid_after
+    return {"Certificate CN": cn(c.subject), "Certificate issuer": cn(c.issuer),
+            "Certificate valid": f"{nb:%Y-%m-%d} → {na:%Y-%m-%d}",
+            "Certificate SHA-1": c.fingerprint(hashes.SHA1()).hex(),
+            "Certificate serial": f"{c.serial_number:x}"}
+
+
+def _named(named: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
+    """Settings by field name → card summary + C2 hosts (AsyncRAT / DcRAT / Venom layout)."""
+    g = {k.lower(): v for k, v in named.items()}
+    summary: dict[str, Any] = {}
+    hosts = [h.strip() for h in re.split(r"[;,]", g.get("hosts", "")) if h.strip() and h.strip().lower() != "null"]
+    ports = [p.strip() for p in re.split(r"[;,]", g.get("ports", "")) if p.strip().isdigit()]
+    paste = g.get("pastebin", "")
+    if hosts:
+        summary["C2"] = [f"{h}:{p}" for h in hosts for p in (ports or [""])]
+        summary["C2"] = [x.rstrip(":") for x in summary["C2"]]
+    if paste and paste.lower() != "null":
+        summary["Dead drop (Pastebin)"] = paste
+        summary["Note"] = ("the C2 host:port is downloaded from this paste when the client starts: "
+                           "the paste is the lead, its content can change")
+        host = re.sub(r"^[a-z]+://", "", paste).split("/", 1)[0]
+        if host:
+            hosts.append(host)
+    for key, label in (("version", "Version"), ("group", "Group"), ("mtx", "Mutex")):
+        if g.get(key):
+            summary[label] = g[key]
+    if g.get("install", "").lower() in _ON:
+        folder, fname = g.get("installfolder", "%AppData%"), g.get("installfile", "")
+        path = f"{folder}\\{fname}" if fname else folder
+        summary["Install path"] = path
+        stem = fname.rsplit(".", 1)[0] if fname else ""
+        if stem:
+            summary["Persistence"] = [f"scheduled task \"{stem}\" at logon, highest privileges (when run as admin)",
+                                      f"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\{stem} (otherwise)"]
+    elif "install" in g:
+        summary["Install"] = "no (runs from where it is)"
+    opts = []
+    if g.get("anti", "").lower() in _ON:
+        opts.append("anti-analysis: quits on VMs, sandboxes and debuggers")
+    if g.get("bdos", "").lower() in _ON:
+        opts.append("BDOS: marks itself a critical process — killing it blue-screens the machine")
+    if g.get("delay", "").isdigit() and int(g["delay"]) > 0:
+        opts.append(f"waits {g['delay']} s before starting")
+    if opts:
+        summary["Options"] = opts
+    cert = _certificate(g.get("certificate", "")) if g.get("certificate") else {}
+    summary.update(cert)
+    defaults = [f"{named_v} — {DEFAULTS[k][named_v]}" for k, named_v in
+                (("MTX", summary.get("Mutex", "")), ("Group", summary.get("Group", "")),
+                 ("Certificate CN", cert.get("Certificate CN", ""))) if named_v in DEFAULTS[k]]
+    if defaults:
+        summary["Builder defaults"] = defaults
+    return {k: v for k, v in summary.items() if v not in ("", [], None)}, list(dict.fromkeys(hosts))
+
+
+def _result(data: bytes, values: dict[str, str], salt_name: str, method: str, master: bytes,
+            names: dict[str, list[str]] | None = None, cls_name: str = "") -> dict[str, Any] | None:
     plain = [v for v in values.values() if v]
-    cls = _classify(plain)
-    if not cls["hosts"]:
-        return None
-    fam = _family(data, salt_name)
-    fields = {f"value {i + 1}": (v if len(v) <= 300 else v[:300] + "…") for i, v in enumerate(plain)}
+    named = {f: v for lit, v in values.items() for f in (names or {}).get(lit, [])}
+    if named:
+        summary, hosts = _named(named)
+        if not hosts:
+            return None
+        fields = {f: (v if len(v) <= 300 else v[:300] + "…") for f, v in named.items()
+                  if f.lower() not in ("certificate", "serversignature")}
+        fields["Settings class"] = cls_name
+        how = f"{method} — {len(named)} settings decrypted and named from {cls_name or 'the settings class'}"
+    else:
+        cls = _classify(plain)
+        if not cls["hosts"]:
+            return None
+        summary, hosts = cls["summary"], cls["hosts"]
+        fields = {f"value {i + 1}": (v if len(v) <= 300 else v[:300] + "…") for i, v in enumerate(plain)}
+        how = f"{method} — {len(plain)} values decrypted (named by what they look like)"
     fields["master key"] = master.decode("latin-1")
-    return {"family": fam, "kind": "RAT", "method": f"{method} — {len(plain)} values decrypted",
-            "confidence": "high", "summary": cls["summary"], "c2": cls["hosts"], "fields": fields}
+    fam = _family(data, salt_name)
+    return {"family": fam, "kind": "RAT", "method": how,
+            "confidence": "high", "summary": summary, "c2": hosts, "fields": fields}
+
+
+# Traces of the family when the settings do not decrypt (a modified builder, another salt)
+_TRACES = ((b"Client.Settings", "settings class Client.Settings"), (b"Anti_Analysis", "class Anti_Analysis"),
+           (b"MessagePackLib", "MessagePackLib (the C2 protocol)"), (b"AsyncClient", "assembly AsyncClient"),
+           (b"P\x00a\x00s\x00t\x00e\x00b\x00i\x00n\x00", "Pastebin setting"), (b"Pastebin", "Pastebin setting"),
+           (b"DcRat", "DcRat"), (b"Serversignature", "field Serversignature"), (b"InstallFolder", "field InstallFolder"))
+
+
+def traces(data: bytes) -> dict[str, Any] | None:
+    """Indicators only: at least three distinct traces of the AsyncRAT family, no configuration."""
+    hits = list(dict.fromkeys(what for needle, what in _TRACES if needle in data))
+    if len(hits) < 3:
+        return None
+    fam = "DcRAT" if "DcRat" in hits else "AsyncRAT"
+    return {"family": fam, "kind": "indicators", "method": "static indicators", "confidence": "low",
+            "status": "indicators only", "c2": [], "fields": {}, "indicators": hits,
+            "summary": {"Indicators": hits,
+                        "Configuration": "not decrypted (another salt or a modified builder)"},
+            "note": f"{fam} traces without a readable configuration: no C2 recovered."}
