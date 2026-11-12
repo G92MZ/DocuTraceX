@@ -4,7 +4,9 @@
   ``|``) and ``ID`` (build tag) are ``base64( xor( base64(value), key ) )``
   with the XOR key a plain string of the same class.
 * **Snake Keylogger / 404** (.NET): strings DES-ECB encrypted with
-  ``MD5(key string)[:8]``, base64; exfiltration over SMTP / FTP / Telegram.
+  ``MD5(key string)[:8]``, base64; exfiltration over SMTP / FTP / Telegram,
+  read into the common family card (server, port, sender / receiver, the
+  password by position, bot token / chat). Traces when nothing decrypts.
 * **Raccoon Stealer v2** (native): strings ``base64( RC4(key, value) )`` with
   the RC4 key a plain string in the binary; the C2 is an ``http(s)://`` URL.
 * **Warzone / AveMaria** (native): ``.bss`` section = ``[key length DWORD]
@@ -26,6 +28,7 @@ import re
 import struct
 from typing import Any
 
+from . import familyspec
 from .dotnet_more import _BOT, _EMAIL, _FTP, _TOKEN
 from .dotnet_rats import _b64, _is_host, user_strings
 from .remcos import rc4
@@ -125,42 +128,95 @@ def _des_ecb(key8: bytes, ct: bytes) -> str | None:
     return s if _printable(s) else None
 
 
+_SNAKE_ROLES = ("smtp_server", "smtp_port", "smtp_user", "smtp_password", "smtp_to", "ftp_server", "ftp_user",
+                "ftp_password", "telegram_token", "telegram_chat")
+SNAKE = familyspec.Spec(
+    family="Snake Keylogger", fields={r: r for r in _SNAKE_ROLES},
+    traces=((b"S\x00n\x00a\x00k\x00e\x00 \x00K\x00e\x00y\x00l\x00o\x00g\x00g\x00e\x00r", "Snake Keylogger banner"),
+            (b"Snake Keylogger", "Snake Keylogger banner"), (b"KeyLoggerEventArgs", "type KeyLoggerEventArgs"),
+            (b"DESCryptoServiceProvider", "DES string decryption"), (b"MD5CryptoServiceProvider", "MD5 key derivation"),
+            (b"SmtpClient", "SMTP exfiltration"), (b"encryptedPassword", "browser credential theft"),
+            (b"Login Data", "browser credential theft")),
+    min_traces=4)
+_PORTS = ("25", "465", "587", "2525", "21", "990")
+_CHAT = re.compile(r"^-?\d{7,14}$")
+
+
+def _snake_roles(values: list[str]) -> dict[str, str]:
+    """Decrypted values (in the order the settings class sets them) → exfiltration roles.
+
+    The builder keeps sender, password, SMTP server, receiver, port together; the
+    password is the value right after the sender that is nothing else (by position)."""
+    def other(v: str) -> bool:
+        return not (_EMAIL.match(v) or _is_host(v) or v in _PORTS or _TOKEN.match(v) or _CHAT.match(v)
+                    or _FTP.match(v) or _BOT.search(v) or "snake" in v.lower() or "---" in v or len(v) > 64)
+    g: dict[str, str] = {}
+    emails = [v for v in values if _EMAIL.match(v)]
+    if emails:
+        g["smtp_user"] = emails[0]
+        g["smtp_to"] = emails[1] if len(emails) > 1 else emails[0]
+        i = values.index(emails[0])
+        if i + 1 < len(values) and other(values[i + 1]):
+            g["smtp_password"] = values[i + 1]
+    for v in values:
+        if _is_host(v) and re.match(r"^(smtp|mail|webmail|mx)\d*\.", v, re.IGNORECASE):
+            g.setdefault("smtp_server", v)
+        elif v in _PORTS and v not in ("21", "990"):
+            g.setdefault("smtp_port", v)
+        elif _TOKEN.match(v):
+            g.setdefault("telegram_token", v)
+        elif _BOT.search(v):
+            g.setdefault("telegram_token", _BOT.search(v).group(1))
+        elif _CHAT.match(v):
+            g.setdefault("telegram_chat", v)
+        elif _FTP.match(v):
+            g.setdefault("ftp_server", v)
+            j = values.index(v)
+            rest = [x for x in values[j + 1:j + 3] if other(x)]
+            if rest:
+                g.setdefault("ftp_user", rest[0])
+            if len(rest) > 1:
+                g.setdefault("ftp_password", rest[1])
+    return g
+
+
 def snake(data: bytes, strings: list[str]) -> dict[str, Any] | None:
     enc = [(s, b) for s in strings for b in [_b64(s)] if b and len(b) % 8 == 0]
     if len(enc) < 2:
-        return None
-    keys = [s for s in strings if 8 <= len(s) <= 128 and _printable(s) and not _b64(s)][:80]
+        return snake_traces(data)
+    cand = [s for s in strings if 8 <= len(s) <= 128 and _printable(s)]
+    # the key string is usually not base64, but a key of letters only can be: try those last
+    keys = ([s for s in cand if not _b64(s)] + [s for s in cand if _b64(s)])[:80]
     for key in keys:
         k8 = hashlib.md5(key.encode("utf-8")).digest()[:8]
         values = [v for _, b in enc for v in [_des_ecb(k8, b)] if v]
         if len(values) < 2:
             continue
-        summary: dict[str, Any] = {}
-        hosts: list[str] = []
-        for v in values:
-            if _EMAIL.match(v):
-                summary.setdefault("Accounts", []).append(v)
-            elif _is_host(v) and re.match(r"^(smtp|mail|ftp)\d*\.", v, re.IGNORECASE):
-                summary.setdefault("Servers", []).append(v)
-                hosts.append(v)
-            elif _TOKEN.match(v):
-                summary["Telegram-style bot token"] = v
-            elif _BOT.search(v) or _FTP.match(v):
-                summary.setdefault("Exfil URL", v)
-                h = re.sub(r"^(https?|ftp)://([^@/]*@)?", "", v, flags=re.IGNORECASE).split("/", 1)[0].split(":", 1)[0]
-                if _is_host(h):
-                    hosts.append(h)
-            elif v in ("25", "465", "587", "2525", "21"):
-                summary["Port"] = v
-        if not hosts and "Accounts" not in summary:
+        g = _snake_roles(values)
+        if not any(r in g for r in ("smtp_server", "smtp_user", "telegram_token", "ftp_server")):
             continue
-        named = any("snake" in v.lower() for v in values) or b"Snake" in data
+        summary, hosts = familyspec.interpret(SNAKE, g)
+        channels = [c for c, r in (("SMTP", "smtp_user"), ("FTP", "ftp_server"), ("Telegram", "telegram_token"))
+                    if g.get(r)]
+        banner = next((v for v in values if "snake" in v.lower() and not _TOKEN.match(v) and not _BOT.search(v)), "")
+        summary = {"Channel": channels, **summary}
+        if banner:
+            summary["Banner"] = banner.strip("- ")
+        if g.get("smtp_password"):
+            summary["Note"] = "the SMTP password is taken by its position after the sender account"
+        named = bool(banner) or b"Snake" in data
+        labels = {r: familyspec.EXFIL[r][0] for r in g}
         return {"family": "Snake Keylogger" if named else "Snake-like keylogger", "kind": "stealer",
-                "method": "DES-ECB, key MD5(string)[:8] (.NET strings)",
+                "method": f"DES-ECB, key MD5(string)[:8] (.NET strings) — {len(values)} values decrypted",
                 "confidence": "high" if named else "medium", "summary": summary,
-                "c2": list(dict.fromkeys(hosts)),
-                "fields": {**{f"value {i + 1}": v for i, v in enumerate(values)}, "key string": key}}
-    return None
+                "c2": hosts,
+                "fields": {**{f"value {i + 1}": v for i, v in enumerate(values)},
+                           **{f"{labels[r]} (role)": v for r, v in g.items()}, "key string": key}}
+    return snake_traces(data)
+
+
+def snake_traces(data: bytes) -> dict[str, Any] | None:
+    return familyspec.traces(SNAKE, data)
 
 
 # --- Raccoon Stealer v2 ------------------------------------------------------------------

@@ -451,6 +451,8 @@ campaign's (`cdn-update.example.net`, `203.0.113.47`).
 | `c2/agenttesla/sample_agenttesla.exe` | AgentTesla-like stealer | exfiltration channel in clear + browser / mail credential paths | SMTP `mail.billing-portal.example:587`, accounts, Telegram-style bot token and chat id on `api.telegram-relay.example` |
 | `c2/redline/sample_redline.exe` | RedLine Stealer | .NET strings: base64 → XOR key `Ombudsman` → base64 | `cdn-update.example.net:7712`, `203.0.113.47:7712`, build `Factura_2026` |
 | `c2/snakekeylogger/sample_snake_keylogger.exe` | Snake Keylogger | .NET strings DES-ECB, key MD5(string) | SMTP `mail.billing-portal.example:587`, sender / recipient accounts |
+| `c2/snakekeylogger/sample_snake_telegram.exe` | Snake Keylogger | DES-ECB strings, Telegram + FTP channel | made-up bot token and chat ID, `ftp://ftp.invoice-sync.example/logs/` with user / password (marked sensitive) |
+| `c2/snakekeylogger/sample_snake_traces.exe` | Snake Keylogger (indicators) | .NET stub with the banner, DES / MD5 / SMTP types and a browser path, nothing encrypted | indicators only, no C2 |
 | `c2/raccoon/sample_raccoon_v2.exe` | Raccoon Stealer v2 | base64 + RC4 strings, key `edinayarossiya2026` | C2 `http://203.0.113.47/`, `machineId=` / `&configId=` |
 | `c2/warzone/sample_warzone.exe` | Warzone / AveMaria | `.bss`: RC4 key + config | `cdn-update.example.net:5200` |
 | `c2/sliver/sample_go_sliver_like` | Sliver (Go) | pclntab names the Sliver implant packages (`sliverpb`, `transports/mtls`) — names only, nothing of Sliver runs | none held: *indicators* (framework, Go version, module); C2 works with or without the Go module |

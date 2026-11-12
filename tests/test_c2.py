@@ -186,8 +186,8 @@ def test_stealer_details(tmp_path: Path) -> None:
     rl = _scan(tmp_path, "rl.exe", ms.redline_exe())[0]["summary"]
     assert rl["C2"] == ["cdn-update.example.net:7712", "203.0.113.47:7712"] and rl["Build ID"] == "Factura_2026"
     sk = _scan(tmp_path, "sk.exe", ms.snake_exe())[0]["summary"]
-    assert sk["Servers"] == ["mail.billing-portal.example"] and sk["Port"] == "587"
-    assert "facturas.envio@billing-portal.example" in sk["Accounts"]
+    assert "SMTP server: mail.billing-portal.example" in sk["Exfiltration"] and "SMTP port: 587" in sk["Exfiltration"]
+    assert "SMTP user: facturas.envio@billing-portal.example" in sk["Exfiltration"]
     rc = _scan(tmp_path, "rc.exe", ms.raccoon_exe())[0]["summary"]
     assert rc["C2"] == ["http://203.0.113.47/"] and rc["RC4 key"] == "edinayarossiya2026"
     wz = _scan(tmp_path, "wz.exe", ms.warzone_exe())[0]["summary"]
