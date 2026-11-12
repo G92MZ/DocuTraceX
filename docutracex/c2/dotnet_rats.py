@@ -429,10 +429,12 @@ def _result(data: bytes, values: dict[str, str], salt_name: str, method: str, ma
             names: dict[str, list[str]] | None = None, cls_name: str = "") -> dict[str, Any] | None:
     plain = [v for v in values.values() if v]
     named = {f: v for lit, v in values.items() for f in (names or {}).get(lit, [])}
+    summary, hosts = _named(named) if named else ({}, [])
+    if named and not hosts:
+        # names that say nothing (an obfuscator renamed the fields: "\u0002", "a"…): read the values
+        # by what they look like, as when there are no names — never worse than without them
+        named = {}
     if named:
-        summary, hosts = _named(named)
-        if not hosts:
-            return None
         fields = {f: (v if len(v) <= 300 else v[:300] + "…") for f, v in named.items()
                   if f.lower() not in ("certificate", "serversignature", "servercertificatestr")}
         fields["Settings class"] = cls_name
@@ -440,10 +442,11 @@ def _result(data: bytes, values: dict[str, str], salt_name: str, method: str, ma
     else:
         cls = _classify(plain)
         if not cls["hosts"]:
-            return None
+            return traces(data)
         summary, hosts = cls["summary"], cls["hosts"]
         fields = {f"value {i + 1}": (v if len(v) <= 300 else v[:300] + "…") for i, v in enumerate(plain)}
-        how = f"{method} — {len(plain)} values decrypted (named by what they look like)"
+        how = (f"{method} — {len(plain)} values decrypted (named by what they look like"
+               + ("; the settings fields are renamed" if names else "") + ")")
     fields["master key"] = master.decode("latin-1")
     fam = _family(data, salt_name)
     return {"family": fam, "kind": "RAT", "method": how,
