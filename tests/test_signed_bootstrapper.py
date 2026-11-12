@@ -48,3 +48,46 @@ def test_signed_bootstrapper_end_to_end(tmp_path: Path) -> None:
     # signed, but the (inert) signature cannot be verified: not high, not dismissed either
     assert by["pe_embedded_pe"][0]["severity"] == "medium"
     assert any("reproducible build" in f["detail"] for f in by["pe_image"])
+
+
+def _with_signature(data: bytes, sig_len: int, after: bytes = b"") -> bytes:
+    import os
+    import struct
+
+    import pefile
+    p = pefile.PE(data=data)
+    sec = p.OPTIONAL_HEADER.DATA_DIRECTORY[4]
+    cert = struct.pack("<IHH", 8 + sig_len, 0x200, 2) + os.urandom(sig_len)     # high entropy, like PKCS#7
+    out = bytearray(data[:sec.VirtualAddress]) + cert
+    struct.pack_into("<II", out, sec.get_file_offset(), sec.VirtualAddress, len(cert))
+    return bytes(out) + after
+
+
+def test_signature_is_not_an_overlay(tmp_path: Path) -> None:
+    from docutracex.parsers import lief_info
+    p = tmp_path / "setup.exe"
+    p.write_bytes(_with_signature(ms.signed_bootstrapper_exe(), 6000))
+    info = lief_info.parse(p)
+    assert "overlay" not in info and info["overlay_signature"]["size"] == 6008
+    assert not [f for f in lief_info._pe_findings(info, "x") if "overlay" in f["rule"]]
+    assert pe.overlay_parts(100, 6108, 100, 6008) == (0, 0)
+
+
+def test_data_after_the_signature(tmp_path: Path) -> None:
+    from docutracex.parsers import lief_info
+    p = tmp_path / "setup.exe"
+    p.write_bytes(_with_signature(ms.signed_bootstrapper_exe(), 6000, b"h=relay.invoice-support.example&p=8041;" * 4))
+    info = lief_info.parse(p)
+    assert info["overlay"]["size"] == 156 and info["overlay"]["excludes_signature"]
+    assert pe.overlay_parts(100, 6108 + 156, 100, 6008) == (0, 156)
+    assert pe.overlay_parts(100, 5000, 0, 0) == (4900, 0)                 # unsigned: the whole tail
+
+
+def test_pe_parser_overlay_findings(tmp_path: Path) -> None:
+    p = tmp_path / "setup.exe"
+    p.write_bytes(_with_signature(ms.signed_bootstrapper_exe(), 6000))
+    rules = {f["rule"] for f in pe.analyze(p, "setup.exe", run_tools=False)["findings"]}
+    assert "pe_overlay" not in rules and "pe_data_after_signature" not in rules
+    p.write_bytes(_with_signature(ms.signed_bootstrapper_exe(), 6000, b"X" * 2000))
+    rules = {f["rule"] for f in pe.analyze(p, "setup.exe", run_tools=False)["findings"]}
+    assert "pe_data_after_signature" in rules and "pe_overlay" not in rules
