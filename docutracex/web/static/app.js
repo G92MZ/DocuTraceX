@@ -2719,6 +2719,18 @@ function originBadge(n) {
   return `<span class="badge badge-warn" title="Recovered by decrypting/decoding: ${t}">🔓 decrypted stage</span>`;
 }
 
+// what was done with a child no dedicated analyzer claims (none is left unread)
+function readAsBadge(n) {
+  const im = n.image || {};
+  const dims = im.width ? ` ${im.width}×${im.height}` : "";
+  if (n.read_as === "text") return '<span class="badge badge-ok" title="Read as text: its IOCs are in the IOCs tab">text · read for IOCs</span>';
+  if (n.read_as === "strings") return `<span class="badge badge-ok" title="Structured binary data: its readable strings (ANSI and UTF-16) were mined for IOCs">binary · ${n.strings_count || 0} string(s) read for IOCs</span>`;
+  if (n.read_as === "image") return `<span class="badge badge-ok" title="Image: checked for a file appended after its end or hidden in its pixels">${escapeHtml(im.format || "image")}${escapeHtml(dims)} · checked for hidden data</span>`;
+  if (n.read_as === "ifps") return '<span class="badge badge-ok" title="Inno Setup [Code] compiled to Pascal Script: strings and called functions read">Inno Setup [Code] · read</span>';
+  if (n.entropy != null) return `<span class="badge badge-${n.entropy >= 7.5 ? "warn" : "muted"}" title="Shannon entropy of the bytes (8 = random: encrypted or compressed)">opaque data · entropy ${n.entropy}${n.entropy >= 7.5 ? " (encrypted/compressed: nothing to read without its key)" : ""}</span>`;
+  return '<span class="badge badge-muted">empty</span>';
+}
+
 function nestedNode(n) {
   const fcount = (n.findings || []).length;
   const worst = (n.findings || []).some((f) => f.severity === "high") ? "bad"
@@ -2742,10 +2754,8 @@ function nestedNode(n) {
         ${(n.findings || []).map((f) => `<div class="nested-finding"><span class="badge badge-${SEV_CLASS[f.severity] || "warn"}">${escapeHtml(f.severity)}</span>
           <span class="mono">${escapeHtml(f.tool)}/${escapeHtml(f.rule)}</span> ${escapeHtml(f.detail)}</div>`).join("")}
       </details>`
-    : (n.kind === "other"
-      ? (n.entropy != null
-        ? `<span class="badge badge-${n.entropy >= 7.5 ? "warn" : "muted"}" title="Shannon entropy of the bytes (8 = random: encrypted or compressed)">opaque data · entropy ${n.entropy}${n.entropy >= 7.5 ? " (encrypted/compressed?)" : ""}</span>`
-        : '<span class="badge badge-muted">not analyzable</span>')
+    : (n.kind === "other" || n.read_as
+      ? readAsBadge(n)
       : (n.listed_only ? "" : '<span class="badge badge-ok">clean</span>'));
   let html = `<div class="nested-card nested-${worst}">
     <div class="nested-row">

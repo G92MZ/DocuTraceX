@@ -362,6 +362,8 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
             x["location"] = loc
             f.append(x)
         item["unpack"] = {k: v for k, v in up.items() if k != "findings"}
+        if up.get("status") == "unpacked" and up.get("family") in unpack.INSTALLERS:
+            _installer_context(f, up, item)
 
     # --- optional external static tools: FLOSS (strings) + capa (capabilities) ---
     if run_tools:
@@ -421,6 +423,32 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
     except Exception:  # noqa: BLE001
         pass
     return item
+
+
+# What an installer stub always looks like: once the app recognised the installer and
+# opened it, these say "installer", not "packed / anti-debug" — the payload is in Nested.
+_INSTALLER_NORMAL = {
+    "lief_overlay_encrypted": "the installer's compressed payload (opened: see Nested)",
+    "pe_overlay": "the installer's payload (opened: see Nested)",
+    "pe_entrypoint_section": "Delphi start-up code (.itext), as in every Inno Setup stub",
+    "pe_tls_callback": "the compiler's TLS data (Delphi), as in every Inno Setup stub",
+    "lief_tls_callbacks": "the compiler's TLS data (Delphi), as in every Inno Setup stub",
+    "lief_checksum_mismatch": "installers are commonly built / signed without updating the PE checksum",
+}
+
+
+def _installer_context(findings: list[dict[str, Any]], up: dict[str, Any], item: dict[str, Any]) -> None:
+    """Lower the stub's usual traits to info, saying why (only for an installer the app opened)."""
+    delphi = any(s.get("name") == ".itext" for s in item.get("sections") or [])
+    for x in findings:
+        why = _INSTALLER_NORMAL.get(x.get("rule", ""))
+        if not why or x.get("severity") == "info":
+            continue
+        if x["rule"] in ("pe_entrypoint_section", "pe_tls_callback", "lief_tls_callbacks") and not (
+                delphi and up.get("family") == "inno"):
+            continue
+        x["severity"] = "info"
+        x["detail"] = f"{x['detail']} — expected: {why}"
 
 
 def _fmt_ts(ts: int) -> str:

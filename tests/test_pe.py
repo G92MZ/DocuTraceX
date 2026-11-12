@@ -37,7 +37,9 @@ def client(env) -> TestClient:
 
 
 def _wait(client, cid):
-    for _ in range(1200):
+    # up to 4 min: the case queue may still be busy with a long analysis another test file left
+    # running (test_unpack's bloated sample keeps C2 work going past its own wait)
+    for _ in range(4800):
         if client.get(f"/api/cases/{cid}").json().get("state") in ("completed", "error"):
             return
         time.sleep(0.05)

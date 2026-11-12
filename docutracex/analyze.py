@@ -1323,6 +1323,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         rm = run("rmm: remote-access tools in the IOCs and the text (LOLRMM)",
                  lambda: _rmm(paths, modules, ioc_result, ioc_sources))
         _tenant_iocs(modules, ioc_result)
+        _drop_own_hashes(paths, ioc_result)
         if rm:
             modules["rmm"] = rm
         write_subresult(paths, "iocs", ioc_result)
@@ -1450,6 +1451,27 @@ def _rmm(paths: CasePaths, modules: dict[str, Any], ioc_result: dict[str, Any],
     return res
 
 
+def _drop_own_hashes(paths: CasePaths, ioc_result: dict[str, Any]) -> None:
+    """The sample's own MD5 / SHA-1 / SHA-256 is no indicator found in it (an installer that
+    names its output after its hash, a script that prints it): drop it from hash_like."""
+    try:
+        h = ((read_json(paths.manifest) or {}).get("original") or {}).get("hashes") or {}
+        own = {str(v).lower() for v in h.values() if v}
+        if not own:
+            return
+        before = len(ioc_result.get("iocs") or [])
+        ioc_result["iocs"] = [i for i in ioc_result.get("iocs") or []
+                              if not (i.get("type") == "hash_like" and str(i.get("value", "")).lower() in own)]
+        if len(ioc_result["iocs"]) != before:
+            counts: dict[str, int] = {}
+            for i in ioc_result["iocs"]:
+                counts[i["type"]] = counts.get(i["type"], 0) + 1
+            counts["total"] = len(ioc_result["iocs"])
+            ioc_result["counts"] = counts
+    except Exception as exc:  # noqa: BLE001
+        log.warning("own-hash filter skipped: %s", exc)
+
+
 def _tenant_iocs(modules: dict[str, Any], ioc_result: dict[str, Any]) -> None:
     """The sender's Microsoft 365 tenant (ID, name, former domains) into the IOCs."""
     try:
@@ -1502,6 +1524,7 @@ def _recompute_derived(paths: CasePaths) -> tuple[int, int]:
     if rm:
         modules["rmm"] = rm
     _tenant_iocs(modules, ioc_result)
+    _drop_own_hashes(paths, ioc_result)
     write_subresult(paths, "iocs", ioc_result)
     ds = _domainsim(paths, modules, ioc_result)
     if ds:

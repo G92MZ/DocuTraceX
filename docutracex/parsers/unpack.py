@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -518,14 +519,33 @@ def _innounp(path: Path, out: Path) -> dict[str, Any]:
     r = _run([str(exe), "-x", "-m", "-b", "-y", "-q", "-h", "-o", f"-d{out}", str(path)], UNPACK_TIMEOUT)
     rec = {"tool": "innounp", "duration_s": r["duration_s"]}
     if any(p.is_file() for p in out.rglob("*")):
-        script = next((p for p in out.rglob("install_script.iss")), None)
-        return {**rec, "status": "ok", "detail": "Inno Setup payload extracted with innounp"
-                + (" (install_script.iss recovered: [Run] / [Code])" if script else "")}
+        return {**rec, "status": "ok", "detail": "Inno Setup payload extracted with innounp" + _inno_script_note(out)}
     if r.get("timed_out"):
         return {**rec, "status": "timeout", "detail": f"innounp timed out after {UNPACK_TIMEOUT}s"}
     why = _INNOUNP_EXIT.get(r.get("rc"), "failed")
     err = " ".join((r.get("err") or r.get("out") or r.get("error") or "").split())[-300:]
     return {**rec, "status": "error", "detail": f"innounp: {why}" + (f" — {err}" if err else "")}
+
+
+_INNO_SECTIONS = ("Run", "UninstallRun", "Code", "Registry", "Files", "Icons", "Tasks", "INI", "InstallDelete",
+                  "UninstallDelete")
+
+
+def _inno_script_note(out: Path) -> str:
+    """What the recovered setup script really holds: its sections, and the compiled [Code]."""
+    script = next((p for p in out.rglob("install_script.iss")), None)
+    if script is None:
+        return ""
+    try:
+        text = script.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return " (install_script.iss recovered)"
+    have = [n for n in _INNO_SECTIONS if re.search(rf"(?im)^\[{n}\]\s*$", text)]
+    code = next((p for p in out.rglob("CompiledCode.bin")), None)
+    parts = [", ".join(f"[{n}]" for n in have if n != "Code")] if [n for n in have if n != "Code"] else []
+    if code is not None:
+        parts.append("[Code] compiled (CompiledCode.bin, Pascal Script)")
+    return " (install_script.iss recovered" + (": " + "; ".join(p for p in parts if p) if parts else "") + ")"
 
 
 def _unpack_inno(path: Path, out: Path) -> dict[str, Any]:

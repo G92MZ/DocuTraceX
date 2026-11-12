@@ -702,6 +702,8 @@ def _scan_text(
             continue
 
         before = text[max(0, match.start() - 14):match.start()]
+        if before.endswith("OID.") or before.endswith("oid ") or before.endswith("OID="):
+            continue                                   # an X.509 OID (OID.2.5.4.15 = businessCategory)
         if value.endswith(".0") or _VERSION_BEFORE.search(before) or re.search(r"\d\.$", before) or (
             text[match.end():match.end() + 1] == "."
             and text[match.end() + 1:match.end() + 2].isdigit()
@@ -1000,7 +1002,9 @@ _MODULE_SKIP_PATHS = {
         # certificate bookkeeping (serials, thumbprints, CA issuer / policy OIDs)
         r"|(?:signature|lief/authenticode|lief/signatures)/.*(?:serial_number|serial|thumbprint"
         r"|certificate_policies(?:\[\d+\])?|issuer)|lief/authenticode/status_message"
-        r"|extraction/entries\[\d+\]/(?:name|path|stored_path))$"),
+        r"|extraction/entries\[\d+\]/(?:name|path|stored_path)"
+        # an unpacker's own messages ("consider filing a bug report at https://innoextract…")
+        r"|unpack/attempts\[\d+\](?:/tried\[\d+\])?/(?:tool_output|detail|tool))$"),
     # the C2 extractors' own bookkeeping (step names, which tool ran)
     "c2": re.compile(r"^(?:timings(?:[/\[].*)?|registry(?:[/\[].*)?|extractor_status(?:/.*)?|runs(?:\[\d+\])?"
                      r"|run_id|interpretations(?:[/\[].*)?"
@@ -1025,6 +1029,9 @@ _MODULE_SKIP_PATHS = {
                             r"|^(?:engine/)?verdict(?:[/\[].*)?$"
                             # the Message-ID and its host: an identifier, not an indicator
                             r"|^findings\[\d+\]/message_id$|^fingerprint/message_id_(?:domain|provider)$"),
+    # Inno Setup's compiled [Code]: the DLLs / functions it calls describe the script (urlmon.dll,
+    # ShellExec), they are not indicators — its strings are mined
+    "ifps": re.compile(r"^(?:imports(?:[/\[].*)?|uses(?:[/\[].*)?|file|findings\[\d+\]/(?:evidence|detail))$"),
     # olevba's description of each indicator ("May run PowerShell commands")
     "oletools": re.compile(r"tools/olevba/analysis\[\d+\]/description$"),
 }
