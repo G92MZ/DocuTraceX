@@ -172,9 +172,39 @@ def sections(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return out
 
 
+_HOST_OK = __import__("re").compile(r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z0-9-]{2,}$"
+                                    r"|^\d{1,3}(?:\.\d{1,3}){3}$")
+
+
+MIN_SETTINGS = 10            # a real beacon config carries ~30-70 settings
+
+
+def _false_find(raw: dict[str, Any]) -> str:
+    """dissect tries every XOR key, and a wrong key can still "parse" a few settings by chance:
+    a found config with no C2, public key, watermark or version and only a handful of
+    recognised settings is noise, not a beacon (seen with XOR 0x00 on packed AgentTesla,
+    NanoCore and Raccoon samples). Returns why it is rejected, or ""."""
+    s = raw.get("settings") or {}
+    known = sum(1 for k in s if k.startswith("SETTING_"))
+    hosts = [h for h in raw.get("domains") or [] if h and _HOST_OK.match(str(h).strip())]
+    uris = [u for u in raw.get("uris") or [] if u]
+    strong = (hosts or uris or raw.get("submit_uri") or raw.get("pubkey_sha256") or raw.get("pubkey_pem")
+              or raw.get("watermark") is not None or (raw.get("version") or "Unknown") != "Unknown")
+    if strong or known >= MIN_SETTINGS:
+        return ""
+    return (f"a decode with XOR 0x{raw.get('xorkey') or '?'} parsed {len(s)} setting(s) ({known} recognised) "
+            "with no C2, public key, watermark or version — a real beacon carries dozens: discarded as a "
+            "false find, not a beacon")
+
+
 def view(raw: dict[str, Any]) -> dict[str, Any]:
     """Worker JSON → a view (same shape as the 1768.py one: status, method, summary, fields, hosts)."""
     st = raw.get("status", "error")
+    if st == "found":
+        why = _false_find(raw)
+        if why:
+            st = "nothing"
+            raw = {"status": "nothing", "lib": raw.get("lib"), "rejected": why}
     lib = raw.get("lib") or ""
     v: dict[str, Any] = {"tool": TOOL, "status": st, "lib_version": lib}
     if st != "found":
@@ -187,10 +217,13 @@ def view(raw: dict[str, Any]) -> dict[str, Any]:
             "timeout": raw.get("error", "timeout"),
             "error": raw.get("error", "error"),
         }.get(st, raw.get("error", ""))
+        if raw.get("rejected"):
+            v["note"] = raw["rejected"]
         return v
     s = raw.get("settings") or {}
     port = raw.get("port")
-    hosts = list(dict.fromkeys(h for h in raw.get("domains") or [] if h))
+    hosts = list(dict.fromkeys(h.strip() for h in raw.get("domains") or []
+                               if h and _HOST_OK.match(str(h).strip())))
     wm = raw.get("watermark")
     hdr = host_header(s.get("SETTING_HOST_HEADER"))
     punycode = [f"{h} = {idn(h)}" for h in hosts if idn(h)]
