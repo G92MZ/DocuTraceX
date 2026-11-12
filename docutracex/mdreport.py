@@ -242,6 +242,10 @@ def _c2(cid: str) -> str:
         out += ["", _fence(json.dumps({"summary": c.get("summary"), "sections": c.get("sections"),
                                        "fields": c.get("fields")}, ensure_ascii=False,
                                       indent=1, default=str)[:20000], "json")]
+    for pr in c2.get("protected") or []:
+        out += ["", f"- **protected** — {pr.get('object')}: "
+                + ", ".join(f"{x.get('name')} ({x.get('evidence')})" for x in pr.get("protectors") or [])
+                + f". {pr.get('note', '')}"]
     if not cfgs:
         out.append("_(no configuration found, or C2 not run)_")
     return "\n".join(out)
