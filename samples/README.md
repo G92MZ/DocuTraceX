@@ -280,6 +280,7 @@ its function names, moduledata pointing back at it and the Go build ID. Built by
 | `go/sample_go_agent_debug` | not stripped (symbol table + DWARF) |
 | `go/sample_go_damaged_buildinfo` | BuildInfo corrupted: still **Confirmed** from pclntab + moduledata + build ID, flagged *metadata altered* |
 | `go/sample_go_garble` | package names renamed like Garble does: *Garble-style names* finding |
+| `go/sample_go_hidden_pclntab` | A Go implant as garble or a modified toolchain leaves it (inert ELF): **no pclntab magic, BuildInfo unreadable**, only the Go runtime's own messages (`runtime.main not on m0`, `sweep increased allocation count`, `GODEBUG`…), which garble's `-literals` does not touch. **Go** tab: *Likely* (runtime messages + runtime), traits *pclntab missing* and *garble*: function names and config are not readable statically. Real garbled Sliver builds came out *Not detected* before. |
 
 GoReSym (the contrast tool) only accepts real Go binaries, so on these stubs it
 reports *no valid pclntab found* — the Go tab shows that next to the own parser's

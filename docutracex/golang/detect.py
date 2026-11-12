@@ -35,6 +35,14 @@ PCLN_MAGICS = {0xFFFFFFFB: "1.2-1.15", 0xFFFFFFFA: "1.16-1.17", 0xFFFFFFF0: "1.1
 PCLN_SECTIONS = (".gopclntab", "__gopclntab")
 RUNTIME_STRINGS = (b"runtime.gopanic", b"runtime.goexit", b"runtime.morestack", b"runtime.mallocgc",
                    b"runtime.newproc", b"runtime.main")
+# The Go runtime's own messages: string literals of the runtime that garble (-literals only touches the
+# program's own) and a stripped / tampered pclntab leave in place — Go, even when its metadata is hidden.
+RUNTIME_MESSAGES = (b"runtime.main not on m0", b"goroutine running on other thread",
+                    b"invalid memory address or nil pointer dereference", b"sweep increased allocation count",
+                    b"GODEBUG", b"bad g status", b"newproc: function arguments too large",
+                    b"unexpected signal during runtime execution", b"all goroutines are asleep",
+                    b"malloc deadlock", b"concurrent map writes", b"runtime: out of memory", b"unknown pc ")
+MIN_RUNTIME_MESSAGES = 5
 OTHER_SIGNS = (b"go.itab.", b"type:.eq.", b"type..eq.", b"go:buildid", b"runtime/internal/", b"go.shape.")
 PACKER_SECTIONS = ("UPX0", "UPX1", "UPX2", ".petite", ".MPRESS1", ".MPRESS2", ".aspack", ".themida", ".vmp0", ".vmp1")
 STD_PREFIXES = ("runtime", "internal", "sync", "syscall", "os", "fmt", "io", "net", "crypto", "time", "strings",
@@ -46,7 +54,8 @@ STD_PREFIXES = ("runtime", "internal", "sync", "syscall", "os", "fmt", "io", "ne
 NOT_USER = tuple(p for p in STD_PREFIXES if p not in ("main", "github.com", "golang.org", "gopkg.in")) + (
     "_cgo_", "__x86", "x_cgo", "_rt0", "callRet", "gcWriteBarrier", "setg_gcc", "crosscall", "aeshash",
     "memeqbody", "indexbytebody", "cmpbody", "countbody", "debugCall", "gogo", "gosave")
-WEIGHTS = {"buildinfo": 40, "pclntab": 40, "go_build_id": 15, "runtime": 15, "moduledata": 10, "other": 5}
+WEIGHTS = {"buildinfo": 40, "pclntab": 40, "go_build_id": 15, "runtime": 15, "moduledata": 10, "other": 5,
+           "runtime_messages": 35}
 MAX_NAMES = 4000
 
 
@@ -460,7 +469,13 @@ def identify(data: bytes) -> dict[str, Any]:
 
     rt_names = h["runtime_functions"] if h else 0
     rt_strings = [s.decode() for s in RUNTIME_STRINGS if s in data]
-    if rt_names >= 5 or len(rt_strings) >= 3:
+    rt_msgs = [s.decode() for s in RUNTIME_MESSAGES if s in data]
+    if len(rt_msgs) >= MIN_RUNTIME_MESSAGES and not h:
+        # no readable pclntab: the runtime's messages are what says Go
+        score += WEIGHTS["runtime_messages"]
+        ev.append(_ev("runtime_messages", f"{len(rt_msgs)} Go runtime messages ({', '.join(rt_msgs[:3])}…) "
+                      "without a readable pclntab", points=WEIGHTS["runtime_messages"]))
+    if rt_names >= 5 or len(rt_strings) >= 3 or len(rt_msgs) >= MIN_RUNTIME_MESSAGES:
         score += WEIGHTS["runtime"]
         ev.append(_ev("runtime", f"Go runtime: {rt_names} runtime.* functions in pclntab" if rt_names
                       else f"Go runtime strings: {', '.join(rt_strings[:4])}", points=WEIGHTS["runtime"]))
@@ -489,8 +504,13 @@ def identify(data: bytes) -> dict[str, Any]:
         traits["metadata_altered"] = "BuildInfo unreadable"
     if h and not bi:
         traits["metadata_altered"] = traits.get("metadata_altered") or "pclntab present but no BuildInfo (removed?)"
-    if (rt_strings or other) and not h:
+    if (rt_strings or other or rt_msgs) and not h:
         traits["pclntab_missing"] = True
+        if len(rt_msgs) >= MIN_RUNTIME_MESSAGES and not traits.get("garble"):
+            traits["garble"] = {"reason": "Go runtime present but pclntab hidden and BuildInfo "
+                                          + ("altered" if bi else "removed")
+                                          + ": garble or a modified toolchain — function names and config are "
+                                          "not readable statically"}
     res["traits"] = traits
     res["score"] = score
     if score >= 80:
