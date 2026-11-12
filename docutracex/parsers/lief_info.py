@@ -218,8 +218,14 @@ def _pe_findings(info: dict[str, Any], loc: str) -> list[dict[str, Any]]:
     if ov.get("size", 0) > 4096 and ov.get("entropy", 0) >= 7.5:
         f.append(_finding("lief_overlay_encrypted", "medium",
                           f"high-entropy overlay ({ov['size']} bytes, entropy {ov['entropy']}) — "
-                          "appended encrypted/compressed payload", loc, ov.get("head", ""), "T1027"))
+                          "appended encrypted/compressed payload", loc, _spaced(ov.get("head", "")), "T1027"))
     return f
+
+
+def _spaced(hexstr: str) -> str:
+    """'7a6c621a…' → '7a 6c 62 1a …': the first bytes as bytes, not something that reads as a hash."""
+    h = "".join(c for c in str(hexstr) if c in "0123456789abcdefABCDEF")
+    return " ".join(h[i:i + 2] for i in range(0, len(h) - 1, 2))
 
 
 # --- ELF / Mach-O ------------------------------------------------------------

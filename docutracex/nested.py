@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import re
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -232,6 +233,8 @@ def _kind(path: Path, name: str) -> str:
         return "other"
     if head[:4] == b"%PDF":
         return "pdf"
+    if head[:4] == b"IFPS":               # Inno Setup's compiled [Code] (Pascal Script bytecode)
+        return "ifps"
     if head[:4] == b"\x4c\x00\x00\x00":   # Shell Link header (HeaderSize = 0x4C)
         return "shortcut"
     if head[:2] == b"MZ":                 # PE image
@@ -517,6 +520,13 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
             mods["java"] = {"module": "java", "scripts": [sc] if sc else [],
                             "findings": it.get("findings", [])}
             add_findings(it.get("findings"), "java")
+        elif kind == "ifps":
+            from .parsers import ifps
+            with timed("ifps (Inno Setup [Code])"):
+                res = ifps.analyze(data, name)
+            mods["ifps"] = res
+            node["read_as"] = "ifps"
+            add_findings(res.get("findings"), "ifps")
         elif kind == "onenote":
             from .parsers import onenote
             with timed("onenote"):
@@ -590,6 +600,18 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
             text = ""
         if text.strip():
             sources_out.append({"module": "text", "location": f"{this_chain} › text", "text": text})
+            node["read_as"] = "text"
+    elif node["kind"] == "other" and not mods and stego_is_image(data):
+        node["read_as"] = "image"                      # its hidden / appended data is checked below
+        node["image"] = _image_info(data)
+    elif node["kind"] == "other" and not mods and (node.get("entropy") or 8) < 7.2:
+        # structured binary data no analyzer claims (a compiled script, a config blob, a database…):
+        # its readable strings, ANSI and UTF-16, are mined for IOCs
+        strs = _binary_strings(data)
+        if strs:
+            sources_out.append({"module": "text", "location": f"{this_chain} › strings", "text": "\n".join(strs)})
+            node["read_as"] = "strings"
+            node["strings_count"] = len(strs)
 
     # The child's own analysis, saved whole so the UI can open it like a case
     # (its tabs: PE, PDF tools, VBA, email…) — "Open analysis" in Nested, and a
@@ -647,6 +669,50 @@ def _prefetch_tools(files: list[Path]) -> None:
         pe_mod.prefetch(files)
     except Exception as exc:  # noqa: BLE001  (an optimisation only)
         log.debug("FLOSS/capa prefetch skipped: %s", exc)
+
+
+_BIN_ASCII = re.compile(rb"[\x20-\x7e]{6,}")
+_BIN_UTF16 = re.compile(rb"(?:[\x20-\x7e]\x00){6,}")
+
+
+def _binary_strings(data: bytes, limit: int = 20000) -> list[str]:
+    """Readable strings of a binary blob (ANSI and UTF-16LE, 6+ chars), first 8 MB."""
+    blob = data[:8 * 1024 * 1024]
+    out = [m.group(0).decode("ascii") for m in _BIN_ASCII.finditer(blob)]
+    out += [m.group(0).decode("utf-16-le") for m in _BIN_UTF16.finditer(blob)]
+    return list(dict.fromkeys(out))[:limit]
+
+
+def _image_info(data: bytes) -> dict[str, Any]:
+    """Format and size of an image child (no decoding beyond the header)."""
+    import struct
+    try:
+        if data[:8] == b"\x89PNG\r\n\x1a\n" and len(data) >= 24:
+            w, h = struct.unpack(">II", data[16:24])
+            return {"format": "PNG", "width": w, "height": h}
+        if data[:6] in (b"GIF87a", b"GIF89a") and len(data) >= 10:
+            w, h = struct.unpack("<HH", data[6:10])
+            return {"format": "GIF", "width": w, "height": h}
+        if data[:2] == b"BM" and len(data) >= 26:
+            w, h = struct.unpack("<ii", data[18:26])
+            return {"format": "BMP", "width": w, "height": abs(h)}
+        if data[:4] == b"\x00\x00\x01\x00" and len(data) >= 8:
+            return {"format": "ICO", "images": struct.unpack("<H", data[4:6])[0],
+                    "width": data[6] or 256, "height": data[7] or 256}
+        if data[:3] == b"\xff\xd8\xff":
+            i = 2
+            while i + 9 < len(data):
+                if data[i] != 0xFF:
+                    break
+                marker, seg = data[i + 1], struct.unpack(">H", data[i + 2:i + 4])[0]
+                if marker in (0xC0, 0xC1, 0xC2):
+                    h, w = struct.unpack(">HH", data[i + 5:i + 9])
+                    return {"format": "JPEG", "width": w, "height": h}
+                i += 2 + seg
+            return {"format": "JPEG"}
+    except Exception:  # noqa: BLE001
+        pass
+    return {"format": "image"}
 
 
 def stego_is_image(data: bytes) -> bool:
