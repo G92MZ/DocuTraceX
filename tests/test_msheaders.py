@@ -39,11 +39,19 @@ class _Opener:
     """AZMap answers ``answer``; Microsoft's endpoints answer from ``ms``
     ({domain: tenant_id or None}; unknown domains: not in Microsoft 365)."""
 
-    def __init__(self, answer: object, calls: list, ms: dict | None = None) -> None:
-        self.answer, self.calls, self.ms = answer, calls, ms or {}
+    def __init__(self, answer: object, calls: list, ms: dict | None = None, fyi: object = None) -> None:
+        self.answer, self.calls, self.ms, self.fyi = answer, calls, ms or {}, fyi
 
     def open(self, req, timeout=None):  # noqa: ANN001
         url = req.full_url
+        if "tenant.fyi" in url:                    # tenant.fyi: its answer, or "not known" (404 + detail)
+            self.calls.append(url)
+            if isinstance(self.fyi, Exception):
+                raise self.fyi
+            if self.fyi is None:
+                import urllib.error
+                raise urllib.error.HTTPError(url, 404, "Not Found", {}, io.BytesIO(b'{"detail": "Tenant not found"}'))
+            return io.BytesIO(json.dumps(self.fyi).encode())
         if "login.microsoftonline.com" in url:
             dom = url.split("login=user@")[1].split("&")[0] if "getuserrealm" in url else url.split("/")[3]
             tid = self.ms.get(dom)
@@ -95,7 +103,8 @@ def test_lookup_ok_cached_and_crossed(monkeypatch: pytest.MonkeyPatch) -> None:
     assert t["status"] == "ok" and t["data"]["brand_name"] == "Attacker Ltd" and t["raw"] == answer
     assert t["matched_domains"] == ["attacker-tenant.example"] and t["role"] == "sender" and not t["own_tenant"]
     again = tenantintel.lookup(ms.M365_SENDER_TENANT)
-    assert again["cached"] and len(calls) == 1
+    azmap = [c for c in calls if "azmap.dev" in c]
+    assert again["cached"] and len(azmap) == 1
     assert calls[0] == f"https://azmap.dev/api/tenant?tenant_id={ms.M365_SENDER_TENANT}"
 
 
@@ -132,6 +141,7 @@ def test_own_tenant_and_unrelated_sender(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_disabled_in_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     data = appsettings.load()
     data["tenant_lookup"] = False
+    data["tenant_fyi_lookup"] = False             # both off (AZMap off alone still asks tenant.fyi)
     appsettings.save(data)
     m = msheaders.parse([{"name": "X-MS-Exchange-CrossTenant-Id", "value": ms.M365_SENDER_TENANT}])
     r = tenantintel.resolve(m, [], [])

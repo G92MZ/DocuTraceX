@@ -153,6 +153,20 @@ async def tenant_lookup_put(body: dict = Body(...)) -> dict:
     return {"enabled": data["tenant_lookup"]}
 
 
+@router.get("/tenant-fyi-lookup")
+async def tenant_fyi_lookup_get() -> dict:
+    """Whether the tenant ID is also looked up in tenant.fyi (names, current and former domains; on by default)."""
+    return {"enabled": bool(appsettings.load().get("tenant_fyi_lookup", True))}
+
+
+@router.put("/tenant-fyi-lookup")
+async def tenant_fyi_lookup_put(body: dict = Body(...)) -> dict:
+    data = appsettings.load()
+    data["tenant_fyi_lookup"] = bool(body.get("enabled", True))
+    appsettings.save(data)
+    return {"enabled": data["tenant_fyi_lookup"]}
+
+
 @router.get("/c2-families")
 async def c2_families() -> dict:
     """The families the C2 tab covers in depth, with what each one is and what is read from it."""
