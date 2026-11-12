@@ -63,6 +63,17 @@ def vipermonkey_status() -> dict[str, Any]:
             "detail": f"PyPy present but ViperMonkey not importable: {err[-1] if err else '?'}"}
 
 
+def _no_result_reason(rec: dict[str, Any]) -> str:
+    """Why ViperMonkey produced nothing: no macros, or its last logged error."""
+    out = str(rec.get("stdout") or "")
+    if "No VBA macros found" in out:
+        return "no VBA macros found"
+    lines = [x.strip() for x in (str(rec.get("stderr") or "") + "\n" + out).splitlines() if x.strip()]
+    errs = [x for x in lines if x.startswith("ERROR") or "Error" in x.split(":")[0]]
+    pick = (errs or lines or ["ViperMonkey stopped without a result"])[-1]
+    return " ".join(pick.replace("ERROR", "", 1).split())[:300] if pick.startswith("ERROR") else pick[:300]
+
+
 def _classify(action: str, params: str) -> tuple[str, str, str] | None:
     text = f"{action} {params}".lower()
     if action.lower() in _IGNORED_ACTIONS:
@@ -91,6 +102,10 @@ def analyze(original_path: Path, extracted_dir: Path | None = None) -> dict[str,
         target = work / original_path.name
         shutil.copyfile(original_path, target)
         out_json = work / "vmonkey.json"
+        # ViperMonkey only writes its JSON when the emulation gets to the end, then reads the file
+        # back unconditionally: without it, a sample it cannot emulate ends in "IOError: No such
+        # file … vmonkey.json" and hides the real reason. An empty object keeps it going.
+        out_json.write_text("{}", encoding="utf-8")
         rec = toolrun.run(
             [str(exe), "-m", "vipermonkey.vmonkey", "-s", "-c", "-t", str(EMULATION_MINUTES),
              "-l", "warning", "-o", str(out_json), str(target)],
@@ -107,6 +122,12 @@ def analyze(original_path: Path, extracted_dir: Path | None = None) -> dict[str,
             result["status"] = "error" if rec.get("error") or rec.get("returncode") else "ok"
             if rec.get("error"):
                 result["error"] = rec["error"]
+            why = _no_result_reason(rec)
+            result["emulation"] = "no_vba" if why == "no VBA macros found" else "no_result"
+            if result["status"] == "ok":
+                result["step_note"] = f"no emulation result: {why}"
+            elif "error" not in result:
+                result["error"] = why
         result["actions"] = [
             {"action": str(a.get("action", "")), "parameters": str(a.get("parameters", "")),
              "description": str(a.get("description", ""))}

@@ -20,6 +20,34 @@ _MAX_FORMULAS = 5000
 _TIMEOUT = tmo(60)
 
 
+def _distutils_shim() -> None:
+    """XLMMacroDeobfuscator 0.2.7 does ``from distutils.util import strtobool``; distutils is
+    gone from Python 3.12. When it is missing, provide just that function (same semantics)."""
+    import importlib.util
+    import sys
+    import types
+    try:
+        if importlib.util.find_spec("distutils") is not None:
+            return
+    except (ImportError, ValueError):
+        pass
+
+    def strtobool(val: str) -> int:
+        v = str(val).lower()
+        if v in ("y", "yes", "t", "true", "on", "1"):
+            return 1
+        if v in ("n", "no", "f", "false", "off", "0"):
+            return 0
+        raise ValueError(f"invalid truth value {val!r}")
+
+    pkg = types.ModuleType("distutils")
+    util = types.ModuleType("distutils.util")
+    util.strtobool = strtobool  # type: ignore[attr-defined]
+    pkg.util = util  # type: ignore[attr-defined]
+    sys.modules.setdefault("distutils", pkg)
+    sys.modules.setdefault("distutils.util", util)
+
+
 # id: gmzpt
 def analyze(original_path: Path) -> dict[str, Any]:
     result: dict[str, Any] = {
@@ -36,6 +64,7 @@ def analyze(original_path: Path) -> dict[str, Any]:
     try:
         from .. import quiet
         quiet.silence()  # hide the harmless "pywin32 is not installed" banner
+        _distutils_shim()
         from XLMMacroDeobfuscator import deobfuscator
         import importlib.metadata as md
         result["tool_version"] = md.version("XLMMacroDeobfuscator")
