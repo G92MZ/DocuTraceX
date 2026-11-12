@@ -349,6 +349,30 @@ tiny inert IL (`ldstr` / `call` / `ret`) that is only disassembled, never run.
 | `dotnet/sample_dotnet_decompile.exe` | *InvoiceSyncAgent.exe*, marked as **Dotfuscator**-protected, whose prioritised methods hold a branch (`if (!string.IsNullOrEmpty(url))`), a download + `Assembly.Load` of `https://sync.invoice-agent.example/stage`, a Run-key write and a `Process.Start`. The .NET view → **Code (IL / C#)** shows their readable IL (`IL_000a: brfalse.s IL_000d`, calls by name); **Decompile** / **Decompile module** run ILSpy CLI on those methods only, after de4dot `--strtyp none` because an obfuscator was detected (Diagnostics → Retry `ilspy` / `de4dot` to provision them). Inert: the bodies only load constants. |
 | `dotnet/sample_dotnet_bitmap_stealer.exe` | The Bitmap loader above whose hidden **stage 2 is the AgentTesla-like stealer**: the .NET analysis takes the stage out of the pixels, and **C2** reads the stealer's AES-encrypted SMTP settings from it, showing the provenance — `… › Gallery › bitmap pixels: … XOR key … › …pixels.exe`. Objects derived from the sample (resources, pixels, stages, decrypted / hidden files) are scanned first, so a big extraction never pushes them out. |
 
+## Process memory dumps (Components → Memory dump)
+
+`memdump/sample_memdump_factura.dmp` is a Windows **minidump** (`MDMP`) of the
+invoice-fraud loader after it ran, laid out like a procdump / Task Manager dump
+(SystemInfo, MiscInfo with the PID, ModuleList, MemoryInfoList, Memory64List).
+Everything in it is inert.
+
+| What the dump holds | What DocuTraceX does |
+|---|---|
+| `C:\Users\invoice\AppData\Local\Temp\factura.exe` mapped at `0x400000` (a module) | carved and rebuilt to file layout (sections copied back to their file offsets) |
+| `C:\Windows\System32\ntdll.dll` (a system module) | listed, **not** carved |
+| the inert XWorm client in clear on the managed heap, flat and not page-aligned (the `byte[]` handed to `Assembly.Load`) | carved as it is → `unbacked_2a40018.exe`; the **C2** tab reads its XWorm config |
+| a stub PE mapped by hand in private RWX memory (reflective injection) | rebuilt to file layout → `unbacked_5b10000.dll` |
+| private RWX memory with no PE header (the inert Metasploit exec shellcode) | saved as `exec_private_6c20000.bin`; the **C2** tab reads the command |
+
+Findings: *Process memory dump of factura.exe (PID 4812)* (info), *2 PE image(s)
+in memory that no module on disk backs* (high, T1620) and *1 private executable
+region without a PE header, RWX* (medium). The carved files are **Nested** objects.
+
+With real samples, the crypter's work is already undone in a dump: run the
+sample in the lab VM, dump the process once it has unpacked (`procdump -ma <pid>`,
+or Task Manager → *Create dump file*; a *full* dump, because mini dumps carry no
+memory), and upload the `.dmp`. DocuTraceX itself never runs anything.
+
 ## FLOSS and capa: speed
 
 On each PE, FLOSS and capa run **at the same time** (two processes), and the PEs
@@ -455,7 +479,7 @@ campaign's (`cdn-update.example.net`, `203.0.113.47`).
 | `c2/quasar/sample_quasar.exe` | QuasarRAT | 1.4 shape: `Quasar.Client.Config.Settings` set by its `.cctor`, AES-256 + HMAC, plain ENCRYPTIONKEY | settings **named by their field**: C2 `cdn-update.example.net:4782`, `203.0.113.47:4782` (host and port split from HOSTS), version 1.4.1, tag, mutex; install `%AppData%\SubDir\Client.exe` (hidden), persistence by the startup name, keylogger with its log folder, reconnect delay; the pinned certificate; Quasar **builder defaults** flagged (tag *Office04*, *Client.exe*, *Quasar Client Startup*, the `QSR_MUTEX_` pattern, certificate CN) |
 | `c2/njrat/sample_njrat.exe` | njRAT | plain .NET settings strings | `cdn-update.example.net:5552`, campaign `Factura_2026`, version `0.7d`, `Server.exe` in `TEMP`, splitter `\|'\|'\|` |
 | `c2/njrat/sample_njrat_custom_split.exe` | njRAT | custom splitter `\|S2026\|`, none of the classic marker strings | recognised by its command names (`ll`, `inv`, `ret`, `Ex`, `PLG`, `osk`, `pl`) next to host and port: C2 `cdn-update.example.net:5552`, splitter, commands |
-| `c2/other/sample_protected_koivm.exe` | (protected) | a .NET client as **KoiVM** leaves it: no settings in clear, only the virtualizer's own strings | **C2**: no configuration, and a *Protected* banner says why — *KoiVM: its code runs inside a virtual machine of the protector, so the configuration cannot be read statically*. Also in the Markdown export. Real AsyncRAT / RedLine (KoiVM) and XWorm (Themida) samples showed nothing before |
+| `c2/protected/sample_protected_koivm.exe` | (protected) | a .NET client as **KoiVM** leaves it: no settings in clear, only the virtualizer's own strings | **C2**: no configuration, and a *Protected* banner says why — *KoiVM: its code runs inside a virtual machine of the protector, so the configuration cannot be read statically*. Also in the Markdown export. Real AsyncRAT / RedLine (KoiVM) and XWorm (Themida) samples showed nothing before |
 | `c2/xworm/sample_xworm.exe` | XWorm | .NET settings, AES-256-ECB with key from the mutex | `cdn-update.example.net` and `203.0.113.47` on port 7000, splitter `<Xwormmm>`, `USB.exe`, mutex `Kz3FvP9qLmX2bWsA` |
 | `c2/xworm/sample_xworm_named.exe` | XWorm | XWorm 5.x settings class (`XClient.Settings`, `.cctor` ldstr → stsfld), AES-256-ECB with MD5(mutex) | C2 `invoice-sync.example.net:7000` and `203.0.113.47:7000`, group `Factura-2026`, install `%AppData%\InvoiceSync.exe` (task / Run / Startup), USB `USB.exe`, keylog `%Temp%\Log.tmp`, made-up Telegram token / chat (marked sensitive) |
 | `c2/xworm/sample_xworm_traces.exe` | XWorm (indicators) | .NET stub with XWorm names and splitter, nothing encrypted | indicators only, no C2 |

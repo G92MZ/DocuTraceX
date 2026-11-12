@@ -906,7 +906,7 @@ const FINDING_SOURCE_LABEL = {
   msoffcrypto: "msoffcrypto", vipermonkey: "ViperMonkey", vbatools: "VBA tools", vba_deobf: "VBA deobfuscation",
   officemalscanner: "OfficeMalScanner", xlmdeobf: "XLM deobfuscator", mailrules: "Email rules", email: "Email",
   archive: "Archive", rtf: "RTF", onenote: "OneNote", shortcut: "Shortcut", netcheck: "Network checks",
-  manual: "Manual", hex: "Hex extracts", ole: "OLE", ooxml: "OOXML",
+  manual: "Manual", hex: "Hex extracts", ole: "OLE", ooxml: "OOXML", memdump: "Memory dump",
 };
 const MARK_SHORT = { true_positive: "TP", false_positive: "FP", suspicious: "suspicious",
                      informational: "info", unreviewed: "unreviewed" };
@@ -2702,6 +2702,37 @@ function panePyinstaller(pim) {
     ${rows}${netFindingsList(pim.findings || [])}${table}`;
 }
 
+function paneMemdump(m) {
+  const p = m.process || {};
+  const c = m.counts || {};
+  const rows = kv([
+    ["Process", p.image || ""],
+    ["PID", p.pid != null ? String(p.pid) : ""],
+    ["Architecture", p.arch || ""],
+    ["Windows", p.windows || ""],
+    ["Modules", String(c.modules || 0) + (c.system_modules_skipped ? ` (${c.system_modules_skipped} system image(s) in memory, not carved)` : "")],
+    ["Memory in the dump", `${Math.round((c.memory_bytes || 0) / 1024)} KiB in ${c.ranges || 0} range(s)`],
+  ]);
+  const carved = (m.carved || []).map((x) => `<tr>
+    <td class="mono">${escapeHtml(x.va || "")}</td>
+    <td class="mono">${escapeHtml(x.name || "")}</td>
+    <td>${x.kind === "region" ? `executable memory (${escapeHtml(x.protect || "")})` : (x.dotnet ? ".NET PE" : "PE")}</td>
+    <td>${escapeHtml(x.layout || "")}</td>
+    <td>${x.backed ? escapeHtml(x.module || "module") : '<span class="badge badge-warn">not backed by a file</span>'}</td>
+    <td>${escapeHtml(String(x.size || 0))}</td></tr>`).join("");
+  const table = carved ? `<table class="cases"><thead><tr><th>Address</th><th>Carved as</th><th>What</th><th>Layout</th>
+    <th>Module</th><th>Bytes</th></tr></thead><tbody>${carved}</tbody></table>` : "<p class=\"muted\">Nothing to carve.</p>";
+  const mods = (m.modules || []).filter((x) => !x.system).slice(0, 80).map((x) => `<tr>
+    <td class="mono">${escapeHtml(x.base)}</td><td class="mono">${escapeHtml(x.path)}</td><td>${escapeHtml(String(x.size))}</td></tr>`).join("");
+  const modTable = mods ? `<details><summary>Modules outside the Windows folder</summary><table class="cases"><thead><tr>
+    <th>Base</th><th>Path</th><th>Size</th></tr></thead><tbody>${mods}</tbody></table></details>` : "";
+  const warn = (m.warnings || []).map((w) => `<p class="hint-line">⚠ ${escapeHtml(w)}</p>`).join("");
+  return `<p class="hint-line">Process memory dump read statically: the PE images in memory (rebuilt to file layout
+    when mapped) and the private executable regions were carved and are analysed as <strong>Nested</strong> objects;
+    run the <strong>C2</strong> tab to read implant configurations from them.</p>
+    ${rows}${warn}${netFindingsList(m.findings || [])}${table}${modTable}`;
+}
+
 // Where a recovered child comes from (its batch kind).
 function originBadge(n) {
   const t = escapeHtml(n.decrypted_from || "");
@@ -3217,6 +3248,10 @@ async function openComponents(analysisId, keepTab, viewId) {
     if (cdm && (cdm.objects || []).some((o) => cxOk(o.code))) {
       const n = cdm.objects.filter((o) => cxOk(o.code)).length;
       sections.push({ id: "code", label: `Code (${n})`, html: paneCode(cdm) });
+    }
+    const mdm = mods.memdump;
+    if (mdm && mdm.status === "ok") {
+      sections.push({ id: "memdump", label: `Memory dump (${(mdm.carved || []).length})`, html: paneMemdump(mdm) });
     }
     const pim = mods.pyinstaller;
     if (pim && pim.is_pyinstaller) {

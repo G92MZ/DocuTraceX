@@ -57,7 +57,7 @@ def test_archive_layout_one_folder_per_type() -> None:
         names = zf.namelist()
     assert names and all("/" in n for n in names)
     tops = {n.split("/")[0] for n in names}
-    assert tops <= {d for _e, d in ms.TYPE_DIRS} | {"c2", "go", "dotnet", "windows-pe", "linux-elf"}
+    assert tops <= {d for _e, d in ms.TYPE_DIRS} | {"c2", "go", "dotnet", "windows-pe", "linux-elf", "memdump"}
     fams = {n.split("/")[1] for n in names if n.startswith("c2/")}
     assert {"cobaltstrike", "redline", "asyncrat", "metasploit"} <= fams and "other" not in fams
     assert ms.archive_path("c2/sample_cs_beacon.bin") == "c2/cobaltstrike/sample_cs_beacon.bin"

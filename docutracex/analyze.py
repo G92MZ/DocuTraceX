@@ -178,6 +178,12 @@ def _effective_family(manifest: dict[str, Any], subject: Path, unlock_rec: dict[
             and unlock_rec.get("kind") == "office" and family == "ooxml"):
         return "ole"
     if family is None:
+        try:
+            with subject.open("rb") as fh:
+                if fh.read(4) == b"MDMP":
+                    return "memdump"         # Windows process dump (procdump, Task Manager, comsvcs)
+        except OSError:
+            pass
         from . import unlock
         kind = unlock.detect(subject).get("kind")
         if kind in ("zip", "7z", "rar"):
@@ -809,6 +815,35 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                 write_subresult(paths, "nested", nested_res)
                 ran.append("nested")
                 findings_total += nested_res.get("counts", {}).get("findings", 0)
+    elif family == "memdump":
+        # Process memory dump taken by the analyst in his lab: read statically, its
+        # PE images (mapped → rebuilt, flat Assembly.Load buffers, unbacked /
+        # injected) and private executable regions carved and scanned as nested
+        # objects — the C2 tab reads them like any other object.
+        from . import nested
+        from .parsers import minidump
+
+        def _memdump() -> dict[str, Any]:
+            rec = minidump.analyze(original, paths.extracted_dir / "memdump")
+            out = minidump.public(rec, paths.root)
+            out["_files"] = [(c["_path"], c["name"]) for c in rec.get("carved") or [] if c.get("_path")]
+            return out
+
+        mres = run("memdump: modules · memory regions · carve PEs and executable memory", _memdump) or {}
+        mfiles = mres.pop("_files", [])
+        if mres:
+            write_subresult(paths, "memdump", mres)
+            ran.append("memdump")
+            overall_counts["components"] = len(mfiles)
+            findings_total += mres.get("counts", {}).get("findings", 0)
+        items = [{"path": f, "filename": n} for f, n in mfiles]
+        if items:
+            nested_res = run("nested: recursive scan of the objects carved from memory",
+                             lambda: nested.scan_children(items, paths, unlock_ctx={"user": user_pw}))
+            if nested_res.get("tree"):
+                write_subresult(paths, "nested", nested_res)
+                ran.append("nested")
+                findings_total += nested_res.get("counts", {}).get("findings", 0)
     elif family in ("zip", "7z", "rar", "container"):
         # Archive or container (.zip/.7z/.rar/.tar(.gz)/.cab/.iso/.img/.udf): extract
         # with bounds (and the analyst's / usual passwords for encrypted ZIP/7z)
@@ -1417,7 +1452,8 @@ _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto"
                "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules", "javascript", "rtf",
                "powershell", "vbscript", "batch", "shortcut", "msi", "python", "java", "onenote", "ml", "c2", "golang", "code", "dotnet")
 # Modules whose findings feed the consolidated view (includes derived ones).
-_COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file", "pyinstaller", "domainsim", "rmm")
+_COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file", "pyinstaller", "domainsim", "rmm",
+                               "memdump")
 
 
 def _rmm(paths: CasePaths, modules: dict[str, Any], ioc_result: dict[str, Any],
