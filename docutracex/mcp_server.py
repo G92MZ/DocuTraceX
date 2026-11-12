@@ -1,10 +1,17 @@
-"""MCP server for DocuTraceX (stdio).
+"""MCP server for DocuTraceX (stdio, or HTTP for clients on other machines).
 
 Exposes the analysed cases as **read-only** MCP tools, so an MCP client
 (Claude Desktop, Claude Code or another) can investigate them in natural
 language without going through the web app:
 
-    python -m docutracex.mcp_server
+    python -m docutracex.mcp_server                                  # stdio (the client starts it)
+    python -m docutracex.mcp_server --http                           # http://127.0.0.1:8001/mcp
+    python -m docutracex.mcp_server --http --host 0.0.0.0 --port 8001  # reachable from other machines
+
+Over HTTP (MCP "streamable HTTP") the endpoint is ``/mcp``. Bound to a
+non-loopback address, the SDK's DNS-rebinding protection is turned off so
+clients can reach it by IP or host name; there is no authentication, so
+expose it only on a network you trust (or behind a firewall / VPN).
 
 It reads the same ``cases/`` folder as the web app (``DOCUTRACEX_CASES_DIR``
 overrides it). Tools (see ``ai_tools``): list_cases, case_summary,
@@ -115,8 +122,45 @@ def build_server():
     return server
 
 
-def main() -> None:
-    build_server().run()
+_LOOPBACK = ("127.0.0.1", "localhost", "::1")
+
+
+def run_http(server, host: str = "127.0.0.1", port: int = 8001) -> None:
+    """Serve over MCP streamable HTTP (endpoint ``/mcp``), on mcp 2.x or 1.x."""
+    sec = None
+    if host not in _LOOPBACK:                        # reachable by IP / name: no Host-header allow-list
+        try:
+            from mcp.server.transport_security import TransportSecuritySettings
+            sec = TransportSecuritySettings(enable_dns_rebinding_protection=False)
+        except Exception:  # noqa: BLE001  (older SDK without it: nothing to turn off)
+            sec = None
+    try:                                             # mcp >= 2: host / port go to run()
+        kw = {"host": host, "port": port}
+        if sec is not None:
+            kw["transport_security"] = sec
+        server.run(transport="streamable-http", **kw)
+    except TypeError:                                # mcp 1.x: they live in the settings
+        server.settings.host, server.settings.port = host, port
+        if sec is not None and hasattr(server.settings, "transport_security"):
+            server.settings.transport_security = sec
+        server.run(transport="streamable-http")
+
+
+def main(argv: list[str] | None = None) -> None:
+    import argparse
+    ap = argparse.ArgumentParser(prog="python -m docutracex.mcp_server",
+                                 description="DocuTraceX MCP server (read-only tools over the cases).")
+    ap.add_argument("--http", action="store_true",
+                    help="serve over HTTP (streamable HTTP, endpoint /mcp) instead of stdio")
+    ap.add_argument("--host", default="127.0.0.1",
+                    help="address to bind with --http (default 127.0.0.1; 0.0.0.0 = every interface)")
+    ap.add_argument("--port", type=int, default=8001, help="port with --http (default 8001)")
+    a = ap.parse_args(argv)
+    server = build_server()
+    if a.http:
+        run_http(server, a.host, a.port)
+    else:
+        server.run()
 
 
 if __name__ == "__main__":

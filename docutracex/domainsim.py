@@ -68,9 +68,69 @@ def _embedded(host: str, reg: str, ref_label: str, th: dict[str, int]) -> tuple[
     if ref_label in joined:                                             # secureoutlook, loginmicrosoftonline
         return "inside", 0
     d = min([similarity.levenshtein(w, ref_label, cap=similarity.EMBED_DIST) for w in words]
-            + ([similarity.embedded_distance(ref_label, joined)] if len(ref_label) >= similarity.FUZZY_INSIDE_LEN
+            + ([similarity.embedded_distance(ref_label, joined, cap=similarity.EMBED_DIST)] if len(ref_label) >= similarity.FUZZY_INSIDE_LEN
                else []))
     return ("inside", d) if 0 < d <= similarity.EMBED_DIST else None
+
+
+def _trigrams(text: str) -> list[str]:
+    return [text[i:i + 3] for i in range(len(text) - 2)]
+
+
+def _bigrams(text: str) -> list[str]:
+    return [text[i:i + 2] for i in range(len(text) - 1)]
+
+
+def _close(word_grams: set[str], word_len: int, ref_grams: list[str], n: int, k: int) -> bool:
+    """Necessary for an edit distance <= k: lengths within k, and each edit
+    breaks at most two bigrams, so at least (n - 1) - 2k of the reference's
+    bigrams must be in the word."""
+    if abs(word_len - n) > k:
+        return False
+    need = (n - 1) - 2 * k
+    return need <= 0 or sum(1 for g in ref_grams if g in word_grams) >= need
+
+
+def _host_view(candidate: str) -> tuple | None:
+    """What compare() looks at in a candidate: its label, folded label, the
+    words and joined text of its name (TLD excluded), and that text's trigrams."""
+    host = normalise(candidate)
+    reg = registrable(host)
+    if not reg or "." not in reg:
+        return None
+    label = _label(reg)
+    body = similarity.homoglyph_fold(host.removesuffix("." + reg.split(".", 1)[1]))
+    words = [w for w in re.split(r"[.-]", body) if w]
+    joined = re.sub(r"[.-]", "", body)
+    folded = similarity.homoglyph_fold(label)
+    return (label, folded, words, joined, set(_trigrams(joined)),
+            set(_bigrams(label)), set(_bigrams(folded)))
+
+
+def _may_match(hv: tuple, ref_label: str, limit: int, kind: str, th: dict[str, int],
+               ref_grams: list[str] | None = None) -> bool:
+    """Cheap necessary condition for compare() to find anything: lengths within
+    the threshold, or the name possibly embedded (trigram bound for one edit).
+    Never discards a pair compare() would report — it only spares the work."""
+    label, folded, words, joined, grams, lab_grams, fold_grams = hv
+    n = len(ref_label)
+    rg = ref_grams if ref_grams is not None else _bigrams(ref_label)
+    if label == ref_label or folded == ref_label:
+        return True
+    if limit and (_close(lab_grams, len(label), rg, n, limit) or _close(fold_grams, len(folded), rg, n, limit)):
+        return True
+    if kind == "case" or n < th["min_len"]:
+        return False
+    if any(w.startswith(ref_label) for w in words):
+        return True
+    if n < similarity.EMBED_LEN:
+        return False
+    if ref_label in joined or any(_close(set(_bigrams(w)), len(w), rg, n, similarity.EMBED_DIST) for w in words):
+        return True
+    if n >= similarity.FUZZY_INSIDE_LEN:
+        hits = sum(1 for t in _trigrams(ref_label) if t in grams)
+        return hits >= (n - 2) - 3 * similarity.EMBED_DIST
+    return False
 
 
 def compare(candidate: str, reference: str, kind: str, th: dict[str, int],
@@ -152,20 +212,31 @@ def run(iocs: dict[str, Any], own_domains: list[str], brands: list[str],
     hosts = sorted(where)[:MAX_DOMAINS]
     skipped_trusted = 0
     refs: list[tuple[str, str, tuple[str, ...]]] = [(d.lower(), "own", ()) for d in own_domains]
+    own_regs = {registrable(d) for d in own_domains}
+
     refs += [(b.lower(), "brand", tuple(BRANDS.get(b.lower(), ()))) for b in list(BRANDS) + list(brands)]
+    def _ref_label(ref: str) -> str:
+        return _label(registrable(ref)) if "." in ref else ref
+    refs = [(r, k, lg, _ref_label(r), similarity.max_distance(_ref_label(r), th), _bigrams(_ref_label(r)))
+            for r, k, lg in refs]
     already = " ".join(f"{f.get('detail', '')} {f.get('evidence', '')}" for f in mail_findings or []
                        if f.get("rule") in _LOOKALIKE_RULES).lower()
     matches: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for h in hosts:
         reg = registrable(h)
-        if any(reg == registrable(d) for d in own_domains):
+        if reg in own_regs:
             continue
         view, platform = tm.view(normalise(h))
         if view is None:
             skipped_trusted += 1                         # a generic legitimate service (Settings)
             continue
-        for ref, kind, legit in refs:
+        hv = _host_view(view if platform else h)
+        if hv is None:
+            continue
+        for ref, kind, legit, ref_label, limit, ref_grams in refs:
+            if not _may_match(hv, ref_label, limit, kind, th, ref_grams):
+                continue
             m = compare(view if platform else h, ref, kind, th, legit, platform)
             if m and platform:                           # show the real host, not the tenant view
                 m["candidate"] = normalise(h)

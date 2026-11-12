@@ -161,7 +161,10 @@ def set_email_settings(own_domains: list[str], brands: list[str],
                        similarity_values: dict[str, Any] | None = None) -> dict[str, Any]:
     from . import similarity
     data = load()
-    data["email"] = {"own_domains": list(own_domains or [])[:200], "brands": list(brands or [])[:200]}
+    # no cap: the look-alike engine pre-filters each pair cheaply (domainsim._may_match),
+    # so thousands of own domains stay fast; duplicates are dropped
+    data["email"] = {"own_domains": list(dict.fromkeys(own_domains or [])),
+                     "brands": list(dict.fromkeys(brands or []))}
     if similarity_values is not None:
         data["similarity"] = similarity.clean(similarity_values)
     save(data)
