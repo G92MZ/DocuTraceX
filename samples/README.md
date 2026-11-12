@@ -455,7 +455,8 @@ campaign's (`cdn-update.example.net`, `203.0.113.47`).
 | `c2/snakekeylogger/sample_snake_keylogger.exe` | Snake Keylogger | .NET strings DES-ECB, key MD5(string) | SMTP `mail.billing-portal.example:587`, sender / recipient accounts |
 | `c2/snakekeylogger/sample_snake_telegram.exe` | Snake Keylogger | DES-ECB strings, Telegram + FTP channel | made-up bot token and chat ID, `ftp://ftp.invoice-sync.example/logs/` with user / password (marked sensitive) |
 | `c2/snakekeylogger/sample_snake_traces.exe` | Snake Keylogger (indicators) | .NET stub with the banner, DES / MD5 / SMTP types and a browser path, nothing encrypted | indicators only, no C2 |
-| `c2/raccoon/sample_raccoon_v2.exe` | Raccoon Stealer v2 | base64 + RC4 strings, key `edinayarossiya2026` | C2 `http://203.0.113.47/`, `machineId=` / `&configId=` |
+| `c2/raccoon/sample_raccoon_v2.exe` | Raccoon Stealer v2 | strings base64 + RC4 with a plain key | C2 `http://203.0.113.47/` and `https://cdn-update.example.net/`, key `edinayarossiya2026`, request fields, user agent, config ID `5c1d9a7e…7e25`, browser-DLL traces |
+| `c2/raccoon/sample_raccoon_traces.exe` | Raccoon Stealer v2 (indicators) | native stub with the request fields and browser DLL / wallet names in clear | indicators only, no C2 |
 | `c2/warzone/sample_warzone.exe` | Warzone / AveMaria | `.bss` = key length + RC4 key + RC4(config), version string, UAC-bypass moniker and `_rptls` key | C2 `cdn-update.example.net:5200`, version 1.60, raw options `010001` |
 | `c2/warzone/sample_warzone_traces.exe` | Warzone / AveMaria (indicators) | native stub with the Warzone strings and no `.bss` | indicators only, no C2 |
 | `c2/sliver/sample_go_sliver_like` | Sliver (Go) | pclntab names the Sliver implant packages (`sliverpb`, `transports/mtls`) — names only, nothing of Sliver runs | none held: *indicators* (framework, Go version, module); C2 works with or without the Go module |

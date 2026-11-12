@@ -142,6 +142,21 @@ FAMILIES: list[dict[str, Any]] = [
                   "a packed or injected payload has to be unpacked first.",
     },
     {
+        "id": "raccoon",
+        "name": "Raccoon Stealer v2",
+        "match": ("Raccoon Stealer v2", "RC4-encrypted C2 (Raccoon-like)"),
+        "what": "Native infostealer sold as malware-as-a-service (v2, \"RecordBreaker\"): browser passwords, "
+                "cookies and cards, crypto wallets, files, screenshots; can download and run more malware.",
+        "arrives": "Cracked-software and fake-download sites, malvertising and loader chains.",
+        "reads": ["its strings decrypted statically (base64 + RC4 with a key string of the binary)",
+                  "every C2 URL, the request fields (machineId / configId), the user agent and a 32-hex config ID "
+                  "when present (marked as probable)",
+                  "traces (browser DLLs, wallet files) — and, alone, only together with its own request fields"],
+        "next": "Hunt the C2 URLs and the user agent; the config ID links samples of the same customer build.",
+        "limits": "What it steals, the DLLs it downloads and its file grabbers come from the C2 at check-in, "
+                  "so they are not in the file.",
+    },
+    {
         "id": "rmm",
         "name": "RMM / remote-access tools",
         "match": ("RMM: ",),
