@@ -2,7 +2,9 @@
 
 * **RedLine / META** (.NET): ``IP`` (C2, ``host:port``, several joined by
   ``|``) and ``ID`` (build tag) are ``base64( xor( base64(value), key ) )``
-  with the XOR key a plain string of the same class.
+  with the XOR key a plain string of the same class; with dnfile + dncil the
+  settings class names them (IP, ID, Message, Key), read through the common
+  family layer. Traces when nothing decrypts.
 * **Snake Keylogger / 404** (.NET): strings DES-ECB encrypted with
   ``MD5(key string)[:8]``, base64; exfiltration over SMTP / FTP / Telegram,
   read into the common family card (server, port, sender / receiver, the
@@ -30,7 +32,7 @@ from typing import Any
 
 from . import familyspec
 from .dotnet_more import _BOT, _EMAIL, _FTP, _TOKEN
-from .dotnet_rats import _b64, _is_host, user_strings
+from .dotnet_rats import _b64, _is_host, settings_fields, user_strings
 from .remcos import rc4
 
 _STD = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
@@ -82,28 +84,73 @@ def _redline_dec(value: str, key: str) -> str | None:
     return out if _printable(out) else None
 
 
+REDLINE = familyspec.Spec(
+    family="RedLine Stealer",
+    fields={"ip": "hosts", "id": "group", "message": "message", "key": "xor_key", "version": "version"},
+    options={"message": ("value", 'shows a fake error message: "{v}"')},
+    traces=((b"RedLine", "RedLine strings"), (b"R\x00e\x00d\x00L\x00i\x00n\x00e", "RedLine strings"),
+            (b"StringDecrypt", "class StringDecrypt"), (b"ScanningArgs", "type ScanningArgs"),
+            (b"ScanResult", "type ScanResult"), (b"net.tcp://", "WCF net.tcp channel"),
+            (b"n\x00e\x00t\x00.\x00t\x00c\x00p\x00:\x00/\x00/", "WCF net.tcp channel"),
+            (b"Login Data", "browser credential theft"), (b"wallet", "crypto-wallet theft")),
+    min_traces=3)
+
+
+def _redline_named(data: bytes, decrypted: dict[str, str]) -> tuple[dict[str, str], str]:
+    names, cls_name = settings_fields(data)
+    named: dict[str, str] = {}
+    for lit, fields in names.items():
+        for f in fields:
+            named.setdefault(f, decrypted.get(lit, lit))
+    return (named, cls_name) if familyspec.known(REDLINE, named) else ({}, "")
+
+
 def redline(data: bytes, strings: list[str]) -> dict[str, Any] | None:
     enc = [s for s in strings if _b64(s)]
     if not enc:
-        return None
-    keys = [s for s in strings if 3 <= len(s) <= 64 and _printable(s) and s not in enc][:80]
+        return redline_traces(data)
+    cand = [s for s in strings if 3 <= len(s) <= 64 and _printable(s)]
+    # a key of letters only can look like base64 ("Pedestal"): try those last, never skip them
+    keys = ([s for s in cand if s not in enc] + [s for s in cand if s in enc])[:80]
     for key in keys:
-        values = [v for s in enc for v in [_redline_dec(s, key)] if v]
+        decrypted = {s: v for s in enc for v in [_redline_dec(s, key)] if v}
+        values = list(decrypted.values())
         c2 = [hp for v in values for part in v.split("|") for hp in [_hostport(part)] if hp]
         if not c2:
             continue
-        build = next((v for v in values if not any(_hostport(p) for p in v.split("|"))), "")
         named = b"RedLine" in data or b"R\x00e\x00d\x00L\x00i\x00n\x00e" in data
-        meta = b"META" in data and not named
+        meta = (b"META" in data or b"M\x00E\x00T\x00A" in data) and not named
         fam = "RedLine Stealer" if named or not meta else "META Stealer"
-        summary = {"C2": [f"{h}:{p}" for h, p in c2]}
-        if build:
-            summary["Build ID"] = build
-        summary["XOR key"] = key
-        return {"family": fam, "kind": "stealer", "method": "base64 + XOR(key) + base64 (.NET strings)",
-                "confidence": "high", "summary": summary, "c2": [h for h, _ in c2],
-                "fields": {**{f"value {i + 1}": v for i, v in enumerate(values)}, "key": key}}
-    return None
+        fields_named, cls_name = _redline_named(data, decrypted)
+        if fields_named:
+            summary, _ = familyspec.interpret(REDLINE, {k: v for k, v in fields_named.items()
+                                                       if k.lower() != "key"})
+            if "Group" in summary:
+                summary["Build ID"] = summary.pop("Group")
+            summary["XOR key"] = key
+            fields = {**fields_named, "Settings class": cls_name}
+            how = f"base64 + XOR(key) + base64 — settings named from {cls_name or 'the settings class'}"
+        else:
+            summary = {"C2": [f"{h}:{p}" for h, p in c2]}
+            build = next((v for v in values if not any(_hostport(p) for p in v.split("|"))), "")
+            if build:
+                summary["Build ID"] = build
+            summary["XOR key"] = key
+            fields = {f"value {i + 1}": v for i, v in enumerate(values)}
+            how = "base64 + XOR(key) + base64 (.NET strings)"
+        summary["Note"] = ("the C2 is a WCF (net.tcp) panel: the stealer asks it what to collect, so the targets "
+                           "are not in the file")
+        return {"family": fam, "kind": "stealer", "method": how, "confidence": "high", "summary": summary,
+                "c2": list(dict.fromkeys(h for h, _ in c2)),
+                "fields": fields if fields_named else {**fields, "key": key}}
+    return redline_traces(data)
+
+
+def redline_traces(data: bytes) -> dict[str, Any] | None:
+    r = familyspec.traces(REDLINE, data)
+    if r and not any("RedLine" in i for i in r["indicators"]) and b"META" in data:
+        r = familyspec.traces(REDLINE, data, "META Stealer")
+    return r
 
 
 # --- Snake Keylogger -------------------------------------------------------------------
@@ -371,11 +418,11 @@ def extract_all(data: bytes) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     if data[:2] == b"MZ" and b"BSJB" in data:
         strings = user_strings(data)
-        for fn in (redline, snake):
-            r = fn(data, strings) if strings else None
-            if r:
-                out.append(r)
-                break
+        found = [r for fn in (redline, snake) for r in [fn(data, strings) if strings else None] if r]
+        # a decrypted configuration wins over another family's traces
+        best = next((r for r in found if r.get("kind") != "indicators"), found[0] if found else None)
+        if best:
+            out.append(best)
     else:
         for fn in (warzone, raccoon):
             r = fn(data)

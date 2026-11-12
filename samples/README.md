@@ -450,6 +450,8 @@ campaign's (`cdn-update.example.net`, `203.0.113.47`).
 | `c2/xworm/sample_xworm_traces.exe` | XWorm (indicators) | .NET stub with XWorm names and splitter, nothing encrypted | indicators only, no C2 |
 | `c2/agenttesla/sample_agenttesla.exe` | AgentTesla-like stealer | exfiltration channel in clear + browser / mail credential paths | SMTP `mail.billing-portal.example:587`, accounts, Telegram-style bot token and chat id on `api.telegram-relay.example` |
 | `c2/redline/sample_redline.exe` | RedLine Stealer | .NET strings: base64 → XOR key `Ombudsman` → base64 | `cdn-update.example.net:7712`, `203.0.113.47:7712`, build `Factura_2026` |
+| `c2/redline/sample_redline_named.exe` | RedLine Stealer | `EntryPoint` settings class (IP / ID / Message / Key, `.cctor` ldstr → stsfld), base64 + XOR + base64 | panel `panel.invoice-sync.example:7712` and `203.0.113.47:7712`, build ID `Factura_2026`, fake error message, key `Pedestal` (looks like base64) |
+| `c2/redline/sample_redline_traces.exe` | RedLine Stealer (indicators) | .NET stub with RedLine names and the WCF channel, nothing encrypted | indicators only, no C2 |
 | `c2/snakekeylogger/sample_snake_keylogger.exe` | Snake Keylogger | .NET strings DES-ECB, key MD5(string) | SMTP `mail.billing-portal.example:587`, sender / recipient accounts |
 | `c2/snakekeylogger/sample_snake_telegram.exe` | Snake Keylogger | DES-ECB strings, Telegram + FTP channel | made-up bot token and chat ID, `ftp://ftp.invoice-sync.example/logs/` with user / password (marked sensitive) |
 | `c2/snakekeylogger/sample_snake_traces.exe` | Snake Keylogger (indicators) | .NET stub with the banner, DES / MD5 / SMTP types and a browser path, nothing encrypted | indicators only, no C2 |

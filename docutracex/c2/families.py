@@ -108,6 +108,23 @@ FAMILIES: list[dict[str, Any]] = [
                   "password, so it is shown as taken by position; option flags (screenshots, clipboard…) are not read.",
     },
     {
+        "id": "redline",
+        "name": "RedLine / META Stealer",
+        "match": ("RedLine Stealer", "META Stealer"),
+        "what": "Commodity .NET infostealers sold as malware-as-a-service (META is a RedLine clone): saved "
+                "browser passwords, cookies and cards, crypto wallets, VPN / FTP / messenger credentials, system "
+                "profile.",
+        "arrives": "Fake software downloads and cracks, malvertising, and phishing attachments that drop a loader.",
+        "reads": ["IP (the panel, host:port, several joined by |) and ID (the build tag) decrypted statically "
+                  "(base64 + XOR with a key string + base64)",
+                  "with dnfile + dncil the settings class names them (IP, ID, Message, Key): the fake error "
+                  "message shown to the victim too",
+                  "RedLine or META by its strings; traces only when nothing decrypts"],
+        "next": "Hunt the panel host:port; the build ID groups samples of the same customer build.",
+        "limits": "What it steals is asked from the panel (WCF net.tcp) at run time, so it is not in the file; "
+                  "builds with another string encryption only give traces.",
+    },
+    {
         "id": "rmm",
         "name": "RMM / remote-access tools",
         "match": ("RMM: ",),
