@@ -70,6 +70,27 @@ FAMILIES: list[dict[str, Any]] = [
                   "(shown as such); later positions (audio, anti-analysis, licence) are left as numbered fields.",
     },
     {
+        "id": "xworm",
+        "name": "XWorm",
+        "match": ("XWorm", "XWorm-like RAT"),
+        "what": "Commodity .NET RAT sold as a builder (and leaked / cracked): remote control, keylogging, USB "
+                "spreading, plugins, DDoS and ransomware modules; often announces new victims over Telegram.",
+        "arrives": "Script or shortcut chains (VBS / JS / PowerShell / LNK) and loaders that decrypt the client "
+                   "in memory, from phishing attachments and fake downloads.",
+        "reads": ["the settings decrypted statically (AES-256-ECB, key from MD5 of the mutex) and named by their "
+                  "field in the settings class (Hosts, Port, Groub, USBNM, InstallDir / InstallStr, Sleep, "
+                  "LoggerPath, ChatID / Token…)",
+                  "C2 hosts and ports, group, mutex, version, splitter",
+                  "install path and persistence (scheduled task, Run key, Startup shortcut), USB spreading name, "
+                  "keylogger log, start delay",
+                  "Telegram bot token / chat ID marked sensitive; without the names the values are read by what "
+                  "they look like, and traces only when nothing decrypts"],
+        "next": "Hunt the hosts / ports; look for the mutex, the install path, the task / Run value / Startup "
+                "shortcut and the USB copy on endpoints; the bot token is the operator's — evidence, not a login.",
+        "limits": "A loader that is not unpacked hides the client; builds that change the key derivation only "
+                  "give traces.",
+    },
+    {
         "id": "rmm",
         "name": "RMM / remote-access tools",
         "match": ("RMM: ",),

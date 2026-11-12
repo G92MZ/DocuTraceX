@@ -7,7 +7,10 @@ All read the #US (user strings) heap of the assembly — see ``dotnet_rats``.
   the ``|'|'|`` splitter.
 * **XWorm** encrypts each setting with AES-256-ECB; the key is
   ``MD5(mutex)[:15] + MD5(mutex) + 0x00`` and the mutex is a plain string of
-  the same class. Every plain string is tried as the mutex.
+  the same class. Every plain string is tried as the mutex. With dnfile +
+  dncil the settings are named by their field (Hosts, Port, Groub, USBNM,
+  InstallDir / InstallStr, Sleep, LoggerPath, ChatID / Token…) and read through
+  the common family layer; without a key, the family's traces.
 * **AgentTesla-style stealers**: the exfiltration channel (SMTP server and
   accounts, FTP URL, Telegram-style bot token / chat) next to the browser /
   mail-client credential paths they read. Builds that encrypt their strings
@@ -22,7 +25,8 @@ import hashlib
 import re
 from typing import Any
 
-from .dotnet_rats import _b64, _classify, _is_host, prefilter, user_strings
+from . import familyspec
+from .dotnet_rats import _b64, _classify, _is_host, prefilter, settings_fields, user_strings
 
 _NJ_SPLIT = "|'|'|"
 _NJ_MARKERS = ("SEE_MASK_NOZONECHECKS", "netsh firewall add allowedprogram", "cmd.exe /c ping 0 -n 2 & del")
@@ -95,15 +99,74 @@ def _aes_ecb(key: bytes, ct: bytes) -> str | None:
     return s if _printable(s) else None
 
 
+# --- XWorm -----------------------------------------------------------------------
+# The settings class (Hosts / Host, Port, KEY, SPL, Sleep, Groub, USBNM, InstallDir,
+# InstallStr, Mutex, LoggerPath, ChatID, Token…): read by name when dnfile + dncil are
+# installed, through the common family layer.
+XWORM = familyspec.Spec(
+    family="XWorm",
+    fields={"hosts": "hosts", "host": "hosts", "port": "ports", "pastebin": "dead_drop", "groub": "group",
+            "group": "group", "mutex": "mutex", "install": "install", "installdir": "install_folder",
+            "installstr": "install_name", "sleep": "interval", "usbnm": "usb_name", "spl": "splitter",
+            "loggerpath": "log_path", "chatid": "telegram_chat", "token": "telegram_token", "key": "aes_key"},
+    options={"interval": ("seconds", "waits {v} s before it starts"),
+             "usb_name": ("value", "spreads to USB drives as {v}"),
+             "log_path": ("value", "keylogger log {v}")},
+    persistence="install_name",
+    persistence_text=('scheduled task "{name}" (when run as admin)',
+                      familyspec.RUN_KEY + "\\{name}",
+                      "%AppData%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\{name}.lnk"),
+    traces=((b"<Xwormmm>", "splitter <Xwormmm>"), (b"<\x00X\x00w\x00o\x00r\x00m\x00m\x00m\x00>", "splitter <Xwormmm>"),
+            (b"XWorm", "XWorm strings"), (b"X\x00W\x00o\x00r\x00m", "XWorm strings"), (b"XClient", "assembly XClient"),
+            (b"Groub", "field Groub"), (b"USBNM", "field USBNM"), (b"InstallStr", "field InstallStr"),
+            (b"AlgorithmAES", "AlgorithmAES"), (b"LoggerPath", "field LoggerPath")),
+    min_traces=3)
+_XW_VERSION = re.compile(r"XWorm\s*V?(\d+(?:\.\d+)+)", re.IGNORECASE)
+
+
+def _xw_named(data: bytes, decrypted: dict[str, str], mutex: str) -> tuple[dict[str, str], str]:
+    """{setting name: value} from the settings class (empty when the names are not readable)."""
+    names, cls_name = settings_fields(data)
+    named: dict[str, str] = {}
+    for lit, fields in names.items():
+        v = decrypted.get(lit, lit)
+        for f in fields:
+            named.setdefault(f, v)
+    if not familyspec.known(XWORM, named):
+        return {}, ""
+    low = {k.lower(): v for k, v in named.items()}
+    if "install" not in low and (low.get("installdir") or low.get("installstr")):
+        named["Install"] = "true"                      # XWorm installs whenever a folder / name is set
+    return named, cls_name
+
+
 def xworm(data: bytes, strings: list[str]) -> dict[str, Any] | None:
     enc = [(s, b) for s in strings for b in [_b64(s)] if b and len(b) % 16 == 0]
     if not enc:
-        return None
+        return xworm_traces(data)
     for mutex in [s for s in strings if 6 <= len(s) <= 64 and re.match(r"^[A-Za-z0-9_\-<>]+$", s)][:60]:
         key = _xw_key(mutex)
-        values = [v for _, b in enc for v in [_aes_ecb(key, b)] if v is not None]
+        decrypted = {s: v for s, b in enc for v in [_aes_ecb(key, b)] if v is not None}
+        values = list(decrypted.values())
         if len(values) < 2:
             continue
+        version = next((m.group(1) for v in values + strings for m in [_XW_VERSION.search(v)] if m), "")
+        named, cls_name = _xw_named(data, decrypted, mutex)
+        if named:
+            summary, hosts = familyspec.interpret(XWORM, named)
+            g = familyspec.roles(XWORM, named)
+            if g.get("splitter"):
+                summary["Splitter"] = g["splitter"]
+            if version and "Version" not in summary:
+                summary = {"Version": version, **summary}
+            if hosts:
+                fields = {f: (v if len(v) <= 300 else v[:300] + "…") for f, v in named.items() if f != "Install"}
+                fields["Settings class"] = cls_name
+                fields["mutex (key)"] = mutex
+                return {"family": "XWorm", "kind": "RAT",
+                        "method": f"AES-256-ECB, key MD5(mutex) — {len(decrypted)} settings decrypted and named "
+                                  f"from {cls_name or 'the settings class'}",
+                        "confidence": "high", "summary": summary, "c2": hosts, "fields": fields}
         cls = _classify(values)
         summary = cls["summary"]
         hosts = cls["hosts"]
@@ -115,13 +178,19 @@ def xworm(data: bytes, strings: list[str]) -> dict[str, Any] | None:
             elif v.lower().endswith(".exe") and "USB name" not in summary:
                 summary["USB name"] = v
         summary["Mutex"] = mutex
+        if version:
+            summary = {"Version": version, **summary}
         if not hosts:
             continue
         family = "XWorm" if any(m in data for m in _XW_MARKERS) or "Splitter" in summary else "XWorm-like RAT"
         return {"family": family, "kind": "RAT", "method": "AES-256-ECB, key MD5(mutex)", "confidence": "high",
                 "summary": summary, "c2": hosts,
                 "fields": {**{f"value {i + 1}": v for i, v in enumerate(values)}, "mutex (key)": mutex}}
-    return None
+    return xworm_traces(data)
+
+
+def xworm_traces(data: bytes) -> dict[str, Any] | None:
+    return familyspec.traces(XWORM, data)
 
 
 # --- AgentTesla-style stealers -------------------------------------------------------
