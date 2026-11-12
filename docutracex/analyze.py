@@ -1405,9 +1405,24 @@ def _rmm(paths: CasePaths, modules: dict[str, Any], ioc_result: dict[str, Any],
     try:
         from . import rmmintel
         cat = rmmintel.catalogue()
+        cfgs: list[dict[str, Any]] = []
+        obj_findings: list[dict[str, Any]] = []
+        manifest = read_json(paths.manifest) or {}
+        stored = (manifest.get("original") or {}).get("stored_path")
+        if stored:                                 # every object through the C2 rmm extractor
+            cfgs, obj_findings = rmmintel.objects_step(paths.root / stored, paths.extracted_dir, ioc_result,
+                                                       modules.get("c2"))
         tagged = rmmintel.tag_iocs(ioc_result, cat)
-        res = rmmintel.mentions(sources, modules.get("c2"), cat)
+        known = {"configs": list((modules.get("c2") or {}).get("configs") or []) + cfgs}
+        res = rmmintel.mentions(sources, known, cat)
         res["tagged_iocs"] = tagged
+        res["configs"] = cfgs
+        # a product named in the text with its context says more than "product only" in the same file
+        mentioned = {m["product"] for m in res.get("mentions") or []}
+        drop = {c["finding_id"] for c in cfgs if c.get("kind") == "indicators" and c["family"][5:] in mentioned}
+        res["configs"] = [c for c in cfgs if c["finding_id"] not in drop]
+        obj_findings = [f for f, c in zip(obj_findings, cfgs) if c["finding_id"] not in drop]
+        res["findings"] = obj_findings + res["findings"]
     except Exception as exc:  # noqa: BLE001  (never breaks the analysis)
         log.warning("RMM step skipped for %s: %s", paths.root.name, exc)
         res = {"module": "rmm", "status": "error", "error": str(exc)[:300], "findings": []}

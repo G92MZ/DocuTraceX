@@ -67,3 +67,21 @@ def test_support_scam_email_end_to_end(tmp_path: Path, builtin_only: None) -> No
     assert found == {("rmm:mention", "medium", "AnyDesk"), ("rmm:mention", "info", "TeamViewer")}
     tagged = [(i["value"], i["rmm"]["product"]) for i in read_json(p.subresult("iocs"))["iocs"] if i.get("rmm")]
     assert tagged == [("https://descargas.factura-soporte.example/AnyDesk.exe", "AnyDesk")]
+
+
+def test_rmm_objects_in_a_normal_analysis(tmp_path: Path, builtin_only: None) -> None:
+    """No C2 run: the trojanised installer still gives c2:rmm with its relay, and the relay joins the IOCs;
+    running C2 afterwards does not duplicate the finding."""
+    from docutracex import analyze, cases
+    from docutracex.storage import CasePaths, read_json
+    m = cases.create_case(io.BytesIO(ms.rmm_screenconnect_msi()), "VisorFacturas.msi", cases_dir=tmp_path)
+    analyze.analyze_case(tmp_path / m["analysis_id"])
+    p = CasePaths(m["analysis_id"], cases_dir=tmp_path)
+
+    def rmm_findings() -> list[tuple[str, str]]:
+        return [(f["rule"], f["severity"]) for f in read_json(p.subresult("findings"))["findings"] if "rmm" in f["rule"]]
+    assert rmm_findings() == [("c2:rmm", "medium")]
+    relay = [i for i in read_json(p.subresult("iocs"))["iocs"] if i["value"] == ms.RMM_RELAY]
+    assert relay and relay[0]["rmm"]["product"].startswith("ScreenConnect")
+    analyze.run_module(tmp_path / m["analysis_id"], "c2")
+    assert rmm_findings() == [("c2:rmm", "medium")]

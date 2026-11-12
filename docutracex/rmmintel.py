@@ -1,6 +1,6 @@
 """RMM / remote-access tools in the IOCs and in the text of a case (LOLRMM).
 
-Two things, both from the LOLRMM catalogue (``docutracex.lolrmm``, refreshed
+Three things, all from the LOLRMM catalogue (``docutracex.lolrmm``, refreshed
 weekly) plus the built-in list of the C2 ``rmm`` extractor:
 
 * **IOC tags** — a domain / URL on a product's domain, or a file path whose
@@ -13,6 +13,13 @@ weekly) plus the built-in list of the C2 ``rmm`` extractor:
   Not repeated when the C2 extractor already found that product bound to an
   instance (``c2:rmm`` says more).
 
+* **Objects** — every analysed object (original, extracted, nested) goes
+  through the C2 ``rmm`` extractor in every IOC extraction, so an RMM client
+  or a trojanised installer shows up without running C2: the product, and the
+  instance it is bound to (relay, account, gateway…), whose hosts join the IOCs.
+  The finding is the C2 one (``c2:rmm``, same id), so running C2 later does not
+  duplicate it; once C2 has run, its card owns the product.
+
 Names that are ordinary words (Level, Remote PC, Atlas…) are never matched on
 their own; names shorter than 6 characters need two words.
 """
@@ -20,6 +27,7 @@ their own; names shorter than 6 characters need two words.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
 
 from .logging_config import get_logger
@@ -223,3 +231,71 @@ def mentions(sources: list[dict[str, Any]], c2_result: dict[str, Any] | None = N
                          + (f"LOLRMM: {c['lolrmm']}; " if c.get("lolrmm") else "")
                          + f"…{m['snippet']}…")[:1500]})
     return res
+
+
+def scan_objects(original: Path, extracted_dir: Path) -> list[dict[str, Any]]:
+    """The C2 rmm extractor over every object of the case (the original first)."""
+    from . import c2
+    from .c2 import rmm
+    out: list[dict[str, Any]] = []
+    seen: dict[str, dict[str, Any]] = {}
+    for label, path, stored in c2._targets(original, extracted_dir):
+        try:
+            if path.stat().st_size > c2.MAX_SIZE:
+                continue
+            data = path.read_bytes()
+        except OSError:
+            continue
+        for cfg in rmm.extract(data, path.name):
+            cur = seen.get(cfg["family"])
+            if cur is not None:                       # one per product: the one bound to an instance wins
+                if cfg.get("c2") and not cur.get("c2"):
+                    out.remove(cur)
+                else:
+                    cur.setdefault("also_in", []).append(label)
+                    continue
+            cfg["object"], cfg["stored_path"] = label, stored
+            seen[cfg["family"]] = cfg
+            out.append(cfg)
+    return out
+
+
+def _ioc_type(h: str) -> str:
+    return "ipv4" if re.fullmatch(r"(?:\d{1,3}\.){3}\d{1,3}", h) else "domain"
+
+
+def objects_step(original: Path, extracted_dir: Path, ioc_result: dict[str, Any],
+                 c2_result: dict[str, Any] | None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(configs, findings) for the RMM products in the objects; adds their instance hosts to the IOCs."""
+    from . import c2
+    from .findings import finding_id
+    owned = {str(c.get("family") or "") for c in (c2_result or {}).get("configs") or []}
+    cfgs = [c for c in scan_objects(original, extracted_dir) if c["family"] not in owned]
+    findings = []
+    have = {(i.get("type"), i.get("value")) for i in ioc_result.get("iocs") or []}
+    c2_rmm = [c for c in (c2_result or {}).get("configs") or [] if str(c.get("family") or "").startswith("RMM: ")]
+    for c in cfgs + c2_rmm:
+        if c in cfgs:
+            f = c2._finding(c)
+            c["finding_id"] = finding_id(f["tool"], f["rule"], f["location"], f["detail"])
+            findings.append(f)
+        tag = {"product": c["family"][5:], "category": "RMM", "why": "instance the client is bound to"}
+        for h in c.get("c2") or []:
+            t = _ioc_type(h)
+            if (t, h) in have:                         # already mined from the text: tag it
+                for i in ioc_result.get("iocs") or []:
+                    if i.get("type") == t and i.get("value") == h:
+                        i["rmm"] = tag
+                continue
+            if c not in cfgs:                          # C2's own configuration: its hosts are already IOCs
+                continue
+            have.add((t, h))
+            ioc_result.setdefault("iocs", []).append({
+                "type": t, "value": h, "count": 1,
+                "occurrences": [{"module": "rmm", "location": c["object"],
+                                 "context": f"{c['family'][5:]} instance ({c.get('method')})"}],
+                "rmm": tag})
+            counts = ioc_result.setdefault("counts", {})
+            counts[t] = counts.get(t, 0) + 1
+            counts["total"] = counts.get("total", 0) + 1
+    return cfgs, findings
