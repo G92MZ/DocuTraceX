@@ -65,7 +65,7 @@ def vipermonkey_status() -> dict[str, Any]:
 
 def _no_result_reason(rec: dict[str, Any]) -> str:
     """Why ViperMonkey produced nothing: no macros, or its last logged error."""
-    out = str(rec.get("stdout") or "")
+    out = str(rec.get("output") or rec.get("stdout") or "")   # toolrun keeps stdout as "output"
     if "No VBA macros found" in out:
         return "no VBA macros found"
     lines = [x.strip() for x in (str(rec.get("stderr") or "") + "\n" + out).splitlines() if x.strip()]
@@ -106,11 +106,16 @@ def analyze(original_path: Path, extracted_dir: Path | None = None) -> dict[str,
         # back unconditionally: without it, a sample it cannot emulate ends in "IOError: No such
         # file … vmonkey.json" and hides the real reason. An empty object keeps it going.
         out_json.write_text("{}", encoding="utf-8")
+        # through a launcher that maps ViperMonkey's hard-coded /tmp/… paths to a real temp folder
+        launcher = work / "_dtx_vmonkey.py"
+        shutil.copyfile(Path(__file__).with_name("_vmonkey_launch.py"), launcher)
+        vtmp = work / "tmp"
+        vtmp.mkdir()
         rec = toolrun.run(
-            [str(exe), "-m", "vipermonkey.vmonkey", "-s", "-c", "-t", str(EMULATION_MINUTES),
+            [str(exe), str(launcher), "-s", "-c", "-t", str(EMULATION_MINUTES),
              "-l", "warning", "-o", str(out_json), str(target)],
             f"vmonkey -s -c -t {EMULATION_MINUTES} {original_path.name}",
-            timeout=PROCESS_TIMEOUT, cwd=work)
+            timeout=PROCESS_TIMEOUT, cwd=work, extra_env={"DTX_VM_TMP": str(vtmp)})
         result["tool"] = rec
         data: dict[str, Any] = {}
         if out_json.is_file():
