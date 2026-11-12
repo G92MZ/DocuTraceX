@@ -328,7 +328,10 @@ def _resource_child(root: Path, sha: str, label: str, x: dict[str, Any], raw: by
             x["costura"] = True
         except zlib.error:
             pass
-    safe = re.sub(r"[^\w.\-]+", "_", name).strip("._")[-100:] or "resource.bin"
+    safe = re.sub(r"[^\w.\-]+", "_", name).strip("._") or "resource.bin"
+    if len(safe) > 100:                      # cut the middle: the name and its extension stay readable
+        stem, dot, ext = safe.rpartition(".")
+        safe = (stem[:100 - len(ext) - 1] + dot + ext) if dot and len(ext) <= 8 else safe[:100]
     out = root / "extracted" / RES_DIR / sha[:12] / safe
     try:
         out.parent.mkdir(parents=True, exist_ok=True)

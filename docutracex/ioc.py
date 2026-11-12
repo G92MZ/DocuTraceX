@@ -155,7 +155,7 @@ _FILE_TLDS = {
     "ppsx", "ppsm", "ppam", "sldx", "sldm", "doc", "dot", "xls",
     "xlt", "xla", "ppt", "pot", "pdf", "eml", "emlx", "msg", "rtf",
     "txt", "json", "html", "htm", "css", "js", "exe", "dll", "zip",
-    "jar", "mgc",
+    "jar", "mgc", "cab", "msi", "sys", "ocx", "cpl",
 }
 
 _CONTEXT = 64
@@ -302,6 +302,17 @@ _CODE_NAMESPACES = ("java.", "javax.", "android.", "androidx.", "kotlin.", "jdk.
 # Shared objects: libc.so, libapp.so, libssl.so.3 — .so is also a ccTLD (Somalia),
 # so only lib*.so names are treated as files; notion.so stays a domain.
 _SHARED_LIB = re.compile(r"(?i)^lib[\w+-]*\.so$")
+
+
+# .NET / Java members and namespaces written in PascalCase (IntPtr.Zero,
+# Contoso.Client.Cloud): every label capitalised, the last one Capitalised-lower.
+# Hosts in samples are written in lower case (or all upper case).
+_DOTNET_MEMBER = re.compile(r"^(?:[A-Z][A-Za-z0-9]*\.)+[A-Z][a-z][a-z0-9]*$")
+
+
+# …but "PayPal.Com" in a lure is still a host: the classic TLDs are never read as code
+_COMMON_TLDS = {"com", "net", "org", "edu", "gov", "mil", "int", "info", "biz", "io", "co", "me", "us", "uk", "eu",
+                "de", "es", "fr", "it", "nl", "pt", "ru", "cn", "jp", "br", "in", "ca", "au", "ch", "be", "pl"}
 
 
 def _looks_like_filename(domain: str) -> bool:
@@ -811,6 +822,8 @@ def _scan_text(
             continue
 
         domain = match.group(1).lower()
+        if _DOTNET_MEMBER.match(match.group(1)) and domain.rsplit(".", 1)[-1] not in _COMMON_TLDS:
+            continue                                       # IntPtr.Zero, ScreenConnect.Site: code, not hosts
         strict = (
             bool(_CODE_LOCATION.search(location or ""))
             or module in ("javascript", "vipermonkey")
@@ -862,6 +875,8 @@ _SKIP_KEYS = {
     "sha1", "sha256", "sha384", "sha512", "md5", "imphash", "ssdeep",
     "tlsh", "pehash", "crc32", "digest", "checksum", "fingerprint",
     "entropy", "code_file",
+    # certificate identifiers: serial numbers and thumbprints are not indicators
+    "serial", "serial_number", "thumbprint", "certificate_thumbprint",
 }
 
 
