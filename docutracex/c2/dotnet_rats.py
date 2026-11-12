@@ -303,11 +303,19 @@ def extract(data: bytes) -> dict[str, Any] | None:
 # attribution, only "this was left as it came".
 DEFAULTS: dict[str, dict[str, str]] = {
     "MTX": {"AsyncMutex_6SI8OkPnk": "AsyncRAT builder default mutex", "DcRatMutex_qwqdanchun": "DcRAT builder default mutex"},
-    "Group": {"Default": "builder default group"},
+    "Group": {"Default": "builder default group", "Office04": "Quasar builder default tag"},
+    "Startup key": {"Quasar Client Startup": "Quasar builder default startup name"},
+    "Install name": {"Client.exe": "Quasar builder default install name"},
     "Certificate CN": {"AsyncRAT Server": "AsyncRAT builder default certificate", "DcRat Server": "DcRAT builder default certificate",
-                       "VenomRAT Server": "VenomRAT builder default certificate"},
+                       "VenomRAT Server": "VenomRAT builder default certificate",
+                       "Quasar Server CA": "Quasar builder default certificate"},
 }
 _ON = ("true", "1", "yes")
+_SPECIAL = {"applicationdata": "%AppData%", "localapplicationdata": "%LocalAppData%",
+            "commonapplicationdata": "%ProgramData%", "programfiles": "%ProgramFiles%",
+            "programfilesx86": "%ProgramFiles(x86)%", "userprofile": "%UserProfile%", "windows": "%WinDir%",
+            "system": "%WinDir%\\System32", "startup": "%AppData%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup",
+            "mydocuments": "%UserProfile%\\Documents", "desktop": "%UserProfile%\\Desktop"}
 
 
 def _certificate(b64: str) -> dict[str, str]:
@@ -333,15 +341,25 @@ def _certificate(b64: str) -> dict[str, str]:
 
 
 def _named(named: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
-    """Settings by field name → card summary + C2 hosts (AsyncRAT / DcRAT / Venom layout)."""
+    """Settings by field name → card summary + C2 hosts. Two layouts: AsyncRAT / DcRAT /
+    Venom (Hosts, Ports, MTX, Group, Install / InstallFolder / InstallFile…) and Quasar
+    (HOSTS = host:port;…, MUTEX, TAG, DIRECTORY / SUBDIRECTORY / INSTALLNAME, STARTUP…)."""
     g = {k.lower(): v for k, v in named.items()}
+    quasar = "installname" in g or "subdirectory" in g or "startupkey" in g or "enablelogger" in g
     summary: dict[str, Any] = {}
-    hosts = [h.strip() for h in re.split(r"[;,]", g.get("hosts", "")) if h.strip() and h.strip().lower() != "null"]
+    hosts: list[str] = []
+    pairs: list[str] = []
     ports = [p.strip() for p in re.split(r"[;,]", g.get("ports", "")) if p.strip().isdigit()]
+    for h in (x.strip() for x in re.split(r"[;,]", g.get("hosts", "")) if x.strip() and x.strip().lower() != "null"):
+        if ":" in h and h.rsplit(":", 1)[1].isdigit():            # Quasar: host:port in HOSTS
+            pairs.append(h)
+            hosts.append(h.rsplit(":", 1)[0])
+        else:
+            hosts.append(h)
+            pairs += [f"{h}:{p}" for p in ports] or [h]
+    if pairs:
+        summary["C2"] = list(dict.fromkeys(pairs))
     paste = g.get("pastebin", "")
-    if hosts:
-        summary["C2"] = [f"{h}:{p}" for h in hosts for p in (ports or [""])]
-        summary["C2"] = [x.rstrip(":") for x in summary["C2"]]
     if paste and paste.lower() != "null":
         summary["Dead drop (Pastebin)"] = paste
         summary["Note"] = ("the C2 host:port is downloaded from this paste when the client starts: "
@@ -349,10 +367,24 @@ def _named(named: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
         host = re.sub(r"^[a-z]+://", "", paste).split("/", 1)[0]
         if host:
             hosts.append(host)
-    for key, label in (("version", "Version"), ("group", "Group"), ("mtx", "Mutex")):
-        if g.get(key):
-            summary[label] = g[key]
-    if g.get("install", "").lower() in _ON:
+    for keys, label in ((("version",), "Version"), (("group", "tag"), "Group"), (("mtx", "mutex"), "Mutex")):
+        v = next((g[k] for k in keys if g.get(k)), "")
+        if v:
+            summary[label] = v
+    if quasar:
+        folder = g.get("directory", "") or "%AppData%"
+        if not folder.startswith("%") and "\\" not in folder:    # Environment.SpecialFolder name
+            folder = _SPECIAL.get(folder.lower(), f"<{folder}>")
+        path = "\\".join(x for x in (folder, g.get("subdirectory", ""), g.get("installname", "")) if x)
+        if g.get("install", "").lower() in _ON:
+            summary["Install path"] = path + (" (hidden file)" if g.get("hidefile", "").lower() in _ON else "")
+        elif "install" in g:
+            summary["Install"] = "no (runs from where it is)"
+        if g.get("startup", "").lower() in _ON and g.get("startupkey"):
+            key = g["startupkey"]
+            summary["Persistence"] = [f"scheduled task \"{key}\" at logon (when run as admin)",
+                                      f"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\{key} (otherwise)"]
+    elif g.get("install", "").lower() in _ON:
         folder, fname = g.get("installfolder", "%AppData%"), g.get("installfile", "")
         path = f"{folder}\\{fname}" if fname else folder
         summary["Install path"] = path
@@ -369,13 +401,25 @@ def _named(named: dict[str, str]) -> tuple[dict[str, Any], list[str]]:
         opts.append("BDOS: marks itself a critical process — killing it blue-screens the machine")
     if g.get("delay", "").isdigit() and int(g["delay"]) > 0:
         opts.append(f"waits {g['delay']} s before starting")
+    if g.get("enablelogger", "").lower() in _ON:
+        logs = g.get("logdirectoryname", "")
+        opts.append("keylogger on" + (f", logs in the folder \"{logs}\"" if logs else "")
+                    + (" (hidden)" if g.get("hidelogdirectory", "").lower() in _ON else ""))
+    if g.get("reconnectdelay", "").isdigit():
+        opts.append(f"reconnects every {int(g['reconnectdelay']) // 1000} s")
+    if g.get("unattendedmode", "").lower() in _ON:
+        opts.append("unattended mode: remote actions without asking the user")
     if opts:
         summary["Options"] = opts
-    cert = _certificate(g.get("certificate", "")) if g.get("certificate") else {}
+    cert_b64 = g.get("certificate") or g.get("servercertificatestr") or ""
+    cert = _certificate(cert_b64) if cert_b64 else {}
     summary.update(cert)
-    defaults = [f"{named_v} — {DEFAULTS[k][named_v]}" for k, named_v in
-                (("MTX", summary.get("Mutex", "")), ("Group", summary.get("Group", "")),
-                 ("Certificate CN", cert.get("Certificate CN", ""))) if named_v in DEFAULTS[k]]
+    checks = (("MTX", summary.get("Mutex", "")), ("Group", summary.get("Group", "")),
+              ("Certificate CN", cert.get("Certificate CN", "")), ("Startup key", g.get("startupkey", "")),
+              ("Install name", g.get("installname", "")))
+    defaults = [f"{v} — {DEFAULTS[k][v]}" for k, v in checks if v in DEFAULTS.get(k, {})]
+    if summary.get("Mutex", "").startswith("QSR_MUTEX_"):
+        defaults.append(f"{summary['Mutex']} — Quasar builder mutex pattern (QSR_MUTEX_ + random)")
     if defaults:
         summary["Builder defaults"] = defaults
     return {k: v for k, v in summary.items() if v not in ("", [], None)}, list(dict.fromkeys(hosts))
@@ -390,7 +434,7 @@ def _result(data: bytes, values: dict[str, str], salt_name: str, method: str, ma
         if not hosts:
             return None
         fields = {f: (v if len(v) <= 300 else v[:300] + "…") for f, v in named.items()
-                  if f.lower() not in ("certificate", "serversignature")}
+                  if f.lower() not in ("certificate", "serversignature", "servercertificatestr")}
         fields["Settings class"] = cls_name
         how = f"{method} — {len(named)} settings decrypted and named from {cls_name or 'the settings class'}"
     else:
