@@ -176,19 +176,25 @@ _HOST_OK = __import__("re").compile(r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9]
                                     r"|^\d{1,3}(?:\.\d{1,3}){3}$")
 
 
+MIN_SETTINGS = 10            # a real beacon config carries ~30-70 settings
+
+
 def _false_find(raw: dict[str, Any]) -> str:
-    """dissect tries every XOR key, and a wrong key can still "parse": a found config whose
-    settings are only unrecognised ``BeaconSetting_NNNN`` entries, with no C2, no public key,
-    no watermark and no version, is noise, not a beacon (seen on packed non-CS samples with
-    XOR 0x00). Returns why it is rejected, or ""."""
+    """dissect tries every XOR key, and a wrong key can still "parse" a few settings by chance:
+    a found config with no C2, public key, watermark or version and only a handful of
+    recognised settings is noise, not a beacon (seen with XOR 0x00 on packed AgentTesla,
+    NanoCore and Raccoon samples). Returns why it is rejected, or ""."""
     s = raw.get("settings") or {}
-    if any(k.startswith("SETTING_") for k in s):
-        return ""
+    known = sum(1 for k in s if k.startswith("SETTING_"))
     hosts = [h for h in raw.get("domains") or [] if h and _HOST_OK.match(str(h).strip())]
-    if hosts or raw.get("uris") or raw.get("submit_uri") or raw.get("pubkey_sha256") or raw.get("pubkey_pem")             or raw.get("watermark") is not None or (raw.get("version") or "Unknown") != "Unknown":
+    uris = [u for u in raw.get("uris") or [] if u]
+    strong = (hosts or uris or raw.get("submit_uri") or raw.get("pubkey_sha256") or raw.get("pubkey_pem")
+              or raw.get("watermark") is not None or (raw.get("version") or "Unknown") != "Unknown")
+    if strong or known >= MIN_SETTINGS:
         return ""
-    return (f"a decode with XOR 0x{raw.get('xorkey') or '?'} parsed, but every setting is unrecognised and "
-            "there is no C2, public key, watermark or version: discarded as a false find, not a beacon")
+    return (f"a decode with XOR 0x{raw.get('xorkey') or '?'} parsed {len(s)} setting(s) ({known} recognised) "
+            "with no C2, public key, watermark or version — a real beacon carries dozens: discarded as a "
+            "false find, not a beacon")
 
 
 def view(raw: dict[str, Any]) -> dict[str, Any]:

@@ -211,3 +211,26 @@ def test_shared_settings_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     assert r == {"watermarks": 1, "pubkeys": 1, "ignored": ["not-a-value"]}
     got = asyncio.run(settings_api.c2_shared_get())
     assert "1234 cracked kit" in got["text"] and "cd" * 32 + " leaked" in got["text"] and "0" in got["builtin"]
+
+
+def test_false_find_is_discarded() -> None:
+    """dissect's chance parse of a non-beacon (seen on real packed AgentTesla / NanoCore / Raccoon samples
+    with XOR 0x00): a few settings, no C2, public key, watermark or version → not a beacon."""
+    from docutracex.c2 import cobalt_dissect as cd
+    noise = {"status": "found", "lib": "1.3.0", "xorkey": "00", "version": "Unknown", "watermark": None,
+             "domains": ["\x0c"], "uris": [None], "submit_uri": None, "pubkey_sha256": None,
+             "settings": {"BeaconSetting_110": "x", "SETTING_DOMAINS": "\x0c", "SETTING_PROCINJ_ALLOWED": 1,
+                          "SETTING_PROCINJ_TRANSFORM_X64": ""}}
+    v = cd.view(noise)
+    assert v["status"] == "nothing" and "false find" in v["note"] and "4 setting(s)" in v["note"]
+    only_unknown = {**noise, "domains": [], "uris": [], "settings": {"BeaconSetting_64933": "00d8", "BeaconSetting_1": "a"}}
+    assert cd.view(only_unknown)["status"] == "nothing"
+    # any strong evidence keeps it: a real host, a public key, a watermark…
+    assert cd.view({**noise, "domains": ["cdn-update.example.net"]})["status"] == "found"
+    assert cd.view({**noise, "watermark": 0})["status"] == "found"
+    assert cd.view({**noise, "pubkey_sha256": "ab" * 32})["status"] == "found"
+    many = {**noise, "settings": {f"SETTING_X{i}": i for i in range(cd.MIN_SETTINGS)}}
+    assert cd.view(many)["status"] == "found"
+    # junk host values are dropped from a kept config
+    kept = cd.view({**noise, "domains": ["\x0c", "cdn-update.example.net"]})
+    assert kept["hosts"] == ["cdn-update.example.net"]
