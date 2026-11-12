@@ -10,7 +10,10 @@
   read into the common family card (server, port, sender / receiver, the
   password by position, bot token / chat). Traces when nothing decrypts.
 * **Raccoon Stealer v2** (native): strings ``base64( RC4(key, value) )`` with
-  the RC4 key a plain string in the binary; the C2 is an ``http(s)://`` URL.
+  the RC4 key a plain string in the binary; the C2 is an ``http(s)://`` URL
+  (all of them), with the request fields, a 32-hex config ID when present and
+  the user agent; the rest of the configuration comes from the C2. Traces when
+  nothing decrypts.
 * **Warzone / AveMaria** (native): ``.bss`` section = ``[key length DWORD]
   [RC4 key][RC4(config)]``; config = ``[host length DWORD][host UTF-16][port]``
   then the builder options (shown raw: their layout changes between
@@ -289,13 +292,23 @@ def _rc4_prefix(ksa: list[int], data: bytes, n: int) -> bytes:
         out.append(c ^ s[(s[i] + s[j]) & 0xFF])
     return bytes(out)
 
+RACCOON = familyspec.Spec(
+    family="Raccoon Stealer v2", fields={},
+    traces=((b"nss3.dll", "nss3.dll (Firefox credential decryption)"), (b"sqlite3.dll", "sqlite3.dll (browser databases)"),
+            (b"mozglue.dll", "mozglue.dll"), (b"softokn3.dll", "softokn3.dll"), (b"freebl3.dll", "freebl3.dll"),
+            (b"wallet.dat", "wallet.dat (crypto wallets)"), (b"\\Local State", "browser Local State key"),
+            (b"machineId=", "machineId= request field"), (b"configId=", "configId= request field")),
+    min_traces=4)
+_HEX32 = re.compile(r"^[0-9a-f]{32}$")
+
+
 def raccoon(data: bytes) -> dict[str, Any] | None:
     if data[:2] != b"MZ":
         return None
     strings = [s for s in native_strings(data) if len(s) <= 256]
     enc = [(s, b) for s in strings for b in [_b64(s)] if b and 4 <= len(b) <= 512][:300]
     if not enc:
-        return None
+        return raccoon_traces(data)
     keys = [s for s in strings if 6 <= len(s) <= 64 and not _b64(s)][:150]
     for key in keys:
         kb = key.encode("latin-1")
@@ -314,14 +327,35 @@ def raccoon(data: bytes) -> dict[str, Any] | None:
         urls = [v for v in values if _url_host(v)]
         if not urls:
             continue
-        markers = [v for v in values if v.startswith(("machineId=", "configId=")) or v in ("&configId=", "machineId=")]
+        markers = [v for v in values if v.startswith(("machineId=", "configId=", "&configId="))]
         fam = "Raccoon Stealer v2" if markers else "RC4-encrypted C2 (Raccoon-like)"
+        summary: dict[str, Any] = {"C2": list(dict.fromkeys(urls)), "RC4 key": key}
+        build = [s for s in strings if _HEX32.match(s)]
+        if build and markers:
+            summary["Config ID (probably)"] = build[0]
+        if markers:
+            summary["Request fields"] = markers
+        ua = next((v for v in values if v.startswith("Mozilla/") or v.lower().startswith("user-agent")), "")
+        if ua:
+            summary["User agent"] = ua
+        hits = list(dict.fromkeys(what for needle, what in RACCOON.traces if needle in data))
+        if hits:
+            summary["Traces"] = hits
+        summary["Note"] = ("the C2 sends the real configuration when the stealer checks in (what to steal, the DLLs "
+                           "to download, file grabbers): it is not in the file")
         return {"family": fam, "kind": "stealer", "method": "base64 + RC4 with a key string from the binary",
-                "confidence": "high" if markers else "medium",
-                "summary": {"C2": urls, "RC4 key": key, **({"Markers": markers} if markers else {})},
-                "c2": [h for u in urls for h in [_url_host(u)] if h],
+                "confidence": "high" if markers else "medium", "summary": summary,
+                "c2": list(dict.fromkeys(h for u in urls for h in [_url_host(u)] if h)),
                 "fields": {f"value {i + 1}": v for i, v in enumerate(values[:60])}}
-    return None
+    return raccoon_traces(data)
+
+
+def raccoon_traces(data: bytes) -> dict[str, Any] | None:
+    """Indicators only — and only with Raccoon's own request fields: the browser DLLs alone are shared by
+    many stealers (Vidar, StealC…) and would name the wrong family."""
+    if b"machineId=" not in data and b"configId=" not in data:
+        return None
+    return familyspec.traces(RACCOON, data)
 
 
 # --- Warzone / AveMaria --------------------------------------------------------------------
