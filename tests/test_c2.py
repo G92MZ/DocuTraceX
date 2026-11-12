@@ -212,5 +212,7 @@ def test_no_configuration_in_the_rest_of_the_samples(tmp_path: Path) -> None:
             r = c2.scan_object(f, f.read_bytes())
             if r:
                 hits[rel] = [x["family"] for x in r]
-    # the .NET stealer sample exists to show its settings decrypted statically in the C2 tab
-    assert hits == {"dotnet/sample_dotnet_stealer.exe": ["AgentTesla-like stealer"]}
+    # the .NET stealer sample exists to show its settings decrypted statically in the C2 tab;
+    # the remote-support scam names AnyDesk's installer: RMM indicators only (no instance)
+    assert hits == {"dotnet/sample_dotnet_stealer.exe": ["AgentTesla-like stealer"],
+                    "email/sample_rmm_support_scam.eml": ["RMM: AnyDesk"]}

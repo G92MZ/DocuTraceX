@@ -1319,6 +1319,10 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             })
         ioc_result = run("ioc: common extractor (URLs, domains, IPs, hashes)",
                          lambda: ioc.extract(ioc_sources))
+        rm = run("rmm: remote-access tools in the IOCs and the text (LOLRMM)",
+                 lambda: _rmm(paths, modules, ioc_result, ioc_sources))
+        if rm:
+            modules["rmm"] = rm
         write_subresult(paths, "iocs", ioc_result)
         overall_counts["iocs"] = ioc_result.get("counts", {}).get("total", 0)
         steps[-1]["iocs"] = overall_counts["iocs"]
@@ -1392,7 +1396,38 @@ _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto"
                "officerules", "vbatools", "vipermonkey", "pdftools", "mailrules", "javascript", "rtf",
                "powershell", "vbscript", "batch", "shortcut", "msi", "python", "java", "onenote", "ml", "c2", "golang", "code", "dotnet")
 # Modules whose findings feed the consolidated view (includes derived ones).
-_COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file", "pyinstaller", "domainsim")
+_COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file", "pyinstaller", "domainsim", "rmm")
+
+
+def _rmm(paths: CasePaths, modules: dict[str, Any], ioc_result: dict[str, Any],
+         sources: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """RMM tools: tags the IOCs of a product (in place) and finds the product names in the text."""
+    try:
+        from . import rmmintel
+        cat = rmmintel.catalogue()
+        cfgs: list[dict[str, Any]] = []
+        obj_findings: list[dict[str, Any]] = []
+        manifest = read_json(paths.manifest) or {}
+        stored = (manifest.get("original") or {}).get("stored_path")
+        if stored:                                 # every object through the C2 rmm extractor
+            cfgs, obj_findings = rmmintel.objects_step(paths.root / stored, paths.extracted_dir, ioc_result,
+                                                       modules.get("c2"))
+        tagged = rmmintel.tag_iocs(ioc_result, cat)
+        known = {"configs": list((modules.get("c2") or {}).get("configs") or []) + cfgs}
+        res = rmmintel.mentions(sources, known, cat)
+        res["tagged_iocs"] = tagged
+        res["configs"] = cfgs
+        # a product named in the text with its context says more than "product only" in the same file
+        mentioned = {m["product"] for m in res.get("mentions") or []}
+        drop = {c["finding_id"] for c in cfgs if c.get("kind") == "indicators" and c["family"][5:] in mentioned}
+        res["configs"] = [c for c in cfgs if c["finding_id"] not in drop]
+        obj_findings = [f for f, c in zip(obj_findings, cfgs) if c["finding_id"] not in drop]
+        res["findings"] = obj_findings + res["findings"]
+    except Exception as exc:  # noqa: BLE001  (never breaks the analysis)
+        log.warning("RMM step skipped for %s: %s", paths.root.name, exc)
+        res = {"module": "rmm", "status": "error", "error": str(exc)[:300], "findings": []}
+    write_subresult(paths, "rmm", res)
+    return res
 
 
 def _domainsim(paths: CasePaths, modules: dict[str, Any], ioc_result: dict[str, Any]) -> dict[str, Any] | None:
@@ -1431,7 +1466,12 @@ def _recompute_derived(paths: CasePaths) -> tuple[int, int]:
 
     modules = _collect_modules(paths)
     modules.pop("domainsim", None)
-    ioc_result = ioc.extract(ioc.sources_from_modules(modules))
+    modules.pop("rmm", None)
+    sources = ioc.sources_from_modules(modules)
+    ioc_result = ioc.extract(sources)
+    rm = _rmm(paths, modules, ioc_result, sources)
+    if rm:
+        modules["rmm"] = rm
     write_subresult(paths, "iocs", ioc_result)
     ds = _domainsim(paths, modules, ioc_result)
     if ds:
