@@ -119,6 +119,20 @@ def _pe_resources(data: bytes) -> list[tuple[str, bytes]]:
     return out
 
 
+def _signed(pe: bytes) -> bool:
+    """The PE carries an Authenticode signature (its security directory is set)."""
+    try:
+        e = struct.unpack_from("<I", pe, 0x3C)[0]
+        if pe[e:e + 4] != b"PE\x00\x00":
+            return False
+        opt = e + 24
+        dd = opt + (96 if struct.unpack_from("<H", pe, opt)[0] == 0x10B else 112)
+        va, size = struct.unpack_from("<II", pe, dd + 4 * 8)
+        return bool(va and size)
+    except struct.error:
+        return False
+
+
 def _try(data: bytes, keys: list[Any]) -> tuple[str, bytes, str] | None:
     from . import stego
     if stego.is_image(data):
@@ -154,14 +168,21 @@ def sweep(paths: Any, original: Path, tree: list[dict[str, Any]],
         if sha in allsh or sha in found:
             return
         out_dir.mkdir(parents=True, exist_ok=True)
-        fname = f"{label}.{kind}".replace("/", "_")[-120:]
+        fname = f"{label.replace('/', '_')[:110]}.{kind}"          # cut at the end: the name stays readable
         p = out_dir / f"{sha[:12]}_{fname}"
         p.write_bytes(payload)
-        found[sha] = {"path": str(p), "filename": fname, "origin": f"hidden in {where} ({how})",
+        stored = how == "stored as it is"
+        found[sha] = {"path": str(p), "filename": fname,
+                      "origin": f"{'stored in' if stored else 'hidden in'} {where}" + ("" if stored else f" ({how})"),
                       "recipe": ["hidden", where, how], "source": "hidden",
-                      "finding": {"tool": "stego", "rule": "stego:payload", "severity": severity,
-                                  "detail": f"{kind.upper()} hidden in {where} ({len(payload)} bytes)",
-                                  "evidence": how, "attack": "T1027.003"}}
+                      # a file kept as it is in a resource is how installers ship files, not steganography
+                      "finding": ({"tool": "pe", "rule": "pe:resource_file", "severity": severity,
+                                   "detail": f"{kind.upper()} stored as it is in {where} ({len(payload)} bytes)"
+                                             + (" — normal for a signed installer / bootstrapper" if severity == "info" else ""),
+                                   "evidence": how, "attack": "T1027.009"} if stored else
+                                  {"tool": "stego", "rule": "stego:payload", "severity": severity,
+                                   "detail": f"{kind.upper()} hidden in {where} ({len(payload)} bytes)",
+                                   "evidence": how, "attack": "T1027.003"})}
 
     # 1. every image the case extracted (not only the ones analysed as children)
     files = []
@@ -211,7 +232,9 @@ def sweep(paths: Any, original: Path, tree: list[dict[str, Any]],
                 continue
             if got:
                 how, payload, kind = got
-                sev = "medium" if how == "stored as it is" else "high"   # installers do store files as they are
+                # installers do store files as they are; a signed one carrying signed files is routine
+                sev = (("info" if _signed(data) and (kind not in ("exe", "dll") or _signed(payload)) else "medium")
+                       if how == "stored as it is" else "high")
                 add(f"{Path(name).stem}.{label}", f"the resource {label} of {name}", how, payload, kind, sev)
     return list(found.values())
 

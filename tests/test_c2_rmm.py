@@ -94,3 +94,11 @@ def test_without_catalogue_builtin_only(tmp_path: Path, monkeypatch) -> None:  #
     monkeypatch.setattr(lolrmm, "path", lambda: tmp_path / "missing.json")
     assert lolrmm.status()["source"] == "builtin"
     assert rmm.extract(ms.rmm_lolrmm_only_exe(), "x.exe") == []
+
+
+def test_same_relay_host_once() -> None:
+    d = (b'ScreenConnect.ClientService.exe "?e=Access&y=Guest&h=instance-abc123-relay.screenconnect.com&p=443&k=x" '
+         b'instance-abc123-relay.screenconnect.com')
+    r = rmm.extract(d, "x.exe")[0]
+    assert r["summary"]["C2"] == ["instance-abc123-relay.screenconnect.com:443"]
+    assert r["c2"] == ["instance-abc123-relay.screenconnect.com"]

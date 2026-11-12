@@ -178,7 +178,9 @@ def extract(data: bytes, filename: str = "") -> list[dict[str, Any]]:
             h = re.sub(r"^[a-z]+://", "", s).split("/", 1)[0].split(",")[0].strip()
             if field_port := fields.get("Relay port") if s == fields.get("Relay") else "":
                 h = f"{h}:{field_port}"
-            hosts.append(h)
+            # the same host twice (relay + instance name, gateway + secondary): once, with its port
+            if not any(x.split(":", 1)[0].lower() == h.split(":", 1)[0].lower() for x in hosts):
+                hosts.append(h)
         lc = lol.get(name) or {}
         # LOLRMM-only products: no vendor line (its website would become an IOC of the sample)
         vendor = PRODUCTS[name][2] if name in PRODUCTS else ""

@@ -161,6 +161,7 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
             pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_RESOURCE"],
             pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_TLS"],
             pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_SECURITY"],
+            pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_DEBUG"],
         ])
     except Exception as exc:  # noqa: BLE001
         item["findings"].append(_finding("pe_malformed", "medium",
@@ -175,12 +176,15 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
     is_dll = bool(pe.FILE_HEADER.Characteristics & 0x2000)
     subsystem = pefile.SUBSYSTEM_TYPE.get(pe.OPTIONAL_HEADER.Subsystem, "unknown")
     ts = pe.FILE_HEADER.TimeDateStamp
-    item.update(machine=machine, is_dll=is_dll, subsystem=subsystem,
-                compiled=_fmt_ts(ts), entrypoint=hex(pe.OPTIONAL_HEADER.AddressOfEntryPoint))
+    repro = _reproducible(pe)
+    compiled = "not a date (reproducible build: the timestamp is a hash)" if repro else _fmt_ts(ts)
+    item.update(machine=machine, is_dll=is_dll, subsystem=subsystem, compiled=compiled, reproducible=repro,
+                entrypoint=hex(pe.OPTIONAL_HEADER.AddressOfEntryPoint))
     f.append(_finding("pe_image", "info",
-        f"PE {'DLL' if is_dll else 'EXE'} ({machine}, {subsystem}, {size} bytes, compiled {_fmt_ts(ts)})",
+        f"PE {'DLL' if is_dll else 'EXE'} ({machine}, {subsystem}, {size} bytes, compiled {compiled})",
         loc, "", "T1204.002"))
-    if ts == 0 or ts > 4_102_444_800 or (0 < ts < 946_684_800):   # zero / >2100 / <2000
+    # a reproducible (deterministic) build stores a hash there, any value is normal
+    if not repro and (ts == 0 or ts > 4_102_444_800 or (0 < ts < 946_684_800)):   # zero / >2100 / <2000
         f.append(_finding("pe_timestamp_anomaly", "low",
             f"suspicious compile timestamp ({ts})", loc, str(ts)))
 
@@ -229,7 +233,8 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
     item["imports_count"] = len(imported)
     for rule, sev, attack, label, apis in _IMPORT_GROUPS:
         hit = sorted({a for a in apis if a in imported})
-        if hit:
+        if hit and rule in _ROUTINE and set(hit) <= _ROUTINE[rule]:
+            sev = "low"          # what every C / C++ runtime imports: context, not a lead
             f.append(_finding(rule, sev, f"{label}: {', '.join(hit[:8])}", loc, ", ".join(hit[:20]), attack))
     if not imported and not is_dll:
         f.append(_finding("pe_no_imports", "medium",
@@ -259,10 +264,9 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
         f.append(_finding("pe_signed", "info", "carries an Authenticode signature (not verified here)", loc))
 
     # --- embedded PE in resources, overlay ---
-    if _has_embedded_pe(pe, blob):
-        f.append(_finding("pe_embedded_pe", "high",
-            "an embedded PE (MZ) was found in a resource — likely a dropper carrying a payload",
-            loc, "", "T1027.009"))
+    # (severity set after the Authenticode check below: a signed installer or
+    # bootstrapper carrying its own binaries is normal)
+    embedded_pe = _has_embedded_pe(pe, blob)
     overlay = pe.get_overlay_data_start_offset()
     if overlay is not None and size - overlay > 1024:
         f.append(_finding("pe_overlay", "low",
@@ -270,7 +274,7 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
 
     # --- version-info masquerade ---
     orig = _version_string(pe, "OriginalFilename")
-    if orig and Path(rel).suffix and orig.lower() != Path(rel).name.lower():
+    if orig and Path(rel).suffix and not _same_name(orig, Path(rel).name) and not _tool_named(rel):
         f.append(_finding("pe_masquerade", "medium",
             f"OriginalFilename '{orig}' differs from the file name '{Path(rel).name}'",
             loc, orig, "T1036"))
@@ -289,6 +293,17 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
             continue
         f.append(x)
     item["lief"] = lf
+    if embedded_pe:
+        sig_ok = str(lf.get("signature_check") or "").upper().endswith("OK")
+        if item["signed"] and sig_ok:
+            f.append(_finding("pe_embedded_pe", "low",
+                "embedded PE in a resource of a binary with a valid Authenticode signature — normal for "
+                "installers and bootstrappers; what it carries is analysed as a child", loc, "", "T1027.009"))
+        else:
+            f.append(_finding("pe_embedded_pe", "medium" if item["signed"] else "high",
+                "an embedded PE (MZ) was found in a resource — likely a dropper carrying a payload"
+                + (" (signed, but the signature could not be verified)" if item["signed"] else ""),
+                loc, "", "T1027.009"))
     for p in lf.get("pdb") or []:
         if p.get("path"):
             strings_for_ioc.append(p["path"])
@@ -407,6 +422,42 @@ def _fmt_ts(ts: int) -> str:
         return datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).strftime("%Y-%m-%d")
     except (OverflowError, OSError, ValueError):
         return str(ts)
+
+
+# Imports every C / C++ runtime brings in: alone they are no lead.
+_ROUTINE: dict[str, set[str]] = {
+    "pe_dynamic_resolve": {"loadlibrary", "loadlibraryex", "getprocaddress"},
+    "pe_antidebug_imports": {"isdebuggerpresent", "outputdebugstringa"},
+}
+
+
+def _reproducible(pe: Any) -> bool:
+    """A reproducible / deterministic build (debug entry IMAGE_DEBUG_TYPE_REPRO):
+    the linker writes a hash where the compile timestamp would be."""
+    try:
+        return any(getattr(d.struct, "Type", None) == 16 for d in getattr(pe, "DIRECTORY_ENTRY_DEBUG", []) or [])
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _same_name(orig: str, name: str) -> bool:
+    """OriginalFilename vs the file's name, tolerant of what extraction does to names:
+    a prefix (resource namespace, ``<sha>_``), a cut from either end, another extension."""
+    o, n = orig.lower().strip(), name.lower().strip()
+    if o == n or n.endswith(o) or o.endswith(n):
+        return True
+    so, sn = Path(o).stem, Path(n).stem
+    return len(so) >= 4 and (so in n or (len(sn) >= 6 and sn in so))
+
+
+# Folders where the app names the files itself (resources, hidden payloads, carved
+# data): their names are labels, not names an attacker chose.
+_TOOL_DIRS = ("hidden", "dotnet_resources", "carved", "images", "stego")
+
+
+def _tool_named(rel: str) -> bool:
+    parts = Path(rel).parts[:-1]
+    return any(p in _TOOL_DIRS for p in parts)
 
 
 def _has_embedded_pe(pe: Any, blob: bytes) -> bool:
