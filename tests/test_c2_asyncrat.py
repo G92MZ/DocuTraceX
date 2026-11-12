@@ -77,3 +77,16 @@ def test_family_cards_and_markdown(tmp_path: Path, monkeypatch) -> None:  # noqa
     analyze.analyze_case(tmp_path / m2["analysis_id"])
     rmm_md = {s["id"]: s["markdown"] for s in mdreport.build(m2["analysis_id"])}["rmm"]
     assert "### About RMM / remote-access tools" in rmm_md and ms.RMM_RELAY in rmm_md
+
+
+def test_quasar_named_layout() -> None:
+    r = dotnet_rats.extract(ms.quasar_exe())
+    s = r["summary"]
+    assert r["family"] == "QuasarRAT" and r["c2"] == ["cdn-update.example.net", "203.0.113.47"]   # no port in the host
+    assert s["C2"] == ["cdn-update.example.net:4782", "203.0.113.47:4782"]
+    assert s["Install path"] == "%AppData%\\SubDir\\Client.exe (hidden file)"
+    assert s["Mutex"] == "QSR_MUTEX_k3Hd9xA1Lm" and s["Group"] == "Office04"
+    assert any("Run\\Quasar Client Startup" in x for x in s["Persistence"])
+    assert any(o.startswith("keylogger on") for o in s["Options"])
+    assert s["Certificate CN"] == "Quasar Server CA" and len(s["Builder defaults"]) == 5
+    assert "named from Quasar.Client.Config.Settings" in r["method"]

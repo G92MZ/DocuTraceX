@@ -31,7 +31,7 @@ FAMILIES: list[dict[str, Any]] = [
     },
     {
         "id": "asyncrat",
-        "name": "AsyncRAT / DcRAT",
+        "name": "AsyncRAT / DcRAT / QuasarRAT",
         "match": ("AsyncRAT", "DcRAT", "QuasarRAT", "AsyncRAT / Quasar family", "VenomRAT"),
         "what": "Open-source .NET remote-access trojans (AsyncRAT and its forks DcRAT and VenomRAT, from the "
                 "Quasar lineage): remote control, keylogging, file transfer and plugins; common in commodity "
@@ -39,10 +39,10 @@ FAMILIES: list[dict[str, Any]] = [
         "arrives": "Usually the last stage of a loader chain: a script, an ISO / ZIP or an Office document drops a "
                    ".NET loader that decrypts the client from a resource, a bitmap or a download.",
         "reads": ["settings decrypted statically (AES-256 + HMAC with the PBKDF2 key, or Quasar 1.3's AES-128) and "
-                  "named by their field in the settings class (Hosts, Ports, MTX, Pastebin…)",
+                  "named by their field in the settings class (AsyncRAT / DcRAT: Hosts, Ports, MTX, Pastebin…; Quasar: HOSTS, MUTEX, TAG, STARTUPKEY…)",
                   "second engine: rat-king-parser, compared with the own decoder",
                   "C2 hosts and ports, or the Pastebin dead drop the C2 is fetched from",
-                  "install path and persistence (scheduled task or Run key), anti-analysis, BSOD-on-kill, delay",
+                  "install path and persistence (scheduled task or Run key), anti-analysis, BSOD-on-kill, delay, keylogger",
                   "the server certificate the client pins (CN, validity, SHA-1) — links samples of the same server",
                   "builder defaults flagged as such; traces only when the settings do not decrypt"],
         "next": "Hunt the hosts / ports and the paste; the certificate SHA-1 links clients of one server; look for "
