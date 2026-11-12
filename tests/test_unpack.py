@@ -262,3 +262,68 @@ def test_dotnet_obfuscator_is_not_a_stub(monkeypatch) -> None:
         n.write_bytes(ms.code_loader_exe())                       # the same label on a native PE: still a protector
         rec2 = unpack.process(n, n.read_bytes(), pefile.PE(str(n)), None)
         assert rec2["status"] == "no_static" and rec2["findings"][0]["rule"] == "pe_protector"
+
+
+_INNO_NEW = ms.inno_new_exe()        # inert Inno Setup 6.4+ stand-in (loader revision 2)
+_TOO_NEW = ("Warning: Unexpected setup loader revision: 2 Warning: Setup loader checksum mismatch! "
+            "Could not determine setup data version!")
+
+
+def _fake_tools(monkeypatch, tmp_path, innoextract=True, innounp=True, innounp_ok=True):  # noqa: ANN001, ANN202
+    ie, iu = tmp_path / "innoextract.exe", tmp_path / "innounp.exe"
+    ie.write_bytes(b"MZ")
+    iu.write_bytes(b"MZ")
+    monkeypatch.setattr(unpack, "innoextract_exe", lambda: ie if innoextract else None)
+    monkeypatch.setattr(unpack, "innounp_exe", lambda: iu if innounp else None)
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, timeout, cwd=None, env=None):  # noqa: ANN001, ANN202
+        calls.append(cmd)
+        if cmd[0] == str(ie):
+            return {"rc": 1, "out": "", "err": _TOO_NEW, "timed_out": False, "duration_s": 0.1}
+        if not innounp_ok:
+            return {"rc": 1, "out": "", "err": "", "timed_out": False, "duration_s": 0.1}
+        out = Path(next(a for a in cmd if a.startswith("-d"))[2:])
+        (out / "{app}").mkdir(parents=True, exist_ok=True)
+        (out / "{app}" / "invoice.exe").write_bytes(b"MZpayload")
+        (out / "install_script.iss").write_text("[Run]\nFilename: \"{app}\\invoice.exe\"\n")
+        return {"rc": 0, "out": "", "err": "", "timed_out": False, "duration_s": 0.1}
+
+    from docutracex import proctools
+    monkeypatch.setattr(proctools, "run_bounded", fake_run)
+    return calls
+
+
+def test_inno_too_new_for_innoextract_goes_to_innounp(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    calls = _fake_tools(monkeypatch, tmp_path)
+    p = tmp_path / "setup.exe"
+    p.write_bytes(_INNO_NEW)
+    rec = unpack.process(p, _INNO_NEW, _pe(_INNO_NEW), tmp_path / "out", use_die=False)
+    assert rec["status"] == "unpacked" and rec["tool"] == "innounp"
+    assert "innoextract 1.9 cannot read this Inno Setup version" in rec["detail"]
+    assert "install_script.iss recovered" in rec["detail"]
+    assert {f["name"] for f in rec["files"]} >= {"install_script.iss", "{app}/invoice.exe"}
+    assert any(s["file"] == "install_script.iss" for s in rec["scripts"])     # mined for IOCs
+    assert [c[1:7] for c in calls[1:]] == [["-x", "-m", "-b", "-y", "-q", "-h"]]
+
+
+def test_inno_too_new_and_no_innounp_says_so(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    _fake_tools(monkeypatch, tmp_path, innounp=False)
+    p = tmp_path / "setup.exe"
+    p.write_bytes(_INNO_NEW)
+    rec = unpack.process(p, _INNO_NEW, _pe(_INNO_NEW), tmp_path / "out", use_die=False)
+    f = next(x for x in rec["findings"] if x["rule"] == "pe_unpack_failed")
+    assert f["severity"] == "low" and "newer than innoextract 1.9 reads" in f["detail"]
+    assert "innounp not installed (Diagnostics → Retry innounp)" in f["detail"]
+    assert "checksum mismatch" not in f["detail"]                     # the raw noise stays out of the finding
+
+
+def test_inno_both_fail_and_none_installed(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    _fake_tools(monkeypatch, tmp_path, innounp_ok=False)
+    p = tmp_path / "setup.exe"
+    p.write_bytes(_INNO_NEW)
+    rec = unpack.process(p, _INNO_NEW, _pe(_INNO_NEW), tmp_path / "out", use_die=False)
+    assert rec["status"] == "failed" and "innounp: Inno Setup version not supported" in rec["detail"]
+    _fake_tools(monkeypatch, tmp_path, innoextract=False, innounp=False)
+    rec = unpack.process(p, _INNO_NEW, _pe(_INNO_NEW), tmp_path / "out2", use_die=False)
+    assert rec["status"] == "not_provisioned" and "Retry innoextract / innounp" in rec["detail"]

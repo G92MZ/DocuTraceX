@@ -443,6 +443,9 @@ _UNPACKERS = (
     ("innoextract", "innoextract", "Extracts Inno Setup installers",
      "Inno Setup installers are not extracted",
      "put innoextract.exe in tools/innoextract/"),
+    ("innounp", "innounp", "Extracts Inno Setup 6.2+ / 7.x installers (innoextract 1.9 stops at 6.1)",
+     "newer Inno Setup installers are not extracted",
+     "press Retry (downloads innounp into tools/innounp/) or put innounp.exe there"),
     ("nuitka-extractor", "nuitka-extractor", "Extracts Nuitka onefile executables",
      "Nuitka onefile payloads are not extracted",
      "put nuitka-extractor.exe in tools/nuitka-extractor/"),
@@ -453,6 +456,44 @@ _UNPACKERS = (
      "Enigma Virtual Box payloads are not extracted",
      "pip install evbunpack in the portable Python"),
 )
+
+
+def _importable_in_tools_python(names: list[str]) -> dict[str, bool]:
+    """{module: importable} in the interpreter that runs the analyses (the portable
+    Python under tools/, probed in its own process; the current one when there is none)."""
+    import importlib.util
+    import json as _json
+    import subprocess
+
+    def here() -> dict[str, bool]:
+        out = {}
+        for n in names:
+            try:
+                out[n] = importlib.util.find_spec(n) is not None
+            except (ImportError, ValueError):
+                out[n] = False
+        return out
+
+    portable = settings.portable_python()
+    if not portable:
+        return here()
+    try:
+        if portable.resolve() == Path(sys.executable).resolve():
+            return here()
+    except OSError:
+        pass
+    code = ("import importlib.util, json, sys\n"
+            "def ok(n):\n"
+            "    try:\n        return importlib.util.find_spec(n) is not None\n"
+            "    except Exception:\n        return False\n"
+            "print(json.dumps({n: ok(n) for n in sys.argv[1:]}))")
+    try:
+        r = subprocess.run([str(portable), "-I", "-c", code, *names], capture_output=True, text=True,
+                           timeout=60, stdin=subprocess.DEVNULL)
+        return {n: bool(v) for n, v in _json.loads(r.stdout.strip().splitlines()[-1]).items()}
+    except Exception:  # noqa: BLE001
+        log.warning("C2 dependency probe on the portable Python failed; checking the current one")
+        return here()
 
 
 def _unpacker_checks() -> list[Check]:
@@ -476,7 +517,7 @@ def _unpacker_checks() -> list[Check]:
         else:
             detail = f"not found — {lost}"
         checks.append(Check(category="Unpackers", name=name, status="ok" if where else "warn",
-                            detail=detail, remedy="" if where else remedy, purpose=purpose))
+                            detail=detail, remedy="" if where else remedy, purpose=purpose, retry=key))
     return checks
 
 
@@ -690,24 +731,30 @@ def run_checks() -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
 
-    # C2 extractors: their dependencies are optional with a warning (registry.REQUIRES)
+    # C2 extractors: their dependencies are optional with a warning (registry.REQUIRES).
+    # They run in the analysis, i.e. on the portable Python: that is where the Python
+    # packages are looked for (the web app's Python does not carry them on purpose).
     try:
         from .c2 import registry as _c2r
         off, less = [], []
+        py_names = sorted({n for reqs in _c2r.REQUIRES.values() for kind, n, *_ in reqs if kind == "python"})
+        on_portable = _importable_in_tools_python(py_names)
         for ex, desc in _c2r.EXTRACTORS.items():
-            d = _c2r.dependency_status(ex, refresh=True)
-            off += [f"{desc['name']}: {m}" for m in d["missing_required"]]
-            less += [f"{desc['name']}: {m}" for m in d["missing_optional"]]
+            for kind, n, required, why in _c2r.REQUIRES.get(ex, []):
+                ok = on_portable.get(n, False) if kind == "python" else _c2r._available(kind, n)
+                if not ok:
+                    (off if required else less).append(f"{desc['name']}: {n} ({why})")
         checks.append(Check(
             category="External tools",
             name="C2 extractors",
             status="ok" if not off and not less else "warn",
-            detail=("all dependencies present" if not off and not less else
+            detail=("all dependencies present (analysis Python)" if not off and not less else
                     "; ".join([f"switched off — {x}" for x in off] + [f"works with less — {x}" for x in less]))[:600],
             remedy="" if not off and not less else
-                   "install the missing Python packages in the app's Python (pip install …) or run install.py; "
-                   "1768.py comes with the toolchain (Diagnostics → Retry didier)",
+                   "Retry tool-deps (installs them into the portable Python under tools/, never into yours); "
+                   "1768.py comes with the toolchain (Retry didier)",
             purpose="Implant configurations (C2 tab); a missing dependency only switches off / limits that extractor",
+            retry="" if not off and not less else ("didier" if all("1768.py" in x for x in off + less) else "tool-deps"),
         ))
     except Exception:  # noqa: BLE001
         pass
