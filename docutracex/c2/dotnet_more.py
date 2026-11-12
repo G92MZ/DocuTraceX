@@ -46,8 +46,16 @@ def _printable(s: str) -> bool:
 
 
 # --- njRAT -----------------------------------------------------------------------
+# njRAT's command names, kept as plain strings even when everything else is renamed
+_NJ_COMMANDS = {"ll", "kl", "prof", "rn", "inv", "ret", "CAP", "un", "up", "RG", "Ex", "PLG", "osk", "MSG", "pl"}
+_NJ_SPLIT_RE = re.compile(r"^\|[^|\s]{1,24}\|$|^\|'\|'\|$")
+
+
 def njrat(data: bytes, strings: list[str]) -> dict[str, Any] | None:
-    if _NJ_SPLIT not in strings and sum(m in s for s in strings for m in _NJ_MARKERS) < 2:
+    cmds = _NJ_COMMANDS & set(strings)
+    splitter = next((s for s in strings if _NJ_SPLIT_RE.match(s)), "")
+    if _NJ_SPLIT not in strings and sum(m in s for s in strings for m in _NJ_MARKERS) < 2 \
+            and not (len(cmds) >= 5 and splitter):
         return None
     summary: dict[str, Any] = {}
     host_i = next((i for i, s in enumerate(strings) if _is_host(s) and not s.lower().startswith("www.")), None)
@@ -69,8 +77,10 @@ def njrat(data: bytes, strings: list[str]) -> dict[str, Any] | None:
             summary["Install name"] = s
         elif s in ("TEMP", "AppData", "UserProfile", "WinDir", "ProgramFiles") and "Install folder" not in summary:
             summary["Install folder"] = s
-    if _NJ_SPLIT in strings:
-        summary["Splitter"] = _NJ_SPLIT
+    if splitter:
+        summary["Splitter"] = splitter
+    if cmds:
+        summary["Commands"] = ", ".join(sorted(cmds))
     return {"family": "njRAT", "kind": "RAT", "method": "plain .NET settings strings", "confidence": "high",
             "summary": summary, "c2": [host],
             "fields": {f"string {i}": s for i, s in enumerate(strings) if _printable(s) and len(s) <= 200}}
