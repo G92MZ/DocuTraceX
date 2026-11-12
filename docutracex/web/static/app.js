@@ -503,7 +503,7 @@ const IOC_TYPE_LABEL = {
   url: "URL", domain: "Domain", ipv4: "IPv4", ipv6: "IPv6", hash_like: "Hash-like",
   email: "Email", filepath: "File path", registry_key: "Registry key",
   named_pipe: "Named pipe", mac_address: "MAC address", command: "Command",
-  user_agent: "User agent",
+  user_agent: "User agent", ms_tenant: "M365 tenant",
 };
 // Group order and plural labels in the IOCs tab.
 const INTEL_TYPES = ["ipv4", "ipv6", "domain", "url", "hash_like"];
@@ -511,7 +511,7 @@ const IOC_GROUPS = [
   ["ipv4", "IPv4"], ["ipv6", "IPv6"], ["domain", "Domains"], ["url", "URLs"],
   ["email", "Emails"], ["user_agent", "User agents"], ["filepath", "File paths"],
   ["registry_key", "Registry keys"], ["named_pipe", "Named pipes"],
-  ["command", "Commands"], ["mac_address", "MAC addresses"], ["hash_like", "Hash-like"],
+  ["command", "Commands"], ["mac_address", "MAC addresses"], ["ms_tenant", "Microsoft 365 tenants"], ["hash_like", "Hash-like"],
 ];
 
 // Manual classification (Marks). Order shown in selectors.
@@ -1079,8 +1079,9 @@ function paneIocs(iocs, net) {
     const uniq = [...new Set(where)].slice(0, 4).join(", ");
     const hay = `${i.value} ${where.join(" ")}`.toLowerCase();
     const rmmTag = i.rmm ? ` <span class="badge badge-warn" title="${escapeHtml(`Remote-access / RMM tool (${i.rmm.category}): ${i.rmm.why}${i.rmm.lolrmm ? ` — LOLRMM: ${i.rmm.lolrmm}` : ""}. Context only: legitimate software, judged by who deployed it.`)}">RMM: ${escapeHtml(i.rmm.product)}</span>` : "";
-    return `<tr data-ioc-row data-hay="${escapeHtml(hay + (i.rmm ? " rmm " + i.rmm.product.toLowerCase() : ""))}">
-      <td class="mono">${escapeHtml(i.value)}${rmmTag}</td>
+    const tenantTag = i.tenant ? ` <span class="badge badge-warn" title="${escapeHtml(`Microsoft 365 tenant ${i.tenant.name} (${i.tenant.role}): ${i.tenant.why}${(i.tenant.names || []).length ? ` — names: ${i.tenant.names.join(", ")}` : ""}`)}">tenant: ${escapeHtml(i.tenant.why)}</span>` : "";
+    return `<tr data-ioc-row data-hay="${escapeHtml(hay + (i.rmm ? " rmm " + i.rmm.product.toLowerCase() : "") + (i.tenant ? ` tenant ${(i.tenant.names || []).join(" ").toLowerCase()}` : ""))}">
+      <td class="mono">${escapeHtml(i.value)}${rmmTag}${tenantTag}</td>
       <td>${i.count}</td>
       <td class="mono" title="${escapeHtml(where.join(", "))}">${escapeHtml(uniq)}</td>
       <td>${addMarkCell("ioc", `${IOC_TYPE_LABEL[i.type] || i.type}: ${i.value}`, "iocs",
@@ -1711,17 +1712,26 @@ function msHeadersBox(ms, tenant) {
     h += `<h4>Tenants (X-MS-Exchange-CrossTenant-Id)</h4><p class="hint-line">AuthAs <b>Internal</b> = the sender's tenant; <b>Anonymous</b> = the receiving one.
       The tenant is an <b>attribution clue</b>, not proof of who sent the message.${tenant && tenant.status === "skipped" ? " Lookup skipped." : ""}${
       tenant && tenant.status === "disabled" ? " Lookup off (Settings)." : ""}</p>`;
-    h += table(["Tenant", "Role", "AuthAs / from", "Organisation (AZMap)", "Related domains", "Mark"], ids.map((b) => {
+    h += table(["Tenant", "Role", "AuthAs / from", "Organisation (AZMap · tenant.fyi)", "Related domains", "Mark"], ids.map((b) => {
       const t = looked[b.tenant_id] || {};
       const d = t.data || {};
+      const f = t.fyi || {};
+      const fd = f.data || {};
+      const other = (d.names || []).filter((n) => n !== d.brand_name && n !== d.tenant_name);
       const org = t.status === "ok" ? escapeHtml([d.brand_name, d.tenant_name].filter(Boolean).join(" · ") || "(no name)")
+          + (other.length ? `<div class="muted">also named: ${escapeHtml(other.slice(0, 5).join(", "))}</div>` : "")
         : t.status ? `<span class="muted">${escapeHtml(t.status)}${t.error ? `: ${escapeHtml(t.error)}` : ""}</span>` : "";
+      const fyiNote = f.provider ? `<div class="muted">tenant.fyi: <a href="${escapeHtml(f.source || "")}" target="_blank" rel="noopener noreferrer">${
+        escapeHtml(f.status === "ok" ? `${(fd.domains || []).length} domain(s)` : f.status || "")}</a>${
+        f.stale ? ` — kept answer (${escapeHtml(f.stale_reason || "unavailable now")})` : f.cached ? " (cached)" : ""}</div>` : "";
+      const seen = {};
+      (fd.domains || []).forEach((x) => { if (!x.current) seen[x.domain] = [x.first_seen, x.last_seen].filter(Boolean).join(" → "); });
       const rel = (d.related_domains || []);
       return `<tr><td class="mono"><a href="${escapeHtml(t.source || `https://azmap.dev/?tenant_id=${b.tenant_id}`)}" target="_blank" rel="noopener noreferrer">${escapeHtml(b.tenant_id)}</a></td>
         <td>${escapeHtml(t.role || b.role || "")}</td><td>${escapeHtml([b.auth_as, b.from_entity].filter(Boolean).join(" / "))}</td>
-        <td>${org}${t.cached ? ' <span class="muted">(cached)</span>' : ""}</td>
+        <td>${org}${t.cached ? ' <span class="muted">(cached)</span>' : ""}${fyiNote}</td>
         <td class="mono">${rel.slice(0, 12).map((x) => (t.matched_domains || []).includes(x) ? `<b>${escapeHtml(x)}</b>` : escapeHtml(x)).join(", ")}${rel.length > 12 ? ` … (${rel.length})` : ""}${
-          (d.former_domains || []).length ? `<div class="muted">removed: ${escapeHtml(d.former_domains.slice(0, 12).join(", "))}${d.former_domains.length > 12 ? ` … (${d.former_domains.length})` : ""}</div>` : ""}</td>
+          (d.former_domains || []).length ? `<div class="muted">removed: ${d.former_domains.slice(0, 12).map((x) => seen[x] ? `<span title="${escapeHtml(seen[x])}">${escapeHtml(x)}</span>` : escapeHtml(x)).join(", ")}${d.former_domains.length > 12 ? ` … (${d.former_domains.length})` : ""}</div>` : ""}</td>
         <td>${addMarkCell("tenant", `Tenant ${b.tenant_id}${d.brand_name ? ` (${d.brand_name})` : ""}`, "microsoft", rel.join(", "))}</td></tr>`;
     }).join(""));
     const doms = (tenant && tenant.domains) || [];
@@ -4963,19 +4973,21 @@ function renderMailintel(m) {
 }
 
 async function loadTenantLookup() {
-  const box = document.getElementById("tenant-lookup");
-  if (!box) return;
-  try { box.checked = !!(await (await fetch("/api/settings/tenant-lookup")).json()).enabled; } catch (_) { /* optional */ }
-  if (box.dataset.wired) return;
-  box.dataset.wired = "1";
-  box.addEventListener("change", async () => {
-    const msg = document.getElementById("tenant-lookup-msg");
-    try {
-      const r = await fetch("/api/settings/tenant-lookup", { method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: box.checked }) });
-      msg.className = "status ok-text"; msg.textContent = (await r.json()).enabled ? "On (new analyses)" : "Off";
-    } catch (err) { msg.className = "status bad-text"; msg.textContent = String(err); }
-  });
+  for (const [id, api] of [["tenant-lookup", "tenant-lookup"], ["tenant-fyi-lookup", "tenant-fyi-lookup"]]) {
+    const box = document.getElementById(id);
+    if (!box) continue;
+    try { box.checked = !!(await (await fetch(`/api/settings/${api}`)).json()).enabled; } catch (_) { /* optional */ }
+    if (box.dataset.wired) continue;
+    box.dataset.wired = "1";
+    box.addEventListener("change", async () => {
+      const msg = document.getElementById(`${id}-msg`);
+      try {
+        const r = await fetch(`/api/settings/${api}`, { method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: box.checked }) });
+        msg.className = "status ok-text"; msg.textContent = (await r.json()).enabled ? "On (new analyses)" : "Off";
+      } catch (err) { msg.className = "status bad-text"; msg.textContent = String(err); }
+    });
+  }
 }
 
 function renderLolrmm(t) {

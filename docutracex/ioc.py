@@ -341,6 +341,7 @@ _TOOL_HOSTS = (  # hosts that belong to a tool (subdomains included)
     "oletools.readthedocs.io", "yara.readthedocs.io", "pypdf.readthedocs.io",
     "msoffcrypto-tool.readthedocs.io", "pefile.readthedocs.io",
     "azmap.dev",                       # the Microsoft 365 tenant lookup the app links to
+    "tenant.fyi",                      # the other one (names, current and former domains)
 )
 _TOOL_PYPI = {
     "oletools", "olefile", "colorlog", "vipermonkey", "pefile", "pdfid", "peepdf",

@@ -1321,6 +1321,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                          lambda: ioc.extract(ioc_sources))
         rm = run("rmm: remote-access tools in the IOCs and the text (LOLRMM)",
                  lambda: _rmm(paths, modules, ioc_result, ioc_sources))
+        _tenant_iocs(modules, ioc_result)
         if rm:
             modules["rmm"] = rm
         write_subresult(paths, "iocs", ioc_result)
@@ -1430,6 +1431,15 @@ def _rmm(paths: CasePaths, modules: dict[str, Any], ioc_result: dict[str, Any],
     return res
 
 
+def _tenant_iocs(modules: dict[str, Any], ioc_result: dict[str, Any]) -> None:
+    """The sender's Microsoft 365 tenant (ID, name, former domains) into the IOCs."""
+    try:
+        from . import tenantintel
+        tenantintel.add_iocs(ioc_result, modules.get("mailrules"))
+    except Exception as exc:  # noqa: BLE001  (never breaks the analysis)
+        log.warning("tenant IOCs skipped: %s", exc)
+
+
 def _domainsim(paths: CasePaths, modules: dict[str, Any], ioc_result: dict[str, Any]) -> dict[str, Any] | None:
     """Global domain similarity over every Domain IOC of the case (any file type)."""
     try:
@@ -1472,6 +1482,7 @@ def _recompute_derived(paths: CasePaths) -> tuple[int, int]:
     rm = _rmm(paths, modules, ioc_result, sources)
     if rm:
         modules["rmm"] = rm
+    _tenant_iocs(modules, ioc_result)
     write_subresult(paths, "iocs", ioc_result)
     ds = _domainsim(paths, modules, ioc_result)
     if ds:

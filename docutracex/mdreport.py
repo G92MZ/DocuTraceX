@@ -73,10 +73,14 @@ def _findings(cid: str) -> str:
 def _iocs(cid: str) -> str:
     paths = ai_tools._paths(cid)
     items = (read_json(paths.subresult("iocs")) or {}).get("iocs", [])
+    def tag(i: dict[str, Any]) -> str:
+        if i.get("tenant"):
+            return f"tenant {i['tenant'].get('name', '')}: {i['tenant'].get('why', '')}"
+        return f"RMM: {i['rmm'].get('product', '')}" if i.get("rmm") else ""
     rows = [[i.get("type"), i.get("value"), i.get("count"),
-             "; ".join(sorted({f"{o.get('module')}/{o.get('location')}" for o in i.get("occurrences", [])})[:4])]
+             "; ".join(sorted({f"{o.get('module')}/{o.get('location')}" for o in i.get("occurrences", [])})[:4]), tag(i)]
             for i in items]
-    return f"# IOCs ({len(items)})\n\n" + _table(["Type", "Value", "Count", "Seen in"], rows)
+    return f"# IOCs ({len(items)})\n\n" + _table(["Type", "Value", "Count", "Seen in", "Tag"], rows)
 
 
 def _nested(cid: str) -> str:
