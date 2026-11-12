@@ -206,25 +206,67 @@ def _payload(b: bytes) -> str | None:
     return None
 
 
+MAX_BLOB_KEYS = 300        # assembly-wide fallback: key strings tried at most
+
+
+def _aes_head_ok(raw: bytes, key: bytes) -> bool:
+    """Cheap pre-check: does block 1 decrypt to a known magic (ECB, CBC iv=0 or iv=key)?"""
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    if len(raw) < 16 or len(raw) % 16:
+        return False
+    block = Cipher(algorithms.AES(key), modes.ECB()).decryptor().update(raw[:16])
+    return any(_payload(bytes(a ^ b for a, b in zip(block, iv))) for iv in (b"\x00" * 16, key[:16]))
+
+
+def _type_of(m: dict[str, Any]) -> str:
+    return str(m.get("method") or "").split("::")[0]
+
+
 def decrypt_blob(raw: bytes, methods: list[dict[str, Any]]) -> tuple[str, bytes, str] | None:
     """Try the decryptors of the assembly (their key strings / static arrays and
-    algorithm) on an encrypted resource; keep only a recognisable file."""
+    algorithm) on an encrypted resource; keep only a recognisable file.
+
+    Key material is looked for in the decrypting method first, then in the rest
+    of its class (loaders keep the key in a static field set by ``.cctor``), and
+    last in every string of the assembly (bounded)."""
     if len(raw) < 16:
         return None
-    for m in methods:
-        hints = _hints(m)
-        if not hints & {"aes", "xor"}:
-            continue
-        keys = _keys(list(m.get("_arrays") or []) + list(m["_all_strings"]))
-        for kl, kb in keys:
-            if "aes" in hints:
+    crypto = [(m, _hints(m) & {"aes", "xor"}) for m in methods]
+    crypto = [(m, h) for m, h in crypto if h]
+    if not crypto:
+        return None
+
+    def attempt(hints: set[str], material: list[Any], where: str) -> tuple[str, bytes, str] | None:
+        for kl, kb in _keys(material):
+            if "aes" in hints and len(kb) in (16, 24, 32) and _aes_head_ok(raw, kb):
                 cands = [(ml, out) for ml, out in _aes(raw, kb, any_pad=True) if _payload(out)]
                 if cands:                                 # ECB / CBC share block 1: keep the cleanest
                     ml, out = min(cands, key=lambda c: _entropy(c[1]))
-                    return f"AES-{len(kb) * 8} {ml}, key {kl} ({m['method']})", out, _payload(out) or "bin"
-            if "xor" in hints:
+                    return f"AES-{len(kb) * 8} {ml}, key {kl} ({where})", out, _payload(out) or "bin"
+            if "xor" in hints and kb and _payload(_xor(raw[:4], kb)):
                 out = _xor(raw, kb)
                 ext = _payload(out)
                 if ext:
-                    return f"XOR key {kl} ({m['method']})", out, ext
-    return None
+                    return f"XOR key {kl} ({where})", out, ext
+        return None
+
+    for m, h in crypto:                                   # 1. the method itself
+        got = attempt(h, list(m.get("_arrays") or []) + list(m["_all_strings"]), m["method"])
+        if got:
+            return got
+    for m, h in crypto:                                   # 2. its class (static fields, .cctor)
+        own = {id(m)}
+        mat: list[Any] = []
+        for o in methods:
+            if id(o) not in own and _type_of(o) == _type_of(m):
+                mat += list(o.get("_arrays") or []) + list(o["_all_strings"])
+        got = attempt(h, list(dict.fromkeys(x if isinstance(x, str) else bytes(x) for x in mat)),
+                      f"{m['method']}, key from its class")
+        if got:
+            return got
+    every: list[Any] = []                                 # 3. the whole assembly
+    for o in methods:
+        every += [s for s in o["_all_strings"] if 4 <= len(s) <= 128]
+    every = list(dict.fromkeys(every))[:MAX_BLOB_KEYS]
+    hints = set().union(*(h for _m, h in crypto))
+    return attempt(hints, every, f"{crypto[0][0]['method']}, key from the assembly's strings")

@@ -278,6 +278,13 @@ def _findings(item: dict[str, Any]) -> list[dict[str, Any]]:
                             "detail": f"{e['stego']['type'].upper()} hidden in the pixels of the Bitmap {x['name']} › {e['name']}"
                                       f" ({e['stego']['size']} bytes) — steganographic loader",
                             "evidence": e["stego"]["how"], "attack": "T1027.003"})
+            if e.get("decrypted"):
+                d = e["decrypted"]
+                out.append({"rule": "dotnet:resource_decrypted", "severity": "high" if d["type"] == "exe" else "medium",
+                            "tool": "dotnet", "location": loc,
+                            "detail": f"encrypted resource {x['name']} › {e['name']} decrypted statically → {d['type']} "
+                                      f"({d['size']} bytes): the loader's next stage", "evidence": d["how"],
+                            "attack": "T1140"})
         if x.get("decrypted"):
             out.append({"rule": "dotnet:resource_decrypted", "severity": "high" if x["decrypted"]["type"] == "exe" else "medium",
                         "tool": "dotnet", "location": loc,
@@ -444,6 +451,20 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
                                 if child:
                                     child["recipe"] = ["dotnet-resource", x["name"], e["name"], "bitmap pixels: " + how]
                                     e["stego"]["stored_path"] = sub.get("stored_path", "")
+                                    res.setdefault("_children", []).append(child)
+                        if blob and meths and not e.get("carved") and blob[:2] != b"MZ" and len(blob) >= 64 \
+                                and _entropy(blob) >= 7.0:
+                            from .strdec import decrypt_blob
+                            got = decrypt_blob(blob, meths)
+                            if got:
+                                how, plain, ext = got
+                                e["decrypted"] = {"how": how, "size": len(plain), "type": ext}
+                                sub = {"name": f"{x['name']}.{e['name']}.decrypted.{ext}"}
+                                child = _resource_child(root, sha, t["label"], sub, plain)
+                                if child:
+                                    child["recipe"] = ["dotnet-resource", x["name"], e["name"],
+                                                       "decrypt: " + how.split(" (")[0]]
+                                    e["decrypted"]["stored_path"] = sub.get("stored_path", "")
                                     res.setdefault("_children", []).append(child)
                         if blob:
                             e["pe"] = blob[:2] == b"MZ"
