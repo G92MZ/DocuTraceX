@@ -62,7 +62,8 @@ def test_sample_hijack_rules() -> None:
     p.write_bytes(ms.email_chain_eml())
     r = mail_rules.analyze(p, ".eml", mail.analyze(p, ".eml", d / "x"), d)
     ids = {m["id"] for m in r["engine"]["matched"]}
-    assert {"thread_hijack_injected_participant", "thread_references_missing"} <= ids
+    assert "thread_hijack_injected_participant" in ids
+    assert "thread_references_missing" not in ids          # a thread never carries every referenced message
     assert "thread_chronology_inverted" not in ids
     assert r["verdict"]["verdict"] == "phishing"
 

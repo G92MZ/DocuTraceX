@@ -394,13 +394,8 @@ rules:
     evidence: "Subject: {thread.subject}"
 
   # Message-ID / In-Reply-To / References, read against Chain
-  - id: thread_references_missing
-    title: The thread references earlier messages that are not available (incomplete conversation — not suspicious by itself)
-    severity: info
-    score: 0
-    attack: []
-    when: {fact: thread.missing_refs}
-    evidence: "missing: {thread.missing_refs}"
+  # (no rule for References naming messages not in the file: a forwarded thread never carries
+  #  them all, so it is the normal case, not a signal)
 
   - id: thread_orphan_reply
     title: Reply to a message that is neither attached nor quoted (orphan reply)
