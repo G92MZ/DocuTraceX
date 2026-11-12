@@ -47,7 +47,7 @@ def test_vmonkey_no_result_reason() -> None:
     assert vm._no_result_reason(rec) == "ViperMonkey stopped without a result"
     rec = {"output": "  On Error GoTo 0\n", "stderr": "ERROR    Emulation time exceeded.\n"
            "ERROR    The ViperMonkey emulation time limit was exceeded. Aborting analysis.\n"}
-    assert vm._no_result_reason(rec).startswith("time limit (3 min) reached")
+    assert vm._no_result_reason(rec).startswith(f"time limit ({vm.EMULATION_MINUTES} min) reached") and vm.EMULATION_MINUTES == 5
     rec = {"stderr": "ERROR    Something odd happened\n"}
     assert vm._no_result_reason(rec) == "Something odd happened"
     rec = {"stderr": "Traceback (most recent call last):\n  File x\nKeyError: 'foo'\n", "returncode": 1}

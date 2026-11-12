@@ -29,8 +29,8 @@ from ..config import tmo
 
 log = get_logger(__name__)
 
-EMULATION_MINUTES = 3          # ViperMonkey's own time limit
-PROCESS_TIMEOUT = tmo(8 * 60)      # hard limit for the whole run
+EMULATION_MINUTES = 5          # ViperMonkey's own time limit (it discards a partial emulation)
+PROCESS_TIMEOUT = tmo(10 * 60)     # hard limit for the whole run (parsing + 5 min of emulation)
 _MAX_ACTIONS = 500
 
 # action keyword -> (rule, severity, label); first match wins.
