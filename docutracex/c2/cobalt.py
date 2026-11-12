@@ -736,6 +736,20 @@ def extract(path: Path, data: bytes, _depth: int = 0) -> dict[str, Any] | None:
 
 def _extract_carving(path: Path, data: bytes, _depth: int) -> dict[str, Any] | None:
     res = _extract(path, data)
+    if (res is None or res.get("kind") == "indicators") and _depth == 0 and _is_pe(data):
+        import tempfile
+        for off, key, blob in xor4_payloads(data):
+            with tempfile.TemporaryDirectory() as t:
+                cp = Path(t) / f"xor4_{off:x}.bin"
+                cp.write_bytes(blob)
+                got = extract(cp, blob, _depth + 1)
+            if got and got.get("kind") != "indicators":
+                how = f"payload XOR-ed with 4-byte key {key.hex()} at offset 0x{off:x} (Artifact Kit layout)"
+                got["method"] = f"{got['method']} · {how}"
+                got["summary"] = {"Loader": how, **(got.get("summary") or {})}
+                if res and res.get("indicators"):
+                    got.setdefault("indicators", res["indicators"])
+                return got
     if (res is None or res.get("kind") == "indicators") and _depth == 0:
         import tempfile
         for off, blob in carve_reflective(data):
@@ -749,6 +763,53 @@ def _extract_carving(path: Path, data: bytes, _depth: int) -> dict[str, Any] | N
                 got["summary"] = {"Carved at": f"0x{off:x} (embedded reflective DLL / PE)", **(got.get("summary") or {})}
                 return got
     return res
+
+
+# Artifact Kit (and loaders built like it) keep the payload in a data section XOR-ed with a
+# 4-byte key: [u32 ?][u32 length][4-byte key][4 bytes][payload ^ key]. Found by the key that
+# turns the bytes into a block_api prologue / a reflective-loader head.
+_XOR4_HEADS = (b"\xfc\xe8\x89\x00\x00\x00\x60\x89", b"\xfc\xe8\x8f\x00\x00\x00\x60\x89",
+               b"\xfc\xe8\x82\x00\x00\x00\x60\x89", b"\xfc\x48\x83\xe4\xf0\xe8\xc8\x00",
+               b"\xfc\x48\x83\xe4\xf0\xe8\xc0\x00", b"\xfc\x48\x83\xe4\xf0\xe8\xcc\x00",
+               b"MZARUH\x89\xe5", b"MZRE\x89\xe5\x81\xc3")
+MAX_XOR4_SCAN = 4 * 1024 * 1024
+
+
+def xor4_payloads(data: bytes) -> list[tuple[int, bytes, bytes]]:
+    """[(file offset, key, decoded payload)] — payloads XOR-ed with a 4-byte key in a PE's sections."""
+    try:
+        import pefile
+        pe = pefile.PE(data=data, fast_load=True)
+    except Exception:  # noqa: BLE001
+        return []
+    out: list[tuple[int, bytes, bytes]] = []
+    for sec in pe.sections:
+        base = sec.PointerToRawData
+        d = data[base:base + min(sec.SizeOfRawData, MAX_XOR4_SCAN)]
+        if len(d) < 16:
+            continue
+        # key-independent: byte[i] ^ byte[i+4] equals head[i] ^ head[i+4] whatever the 4-byte key
+        n4 = len(d) - 4
+        x = (int.from_bytes(d[:n4], "big") ^ int.from_bytes(d[4:], "big")).to_bytes(n4, "big")
+        for head in _XOR4_HEADS:
+            want = bytes(head[i] ^ head[4 + i] for i in range(4))
+            off = x.find(want)
+            while off >= 0:
+                key = bytes(d[off + i] ^ head[i] for i in range(4))
+                if key != b"\x00\x00\x00\x00":
+                    break
+                off = x.find(want, off + 1)
+            if off < 0:
+                continue
+            n = len(d) - off
+            if off >= 12:                              # Artifact Kit header: [length][key][pad] before it
+                ln = struct.unpack_from("<I", d, off - 12)[0]
+                if d[off - 8:off - 4] == key and 64 <= ln <= n:
+                    n = ln
+            dec = bytes(b ^ key[i % 4] for i, b in enumerate(d[off:off + n]))
+            out.append((base + off, key, dec))
+            return out
+    return out
 
 
 def applicable(data: bytes) -> bool:
