@@ -90,7 +90,32 @@ def _keys(raw: list[Any]) -> list[tuple[str, bytes]]:
         b = _b64(k)
         if b:
             out.append((f'Base64("{k[:24]}")', b))
+        if 2 <= len(k) <= 128 and len(k) % 2 == 0 and all(c in "0123456789abcdefABCDEF" for c in k):
+            out.append((f'hex "{k[:24]}"', bytes.fromhex(k)))   # keys handed between stages as hex text
     return out
+
+
+def _rc4(key: bytes, data: bytes) -> bytes:
+    """RC4, any key length (loaders write it inline; ``cryptography`` refuses odd sizes)."""
+    S = list(range(256))
+    j = 0
+    for i in range(256):
+        j = (j + S[i] + key[i % len(key)]) & 255
+        S[i], S[j] = S[j], S[i]
+    i = j = 0
+    out = bytearray(len(data))
+    for n, c in enumerate(data):
+        i = (i + 1) & 255
+        j = (j + S[i]) & 255
+        S[i], S[j] = S[j], S[i]
+        out[n] = c ^ S[(S[i] + S[j]) & 255]
+    return bytes(out)
+
+
+def _rc4_shape(m: dict[str, Any]) -> bool:
+    """An inline RC4: a 256-entry state table, ``& 255`` and ``xor`` in one method."""
+    ops = m.get("_ops") or ()
+    return "xor" in ops and "and" in ops and ("rem" in ops or "rem.un" in ops) and 256 in (m.get("_ints") or ())
 
 
 def _attempts(s: Any, keys: list[Any], hints: set[str]) -> Iterable[tuple[str, str]]:
@@ -231,7 +256,7 @@ def decrypt_blob(raw: bytes, methods: list[dict[str, Any]]) -> tuple[str, bytes,
     last in every string of the assembly (bounded)."""
     if len(raw) < 16:
         return None
-    crypto = [(m, _hints(m) & {"aes", "xor"}) for m in methods]
+    crypto = [(m, (_hints(m) & {"aes", "xor"}) | ({"rc4"} if _rc4_shape(m) else set())) for m in methods]
     crypto = [(m, h) for m, h in crypto if h]
     if not crypto:
         return None
@@ -243,6 +268,11 @@ def decrypt_blob(raw: bytes, methods: list[dict[str, Any]]) -> tuple[str, bytes,
                 if cands:                                 # ECB / CBC share block 1: keep the cleanest
                     ml, out = min(cands, key=lambda c: _entropy(c[1]))
                     return f"AES-{len(kb) * 8} {ml}, key {kl} ({where})", out, _payload(out) or "bin"
+            if "rc4" in hints and kb and 1 <= len(kb) <= 256 and _payload(_rc4(kb, raw[:4])):
+                out = _rc4(kb, raw)
+                from ..stego import identify
+                if identify(out):
+                    return f"RC4 key {kl} ({where})", out, _payload(out) or "bin"
             if "xor" in hints and kb and _payload(_xor(raw[:4], kb)):
                 out = _xor(raw, kb)
                 ext = _payload(out)

@@ -134,6 +134,17 @@ def _plausible_head(h: bytes) -> bool:
 
 
 # --- pixel streams ----------------------------------------------------------------
+def _byte_orders(major: str, raw: bytes) -> Iterable[tuple[str, bytes]]:
+    for name, idx in _ORDERS.items():
+        if name == "RGBA":
+            yield f"{major}, {name} bytes", raw
+            continue
+        out = bytearray(len(raw) // 4 * len(idx))
+        for j, c in enumerate(idx):
+            out[j::len(idx)] = raw[c::4]
+        yield f"{major}, {name} bytes", bytes(out)
+
+
 def _streams(img: Any) -> Iterable[tuple[str, bytes]]:
     from PIL import Image
     rgba = img.convert("RGBA")
@@ -143,14 +154,7 @@ def _streams(img: Any) -> Iterable[tuple[str, bytes]]:
         np = None
     for major, im in (("rows", rgba), ("columns", rgba.transpose(Image.Transpose.TRANSPOSE))):
         raw = im.tobytes()
-        for name, idx in _ORDERS.items():
-            if name == "RGBA":
-                yield f"{major}, {name} bytes", raw
-                continue
-            out = bytearray(len(raw) // 4 * len(idx))
-            for j, c in enumerate(idx):
-                out[j::len(idx)] = raw[c::4]
-            yield f"{major}, {name} bytes", bytes(out)
+        yield from _byte_orders(major, raw)
         if np is None:
             continue
         a = np.frombuffer(raw, dtype=np.uint8).reshape(-1, 4)
@@ -161,6 +165,16 @@ def _streams(img: Any) -> Iterable[tuple[str, bytes]]:
                 for order in ("big", "little"):
                     packed = np.packbits(bits[:len(bits) // 8 * 8], bitorder=order).tobytes()
                     yield f"{major}, LSB{nb} {cl} ({'MSB' if order == 'big' else 'LSB'} first)", packed
+    # loaders that skip empty (fully transparent black) pixels: the encoder left them as padding
+    for major, im in (("rows", rgba), ("columns", rgba.transpose(Image.Transpose.TRANSPOSE))):
+        raw = im.tobytes()
+        if np is not None:
+            a = np.frombuffer(raw, dtype=np.uint8).reshape(-1, 4)
+            dense = a[a.any(axis=1)].tobytes()
+        else:
+            dense = b"".join(raw[i:i + 4] for i in range(0, len(raw), 4) if raw[i:i + 4] != b"\x00\x00\x00\x00")
+        if 0 < len(dense) < len(raw):
+            yield from _byte_orders(f"{major} without empty pixels", dense)
 
 
 # --- decodings of one stream ------------------------------------------------------
@@ -191,6 +205,29 @@ def _xor(data: bytes, key: bytes) -> bytes:
     return bytes(a ^ b for a, b in zip(data, rep))
 
 
+MAX_RECOVERED_KEY = 16
+
+
+def recover_xor_key(body: bytes) -> bytes | None:
+    """Repeating-key XOR of a PE, key unknown: the 32 bytes at 0x1C–0x3B of a
+    standard DOS header are zero, so there the ciphertext IS the key stream. A
+    period of at most MAX_RECOVERED_KEY that repeats there and turns the first
+    two bytes into ``MZ`` gives the key (callers keep it only if the whole
+    result is a well-formed file)."""
+    if len(body) < 0x100:
+        return None
+    z = body[0x1C:0x3C]
+    if not any(z):
+        return None                                      # not encrypted (or not this)
+    for p in range(1, MAX_RECOVERED_KEY + 1):
+        if all(z[i] == z[i % p] for i in range(len(z))):
+            key = bytes(z[(i - 0x1C) % p] for i in range(p))
+            if body[0] ^ key[0] == 0x4D and body[1] ^ key[1 % p] == 0x5A:
+                return key
+            return None
+    return None
+
+
 def _decodings(s: bytes, keys: list[tuple[str, bytes]]) -> Iterable[tuple[str, bytes]]:
     """Cheap head tests first; the whole stream is transformed only on a hit."""
     bodies = [("", s)]
@@ -218,12 +255,13 @@ def _decodings(s: bytes, keys: list[tuple[str, bytes]]) -> Iterable[tuple[str, b
                     yield f"{label}Base64 + zlib/gzip", zlib.decompressobj(47).decompress(dec)
             except (binascii.Error, zlib.error, ValueError):
                 pass
+        holes = b"\x00" * 64 in body                    # zero runs in XOR-ed data = padding holes: wrong stream
         for mg in _MAGICS:                          # single-byte XOR that makes a magic appear
             k0 = body[0] ^ mg[0]
-            if k0 and all(body[i] ^ k0 == mg[i] for i in range(1, len(mg))):
+            if k0 and not holes and all(body[i] ^ k0 == mg[i] for i in range(1, len(mg))):
                 yield f"{label}XOR 0x{k0:02x}", _xor(body, bytes([k0]))
         for kl, kb in keys:
-            if len(kb) > 1 and _plausible_head(_xor(body[:8], kb)):
+            if len(kb) > 1 and not holes and _plausible_head(_xor(body[:8], kb)):
                 yield f"{label}XOR key {kl}", _xor(body, kb)
             if len(kb) in (16, 24, 32) and len(body) >= 32:
                 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -231,6 +269,9 @@ def _decodings(s: bytes, keys: list[tuple[str, bytes]]) -> Iterable[tuple[str, b
                     if _plausible_head(Cipher(algorithms.AES(kb), mode).decryptor().update(body[:16])):
                         yield (f"{label}AES-{len(kb) * 8} {ml} key {kl}",
                                Cipher(algorithms.AES(kb), mode).decryptor().update(body[:len(body) // 16 * 16]))
+        rk = None if holes else recover_xor_key(body)
+        if rk:
+            yield f"{label}XOR key {rk.hex()} (recovered from the zeros of the DOS header)", _xor(body, rk)
 
 
 def is_image(data: bytes) -> bool:
