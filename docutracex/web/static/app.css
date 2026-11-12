@@ -954,3 +954,64 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 .quick-ic[data-tool="ml"] { --ic: #b48cff; }
 .quick-ic[data-tool="c2"] { --ic: #ff7a59; }
 .quick-ic[data-tool="hex"] { --ic: #59c3ff; }
+
+/* ---------------------------------------------------------------------------
+   Phones and narrow tablets: one column, a compact single-row navigation that
+   scrolls sideways, and tables that scroll inside their panel instead of
+   widening the page. Heavy views (hex, call graph, CFG) stay usable by scrolling.
+   --------------------------------------------------------------------------- */
+@media (max-width: 760px) {
+  html, body { overflow-x: hidden; }
+  .content { padding: 12px 10px; }
+  .panel { padding: 12px; border-radius: 10px; min-width: 0; max-width: 100%; }
+  .view, .panel, .panel > *, #comp-body, #comp-body > * { min-width: 0; max-width: 100%; }
+
+  /* top bar */
+  .topbar { padding: 8px 12px; }
+  .brand-sub { display: none; }
+  .brand-mark { font-size: 17px; }
+  .brand-logo { width: 26px; height: 26px; margin-right: 8px; }
+
+  /* navigation: one row of icon tabs, scrolled sideways; group labels become coloured ticks */
+  .tabs { flex-wrap: nowrap; overflow-x: auto; gap: 6px; padding: 8px 10px; scrollbar-width: none;
+          -webkit-overflow-scrolling: touch; scroll-snap-type: x proximity; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab-group { flex-direction: row; padding: 4px; gap: 4px; border-radius: 12px; scroll-snap-align: start;
+               border-top: 2px solid var(--g); }
+  .tab-group-label { display: none; }
+  .tab-group-system { margin-left: 0; }
+  .tab-group-items { gap: 4px; }
+  .tab { min-width: 0; padding: 7px; border-radius: 9px; }
+  .tab-icon { width: 17px; height: 17px; padding: 4px; }
+
+  /* tables: scroll inside the panel; values wrap, columns keep a readable width */
+  table.cases { display: block; overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
+  table.cases th, table.cases td { padding: 6px 7px; }
+  table.cases td.mono, table.cases td:first-child { min-width: 150px; max-width: 260px; overflow-wrap: anywhere; }
+  table.cases td:not(.mono):not(:first-child) { white-space: normal; }
+
+  /* findings: one card per finding — severity · source · rule on top, then detail and where */
+  table.findings-table { display: block; overflow: visible; }
+  table.findings-table thead { display: none; }
+  table.findings-table tbody { display: block; }
+  table.findings-table tr { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 9px 2px;
+                            border-bottom: 1px solid var(--panel-border); }
+  table.findings-table td { display: block; border: 0; padding: 0; min-width: 0; max-width: 100%; }
+  table.findings-table td:nth-child(n+4) { flex: 1 1 100%; overflow-wrap: anywhere; }
+  table.findings-table td:nth-child(5) { font-size: 12px; color: var(--text-dim); }
+  table.findings-table td:first-child { min-width: 0; }
+
+  /* toolbars, forms and button rows wrap; inputs take the width */
+  .ioc-toolbar, .cx-toolbar, .diag-head, .quick-form, form.upload { flex-wrap: wrap; gap: 6px; }
+  input[type="search"], input[type="text"], input[type="password"], input[type="url"], select, textarea {
+    max-width: 100%; }
+  .ioc-q, .cx-toolbar input[type="search"] { flex: 1 1 100%; }
+  .btn { touch-action: manipulation; }
+  .add-mark-form { max-width: 100%; flex-wrap: wrap; }
+
+  /* case header and sub-tabs */
+  .subtabs, .itabs { flex-wrap: wrap; gap: 6px; }
+  pre, .cx-code, .c2-pre { max-width: 100%; overflow-x: auto; font-size: 12px; }
+  h2 { font-size: 20px; }
+  .hint-line { overflow-wrap: anywhere; }
+}
