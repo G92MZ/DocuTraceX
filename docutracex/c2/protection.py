@@ -30,13 +30,19 @@ MARKERS: dict[str, tuple[str, tuple[bytes, ...]]] = {
     "VMProtect": ("virtualizer", (b".vmp0\x00", b".vmp1\x00")),
     "Enigma Protector": ("protector", (b".enigma1", b".enigma2")),
     "Obsidium": ("protector", (b"Obsidium",)),
+    # packers with no static unpacker here (UPX is unpacked by the app; these are not)
+    "MPRESS": ("packer", (b".MPRESS",)),
+    "ASPack": ("packer", (b".aspack\x00", b".adata\x00\x00")),
+    "PECompact": ("packer", (b"PEC2TO", b"PECompact2")),
+    "NsPack": ("packer", (b".nsp0\x00", b".nsp1\x00")),
 }
 # Themida 3 renames its sections to spaces / random words but keeps the taggant section
 _THEMIDA3 = b".taggant"
 
 SAYS = {"virtualizer": "its code runs inside a virtual machine of the protector",
         "protector": "its code is encrypted and only unpacked when it runs",
-        "obfuscator": "its strings and settings are encrypted by the obfuscator's own routines"}
+        "obfuscator": "its strings and settings are encrypted by the obfuscator's own routines",
+        "packer": "it is compressed by a packer that only unpacks itself when it runs (no static unpacker here)"}
 
 
 def detect(data: bytes, die_detects: list[dict[str, Any]] | None = None) -> list[dict[str, str]]:
@@ -45,8 +51,10 @@ def detect(data: bytes, die_detects: list[dict[str, Any]] | None = None) -> list
     head = data[:64 * 1024 * 1024]
     for name, (kind, marks) in MARKERS.items():
         # as an identifier (#Strings, sections) or as a .NET user string (UTF-16)
-        hit = next((m for m in marks if m in head or (m[:1] != b"." and m.rstrip(b"\x00").decode("latin-1")
-                                                        .encode("utf-16-le") in head)), None)
+        zone = head[:4096] if kind == "packer" else head            # packers: section names in the PE header
+        hit = next((m for m in marks if m in zone or (kind != "packer" and m[:1] != b"."
+                                                      and m.rstrip(b"\x00").decode("latin-1").encode("utf-16-le") in head)),
+                   None)
         if hit:
             out.append({"name": name, "kind": kind,
                         "evidence": f"marker {hit.decode('latin-1').strip(chr(0)).replace(chr(0), '')!r}"})

@@ -40,3 +40,12 @@ def test_c2_tab_says_protected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     assert c2.get("protected") and c2["protected"][0]["protectors"][0]["name"] == "KoiVM"
     md = {s["id"]: s["markdown"] for s in mdreport.build(m["analysis_id"])}
     assert "**protected**" in md["c2"] and "KoiVM" in md["c2"]
+
+
+def test_packers_without_static_unpacker() -> None:
+    mpress = b"MZ" + b"\x00" * 200 + b".MPRESS1" + b"\x00" * 32 + b".MPRESS2" + b"\x00" * 64
+    got = protection.detect(mpress)
+    assert got[0]["name"] == "MPRESS" and got[0]["kind"] == "packer"
+    assert "compressed by a packer" in protection.note(got)
+    # a section name deep in the data (not in the header) is not a packer
+    assert protection.detect(b"MZ" + b"\x00" * 8000 + b".MPRESS1") == []
