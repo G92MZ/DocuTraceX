@@ -91,6 +91,23 @@ FAMILIES: list[dict[str, Any]] = [
                   "give traces.",
     },
     {
+        "id": "snake",
+        "name": "Snake Keylogger",
+        "match": ("Snake Keylogger", "Snake-like keylogger"),
+        "what": "Commodity .NET keylogger and credential stealer (also sold as 404 Keylogger): keystrokes, "
+                "clipboard, screenshots and saved browser / mail / FTP credentials, sent out by mail, FTP or Telegram.",
+        "arrives": "Invoice and purchase-order phishing: an archive or Office document that drops a loader, which "
+                   "decrypts the keylogger in memory.",
+        "reads": ["the strings decrypted statically (DES-ECB, key from MD5 of a string of the binary)",
+                  "the exfiltration channel: SMTP server, port, sender and receiver, the password by its position "
+                  "after the sender; FTP URL, user and password; Telegram bot token and chat ID",
+                  "credentials marked sensitive; the banner; traces only when nothing decrypts"],
+        "next": "Hunt the mail / FTP server and the accounts; report the mailbox or the bot to its provider; "
+                "the credentials are the operator's — evidence, not a login.",
+        "limits": "A loader that is not unpacked hides the keylogger; the order of the settings decides the "
+                  "password, so it is shown as taken by position; option flags (screenshots, clipboard…) are not read.",
+    },
+    {
         "id": "rmm",
         "name": "RMM / remote-access tools",
         "match": ("RMM: ",),
