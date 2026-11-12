@@ -125,6 +125,23 @@ FAMILIES: list[dict[str, Any]] = [
                   "builds with another string encryption only give traces.",
     },
     {
+        "id": "warzone",
+        "name": "Warzone / AveMaria",
+        "match": ("Warzone / AveMaria",),
+        "what": "Native C++ RAT sold as a service: remote desktop and hidden RDP, UAC bypass, keylogger "
+                "(online and offline), credential theft from browsers and mail clients, reverse proxy.",
+        "arrives": "Phishing attachments (Office documents with exploits or macros, archives) that drop or "
+                   "inject it, often through a loader.",
+        "reads": ["the .bss configuration decrypted statically (RC4 with the key stored next to it)",
+                  "C2 host:port, the RC4 key and the version (warzoneNNN)",
+                  "the builder options after the port, shown raw (their layout changes between versions)",
+                  "traces (Ave_Maria, UAC bypass moniker, _rptls key, rdpwrap) — alone when nothing decrypts"],
+        "next": "Hunt the C2 host:port; look for the HKCU\\Software\\_rptls key, added RDP users and "
+                "rdpwrap on endpoints.",
+        "limits": "Install / startup / keylogger options are not named until real samples confirm the layout; "
+                  "a packed or injected payload has to be unpacked first.",
+    },
+    {
         "id": "rmm",
         "name": "RMM / remote-access tools",
         "match": ("RMM: ",),

@@ -12,7 +12,9 @@
 * **Raccoon Stealer v2** (native): strings ``base64( RC4(key, value) )`` with
   the RC4 key a plain string in the binary; the C2 is an ``http(s)://`` URL.
 * **Warzone / AveMaria** (native): ``.bss`` section = ``[key length DWORD]
-  [RC4 key][RC4(config)]``; config = ``[host length DWORD][host UTF-16][port]``.
+  [RC4 key][RC4(config)]``; config = ``[host length DWORD][host UTF-16][port]``
+  then the builder options (shown raw: their layout changes between
+  versions); the version from ``warzoneNNN``; traces when nothing decrypts.
 * **DarkGate**: settings base64-encoded with a *custom alphabet* (a 64-char
   permutation of the standard one stored in the binary / script).
 
@@ -335,9 +337,35 @@ def _bss(data: bytes) -> bytes | None:
     return None
 
 
+WARZONE = familyspec.Spec(
+    family="Warzone / AveMaria", fields={},
+    traces=((b"Ave_Maria", "Ave_Maria string"), (b"A\x00v\x00e\x00_\x00M\x00a\x00r\x00i\x00a", "Ave_Maria string"),
+            (b"warzone", "warzone version string"), (b"w\x00a\x00r\x00z\x00o\x00n\x00e", "warzone version string"),
+            (b"Elevation:Administrator!new:", "UAC bypass moniker"),
+            (b"E\x00l\x00e\x00v\x00a\x00t\x00i\x00o\x00n\x00:\x00A\x00d\x00m\x00i\x00n", "UAC bypass moniker"),
+            (b"_rptls", "registry key _rptls"), (b"_\x00r\x00p\x00t\x00l\x00s", "registry key _rptls"),
+            (b"rdpwrap", "hidden RDP (rdpwrap)"), (b"r\x00d\x00p\x00w\x00r\x00a\x00p", "hidden RDP (rdpwrap)")),
+    min_traces=3)
+_WZ_VERSION = re.compile(rb"w(?:\x00)?a(?:\x00)?r(?:\x00)?z(?:\x00)?o(?:\x00)?n(?:\x00)?e(?:\x00)?((?:\d(?:\x00)?){2,4})")
+
+
 def warzone(data: bytes) -> dict[str, Any] | None:
-    if data[:2] != b"MZ" or b".bss" not in data[:0x400]:
+    if data[:2] != b"MZ":
         return None
+    res = _warzone_config(data) if b".bss" in data[:0x400] else None
+    if res is None:
+        return familyspec.traces(WARZONE, data)
+    m = _WZ_VERSION.search(data)
+    if m:
+        digits = m.group(1).replace(b"\x00", b"").decode()
+        res["summary"] = {"Version": f"{digits[0]}.{digits[1:]}", **res["summary"]}
+    hits = [what for needle, what in WARZONE.traces if needle in data]
+    if hits:
+        res["summary"]["Traces"] = list(dict.fromkeys(hits))
+    return res
+
+
+def _warzone_config(data: bytes) -> dict[str, Any] | None:
     blob = _bss(data)
     if not blob or len(blob) < 16:
         return None
@@ -355,9 +383,18 @@ def warzone(data: bytes) -> dict[str, Any] | None:
     port = struct.unpack_from("<H", cfg, 4 + hlen)[0]
     if not _is_host(host) or not port:
         return None
+    rest = cfg[4 + hlen + 2:4 + hlen + 2 + 256]
+    gap = re.search(rb"\x00{16,}", rest)             # the options end where the zero padding starts
+    rest = (rest[:gap.start()] if gap else rest[:64]).rstrip(b"\x00")
     return {"family": "Warzone / AveMaria", "kind": "RAT", "method": f".bss: RC4 (key {klen} bytes)",
-            "confidence": "high", "summary": {"C2": [f"{host}:{port}"]}, "c2": [host],
-            "fields": {"host": host, "port": str(port), "key": blob[4:4 + klen].hex()}}
+            "confidence": "high",
+            "summary": {"C2": [f"{host}:{port}"], "RC4 key": blob[4:4 + klen].hex(),
+                        "Note": "the bytes after the port hold the builder options (install, startup, "
+                                "offline keylogger, hidden RDP…); their layout changes between versions, "
+                                "so they are shown raw"},
+            "c2": [host],
+            "fields": {"host": host, "port": str(port), "key": blob[4:4 + klen].hex(),
+                       **({"options (raw)": rest.hex()} if rest else {})}}
 
 
 # --- DarkGate --------------------------------------------------------------------------------
@@ -424,11 +461,10 @@ def extract_all(data: bytes) -> list[dict[str, Any]]:
         if best:
             out.append(best)
     else:
-        for fn in (warzone, raccoon):
-            r = fn(data)
-            if r:
-                out.append(r)
-                break
+        found = [r for fn in (warzone, raccoon) for r in [fn(data)] if r]
+        best = next((r for r in found if r.get("kind") != "indicators"), found[0] if found else None)
+        if best:
+            out.append(best)
     if not out:
         r = darkgate(data)
         if r:
