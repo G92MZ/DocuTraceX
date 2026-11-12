@@ -5,17 +5,6 @@ really sent it, how it travelled, whether its authentication holds, what it asks
 do, and what it carries. DocuTraceX answers each of those in its own tab, and analyses every
 attachment and link target as a case of its own.
 
-!!! example "Try it"
-    The pictures on this page come from these inert samples in `samples/samples.zip`:
-
-    | Sample | What it shows |
-    |---|---|
-    | `email/sample.eml` | an invoice-fraud email: spoofed sender, failed authentication, a macro document, an RTF exploit, a disguised executable, HTML smuggling and a QR code |
-    | `email/sample_email_chain.eml` | a conversation with quoted replies and an attached original: the thread-hijack pattern |
-    | `email/sample_m365_headers.eml` | Microsoft 365 / Exchange Online anti-spam stamps |
-    | `email/sample_brand_lookalike.eml` | a sender domain that imitates a brand |
-    | `email/sample_gateway_links.eml` | links wrapped by several mail security gateways |
-
 ## Delivery path and attachments
 
 At the top of every email case: the **Received chain**, from origin to destination, with the IP,
