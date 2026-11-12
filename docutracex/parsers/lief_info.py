@@ -161,8 +161,16 @@ def _pe(b: Any, lief: Any) -> dict[str, Any]:
                        for s in list(b.sections)[:60]]
     ov = _try(lambda: bytes(b.overlay), b"") or b""
     if ov:
-        out["overlay"] = {"offset": b.overlay_offset, "size": len(ov), "entropy": _entropy(ov[:4 << 20]),
-                          "head": ov[:16].hex()}
+        # the Authenticode signature sits after the sections: LIEF counts it as overlay, it is not one
+        start = b.overlay_offset
+        cert = _try(lambda: b.data_directories[4], None)
+        coff, csize = (_try(lambda: cert.rva, 0) or 0, _try(lambda: cert.size, 0) or 0) if cert is not None else (0, 0)
+        if coff and csize and start <= coff < start + len(ov):
+            ov = ov[:coff - start] + ov[coff - start + csize:]
+            out["overlay_signature"] = {"offset": coff, "size": csize}
+        if len(ov) > 8:
+            out["overlay"] = {"offset": start, "size": len(ov), "entropy": _entropy(ov[:4 << 20]),
+                              "head": ov[:16].hex(), "excludes_signature": bool(out.get("overlay_signature"))}
     return out
 
 

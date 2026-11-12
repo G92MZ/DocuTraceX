@@ -264,3 +264,22 @@ def test_yara_scans_nested_and_decoded_stages(client: TestClient, env: Path) -> 
     hits = [s for s in comp["modules"]["yara"]["scanned"] if s.get("matches")]
     assert any("stages" in (s.get("stored_path") or s.get("file") or "") for s in hits)
     assert not [f for f in comp["findings"] if f["source"] == "yara"]
+
+
+def test_yara_reaches_extracted_objects(client: TestClient, env: Path) -> None:
+    """YARA runs over every object of the case, not only the original: a rule that can
+    only match the decompressed child of an archive still hits (and files_scanned counts all)."""
+    import io
+    import zipfile
+    client.post("/api/yara/upload", files={"file": ("c.yar", b'rule Child_Only { strings: $m="FACTURA_CHILD_MARKER_0187" '
+                                                             b'condition: $m }')})
+    _compile(client)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("factura.txt", ("FACTURA_CHILD_MARKER_0187 " * 200).encode())
+    assert b"FACTURA_CHILD_MARKER_0187" not in buf.getvalue()
+    cid = client.post("/api/cases", files={"file": ("factura.zip", buf.getvalue())}).json()["analysis_id"]
+    _wait_case(client, cid)
+    ymod = client.get(f"/api/cases/{cid}/components").json()["modules"]["yara"]
+    assert ymod["files_scanned"] >= 2
+    assert [h["file"] for h in ymod["scanned"]] and all(h["file"] != "original" for h in ymod["scanned"])

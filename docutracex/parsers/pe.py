@@ -268,9 +268,18 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
     # bootstrapper carrying its own binaries is normal)
     embedded_pe = _has_embedded_pe(pe, blob)
     overlay = pe.get_overlay_data_start_offset()
-    if overlay is not None and size - overlay > 1024:
-        f.append(_finding("pe_overlay", "low",
-            f"overlay data appended after the last section ({size - overlay} bytes)", loc, str(size - overlay)))
+    if overlay is not None:
+        before, after = overlay_parts(overlay, size, sec.VirtualAddress, sec.Size)
+        item["overlay"] = {"offset": overlay, "before_signature": before, "after_signature": after}
+        if before > 1024:
+            f.append(_finding("pe_overlay", "low",
+                f"overlay data appended after the last section ({before} bytes"
+                + (", not counting the Authenticode signature" if item["signed"] else "") + ")", loc, str(before)))
+        if after > 8:                            # beyond the 8-byte alignment padding
+            f.append(_finding("pe_data_after_signature", "medium",
+                f"{after} bytes appended after the Authenticode signature — outside what the signature "
+                "covers (configuration stamped on a signed installer, or content added to a signed file)",
+                loc, str(after), "T1027"))
 
     # --- version-info masquerade ---
     orig = _version_string(pe, "OriginalFilename")
@@ -422,6 +431,18 @@ def _fmt_ts(ts: int) -> str:
         return datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).strftime("%Y-%m-%d")
     except (OverflowError, OSError, ValueError):
         return str(ts)
+
+
+def overlay_parts(overlay: int, size: int, cert_off: int, cert_size: int) -> tuple[int, int]:
+    """(bytes of overlay before the Authenticode signature, bytes after it).
+
+    pefile / LIEF count the certificate table as overlay — it sits after the
+    sections — so a signed file always "has an overlay" of high entropy (the
+    PKCS#7 blob). The signature is not an overlay: only what is around it is."""
+    if not cert_off or not cert_size or cert_off < overlay or cert_off >= size:
+        return max(0, size - overlay), 0
+    end = min(size, cert_off + cert_size)
+    return cert_off - overlay, size - end
 
 
 # Imports every C / C++ runtime brings in: alone they are no lead.
