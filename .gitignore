@@ -42,3 +42,6 @@ Thumbs.db
 # "infected": antivirus engines flag its source). An unpacked copy to edit
 # (python scripts/samplegen.py --unpack) is never committed.
 /scripts/make_samples.py
+
+# documentation site build output (mkdocs build)
+/site/

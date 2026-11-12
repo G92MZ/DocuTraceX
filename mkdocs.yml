@@ -1,0 +1,84 @@
+site_name: DocuTraceX
+site_description: Static forensic analysis of malicious documents, emails, scripts and droppers — without opening them.
+site_url: https://g92mz.github.io/DocuTraceX/
+repo_url: https://github.com/G92MZ/DocuTraceX
+repo_name: G92MZ/DocuTraceX
+edit_uri: edit/main/docs/
+copyright: © 2026 Gregorio Moreno (gmzpt) · Apache-2.0
+
+theme:
+  name: material
+  icon:
+    logo: material/file-search-outline
+    repo: fontawesome/brands/github
+  favicon: assets/favicon.svg
+  palette:
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: light blue
+      toggle:
+        icon: material/weather-sunny
+        name: Light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: light blue
+      toggle:
+        icon: material/weather-night
+        name: Dark mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - toc.follow
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.tabs.link
+
+extra_css:
+  - assets/extra.css
+
+plugins:
+  - search
+  - glightbox:
+      zoomable: true
+      skip_classes: [no-lightbox]
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.keys
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+# pages outside the site (README pictures) and drafts
+exclude_docs: |
+  img/
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - File types:
+      - Email: file-types/email.md
+  - Reference:
+      - Tools and licences: TOOLS.md
+      - Detection rules: detection-rules.md
+      - Microsoft 365 headers: microsoft-headers.md
+      - C2 external parsers: c2-external-parsers.md
