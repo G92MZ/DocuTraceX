@@ -9,6 +9,7 @@ TOOLS = [
     (unpack.upx_exe, "DOCUTRACEX_UPX", "upx", "upx.exe"),
     (unpack.sevenzip_exe, "DOCUTRACEX_7Z", "7zip", "7z.exe"),
     (unpack.innoextract_exe, "DOCUTRACEX_INNOEXTRACT", "innoextract", "innoextract.exe"),
+    (unpack.innounp_exe, "DOCUTRACEX_INNOUNP", "innounp", "innounp.exe"),
     (unpack.die_exe, "DOCUTRACEX_DIEC", "die", "diec.exe"),
     (unpack.nuitka_exe, "DOCUTRACEX_NUITKA_EXTRACTOR", "nuitka-extractor", "nuitka-extractor.exe"),
 ]

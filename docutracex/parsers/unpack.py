@@ -14,7 +14,8 @@ family              tool                                        license
 ==================  ==========================================  ==============
 UPX                 ``upx -d`` (+ section-name repair retry)    GPL-2.0+
 AutoIt (compiled)   AutoIt-Ripper (portable Python)             MIT
-Inno Setup          innoextract                                 zlib
+Inno Setup          innoextract, then innounp (Inno Setup 6.2+  zlib / GPL
+                    up to 7.1, which innoextract 1.9 cannot read)
 NSIS, 7z/RAR/ZIP    7-Zip (``7z x``)                            LGPL-2.1
 SFX
 Nuitka onefile      nuitka-extractor                            MIT
@@ -169,6 +170,13 @@ def innoextract_exe() -> Path | None:
                  ("innoextract.exe", "innoextract"), ("innoextract",))
 
 
+def innounp_exe() -> Path | None:
+    """innounp (Inno Setup Unpacker, J. Rathlev's branch): reads the Inno Setup 6.2+ / 7.x
+    installers innoextract 1.9 (2020) does not. Windows console tool."""
+    t = _tools_dir() / "innounp"
+    return _tool("DOCUTRACEX_INNOUNP", (t / "innounp.exe",), ("innounp.exe", "innounp"), ("innounp",))
+
+
 def sevenzip_exe() -> Path | None:
     """7-Zip's CLI. Needed for SFX archives and RAR (FLARE-VM: C:\\Program Files\\7-Zip\\7z.exe)."""
     t = _tools_dir() / "7zip"
@@ -211,6 +219,7 @@ def tool_status() -> dict[str, str]:
     if not (die and die_db.is_dir() and any(die_db.rglob("*"))):
         die = None
     return {"die": p(die), "upx": p(upx_exe()), "innoextract": p(innoextract_exe()),
+            "innounp": p(innounp_exe()),
             "7zip": p(sevenzip_exe()), "nuitka-extractor": p(nuitka_exe()),
             "autoit-ripper": "portable" if _has_module("autoit_ripper") else "",
             "evbunpack": "portable" if _has_module("evbunpack") else ""}
@@ -471,7 +480,12 @@ def _unpack_autoit(path: Path, out: Path) -> dict[str, Any]:
     return {**rec, "status": "error", "detail": "no AutoIt script found (unsupported version or not AutoIt)"}
 
 
-def _unpack_inno(path: Path, out: Path) -> dict[str, Any]:
+# innoextract's words for "this Inno Setup is newer than I know"
+_INNO_TOO_NEW = ("unexpected setup loader revision", "could not determine setup data version",
+                 "not a supported inno setup", "unknown version", "setup loader checksum mismatch")
+
+
+def _innoextract(path: Path, out: Path) -> dict[str, Any]:
     exe = innoextract_exe()
     if exe is None:
         return {"status": "not_provisioned", "tool": "innoextract",
@@ -483,8 +497,62 @@ def _unpack_inno(path: Path, out: Path) -> dict[str, Any]:
         return {**rec, "status": "ok", "detail": "Inno Setup payload extracted"}
     if r.get("timed_out"):
         return {**rec, "status": "timeout", "detail": f"innoextract timed out after {UNPACK_TIMEOUT}s"}
-    err = (r.get("err") or r.get("out") or r.get("error") or "").strip()[-300:]
+    err = " ".join((r.get("err") or r.get("out") or r.get("error") or "").split())[-300:]
+    if any(w in err.lower() for w in _INNO_TOO_NEW):
+        return {**rec, "status": "unsupported", "detail": "Inno Setup newer than innoextract 1.9 reads (6.1 at most)",
+                "tool_output": err}
     return {**rec, "status": "error", "detail": f"innoextract failed: {err}"}
+
+
+_INNOUNP_EXIT = {1: "Inno Setup version not supported", 2: "corrupt or incompatible setup file", 3: "error"}
+
+
+def _innounp(path: Path, out: Path) -> dict[str, Any]:
+    exe = innounp_exe()
+    if exe is None:
+        return {"status": "not_provisioned", "tool": "innounp",
+                "detail": "innounp not found (tools/innounp/, DOCUTRACEX_INNOUNP, PATH)"}
+    out.mkdir(parents=True, exist_ok=True)
+    # -x extract · -m also the embedded files (install_script.iss: [Run] entries, Pascal code)
+    # -b batch: never prompts (a password-protected setup just fails) · -y overwrite · -q -h -o quiet
+    r = _run([str(exe), "-x", "-m", "-b", "-y", "-q", "-h", "-o", f"-d{out}", str(path)], UNPACK_TIMEOUT)
+    rec = {"tool": "innounp", "duration_s": r["duration_s"]}
+    if any(p.is_file() for p in out.rglob("*")):
+        script = next((p for p in out.rglob("install_script.iss")), None)
+        return {**rec, "status": "ok", "detail": "Inno Setup payload extracted with innounp"
+                + (" (install_script.iss recovered: [Run] / [Code])" if script else "")}
+    if r.get("timed_out"):
+        return {**rec, "status": "timeout", "detail": f"innounp timed out after {UNPACK_TIMEOUT}s"}
+    why = _INNOUNP_EXIT.get(r.get("rc"), "failed")
+    err = " ".join((r.get("err") or r.get("out") or r.get("error") or "").split())[-300:]
+    return {**rec, "status": "error", "detail": f"innounp: {why}" + (f" — {err}" if err else "")}
+
+
+def _unpack_inno(path: Path, out: Path) -> dict[str, Any]:
+    """innoextract first; innounp when innoextract is missing or cannot read the setup
+    (Inno Setup 6.2+: "unexpected setup loader revision", checksum mismatch…)."""
+    first = _innoextract(path, out)
+    if first["status"] in ("ok", "timeout"):
+        return first
+    if out.is_dir():
+        shutil.rmtree(out, ignore_errors=True)
+    second = _innounp(path, out)
+    if second["status"] == "ok":
+        note = ("innoextract 1.9 cannot read this Inno Setup version" if first["status"] == "unsupported"
+                else f"innoextract: {first['detail']}")
+        return {**second, "detail": f"{second['detail']} ({note})", "tried": [first, second]}
+    if first["status"] == "not_provisioned" and second["status"] == "not_provisioned":
+        return {"status": "not_provisioned", "tool": "innoextract / innounp",
+                "detail": "no Inno Setup unpacker (Diagnostics → Retry innoextract / innounp)"}
+    parts = []
+    for x in (first, second):
+        if x["status"] == "not_provisioned":
+            parts.append(f"{x['tool']} not installed (Diagnostics → Retry {x['tool']})")
+        else:
+            parts.append(f"{x['tool']}: {x['detail']}")
+    status = "unsupported" if first["status"] == "unsupported" and second["status"] == "not_provisioned" else "error"
+    return {"status": status, "tool": "innoextract / innounp", "detail": "; ".join(parts),
+            "tried": [first, second]}
 
 
 def _unpack_7z(path: Path, out: Path, label: str) -> dict[str, Any]:

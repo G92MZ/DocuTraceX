@@ -55,8 +55,40 @@ def test_case_warns_and_diagnostics_lists_it(tmp_path: Path, monkeypatch: pytest
     w = " | ".join(res["warnings"])
     assert "AsyncRAT / DcRAT / QuasarRAT: switched off — needs cryptography" in w
     assert "Cobalt Strike: works with less — missing 1768.py" in w
+    real = deps._importable_in_tools_python
+    monkeypatch.setattr(deps, "_importable_in_tools_python",
+                        lambda names: {**real(names), "cryptography": False})
     chk = next(x for x in deps.run_checks()["checks"] if x["name"] == "C2 extractors")
     assert chk["status"] == "warn" and "switched off" in chk["detail"] and "works with less" in chk["detail"]
+    assert chk["retry"] == "tool-deps" and "portable Python" in chk["remedy"] and "pip install" not in chk["remedy"]
+
+
+def test_diagnostics_asks_the_analysis_python(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The C2 packages live in the portable Python (where analyses run), not in the web app's:
+    Diagnostics must look there — a web Python without them is no warning."""
+    import json
+    import subprocess
+
+    from docutracex import deps
+    fake = tmp_path / "python.exe"
+    fake.write_text("")
+    import types
+    real_settings, real_run = deps.settings, deps.subprocess.run
+    monkeypatch.setattr(deps, "settings", types.SimpleNamespace(portable_python=lambda: fake))
+    seen = {}
+
+    def run(cmd, **kw):  # noqa: ANN001, ANN003, ANN202
+        seen["cmd"] = cmd
+        return subprocess.CompletedProcess(cmd, 0, json.dumps({n: True for n in cmd[4:]}), "")
+    monkeypatch.setattr(deps.subprocess, "run", run)
+    got = deps._importable_in_tools_python(["dissect.cobaltstrike", "rat_king_parser"])
+    assert got == {"dissect.cobaltstrike": True, "rat_king_parser": True} and seen["cmd"][0] == str(fake)
+    monkeypatch.setattr(deps, "settings", real_settings)
+    monkeypatch.setattr(deps.subprocess, "run", real_run)
+    monkeypatch.setattr(deps, "_importable_in_tools_python", lambda names: {n: True for n in names})
+    monkeypatch.setattr(registry, "_available", lambda kind, name: kind != "python" or name == "pefile")
+    chk = next(x for x in deps.run_checks()["checks"] if x["name"] == "C2 extractors")
+    assert chk["status"] == "ok", chk                                     # web Python lacking them: no warning
 
 
 # --- rat-king-parser: second .NET RAT engine ------------------------------------------------

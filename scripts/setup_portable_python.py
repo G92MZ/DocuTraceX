@@ -1403,6 +1403,7 @@ UPX_DIR = TOOLS / "upx"
 SEVENZIP_DIR = TOOLS / "7zip"
 DIE_DIR = TOOLS / "die"
 INNOEXTRACT_DIR = TOOLS / "innoextract"
+INNOUNP_DIR = TOOLS / "innounp"
 NUITKA_DIR = TOOLS / "nuitka-extractor"
 
 
@@ -1412,6 +1413,12 @@ DIE_DB_REPO = "horsicq/Detect-It-Easy"
 NUITKA_REPO = "extremecoders-re/nuitka-extractor"
 INNOEXTRACT_URL = "https://constexpr.org/innoextract/files/innoextract-1.9/innoextract-1.9-windows.zip"
 INNOEXTRACT_SHA256 = "6989342c9b026a00a72a38f23b62a8e6a22cc5de69805cf47d68ac2fec993065"
+# innounp 2.71.3 (J. Rathlev's branch; Inno Setup 2.0.7 – 7.1.1), pinned to a commit of the repo that
+# publishes it (the file name carries no version) and to its SHA-256. Runs in a separate process.
+INNOUNP_VERSION = "2.71.3"
+INNOUNP_URL = ("https://raw.githubusercontent.com/jrathlev/InnoUnpacker-Windows-GUI/"
+               "418937d9913c67b9abbe93a2e9e725a06f0f2be7/innounp-2/bin/innounp-2.zip")
+INNOUNP_SHA256 = "f8e45c9676bebc7d7570108ab572673b541fcf7a7d3d24a04319ac6b5315b4e8"
 SEVENZIP_VERSION = "26.02"
 # Use the official x64 MSI rather than 7z2602-extra.7z. The Extra archive is
 # BCJ2-compressed, which py7zr cannot extract; the MSI supports administrative
@@ -1739,6 +1746,34 @@ def install_innoextract() -> bool:
         return False
 
 
+def _innounp_ok() -> bool:
+    return (INNOUNP_DIR / "innounp.exe").is_file()
+
+
+def install_innounp() -> bool:
+    """innounp: the Inno Setup 6.2+ / 7.x installers innoextract 1.9 cannot read."""
+    if _innounp_ok():
+        return True
+    if not sys.platform.startswith("win"):
+        print("[=] innounp automatic provisioning targets Windows (a Windows console tool); skipped.")
+        return False
+    print(f"[>] Downloading innounp {INNOUNP_VERSION} (Inno Setup Unpacker)...")
+    try:
+        import hashlib
+        data = _get(INNOUNP_URL)
+        got = hashlib.sha256(data).hexdigest()
+        if got != INNOUNP_SHA256:
+            raise ValueError(f"SHA-256 mismatch ({got})")
+        files = _safe_extract_zip(data, INNOUNP_DIR, flatten_root=True)
+        if not any(p.name.lower() == "innounp.exe" for p in files):
+            raise RuntimeError("innounp.exe not found in the archive")
+        print(f"[+] innounp installed at {INNOUNP_DIR}")
+        return _innounp_ok()
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] innounp could not be provisioned ({exc}); it remains optional.")
+        return False
+
+
 def _nuitka_extractor_ok() -> bool:
     return (NUITKA_DIR / "nuitka-extractor.exe").is_file()
 
@@ -2018,13 +2053,14 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
     install_ilspy()      # ILSpy CLI + portable .NET runtime (.NET decompilation, on demand)
     install_de4dot()     # de4dot-cex, --strtyp none only (Windows / Mono)
     # PE packer / installer unpackers. Each is optional and independently guarded.
-    for _name in ("upx", "7zip", "die", "innoextract", "nuitka-extractor",
+    for _name in ("upx", "7zip", "die", "innoextract", "innounp", "nuitka-extractor",
                   "autoit-ripper", "evbunpack"):
         _clear_mark(_name)
     install_upx()
     install_7zip()
     install_die()
     install_innoextract()
+    install_innounp()
     install_nuitka_extractor()
     install_autoit_ripper()
     install_evbunpack()
@@ -2289,13 +2325,14 @@ def _ensure_optional() -> None:
                               ("7zip", _sevenzip_ok, install_7zip),
                               ("die", _die_ok, install_die),
                               ("innoextract", _innoextract_ok, install_innoextract),
+                              ("innounp", _innounp_ok, install_innounp),
                               ("nuitka-extractor", _nuitka_extractor_ok, install_nuitka_extractor),
                               ("autoit-ripper", lambda: _portable_import_ok("autoit_ripper"), install_autoit_ripper),
                               ("evbunpack", lambda: _portable_import_ok("evbunpack"), install_evbunpack),
                               ("ember", _ember_ok, install_ember),
                               ("ilspy", _ilspy_ok, install_ilspy),
                               ("de4dot", _de4dot_ok, install_de4dot)):
-        if name in ("floss", "capa", "upx", "7zip", "die", "innoextract",
+        if name in ("floss", "capa", "upx", "7zip", "die", "innoextract", "innounp",
                     "nuitka-extractor", "de4dot") and not sys.platform.startswith("win"):
             continue  # Windows-only standalone builds provisioned by this installer
         try:
@@ -2418,6 +2455,7 @@ COMPONENTS: dict = {
     "7zip": lambda: bool(install_7zip()) and _sevenzip_ok(),
     "die": lambda: bool(install_die()) and _die_ok(),
     "innoextract": lambda: bool(install_innoextract()) and _innoextract_ok(),
+    "innounp": lambda: bool(install_innounp()) and _innounp_ok(),
     "nuitka-extractor": lambda: bool(install_nuitka_extractor()) and _nuitka_extractor_ok(),
     "autoit-ripper": lambda: bool(install_autoit_ripper()) and _portable_import_ok("autoit_ripper"),
     "evbunpack": lambda: bool(install_evbunpack()) and _portable_import_ok("evbunpack"),
