@@ -8,6 +8,8 @@ The connect-back target is read from fixed shapes:
 * x64 reverse_tcp: ``mov r12/r14, <port><0x0002><ip>``
 * reverse_http(s): the port pushed before ``InternetConnectA``'s hash and the
   host / URI as NUL-terminated strings in the payload.
+* windows/exec (also adduser): ``WinExec``'s hash, then the command line —
+  a single-stage payload with no connect-back; the command is the indicator.
 """
 
 from __future__ import annotations
@@ -30,6 +32,10 @@ H_INTERNETCONNECT = b"\x68\x57\x89\x9f\xc6"                  # push 0xC69F8957
 H_WINHTTP = b"\x68\x77\x69\x6e\x68"                           # push "winh"
 _SOCK_X86 = re.compile(rb"\x68(.{4})\x68\x02\x00(.{2})", re.DOTALL)
 _SOCK_X64 = re.compile(rb"\x49[\xbc\xbe]\x02\x00(.{2})(.{4})", re.DOTALL)
+# windows/exec (and adduser, which is exec of "net user … /add"): WinExec's ROR13 hash, then the
+# command line as a NUL-terminated string at the end of the shellcode
+H_WINEXEC = (b"\x68\x31\x8b\x6f\x87", b"\x41\xba\x31\x8b\x6f\x87")       # x86 push / x64 mov r10d
+_CMD = re.compile(rb"([\x20-\x7e]{4,1024})\x00")
 _HOST = re.compile(rb"(?<![\x21-\x7e])((?:[A-Za-z0-9-]{1,63}\.)+[A-Za-z]{2,24}|\d{1,3}(?:\.\d{1,3}){3})\x00")
 _URI = re.compile(rb"\x00(/[A-Za-z0-9_\-./?=&%]{3,200})\x00")
 
@@ -83,6 +89,23 @@ def extract(data: bytes) -> dict[str, Any] | None:
             c2.append(f"{h}:{port}" if port else h)
         if uris:
             summary["URI"] = uris[0]
+    if not c2 and any(h in sc for h in H_WINEXEC):
+        j = max(sc.rfind(h) for h in H_WINEXEC)
+        cmds = [m.group(1).decode("latin-1") for m in _CMD.finditer(sc, j)]
+        verbs = re.compile(r"(?i)\b(?:cmd|powershell|net|reg|schtasks|rundll32|regsvr32|mshta|certutil|bitsadmin|"
+                           r"wmic|curl|start|copy|del|calc|notepad)\b|\.(?:exe|bat|cmd|ps1|vbs|dll)\b")
+        cands = [c.strip() for c in cmds if c.strip()]
+        cmd = max(cands, key=lambda c: (bool(verbs.search(c)), len(c)), default="")
+        if cmd and not verbs.search(cmd):
+            cmd = ""
+        adds_user = bool(re.search(r"(?i)\bnet\s+user\b.*\s/add\b", cmd))
+        summary.update({"Payload": "windows/exec" + (" (adds a local user)" if adds_user else ""),
+                        "Command": cmd or "(not found after the WinExec call)"})
+        return {"family": "Metasploit payload (exec)", "kind": "payload", "method": f"block_api ({arch}) + WinExec hash",
+                "confidence": "high" if cmd else "medium", "summary": summary, "c2": [],
+                "fields": {"block_api offset": hex(at), "architecture": arch, "command": cmd},
+                "note": "a single-stage payload that runs one command: no connect-back, nothing to hunt on the "
+                        "network — the command is the indicator (accounts, files, persistence it creates)"}
     if not c2:
         return {"family": "Metasploit-style stager", "kind": "stager", "method": "block_api signature",
                 "confidence": "low", "summary": {**summary, "Note": "block_api shellcode found; "
