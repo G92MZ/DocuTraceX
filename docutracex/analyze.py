@@ -481,13 +481,14 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             rec["status"] = "unavailable" if res.get("available") is False else res.get("status", "ok")
             rec["findings"] = res.get("counts", {}).get("findings", 0)
             if res.get("available") is False:
-                rec["note"] = note or "not provisioned"
+                # ``note`` is only the fallback for a tool that is not there: the tool's own reason first
+                rec["note"] = _short_reason(res) or note or "not provisioned"
+            elif rec["status"] == "error":
+                rec["note"] = _short_reason(res) or "failed (see the module's tab)"
         else:
             rec["status"] = "ok" if res is not None else "skipped"
         if isinstance(res, dict) and res.get("step_note") and "note" not in rec:
             rec["note"] = res["step_note"]          # a verdict only known after the step ran
-        if note and "note" not in rec:
-            rec["note"] = note
         subs = _substeps(res)
         if subs:
             rec["substeps"] = subs                  # per child / per object, kept after the step ends
@@ -1383,6 +1384,24 @@ def _code_targets(paths: CasePaths, original: Path, tree: list[dict[str, Any]]) 
 
 
 ON_DEMAND = ("yara", "ml", "c2")
+
+
+def _short_reason(res: dict[str, Any]) -> str:
+    """Why a step did not run / failed, in one line: the module's ``error`` / ``detail``,
+    else the last line of its tool's stderr."""
+    for k in ("error", "detail"):
+        v = res.get(k)
+        if v and isinstance(v, str):
+            return " ".join(v.split())[:300]
+    tool = res.get("tool")
+    if isinstance(tool, dict):
+        lines = [x.strip() for x in str(tool.get("stderr") or tool.get("error") or "").splitlines() if x.strip()]
+        if lines:
+            rc = tool.get("returncode")
+            return ((f"exit {rc}: " if rc not in (None, 0) else "") + lines[-1])[:300]
+        if tool.get("returncode") not in (None, 0):
+            return f"exit {tool['returncode']}"
+    return ""
 
 
 def auto_modules() -> set[str]:
