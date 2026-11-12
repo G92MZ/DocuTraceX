@@ -39,8 +39,19 @@ def test_vmonkey_no_result_reason() -> None:
     from docutracex.parsers import vipermonkey as vm
     assert vm._no_result_reason({"stdout": "...\nNo VBA macros found.\n"}) == "no VBA macros found"
     rec = {"stdout": "FILE: x.doc\n", "stderr": "INFO  start\nERROR    VBA looks corrupted. Not analyzing.\n"}
-    assert vm._no_result_reason(rec) == "VBA looks corrupted. Not analyzing."
+    assert vm._no_result_reason(rec).startswith("the VBA looks corrupted")
     assert vm._no_result_reason({}) == "ViperMonkey stopped without a result"
+    # the macro echoed in the output is not a reason ("On Error GoTo 0" was shown as one)
+    rec = {"output": "TRACING VBA CODE\n  On Error GoTo 0\n  Err.Raise 5\n", "stderr": "",
+           "returncode": 0}
+    assert vm._no_result_reason(rec) == "ViperMonkey stopped without a result"
+    rec = {"output": "  On Error GoTo 0\n", "stderr": "ERROR    Emulation time exceeded.\n"
+           "ERROR    The ViperMonkey emulation time limit was exceeded. Aborting analysis.\n"}
+    assert vm._no_result_reason(rec).startswith("time limit (3 min) reached")
+    rec = {"stderr": "ERROR    Something odd happened\n"}
+    assert vm._no_result_reason(rec) == "Something odd happened"
+    rec = {"stderr": "Traceback (most recent call last):\n  File x\nKeyError: 'foo'\n", "returncode": 1}
+    assert vm._no_result_reason(rec) == "KeyError: 'foo'"
 
 
 def test_vmonkey_failed_emulation_is_not_an_ioerror(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -64,7 +75,7 @@ def test_vmonkey_failed_emulation_is_not_an_ioerror(tmp_path: Path, monkeypatch:
     assert seen["prefilled"] == "{}"
     assert seen["launcher"].name == "_dtx_vmonkey.py" and seen["env"]["DTX_VM_TMP"].endswith("tmp")
     assert r["status"] == "ok" and r["emulation"] == "no_result"
-    assert r["step_note"] == "no emulation result: VBA looks corrupted. Not analyzing."
+    assert r["step_note"].startswith("no emulation result: the VBA looks corrupted")
 
 
 def test_launcher_maps_tmp_paths(tmp_path: Path) -> None:

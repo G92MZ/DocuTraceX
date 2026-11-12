@@ -16,6 +16,7 @@ case's extracted/ folder.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -63,15 +64,43 @@ def vipermonkey_status() -> dict[str, Any]:
             "detail": f"PyPy present but ViperMonkey not importable: {err[-1] if err else '?'}"}
 
 
+# ViperMonkey's own reasons for stopping, said plainly (it discards the partial emulation then)
+_KNOWN_STOPS = (
+    ("emulation time limit was exceeded", f"time limit ({EMULATION_MINUTES} min) reached — ViperMonkey discards a "
+                                          "partial emulation, so nothing was reported (long loops / delays)"),
+    ("Emulation time exceeded", f"time limit ({EMULATION_MINUTES} min) reached — ViperMonkey discards a partial "
+                                "emulation, so nothing was reported (long loops / delays)"),
+    ("recursion depth will be exceeded", "recursion limit reached (deep or endless recursion in the macro)"),
+    ("VBA looks corrupted", "the VBA looks corrupted (stomped or garbled), not emulated"),
+    ("Parsing failed", "ViperMonkey could not parse the VBA"),
+)
+_PY_ERROR = re.compile(r"^[A-Za-z_][\w.]*(?:Error|Exception|Exit)\b:?")
+
+
 def _no_result_reason(rec: dict[str, Any]) -> str:
-    """Why ViperMonkey produced nothing: no macros, or its last logged error."""
+    """Why ViperMonkey produced nothing: no macros, a known stop, or its last logged error.
+
+    Only ViperMonkey's own log lines (``ERROR    …``) and a Python traceback's last line
+    count: its output also echoes the macro, and VBA such as ``On Error GoTo 0`` is not a reason."""
     out = str(rec.get("output") or rec.get("stdout") or "")   # toolrun keeps stdout as "output"
+    err = str(rec.get("stderr") or "")
     if "No VBA macros found" in out:
         return "no VBA macros found"
-    lines = [x.strip() for x in (str(rec.get("stderr") or "") + "\n" + out).splitlines() if x.strip()]
-    errs = [x for x in lines if x.startswith("ERROR") or "Error" in x.split(":")[0]]
-    pick = (errs or lines or ["ViperMonkey stopped without a result"])[-1]
-    return " ".join(pick.replace("ERROR", "", 1).split())[:300] if pick.startswith("ERROR") else pick[:300]
+    both = err + "\n" + out
+    for needle, said in _KNOWN_STOPS:
+        if needle in both:
+            return said
+    for text in (err, out):
+        lines = [x.strip() for x in text.splitlines() if x.strip()]
+        logged = [x for x in lines if x.startswith("ERROR")]
+        if logged:
+            return " ".join(logged[-1][5:].split())[:300]
+        tb = [x for x in lines if _PY_ERROR.match(x)]
+        if tb and any(x.startswith("Traceback") for x in lines):
+            return tb[-1][:300]
+    if rec.get("returncode") not in (None, 0):
+        return f"ViperMonkey exited with code {rec['returncode']}"
+    return "ViperMonkey stopped without a result"
 
 
 def _classify(action: str, params: str) -> tuple[str, str, str] | None:
