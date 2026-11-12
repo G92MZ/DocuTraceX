@@ -24,14 +24,30 @@ really is, what it would do, what it carries inside, and where it would connect.
 
     [:octicons-arrow-right-24: Getting started](getting-started.md)
 
--   :material-email-search-outline:{ .lg .middle } **Email**
+-   :material-file-document-multiple-outline:{ .lg .middle } **File types**
 
     ---
 
-    Delivery path, SPF / DKIM / DMARC and Microsoft 365 stamps, the conversation chain,
-    look-alike domains, rewritten links and every attachment.
+    [Email](file-types/email.md) · [Office](file-types/office.md) · [RTF](file-types/rtf.md) ·
+    [PDF](file-types/pdf.md) · [OneNote and shortcuts](file-types/onenote-shortcuts.md) ·
+    [Scripts](file-types/scripts.md) · [Java](file-types/java.md) · [MSI](file-types/installers.md) ·
+    [Archives](file-types/archives.md) · [Images](file-types/images.md)
 
-    [:octicons-arrow-right-24: Email](file-types/email.md)
+-   :material-chip:{ .lg .middle } **Binaries**
+
+    ---
+
+    [Windows executables](file-types/windows-pe.md) · [.NET](file-types/dotnet.md) ·
+    [Go](file-types/go.md) · [Linux, macOS and Android](file-types/other-binaries.md) ·
+    [Memory dumps](file-types/memdump.md)
+
+-   :material-radar:{ .lg .middle } **Analysis tools**
+
+    ---
+
+    [Findings and IOCs](engines/findings-iocs.md) · [C2 / Beacons](engines/c2.md) ·
+    [YARA](engines/yara.md) · [Machine Learning](engines/ml.md) · [Hex](engines/hex.md) ·
+    [Network checks](engines/network-checks.md) · [Reports, AI and MCP](engines/reports.md)
 
 -   :material-shield-check-outline:{ .lg .middle } **Static only**
 

@@ -77,6 +77,28 @@ nav:
   - Getting started: getting-started.md
   - File types:
       - Email: file-types/email.md
+      - Word, Excel and PowerPoint: file-types/office.md
+      - RTF: file-types/rtf.md
+      - PDF: file-types/pdf.md
+      - OneNote and shortcuts: file-types/onenote-shortcuts.md
+      - Scripts: file-types/scripts.md
+      - Java: file-types/java.md
+      - Installers (MSI): file-types/installers.md
+      - Windows executables: file-types/windows-pe.md
+      - .NET: file-types/dotnet.md
+      - Go: file-types/go.md
+      - Linux, macOS and Android: file-types/other-binaries.md
+      - Archives and disk images: file-types/archives.md
+      - Images: file-types/images.md
+      - Memory dumps: file-types/memdump.md
+  - Analysis tools:
+      - Findings, IOCs and marks: engines/findings-iocs.md
+      - C2 / Beacons: engines/c2.md
+      - YARA: engines/yara.md
+      - Machine Learning: engines/ml.md
+      - Hex: engines/hex.md
+      - Network checks: engines/network-checks.md
+      - Reports, AI and MCP: engines/reports.md
   - Reference:
       - Tools and licences: TOOLS.md
       - Detection rules: detection-rules.md

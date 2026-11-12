@@ -26,8 +26,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs" / "assets" / "shots"
+sys.path[:0] = [str(ROOT), str(ROOT / "scripts")]
 
-# page → [(sample in samples.zip, [(tab id, picture name, 'first|last' element of the picture or None = the tab and its pane), …]), …]
+# page → [(sample in samples.zip, [(tab, picture name, 'first|last' element of the picture or None), …]), …]
+# tab: a Components sub-tab id, or "@c2" / "@ml" / "@yara" / "@hex" / "@reports" for an engine view
+# (the module is run on the case first). None = the tab and its pane (or the engine's panel).
 SHOTS: dict[str, list[tuple[str, list[tuple[str, str, str | None]]]]] = {
     "email": [
         ("email/sample.eml", [
@@ -37,6 +40,7 @@ SHOTS: dict[str, list[tuple[str, list[tuple[str, str, str | None]]]]] = {
             ("attachments", "attachments", None),
             ("body", "body", None),
             ("findings", "findings", None),
+            ("iocs", "iocs", None),
             ("findings", "delivery-path", "#comp-case|.nested-panel"),
         ]),
         ("email/sample_email_chain.eml", [("chain", "chain", None)]),
@@ -44,7 +48,85 @@ SHOTS: dict[str, list[tuple[str, list[tuple[str, str, str | None]]]]] = {
         ("email/sample_brand_lookalike.eml", [("lookalikes", "lookalikes", None)]),
         ("email/sample_gateway_links.eml", [("iocs", "iocs-gateway-links", None)]),
     ],
+    "office": [
+        ("word/sample.docm", [("vba", "vba", None), ("content", "content", None), ("metadata", "metadata", None),
+                              ("tools", "tools", None), ("relationships", "relationships", None)]),
+        ("excel/sample.xlsm", [("content", "excel-content", None)]),
+    ],
+    "rtf": [("word/sample.rtf", [("rtfobjects", "objects", None), ("rtfstructure", "structure", None),
+                                 ("rtftext", "text", None), ("rtfmeta", "metadata", None)])],
+    "pdf": [("pdf/sample.pdf", [("pdf", "pdf", None), ("pdftools", "pdftools", None), ("embedded", "embedded", None),
+                                ("javascript", "javascript", None)])],
+    "onenote": [("onenote/sample_notes.one", [("onenote", "onenote", None)])],
+    "shortcuts": [("shortcuts/sample_shortcut.pdf.lnk", [("shortcut", "shortcut", None)])],
+    "scripts": [
+        ("javascript/sample_obf_techniques.js", [("javascript", "javascript", None)]),
+        ("powershell/sample_crypto_loader.ps1", [("powershell", "powershell", None)]),
+        ("vbscript/sample_xor_loader.vbs", [("vbscript", "vbscript", None)]),
+        ("batch/sample_dosfuscation.bat", [("batch", "batch", None)]),
+        ("python/sample_dropper.pyc", [("python", "python", None)]),
+    ],
+    "java": [("java/sample_app.jar", [("java", "java", None)])],
+    "installers": [("installers/sample_installer.msi", [("msi", "msi", None)])],
+    "windows-pe": [
+        ("windows-pe/sample_packed.exe", [("msi", "binary", None)]),
+        ("windows-pe/sample_code_loader.exe", [("code", "code", None)]),
+        ("windows-pe/sample_pyinstaller.exe", [("pyinstaller", "pyinstaller", None)]),
+    ],
+    "dotnet": [
+        ("dotnet/sample_dotnet_loader.exe", [("dotnet", "dotnet", None)]),
+        ("dotnet/sample_dotnet_crypter_chain.exe", [("dotnet", "stages", ".nested-panel")]),
+    ],
+    "go": [("go/sample_go_code.exe", [("golang", "go", None)])],
+    "other-binaries": [("linux-elf/sample_elf_backdoor", [("msi", "elf", None), ("code", "elf-code", None)])],
+    "archives": [
+        ("archives/dropper_bundle.zip", [("archive", "archive", None), ("archive", "nested", ".nested-panel")]),
+        ("disk-images/sample_image.iso", [("archive", "iso", ".nested-panel")]),
+    ],
+    "images": [
+        ("images/sample_logo_appended.png", [("findings", "appended", ".nested-panel")]),
+        ("archives/sample_stego_invoice.zip", [("findings", "pixels", ".nested-panel")]),
+    ],
+    "memdump": [("memdump/sample_memdump_factura.dmp", [("memdump", "memdump", None),
+                                                          ("memdump", "carved", ".nested-panel")])],
+    "c2": [
+        ("c2/cobaltstrike/sample_cs_beacon.bin", [("@c2", "cobaltstrike", None)]),
+        ("c2/asyncrat/sample_asyncrat.exe", [("@c2", "asyncrat", None)]),
+    ],
+    "ml": [("dotnet/sample_dotnet_stealer_ml.exe", [("@ml", "ml", None)])],
+    "yara": [("email/sample.eml", [("@yara", "yara", None)])],
+    "hex": [("windows-pe/sample_win32_invoice_calc.dll", [("@hex", "hex", None)])],
+    "reports": [("email/sample.eml", [("@reports", "report", None)])],
 }
+
+# inner tab to open before the picture, by (page, picture)
+_CLICKS = {("windows-pe", "binary"): '[data-itab="pefile"]', ("other-binaries", "elf"): '[data-itab="lief"]'}
+
+# a YARA rule for the YARA page (inert: it matches the campaign's own indicators)
+_YARA_RULE = b"""rule Invoice_Fraud_Campaign_Indicators
+{
+    meta:
+        description = "Indicators of the invoice-fraud campaign of the DocuTraceX samples"
+    strings:
+        $d1 = "cdn-update.example.net" ascii wide nocase
+        $d2 = "rnicrosoft-online.example" ascii wide nocase
+        $ip = "203.0.113.47" ascii wide
+    condition:
+        any of them
+}
+"""
+
+# how each engine view is opened in the page, and which module it needs first
+_ENGINE_JS = {
+    "@c2": "async (id) => { showTab('c2'); _c2Case = id; await loadC2View(id); }",
+    "@ml": "async (id) => { showTab('ml'); _mlCase = id; await loadMlView(id); }",
+    "@yara": "async (id) => { showTab('yara'); await loadYara(); const s = document.getElementById('yara-case');"
+             " await fillCaseSelect(s, id); s.value = id; await showYaraResults(id); }",
+    "@hex": "async (id) => { showTab('hex'); await loadHexView(); await fillCaseSelect(document.getElementById('hex-case'), id);"
+            " hexResetCase(id); renderHexView(); }",
+    "@reports": "async (id) => { _openCaseId = id; showTab('reports'); loadReports(id); }",
+}
+_ENGINE_MODULE = {"@c2": "c2", "@ml": "ml", "@yara": "yara"}
 
 WIDTH, HEIGHT = 1440, 900
 MAX_H = 1000                 # css px: long panes are cut here
@@ -56,8 +138,7 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _analyse(samples: list[str], cases: Path) -> dict[str, str]:
-    sys.path[:0] = [str(ROOT), str(ROOT / "scripts")]
+def _analyse(samples: list[str], cases: Path, modules: dict[str, set[str]]) -> dict[str, str]:
     import zipcrypto
 
     from docutracex import analyze, cases as case_service
@@ -71,6 +152,9 @@ def _analyse(samples: list[str], cases: Path) -> dict[str, str]:
         m = case_service.create_case(io.BytesIO(data), Path(name).name, cases_dir=cases)
         print(f"  analysing {name} …", flush=True)
         analyze.analyze_case(cases / m["analysis_id"])
+        for mod in sorted(modules.get(name, ())):
+            print(f"  running {mod} on {name} …", flush=True)
+            analyze.run_module(cases / m["analysis_id"], mod)
         out[name] = m["analysis_id"]
     return out
 
@@ -116,17 +200,25 @@ def _shoot(base: str, ids: dict[str, str], pages: list[str], scale: int) -> None
                 (OUT / pg).mkdir(parents=True, exist_ok=True)
                 for sample, tabs in SHOTS[pg]:
                     for tab, pic, focus in tabs:
-                        page.evaluate("([id, tab]) => openComponents(id, tab)", [ids[sample], tab])
+                        if tab.startswith("@"):
+                            page.evaluate(_ENGINE_JS[tab], ids[sample])
+                            host, default = ".view:not([hidden]) .panel", ".view:not([hidden]) .panel"
+                        else:
+                            page.evaluate("([id, tab]) => openComponents(id, tab)", [ids[sample], tab])
+                            host, default = "#comp-body", "#comp-body .subtabs|#comp-body .subpane"
                         page.wait_for_load_state("networkidle")
-                        page.wait_for_timeout(700)
+                        page.wait_for_timeout(1500 if tab.startswith("@") else 700)
+                        if (pg, pic) in _CLICKS:
+                            page.locator(_CLICKS[(pg, pic)]).first.click()
+                            page.wait_for_timeout(400)
                         # crop to the tab bar + its pane (or to the element asked for), at most MAX_H tall
                         box = page.evaluate(
-                            "(sel) => { const [s1, s2] = (sel || '#comp-body .subtabs|#comp-body .subpane').split('|');"
+                            "([sel, host]) => { const [s1, s2] = sel.split('|');"
                             " const top = document.querySelector(s1), end = s2 ? document.querySelector(s2) : top;"
                             " const a = top.getBoundingClientRect(), b = end.getBoundingClientRect();"
-                            " const host = document.querySelector('#comp-body').getBoundingClientRect();"
-                            " return {x: host.left - 8, y: a.top + window.scrollY - 12,"
-                            " w: host.width + 16, h: b.bottom - a.top + 24}; }", focus)
+                            " const h = document.querySelector(host).getBoundingClientRect();"
+                            " return {x: h.left - 8, y: a.top + window.scrollY - 12,"
+                            " w: h.width + 16, h: b.bottom - a.top + 24}; }", [focus or default, host])
                         clip = {"x": max(0, box["x"]), "y": max(0, box["y"]), "width": box["w"],
                                 "height": min(MAX_H, box["h"])}
                         path = OUT / pg / f"{pic}.webp"
@@ -154,8 +246,19 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="dtx-docshots-") as tmp:
         cases = Path(tmp) / "cases"
         cases.mkdir()
+        from docutracex import yara_engine
+        from docutracex.config import settings
+        settings.yara_dir = Path(tmp) / "yara"
+        yara_engine.add_upload("invoice_campaign.yar", _YARA_RULE)
+        list(yara_engine.compile_stream())                      # compile (and cache) the ruleset
         samples = sorted({s for pg in pages for s, _ in SHOTS[pg]})
-        ids = _analyse(samples, cases)
+        modules: dict[str, set[str]] = {}
+        for pg in pages:
+            for smp, tabs in SHOTS[pg]:
+                for tab, _pic, _f in tabs:
+                    if tab in _ENGINE_MODULE:
+                        modules.setdefault(smp, set()).add(_ENGINE_MODULE[tab])
+        ids = _analyse(samples, cases, modules)
         with _serve(_free_port()) as base:
             _shoot(base, ids, pages, a.scale)
 
