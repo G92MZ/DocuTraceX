@@ -38,9 +38,29 @@ _ID = re.compile(r"<[^<>\s]+>")
 # --- addresses ---------------------------------------------------------------
 
 def _clean_addr_text(value: str) -> str:
-    # Outlook: "John Smith [mailto:john@x]" / "'John' <john@x>"
-    value = re.sub(r"\[mailto:([^\]]+)\]", r"<\1>", value or "", flags=re.I)
-    return value.replace("​", "").strip()
+    # Outlook: "John Smith [mailto:john@x]" / "'John' <john@x>"; HTML-escaped "&lt;john@x&gt;";
+    # bold rendered in plain text ("*De:* …" / "**From:** …") leaves the asterisks in the value
+    import html
+    value = html.unescape(value or "")
+    value = re.sub(r"\[mailto:([^\]]+)\]", r"<\1>", value, flags=re.I)
+    value = re.sub(r"<\s*mailto:", "<", value, flags=re.I)
+    return value.replace("​", "").replace("\u00a0", " ").strip().strip("*_").strip()
+
+
+# "Name <addr>" / "addr <addr>" / "<addr>" / a bare address — read by hand: the standard parser
+# (Python 3.13's strict getaddresses) rejects "addr <addr>", which is how Outlook quotes a sender
+# without a display name, and returns nothing
+_PAIR = re.compile(r"\s*(?P<name>[^<>;]*?)\s*<\s*(?P<addr>[^<>\s;]+@[^<>\s;]+?)\s*>")
+_BARE = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+
+
+def _pairs(piece: str) -> list[tuple[str, str]]:
+    found = [(m.group("name").strip().strip(",").strip(), m.group("addr")) for m in _PAIR.finditer(piece)]
+    rest = _PAIR.sub(" ", piece)
+    found += [("", a) for a in _BARE.findall(rest)]
+    if found:
+        return found
+    return getaddresses([piece])
 
 
 def parse_people(values: list[str] | str | None) -> list[dict[str, str]]:
@@ -60,10 +80,12 @@ def parse_people(values: list[str] | str | None) -> list[dict[str, str]]:
                 name = piece.strip().strip("'\"").strip()
                 pairs = [(name, "")] if name else []
             else:
-                pairs = getaddresses([piece])
+                pairs = _pairs(piece)
             for name, addr in pairs:
                 addr = (addr or "").strip().strip("<>").lower()
-                name = (name or "").strip().strip("'\"").strip()
+                name = (name or "").strip().strip("'\"*_").strip()
+                if name.lower() == addr:                    # "addr <addr>": no display name
+                    name = ""
                 if addr and "@" not in addr:
                     name, addr = (name or addr), ""
                 key = addr or name.lower()
@@ -226,7 +248,7 @@ def quoted_messages(text: str) -> list[dict[str, Any]]:
                 key = next(k for k in _F if mm.group(k))
                 if key in fields and key == "from":
                     break                                   # next block
-                fields[key] = mm.group("val").strip()
+                fields[key] = mm.group("val").strip().strip("*_").strip()
                 last = key
             elif lines[j].strip() and last in ("to", "cc", "bcc") and not lines[j].lstrip().startswith(">") \
                     and ("@" in lines[j] or ";" in lines[j]):

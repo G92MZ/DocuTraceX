@@ -1557,16 +1557,10 @@ function paneEmailChain(email, mr) {
   if (!msgs.length) return `<p class="hint-line">No messages.</p>`;
   const ids = new Set(msgs.map((m) => m.message_id).filter(Boolean));
   const thread = msgs.filter((m) => m.related !== false), apart = msgs.filter((m) => m.related === false);
-  const miss = c.missing_references || [];
   let h = `<p class="hint-line">The conversation as this file shows it: the message, the messages attached to it and the ones quoted in its body,
     oldest first. Each message is compared with the previous one: <span class="ok-text">new</span>, <span class="bad-text">removed</span>,
     <span class="warn-text">moved / changed</span>. ${thread.length} message(s)${c.quoted ? `, ${c.quoted} quoted` : ""}, ${c.changes || 0} change(s).
     ${c.zone && c.zone.offset ? `Times shown in <b>${escapeHtml(c.zone.offset)}</b> (the reader's zone, from the ${escapeHtml(c.zone.source)}); quoted dates carry no zone and are shown as written.` : ""}</p>`;
-  if (miss.length) {
-    h += `<div class="chain-banner"><b>Incomplete chain:</b> ${miss.length} referenced message(s) are not available as messages here${
-      c.quoted ? ` (${c.quoted} message(s) are quoted in the body, without identifiers — they may be some of these)` : ""}:
-      ${miss.map((r) => `<span class="mono">${escapeHtml(r)}</span>`).join(", ")}</div>`;
-  }
   if (threadRules.length) {
     h += `<div class="chain-rules"><b>Thread detections</b> (Message-ID / In-Reply-To / References read against this chain)<ul>${threadRules.map((r) =>
       `<li><span class="badge ${r.severity === "high" ? "badge-bad" : r.severity === "medium" ? "badge-warn" : "badge-muted"}">${escapeHtml(r.severity)}</span>
