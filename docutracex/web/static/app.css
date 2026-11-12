@@ -955,6 +955,12 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 .quick-ic[data-tool="c2"] { --ic: #ff7a59; }
 .quick-ic[data-tool="hex"] { --ic: #59c3ff; }
 
+/* C2 tab: the families covered in depth */
+.c2-fam { border: 1px solid var(--panel-border); border-radius: 8px; padding: 10px 14px; margin: 8px 0; background: #121821; }
+.c2-fam h4 { margin: 0 0 6px; }
+.c2-fam p { margin: 4px 0; line-height: 1.5; }
+.c2-fam ul { margin: 4px 0 4px 18px; padding: 0; }
+
 /* ---------------------------------------------------------------------------
    Phones and narrow tablets: one column, a compact single-row navigation that
    scrolls sideways, and tables that scroll inside their panel instead of

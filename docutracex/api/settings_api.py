@@ -153,6 +153,13 @@ async def tenant_lookup_put(body: dict = Body(...)) -> dict:
     return {"enabled": data["tenant_lookup"]}
 
 
+@router.get("/c2-families")
+async def c2_families() -> dict:
+    """The families the C2 tab covers in depth, with what each one is and what is read from it."""
+    from ..c2.families import FAMILIES
+    return {"families": [{k: v for k, v in f.items() if k != "match"} for f in FAMILIES]}
+
+
 @router.get("/lolrmm")
 async def lolrmm_status() -> dict:
     """The LOLRMM catalogue the RMM extractor uses: source, size, date."""

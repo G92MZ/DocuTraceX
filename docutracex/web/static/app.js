@@ -5005,6 +5005,25 @@ async function loadLolrmm() {
   });
 }
 
+async function loadC2Families() {
+  const box = document.querySelector("#c2-families .c2-fam-list");
+  if (!box || box.dataset.loaded) return;
+  try {
+    const j = await (await fetch("/api/settings/c2-families")).json();
+    const e = (x) => escapeHtml(String(x ?? ""));
+    box.innerHTML = (j.families || []).map((f) => `<div class="c2-fam">
+        <h4 class="formats-title">${e(f.name)}</h4>
+        <p>${e(f.what)}</p>
+        <p class="hint-line"><b>How it arrives:</b> ${e(f.arrives)}</p>
+        <div class="hint-line"><b>What DocuTraceX reads:</b><ul>${(f.reads || []).map((r) => `<li>${e(r)}</li>`).join("")}</ul></div>
+        <p class="hint-line"><b>Next:</b> ${e(f.next)}</p>
+        <p class="hint-line"><b>Limits:</b> ${e(f.limits)}</p></div>`).join("")
+      + '<p class="hint-line">The other families are read too (see the extractor table) — they get a card once covered in depth.</p>';
+    document.querySelector("#c2-families summary").textContent = `Families covered in depth (${(j.families || []).length})`;
+    box.dataset.loaded = "1";
+  } catch (_) { /* optional */ }
+}
+
 async function loadC2Shared() {
   const ta = document.getElementById("c2-shared-text");
   if (!ta) return;
@@ -6914,6 +6933,7 @@ async function loadC2View(caseId) {
   if (!sel || !body) return;
   loadC2Shared();
   loadLolrmm();
+  loadC2Families();
   const id = await fillCaseSelect(sel, caseId || _c2Case || _openCaseId);
   _c2Case = id;
   if (!id) { body.innerHTML = '<p class="hint-line">Analyse a file first; implant configurations found in it show up here.</p>'; return; }

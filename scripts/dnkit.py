@@ -54,7 +54,7 @@ class _Heap:
 
 _OP = {"ldstr": 0x72, "call": 0x28, "callvirt": 0x6F, "newobj": 0x73, "pop": 0x26, "ret": 0x2A, "calldef": 0x28,
        "xor": 0x61, "ldarg.0": 0x02, "initarray": 0x00, "ldc": 0x20, "shl": 0x62, "shr.un": 0x64, "mul": 0x5A,
-       "brfalse.s": 0x2C, "br.s": 0x2B}
+       "brfalse.s": 0x2C, "br.s": 0x2B, "stsfld": 0x80}
 
 
 def _ops(ops: list[tuple], us: _Heap, rids: dict[str, int] | None = None) -> bytes:
@@ -77,6 +77,8 @@ def _ops(ops: list[tuple], us: _Heap, rids: dict[str, int] | None = None) -> byt
             out += struct.pack("<b", arg[0])
         elif op == "calldef":
             out += struct.pack("<I", 0x06000000 | (rids or {})[arg[0]])
+        elif op == "stsfld":                        # stsfld <own static field "Type::Field">
+            out += struct.pack("<I", 0x04000000 | (rids or {})["field:" + arg[0]])
         elif op in ("call", "callvirt", "newobj"):
             out += struct.pack("<I", 0x0A000000 | (arg[0] + 1))
     return bytes(out)
@@ -126,7 +128,8 @@ def resources(entries: list[tuple[str, Any]]) -> bytes:
 
 def build(va: int, spec: dict[str, Any]) -> tuple[bytes, int, int, int, int, int]:
     """spec: {assembly, version, refs: [(name, version)], typerefs: [(scope_ref_index|None, ns, name)],
-    types: [{ns, name, methods: [{name, il?, pinvoke?: (dll, entry)}]}], memberrefs: [(typeref_idx, name)],
+    types: [{ns, name, fields?: [static string field names], methods: [{name, il?, ops?, pinvoke?: (dll, entry)}]}],
+    memberrefs: [(typeref_idx, name)],
     attributes: [(parent: "module"|"assembly", memberref_idx)], resources: [(name, bytes)], user_strings: [...]}"""
     st, us, bl = _Heap(), _Heap(), _Heap()
     guid = bytes(range(0x30, 0x40))
@@ -166,6 +169,13 @@ def build(va: int, spec: dict[str, Any]) -> tuple[bytes, int, int, int, int, int
     entry = 0
     rids = {f"{t['name']}::{m['name']}": i for i, (t, m) in
             enumerate(((t, m) for t in types for m in t.get("methods") or []), 1)}
+    # Field table: the types' own static string fields first (in type order), then the array fields
+    own_fields = [(k, f) for k, t in enumerate(types) for f in t.get("fields") or []]
+    field_first = {}
+    for i, (k, f) in enumerate(own_fields, 1):
+        field_first.setdefault(k, i)
+        rids[f"field:{types[k]['name']}::{f}"] = i
+    field_rids = {name: len(own_fields) + i for name, i in field_rids.items()}
     rids.update({"field:" + n: r for n, r in field_rids.items()})
     for t in types:
         first = len(meth_rows) + 1
@@ -226,12 +236,19 @@ def build(va: int, spec: dict[str, Any]) -> tuple[bytes, int, int, int, int, int
     for k, (flags, nm, ns, first) in enumerate(rows[0x02]):
         nxt = rows[0x02][k + 1][3] if k + 1 < len(rows[0x02]) else n_methods + 1
         first = min(first, nxt)
-        flist = 1 if k + 1 <= (pid_index or 10 ** 6) else len(arrays) + 1
+        if k in field_first:
+            flist = field_first[k]
+        elif k + 1 >= (pid_index or 10 ** 6):
+            flist = len(own_fields) + 1 if k + 1 == pid_index else len(own_fields) + len(arrays) + 1
+        else:                                       # no fields: the next type's first field
+            flist = next((field_first[j] for j in sorted(field_first) if j > k), len(own_fields) + 1)
         if types[k].get("_size"):
             flags = 0x00000113                                     # sealed explicit value type
         tdefs.append(struct.pack("<IHHHHH", flags, nm, ns, 0, flist, first))
     for n, ti in size_index.items():
         rows[0x0F].append(struct.pack("<HIH", 1, n, ti))
+    for k, f in own_fields:
+        rows[0x04].append(struct.pack("<HHH", 0x0016, st.str(f), bl.blob(b"\x06\x0e")))   # public static string
     for k, (name, data) in enumerate(arrays, 1):
         sig = bl.blob(bytes([0x06, 0x11, (size_index[len(data)] << 2) & 0x7F if size_index[len(data)] < 32 else 0]))
         rows[0x04].append(struct.pack("<HHH", 0x0133, st.str(name), sig))   # static assembly initonly HasFieldRVA

@@ -55,8 +55,12 @@ def _split(v: Any) -> list[str]:
 def view(raw: dict[str, Any]) -> dict[str, Any]:
     """Worker JSON → a view: status, method, summary, fields, hosts."""
     st = raw.get("status", "error")
-    v: dict[str, Any] = {"tool": TOOL, "status": st, "lib_version": raw.get("lib") or ""}
     rep = raw.get("report") or {}
+    if st == "found" and str(rep.get("key") or "None") == "None":
+        # it located the settings but did not decrypt them: what it shows is ciphertext
+        st, raw = "nothing", {**raw, "error": "found the settings class but could not decrypt it"}
+        rep = {**rep, "config": raw["error"]}
+    v: dict[str, Any] = {"tool": TOOL, "status": st, "lib_version": raw.get("lib") or ""}
     if st != "found":
         cfg = rep.get("config")
         v["note"] = {"not_installed": "rat-king-parser is not installed in the portable Python "
@@ -94,11 +98,17 @@ def _norm(hosts: list[str]) -> set[str]:
 
 def combine(own: dict[str, Any] | None, rk: dict[str, Any]) -> dict[str, Any] | None:
     """Own decoder + rat-king-parser → one configuration with a sub-tab per engine."""
+    if own is not None and own.get("kind") == "indicators":
+        if rk.get("status") == "found":                # traces only on our side: rat-king's configuration wins
+            own = None
+        else:
+            return {**own, "tools": {"own": {"tool": "own decoder", "status": "indicators", "note": own.get("note")},
+                                     "ratking": rk}}
+    if own is None and rk.get("status") != "found":
+        return None
     own_view = ({"tool": "own decoder", "status": "found", "method": own.get("method"), "summary": own.get("summary"),
                  "fields": own.get("fields"), "hosts": own.get("c2") or []} if own else
                 {"tool": "own decoder", "status": "nothing", "note": "No AES-encrypted settings it could decrypt."})
-    if own is None and rk.get("status") != "found":
-        return None
     tools = {"own": own_view, "ratking": rk}
     if own is None:                                   # only rat-king-parser read it
         fam = rk.get("family") if rk.get("family") not in ("", "No match", None) else "AsyncRAT / Quasar family"
