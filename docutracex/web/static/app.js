@@ -5653,6 +5653,13 @@ async function loadMcpInfo() {
     h += mcpBlock("1 · Start the server (stdio) — to test it", (j.env ? Object.entries(j.env).map(([k, v]) => `${k}=${v}`).join(" ") + " " : "") + j.run);
     h += mcpBlock("2 · Claude Desktop — Settings → Developer → Edit Config (claude_desktop_config.json)", j.claude_desktop);
     h += mcpBlock("2 · (alternative) Claude Code", j.claude_code);
+    if (j.http_run) {
+      h += `<h3 class="formats-title">Over HTTP — for clients on other machines or apps that only speak HTTP</h3>
+        <p class="hint-line">The same server on <b>streamable HTTP</b> (endpoint <span class="mono">/mcp</span>). Leave it running in a terminal; clients connect to the URL. With <span class="mono">--host 0.0.0.0</span> it listens on every interface and accepts connections by IP or host name. <b>It has no authentication</b>: open the port only on a network you trust (firewall / VPN), or use <span class="mono">--host 127.0.0.1</span> for this machine only.</p>`;
+      h += mcpBlock("Start the server over HTTP", j.http_run);
+      h += mcpBlock("URL for the client (from another machine, use this computer's IP or name)", j.http_url);
+      h += mcpBlock("Claude Code over HTTP", j.claude_code_http);
+    }
     h += `<h3 class="formats-title">3 · Available tools</h3><ul class="hint-list">${(j.tools || []).map((t) => `<li><span class="mono">${escapeHtml(t.signature)}</span> — ${escapeHtml(t.description)}</li>`).join("")}</ul>`;
     h += `<p class="hint-line">All read-only. Paths above are this installation's (portable Python ${escapeHtml(j.mcp_version ? "· mcp " + j.mcp_version : "")}).</p>`;
     el.innerHTML = h;

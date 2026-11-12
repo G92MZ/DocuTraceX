@@ -6,7 +6,7 @@ import asyncio
 import json
 import sys
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Request
 
 from ..config import APP_ROOT, settings
 
@@ -47,7 +47,7 @@ def _mcp_version(python: str) -> str | None:
 
 
 @router.get("/mcp/info")
-async def mcp_info() -> dict:
+async def mcp_info(request: Request) -> dict:
     """Everything needed to connect an MCP client to this installation."""
     from .. import ai_tools
 
@@ -59,7 +59,21 @@ async def mcp_info() -> dict:
     q = (lambda s: f'"{s}"') if sys.platform.startswith("win") else (lambda s: f"'{s}'")
     code = (f"claude mcp add docutracex -e PYTHONPATH={q(APP_ROOT)} -e DOCUTRACEX_CASES_DIR={q(settings.cases_dir)} "
             f"-- {q(python)} -m docutracex.mcp_server")
+    # over HTTP, for clients on other machines (or apps that only speak HTTP)
+    port = 8001
+    if sys.platform.startswith("win"):
+        http_run = (f'$env:PYTHONPATH="{APP_ROOT}"; $env:DOCUTRACEX_CASES_DIR="{settings.cases_dir}"; '
+                    f'& "{python}" -m docutracex.mcp_server --http --host 0.0.0.0 --port {port}')
+    else:
+        http_run = (f"PYTHONPATH={q(APP_ROOT)} DOCUTRACEX_CASES_DIR={q(settings.cases_dir)} "
+                    f"{q(python)} -m docutracex.mcp_server --http --host 0.0.0.0 --port {port}")
+    host = request.url.hostname or "127.0.0.1"
+    if host in ("0.0.0.0", "::"):
+        host = "127.0.0.1"
+    http_url = f"http://{host}:{port}/mcp"
     return {"python": str(python), "app_root": str(APP_ROOT), "cases_dir": str(settings.cases_dir),
+            "http_run": http_run, "http_url": http_url,
+            "claude_code_http": f"claude mcp add --transport http docutracex {http_url}",
             "mcp_installed": mcp_version is not None, "mcp_version": mcp_version,
             "run": f"{q(python)} -m docutracex.mcp_server", "env": env,
             "claude_desktop": json.dumps(desktop, indent=2), "claude_code": code,

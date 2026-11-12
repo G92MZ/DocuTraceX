@@ -10,6 +10,7 @@ would match half the internet). A distance is a maximum: 2 also catches 1.
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any
 
 DEFAULTS: dict[str, int] = {"short_len": 4, "short_dist": 1, "long_len": 9, "long_dist": 2, "xlong_dist": 3,
@@ -56,30 +57,55 @@ def max_distance(name: str, th: dict[str, int] | None = None) -> int:
     return th["long_dist"] if n <= th.get("long_len", DEFAULTS["long_len"]) else th.get("xlong_dist", th["long_dist"])
 
 
-def embedded_distance(ref: str, text: str) -> int:
+def embedded_distance(ref: str, text: str, cap: int | None = None) -> int:
     """Fewest edits that turn some piece of ``text`` into ``ref`` (approximate
-    substring match): 0 when ``ref`` is inside ``text`` as written."""
+    substring match): 0 when ``ref`` is inside ``text`` as written. With ``cap``,
+    exact up to it and ``cap + 1`` beyond (stops early)."""
     if not ref:
         return 0
+    if cap is not None and len(ref) > len(text) + cap:
+        return cap + 1
     prev = [0] * (len(text) + 1)                      # the match may start anywhere in text
     for i, c in enumerate(ref, 1):
         cur = [i]
         for j, t in enumerate(text, 1):
             cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (c != t)))
         prev = cur
+        if cap is not None and min(prev) > cap:
+            return cap + 1
     return min(prev)
 
 
 def levenshtein(a: str, b: str, cap: int = 9) -> int:
+    """Edit distance, exact up to ``cap``; ``cap + 1`` when it is larger. Banded
+    (only cells within ``cap`` of the diagonal) and stops as soon as a row has
+    nothing within ``cap``: thousands of own domains × the domains of a case
+    stay fast."""
+    if a == b:
+        return 0
     if abs(len(a) - len(b)) > cap:
         return cap + 1
-    prev = list(range(len(b) + 1))
-    for i, ca in enumerate(a, 1):
-        cur = [i]
-        for j, cb in enumerate(b, 1):
-            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != cb)))
+    if len(a) > len(b):
+        a, b = b, a
+    over = cap + 1
+    lb = len(b)
+    prev = [j if j <= cap else over for j in range(lb + 1)]
+    for i in range(1, len(a) + 1):
+        lo, hi = max(1, i - cap), min(lb, i + cap)
+        cur = [over] * (lb + 1)
+        cur[0] = i if i <= cap else over
+        ca = a[i - 1]
+        best = cur[0] if lo == 1 else over
+        for j in range(lo, hi + 1):
+            v = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (ca != b[j - 1]))
+            v = v if v <= cap else over
+            cur[j] = v
+            if v < best:
+                best = v
+        if best > cap:
+            return over
         prev = cur
-    return prev[-1]
+    return prev[lb]
 
 
 def lookalike_distance(candidate: str, reference: str, th: dict[str, int] | None = None) -> int:
@@ -94,21 +120,31 @@ def lookalike_distance(candidate: str, reference: str, th: dict[str, int] | None
 
 def damerau(a: str, b: str, cap: int = 9) -> int:
     """Optimal-string-alignment distance: like Levenshtein, but swapping two
-    adjacent letters (docusign → docusing) costs 1."""
+    adjacent letters (docusign → docusing) costs 1. Exact up to ``cap``,
+    ``cap + 1`` beyond (stops as soon as a row has nothing within ``cap``)."""
+    if a == b:
+        return 0
     if abs(len(a) - len(b)) > cap:
         return cap + 1
-    d = [[0] * (len(b) + 1) for _ in range(len(a) + 1)]
-    for i in range(len(a) + 1):
+    la, lb = len(a), len(b)
+    big = la + lb + 1
+    d = [[big] * (lb + 1) for _ in range(la + 1)]
+    for i in range(la + 1):
         d[i][0] = i
-    for j in range(len(b) + 1):
+    for j in range(lb + 1):
         d[0][j] = j
-    for i in range(1, len(a) + 1):
-        for j in range(1, len(b) + 1):
+    for i in range(1, la + 1):
+        best = d[i][0]
+        for j in range(max(1, i - cap - 1), min(lb, i + cap + 1) + 1):
             cost = a[i - 1] != b[j - 1]
-            d[i][j] = min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost)
+            v = min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost)
             if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
-                d[i][j] = min(d[i][j], d[i - 2][j - 2] + 1)
-    return d[len(a)][len(b)]
+                v = min(v, d[i - 2][j - 2] + 1)
+            d[i][j] = v
+            best = min(best, v)
+        if best > cap:
+            return cap + 1
+    return min(d[la][lb], cap + 1)
 
 
 # Look-alike ASCII sequences and Unicode confusables, folded to the letters they imitate.
@@ -127,6 +163,7 @@ CONFUSABLES = {
 }
 
 
+@lru_cache(maxsize=65536)
 def unicode_skeleton(label: str) -> str:
     """Unicode look-alikes folded to ASCII (Cyrillic а → a, accents dropped)."""
     import unicodedata
@@ -134,6 +171,7 @@ def unicode_skeleton(label: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKD", out) if not unicodedata.combining(c))
 
 
+@lru_cache(maxsize=65536)
 def homoglyph_fold(label: str) -> str:
     out = unicode_skeleton(label)
     for a, b in HOMOGLYPHS:

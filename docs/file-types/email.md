@@ -113,7 +113,8 @@ each analysed with its own family's tools, many levels deep.
 
 ??? abstract "Look-alike domains — typosquats and brand imitations"
 
-    Every domain in the case, from any file, compared with **your own domains** (Settings), the
+    Every domain in the case, from any file, compared with **your own domains** (Settings — as
+    many as you need; thousands stay fast), the
     protected brands and each other: Levenshtein and Damerau-Levenshtein distances within the
     configured thresholds, look-alike characters (`rn`→`m`, `0`→`o`, Cyrillic…), the same name
     under another TLD, and your name embedded in another domain.
