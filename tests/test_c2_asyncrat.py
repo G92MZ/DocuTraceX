@@ -90,3 +90,16 @@ def test_quasar_named_layout() -> None:
     assert any(o.startswith("keylogger on") for o in s["Options"])
     assert s["Certificate CN"] == "Quasar Server CA" and len(s["Builder defaults"]) == 5
     assert "named from Quasar.Client.Config.Settings" in r["method"]
+
+
+def test_renamed_fields_fall_back_to_the_values(monkeypatch) -> None:  # noqa: ANN001
+    """An obfuscator renamed the settings fields: the names say nothing, the values still give the C2."""
+    real = dotnet_rats.settings_fields
+
+    def renamed(data: bytes):  # noqa: ANN202
+        names, cls = real(data)
+        return {lit: [f"\u0002{i}" for i, _ in enumerate(fs)] for lit, fs in names.items()}, "\u0003.\u0004"
+    monkeypatch.setattr(dotnet_rats, "settings_fields", renamed)
+    r = dotnet_rats.extract(ms.asyncrat_exe())
+    assert r["kind"] == "RAT" and "203.0.113.47" in r["c2"] and "fields are renamed" in r["method"]
+    assert r["summary"]["Mutex"] == "AsyncMutex_6SI8OkPnk"
