@@ -301,8 +301,11 @@ def analyze(original: Path, extracted_dir: Path, only: set[str] | None = None) -
             continue
         todo.append((label, path, stored))
     prog = ObjectProgress(len(todo))
+    die_by_name = _die_detects(case_root)
     for idx, ((label, path, stored), (found, runs)) in enumerate(zip(todo, _scan_all(todo, prog))):
         result["objects_scanned"] += 1
+        if not any(c.get("kind") != "indicators" and c.get("c2") for c in found):
+            _protected(result, label, path, die_by_name)
         raw_ref = f"{RUNS_DIR}/{run_id}/{idx:04d}.json"
         for r in runs:
             st = result["extractor_status"].setdefault(r["extractor"], {})
@@ -361,6 +364,38 @@ def analyze(original: Path, extracted_dir: Path, only: set[str] | None = None) -
     if result["findings"]:
         result["status"] = "ok_with_findings"
     return result
+
+
+def _die_detects(case_root: Path | None) -> dict[str, list[dict[str, Any]]]:
+    """File name → Detect It Easy detects, from the PE analysis of the case (when DIE ran)."""
+    if case_root is None:
+        return {}
+    out: dict[str, list[dict[str, Any]]] = {}
+    try:
+        import json
+        msi = json.loads((case_root / "results" / "msi.json").read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError):
+        return {}
+    for it in msi.get("items") or []:
+        dets = ((it.get("unpack") or {}).get("die") or {}).get("detects") or []
+        if it.get("file") and dets:
+            out[str(it["file"])] = dets
+    return out
+
+
+def _protected(result: dict[str, Any], label: str, path: Path, die_by_name: dict[str, list[dict[str, Any]]]) -> None:
+    """No configuration in this object: say so when a protector is why."""
+    from . import protection
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return
+    if data[:2] != b"MZ":
+        return
+    found = protection.detect(data, die_by_name.get(path.name) or die_by_name.get(label))
+    if found:
+        result.setdefault("protected", []).append({"object": label, "protectors": found,
+                                                   "note": protection.note(found)})
 
 
 def reinterpret(case_root: Path, run_id: str | None = None) -> dict[str, Any]:

@@ -6859,6 +6859,10 @@ function paneC2(c2, findings, caseId) {
     Each configuration is a <b>finding</b> (Findings tab) and its C2 values are in the <b>IOCs</b> tab, ready to Check.
     Mark it here; the report lists the configurations you mark.
     ${caseId && (c2.configs || []).length ? ` <a class="btn btn-ghost btn-sm" href="/api/cases/${encodeURIComponent(caseId)}/c2.csv">Export CSV</a>` : ""}</p>`;
+  const prot = (c2.protected || []).length
+    ? `<div class="chain-banner"><b>Protected — configuration not readable statically:</b><ul>${c2.protected.map((p) =>
+        `<li><span class="mono">${escapeHtml(p.object)}</span>: ${p.protectors.map((x) => `<span class="badge badge-warn" title="${escapeHtml(x.evidence)}">${escapeHtml(x.name)}</span>`).join(" ")}
+          <span class="muted">${escapeHtml(p.note)}</span></li>`).join("")}</ul></div>` : "";
   const cards = cfgs.map((c, i) => {
     const f = byId[c.finding_id];
     const s = c.summary || {};
@@ -6937,7 +6941,7 @@ function paneC2(c2, findings, caseId) {
       re-reads the stored RAW with the current parsers (nothing is run again; the RAW is untouched; earlier interpretations are kept).
       ${interp ? `Done: ${interp}.` : ""}</p>` : ""}</div>`;
   return innerTabs("c2", [
-    { id: "results", label: `Results (${cfgs.length})`, html: `<div class="ml-pane">${head}${cfgs.length ? cards : empty}</div>` },
+    { id: "results", label: `Results (${cfgs.length})`, html: `<div class="ml-pane">${head}${prot}${cfgs.length ? cards : empty}</div>` },
     { id: "extractors", label: "Extractors", html: extractors },
     { id: "help", label: "Help", html: c2Help(c2) },
   ]);
