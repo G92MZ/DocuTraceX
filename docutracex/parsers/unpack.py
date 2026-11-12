@@ -297,6 +297,10 @@ def heuristics(blob: bytes, pe: Any | None) -> list[dict[str, str]]:
             add("sfx7z", "overlay", "7z archive in overlay")
         elif o[:4] == b"Rar!":
             add("sfxrar", "overlay", "RAR archive in overlay")
+        elif b"WinRAR" in blob[:ovl] and b"Rar!\x1a\x07" in blob[ovl:ovl + 0x10000]:
+            # WinRAR SFX with the archive a little into the overlay (after its SFX comment / script,
+            # often UTF-16 "*** … ***"): seen on real RedLine droppers
+            add("sfxrar", "overlay", "RAR archive inside the overlay of a WinRAR SFX stub")
         elif o[:4] == b"PK\x03\x04":
             add("sfxzip", "overlay", "ZIP archive in overlay")
     return hits
