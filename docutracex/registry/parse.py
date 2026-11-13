@@ -249,7 +249,32 @@ def apply_logs(path: Path, out: Path) -> tuple[Path, list[str]]:
 
 
 def iter_hive(path: Path, mount: str) -> Iterator[tuple[str, tuple]]:
-    """("key", row) and ("value", row) for every key and value of the hive, depth first."""
+    """("key", row) and ("value", row) for every key and value of the hive, depth first.
+
+    The fast walker (``fastregf``) reads a full SOFTWARE hive in seconds; on a structure it
+    cannot follow, regipy takes over for the keys not read yet."""
+    from . import fastregf
+    done: set[str] = set()
+    try:
+        for what, row in fastregf.iter_hive(path, mount, _decode, MAX_TEXT, MAX_RAW):
+            if what == "key":
+                done.add(row[0])
+                parent, name = _parent(row[0])
+                row = (row[0], parent, name, *row[3:])
+            yield what, row
+        return
+    except Exception as exc:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning("registry: fast walker stopped on %s (%s); regipy continues", path.name, exc)
+    skip = False
+    for what, row in _iter_hive_regipy(path, mount):
+        if what == "key":
+            skip = row[0] in done
+        if not skip:
+            yield what, row
+
+
+def _iter_hive_regipy(path: Path, mount: str) -> Iterator[tuple[str, tuple]]:
     from regipy.registry import RegistryHive
     h = RegistryHive(str(path))
 

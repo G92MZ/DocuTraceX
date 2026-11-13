@@ -20,11 +20,15 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 MAX_PER_PLUGIN = 20000
+# Plugins that only re-list keys and values already in the database (and take most of the time
+# on a full hive): services and installed programs are queried there directly (SQL examples).
+SKIP = {"services", "installed_programs_software", "installed_programs_ntuser", "software_classes_installer",
+        "ntuser_classes_installer"}
 _TS_FIELDS = ("last_run", "last_executed", "last_execution", "timestamp", "last_write", "last_modified",
               "last_connected", "last_login", "last_logon", "first_installed", "install_date", "date",
               "last_written_timestamp", "last_mod_date", "created", "first_connected")
-_KEY_FIELDS = ("key_path", "path", "key")
-_SKIP_SUMMARY = {"key_path", "path", "key", "raw", "data", "value_data", "slack"}
+_KEY_FIELDS = ("key_path",)          # a registry key; "path" is usually a file (ShimCache, BAM, Amcache)
+_SKIP_SUMMARY = {"key_path", "raw", "data", "value_data", "slack"}
 
 
 def _ts(v: Any) -> str | None:
@@ -95,6 +99,7 @@ def run(hive_path: Path, hive_type: str | None) -> tuple[list[tuple[Any, ...]], 
     """(rows, plugins that ran) for one hive."""
     try:
         from regipy.hive_types import SUPPORTED_HIVE_TYPES
+        from regipy.plugins.plugin import PLUGINS
         from regipy.plugins.utils import run_relevant_plugins
         from regipy.registry import RegistryHive
     except ImportError:
@@ -104,7 +109,8 @@ def run(hive_path: Path, hive_type: str | None) -> tuple[list[tuple[Any, ...]], 
     logging.getLogger("regipy").setLevel(logging.CRITICAL)
     try:
         hive = RegistryHive(str(hive_path), hive_type=hive_type)
-        res = run_relevant_plugins(hive, as_json=True, continue_on_error=True)
+        wanted = [p.NAME for p in PLUGINS if p.NAME not in SKIP]
+        res = run_relevant_plugins(hive, as_json=True, continue_on_error=True, plugins=wanted)
     except Exception as exc:  # noqa: BLE001
         log.warning("registry artifacts: %s: %s", hive_path, exc)
         return [], []
@@ -117,7 +123,8 @@ def run(hive_path: Path, hive_type: str | None) -> tuple[list[tuple[Any, ...]], 
 def store(con, src: int, rows: list[tuple[Any, ...]], mount: str = "") -> None:  # noqa: ANN001
     """Key paths of the plugins are relative to the hive: stored under its mount (HKCU\\…)
     so they read and link like every other path of the case."""
-    if rows:
-        con.executemany("INSERT INTO artifacts VALUES (?, ?, CAST(? AS TIMESTAMP), ?, ?, ?)",
-                        [[src, plugin, ts, (mount + key if mount and key.startswith("\\") else key), summary, entry]
-                         for plugin, ts, key, summary, entry in rows])
+    from .store import bulk_insert
+    bulk_insert(con, "artifacts", [("src", "INTEGER"), ("plugin", "VARCHAR"), ("ts", "TIMESTAMP"), ("key", "VARCHAR"),
+                                   ("summary", "VARCHAR"), ("entry", "VARCHAR")],
+                ([src, plugin, ts, (mount + key if mount and key.startswith("\\") else key), summary, entry]
+                 for plugin, ts, key, summary, entry in rows))

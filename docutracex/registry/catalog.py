@@ -219,6 +219,7 @@ def match(con, sources: list[dict[str, Any]], entries: list[dict[str, Any]] | No
     if not entries:
         return 0
     n = 0
+    _PENDING.clear()
     for s in sources:
         if s.get("error") and not s.get("keys"):
             continue
@@ -234,6 +235,9 @@ def match(con, sources: list[dict[str, Any]], entries: list[dict[str, Any]] | No
             if not e["value"]:            # a key entry: the key is the bookmark
                 n += _ins_keys(con, meta, lit, rx)
             n += _ins_vals(con, meta, lit, rx, e)
+    from .store import bulk_insert
+    bulk_insert(con, "catalog", _COLS, _PENDING)
+    _PENDING.clear()
     return n
 
 
@@ -259,12 +263,15 @@ def _ins_vals(con, meta: list, lit: str, rx: str, e: dict[str, Any]) -> int:  # 
         WHERE v.src = ? AND starts_with(lower(v."key"), ?) AND regexp_matches(v."key", ?, 'i') AND v.op = ''
         {name_cond} LIMIT 5000""", [meta[0], lit, rx] + args).fetchall()
     if rows and e["value"]:                # a value entry: its keys become bookmarks only where the value exists
-        con.executemany("INSERT INTO catalog VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?)",
-                        list({(src, key): [src, meta[1], meta[2], meta[3], meta[4], key, lw]
-                              for src, key, _n, _t, _d, _r, lw in rows}.values()))
-    if rows:
-        con.executemany("INSERT INTO catalog VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        [[src, meta[1], meta[2], meta[3], meta[4], key, name, vtype,
-                          convert(e["convert"], bytes(raw) if raw is not None else None, data or "")[:4000], lw]
-                         for src, key, name, vtype, data, raw, lw in rows])
+        _PENDING.extend({(src, key): [src, meta[1], meta[2], meta[3], meta[4], key, None, None, None, lw]
+                         for src, key, _n, _t, _d, _r, lw in rows}.values())
+    _PENDING.extend([src, meta[1], meta[2], meta[3], meta[4], key, name, vtype,
+                     convert(e["convert"], bytes(raw) if raw is not None else None, data or "")[:4000], lw]
+                    for src, key, name, vtype, data, raw, lw in rows)
     return len(rows)
+
+
+_PENDING: list[list] = []                  # catalogue rows, inserted at once at the end of match()
+_COLS = [("src", "INTEGER"), ("category", "VARCHAR"), ("description", "VARCHAR"), ("comment", "VARCHAR"),
+         ("batch", "VARCHAR"), ("key", "VARCHAR"), ("name", "VARCHAR"), ("type", "VARCHAR"), ("data", "VARCHAR"),
+         ("last_write", "TIMESTAMP")]
