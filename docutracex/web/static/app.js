@@ -48,6 +48,11 @@ const FORMATS = [
   { name: "Binaries / PE", color: "#b58900", glyph: "MSI",
     exts: [".msi", ".exe", ".dll", ".scr", ".sys", ".ocx", ".cpl"],
     title: "MSI installers get real analysis (CustomAction/sequence/Binary tables, string mining, embedded CABs); PyInstaller EXEs are unpacked and their Python recovered; other PE images get static triage (sections/entropy, imports, resources, signing, packer detection) with pefile" },
+  { name: "Registry", color: "#0f7b8a", glyph: "REG",
+    exts: [".reg", "NTUSER.DAT", "UsrClass.dat", "SYSTEM", "SOFTWARE", "SAM", "SECURITY", "Amcache.hve", ".LOG1/2"],
+    title: "Registry hives (by content, whatever the name; with their transaction logs) and .reg exports: loaded into a per-case database to browse, search and query with SQL; persistence / evasion / hiding rules, deleted keys recovered, artifacts decoded (UserAssist, ShimCache, BAM, ShellBags, USB…), the machine behind SYSTEM + SOFTWARE, RECmd bookmarks, timeline and .reg / bodyfile exports" },
+  { name: "Memory dumps", color: "#8e44ad", glyph: "DMP", exts: [".dmp", ".mdmp"],
+    title: "Windows process minidumps (MDMP: procdump, Task Manager, WinDbg): the PE images in memory rebuilt and carved, so a payload a crypter only decrypts at run time is analysed like any other binary" },
   { name: "Any other file", color: "#5f6b7a", glyph: "BIN", exts: [".img", ".iso", ".bin", "…"],
     title: "Anything else (disk images, data...): YARA, marks and the report" },
 ];

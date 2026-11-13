@@ -24,6 +24,7 @@ The **Diagnostics** tab shows which ones are available; a **Retry** button on a 
 | Scripts | STPyV8 (JavaScript sandbox), webcrack (on a portable Node), box-ps (on portable PowerShell Core) |
 | Containers | py7zr, pyzipper, pycdlib |
 | Machine Learning | LightGBM, the EMBER2024 models and feature extractor (Apache-2.0) |
+| Registry | regipy (MIT) — hive identification, transaction logs and the artifact plugins; DuckDB (MIT) — the per-case registry database; the RECmd batch files of Eric Zimmerman (`Kroll_Batch.reb`, `DFIRBatch.reb`, MIT) — bookmarks and catalogue, downloaded into `tools/recmd/` and refreshed weekly |
 | Rules | YARA (yara-python) |
 | Network checks | Playwright + Chromium, DB-IP (CC BY 4.0), iptoasn.com, the IANA TLD list, ProxyScrape |
 | Web / AI | FastAPI, Uvicorn, Jinja2, the MCP Python SDK |

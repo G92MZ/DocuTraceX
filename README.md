@@ -56,7 +56,7 @@ and [Configuration](https://g92mz.github.io/DocuTraceX/configuration/).
 - 📝 **Office · PDF · RTF · OneNote** — macros extracted and emulated, Excel 4.0, DDE, remote templates, exploit objects, PDF actions and signatures, QR codes.
 - 🧪 **Scripts** — JavaScript, PowerShell, VBScript, batch and Python deobfuscated and followed to their final behaviour, with MITRE ATT&CK.
 - 🧱 **Binaries** — PE, .NET, Go, ELF and Mach-O: static triage, packers and installers unpacked, encrypted stages decrypted, functions and pseudocode, memory dumps carved.
-- 🗝️ **Registry** — hives and .reg exports loaded once into a per-case DuckDB database: browse (with RECmd bookmarks), search, read-only SQL and a timeline; artifacts decoded by regipy (UserAssist, ShimCache, BAM, ShellBags, USB…); persistence / evasion rules; payloads in values carved.
+- 🗝️ **Registry** — hives (whatever their name, with their transaction logs) and .reg exports loaded once into a per-case DuckDB database: browse with RECmd bookmarks, search, read-only SQL and a timeline; persistence, evasion and hiding rules; deleted keys and values recovered; artifacts decoded (UserAssist, ShimCache, BAM, ShellBags, USB…); the machine behind SYSTEM + SOFTWARE (users, time zone, install date); payloads in values carved; .reg and bodyfile exports. A full machine loads in about half a minute.
 - 🪆 **Recursion** — everything a file carries is analysed in turn, many levels deep.
 - 📡 **C2 · YARA · ML · Hex** — implant configurations, your rules, a machine-learning second opinion, a hex viewer.
 - 🌐 **Network checks** — on demand, through your proxy, like a real victim with a fake identity.

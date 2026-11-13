@@ -41,6 +41,13 @@ really is, what it would do, what it carries inside, and where it would connect.
     [Go](file-types/go.md) · [Linux, macOS and Android](file-types/other-binaries.md) ·
     [Memory dumps](file-types/memdump.md)
 
+-   :material-file-tree-outline:{ .lg .middle } **Registry**
+
+    ---
+
+    [Hives and .reg exports](file-types/registry.md): browse, search and SQL over a per-case
+    database, rules, deleted entries recovered, decoded artifacts, the machine, a timeline.
+
 -   :material-radar:{ .lg .middle } **Analysis tools**
 
     ---
