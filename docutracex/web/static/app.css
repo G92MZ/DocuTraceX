@@ -1043,3 +1043,8 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 .reg-vals { overflow: auto; max-height: 520px; }
 .table-scroll { overflow: auto; max-height: 600px; }
 @media (max-width: 900px) { .reg-cols { grid-template-columns: 1fr; } }
+
+.reg-findings td { vertical-align: top; }
+.reg-findings .reg-fdetail > td { background: var(--bg); padding: 8px 12px 12px; }
+.reg-findings .mark-cell { min-width: 220px; }
+tr.reg-sus td { background: color-mix(in srgb, var(--bad, #e5534b) 8%, transparent); }

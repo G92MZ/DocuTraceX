@@ -99,7 +99,7 @@ def consolidate(modules: dict[str, Any]) -> list[dict[str, Any]]:
                              ("shortcut", "shortcut"), ("msi", "msi"),
                              ("python", "python"), ("pyinstaller", "pyinstaller"),
                              ("java", "java"), ("onenote", "onenote"), ("domainsim", "domainsim"),
-                             ("rmm", "rmm")):
+                             ("rmm", "rmm"), ("registry", "registry")):
         mod = modules.get(mod_name)
         if not mod:
             continue

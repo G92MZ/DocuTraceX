@@ -107,6 +107,8 @@ def run_rules(dbp: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         if r.get("suspicious"):
             rx = re.compile(r["suspicious"])
             sus = [it for it in items if rx.search(it["data"] or "")]
+            for it in sus:
+                it["suspicious"] = True
         severity = r["severity"]
         shown = items
         if sus:
