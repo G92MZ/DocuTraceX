@@ -2785,21 +2785,59 @@ function regSourcesSelect(sources, id) {
     `<option value="${s.id}">${escapeHtml(`${s.id} · ${s.label}`)}</option>`).join("")}</select>`;
 }
 
-function paneRegistry(rg) {
+// Registry findings: one compact row per rule (severity, rule, title, ATT&CK, mark); ▸ opens
+// the entries behind it (source, key → Browse, value, data, last write).
+function regFindingsHtml(rg, marked) {
+  const fs = rg.findings || [];
+  const hitsBy = {};
+  (rg.hits || []).forEach((h) => { hitsBy[h.rule] = h; });
+  const byKey = {};
+  (marked || []).forEach((f) => { byKey[`${f.rule}\u0000${f.detail}`] = f; });
+  const evRows = (f) => {
+    const h = hitsBy[f.rule];
+    if (h && (h.items || []).length) {
+      return `<table class="cases"><thead><tr><th>Src</th><th>Key</th><th>Value</th><th>Data</th><th>Last write</th></tr></thead><tbody>
+        ${h.items.map((it) => `<tr${it.suspicious ? ' class="reg-sus"' : ""}><td class="reg-nowrap">${it.src}</td>
+          <td class="mono"><a href="#" data-reg-open="${escapeHtml(it.key)}" data-reg-src="${it.src}">${escapeHtml(it.key)}</a></td>
+          <td class="mono reg-nowrap">${escapeHtml(it.name || "")}</td><td class="mono">${escapeHtml(it.data || "")}${it.suspicious ? ' <span class="badge badge-bad">suspicious</span>' : ""}</td>
+          <td class="reg-nowrap">${escapeHtml(it.last_write || "")}</td></tr>`).join("")}</tbody></table>
+        ${h.count > h.items.length ? `<p class="hint-line">${h.items.length} of ${h.count} shown — the rest in Search / SQL.</p>` : ""}`;
+    }
+    return f.evidence ? `<pre class="text-sample">${escapeHtml(f.evidence)}</pre>` : "";
+  };
+  const rows = fs.map((f, i) => {
+    const h = hitsBy[f.rule] || {};
+    const cf = byKey[`${f.rule}\u0000${f.detail}`] || f;
+    const title = String(f.detail || "").split(" — ")[0];
+    const count = String(f.detail || "").match(/ — (\d+) entr/);
+    return `<tr data-frow><td><span class="badge badge-${SEV_CLASS[f.severity] || "warn"}">${escapeHtml(f.severity)}</span></td>
+        <td class="mono reg-nowrap"><a href="#" data-reg-ftoggle="${i}" title="Show the entries">▸ ${escapeHtml(f.rule)}</a></td>
+        <td>${escapeHtml(title)}${count ? ` <span class="hint-line">· ${count[1]}</span>` : ""}${/suspicious command/.test(f.detail || "") ? ' <span class="badge badge-bad">suspicious command</span>' : ""}</td>
+        <td class="hint-line reg-nowrap">${escapeHtml((h.attack || (String(f.detail).match(/T\d{4}(\.\d{3})?/g) || [])).join(", "))}</td>
+        <td>${markControlsHtml(cf)}</td></tr>
+      <tr class="reg-fdetail" data-reg-fdetail="${i}" hidden><td colspan="5">${evRows(f)}</td></tr>`;
+  }).join("");
+  const info = (rg.hits || []).filter((h) => !fs.some((f) => f.rule === h.rule));
+  const infoHtml = info.length ? `<h4>Listed, not findings</h4><p class="hint-line">Entries the rules list for context (nothing suspicious in them).</p>
+    ${info.map((h) => `<details class="disclose"><summary><span class="mono">${escapeHtml(h.rule)}</span> ${escapeHtml(h.title)} — ${h.count}
+      <span class="hint-line">${escapeHtml((h.attack || []).join(", "))}</span></summary>
+      <table class="cases"><thead><tr><th>Src</th><th>Key</th><th>Value</th><th>Data</th><th>Last write</th></tr></thead><tbody>
+      ${(h.items || []).map((it) => `<tr><td>${it.src}</td><td class="mono"><a href="#" data-reg-open="${escapeHtml(it.key)}" data-reg-src="${it.src}">${escapeHtml(it.key)}</a></td>
+        <td class="mono">${escapeHtml(it.name || "")}</td><td class="mono">${escapeHtml(it.data || "")}</td>
+        <td>${escapeHtml(it.last_write || "")}</td></tr>`).join("")}</tbody></table></details>`).join("")}` : "";
+  return (fs.length ? `<div class="row"><button class="btn btn-ghost btn-sm" type="button" data-reg-fall="1">Expand all</button>
+      <button class="btn btn-ghost btn-sm" type="button" data-reg-fall="0">Collapse all</button></div>
+    <table class="cases findings-table reg-findings"><thead><tr><th>Severity</th><th>Rule</th><th>Finding</th><th>ATT&amp;CK</th><th>Mark</th></tr></thead>
+    <tbody>${rows}</tbody></table>` : `<p class="hint-line">No findings.</p>`) + infoHtml;
+}
+
+function paneRegistry(rg, marked) {
   const c = rg.counts || {};
   const sources = rg.sources || [];
   const srcRows = sources.map((s) => `<tr><td>${s.id}</td><td class="mono">${escapeHtml(s.label)}</td>
     <td>${escapeHtml(s.kind === "hive" ? `hive (${s.hive_type || "?"})` : ".reg")}</td><td class="mono">${escapeHtml(s.mount || "")}</td>
     <td>${s.keys}</td><td>${s.values}</td><td>${escapeHtml((s.logs || []).join(", "))}</td>
     <td>${s.error ? `<span class="bad-text">${escapeHtml(s.error)}</span>` : ""}</td></tr>`).join("");
-  const hits = (rg.hits || []).map((h) => `<details class="disclose"><summary>
-      <span class="badge badge-${SEV_CLASS[h.severity] || "muted"}">${escapeHtml(h.severity)}</span>
-      <span class="mono">${escapeHtml(h.rule)}</span> ${escapeHtml(h.title)} — ${h.count}${h.suspicious ? ` (${h.suspicious} suspicious)` : ""}
-      <span class="hint-line">${escapeHtml((h.attack || []).join(", "))}</span></summary>
-      <table class="cases"><thead><tr><th>Source</th><th>Key</th><th>Value</th><th>Data</th><th>Last write</th></tr></thead><tbody>
-      ${(h.items || []).map((it) => `<tr><td>${it.src}</td><td class="mono"><a href="#" data-reg-open="${escapeHtml(it.key)}" data-reg-src="${it.src}">${escapeHtml(it.key)}</a></td>
-        <td class="mono">${escapeHtml(it.name || "")}</td><td class="mono">${escapeHtml(it.data || "")}</td>
-        <td>${escapeHtml(it.last_write || "")}</td></tr>`).join("")}</tbody></table></details>`).join("");
   const certs = (rg.certificates || []).length ? `<h4>Certificates added to trusted stores</h4><table class="cases"><thead><tr>
       <th>Thumbprint</th><th>Subject</th><th>Issuer</th><th>Valid</th></tr></thead><tbody>${rg.certificates.map((x) => `<tr>
       <td class="mono">${escapeHtml(x.thumbprint || "")}</td><td>${escapeHtml(x.subject || "")}${x.self_signed ? ' <span class="badge badge-warn">self-signed</span>' : ""}</td>
@@ -2849,7 +2887,7 @@ function paneRegistry(rg) {
     <table class="cases"><thead><tr><th>#</th><th>Source</th><th>Kind</th><th>Mounted as</th><th>Keys</th><th>Values</th>
       <th>Logs applied</th><th></th></tr></thead><tbody>${srcRows}</tbody></table>
     ${innerTabs("registry", [
-      { id: "findings", label: `Findings (${(rg.findings || []).length})`, html: `${netFindingsList(rg.findings || [])}${hits ? `<h4>Rule hits</h4>${hits}` : ""}${certs}${carved}` || "-" },
+      { id: "findings", label: `Findings (${(rg.findings || []).length})`, html: `${regFindingsHtml(rg, marked)}${certs}${carved}` },
       { id: "browse", label: "Browse", html: browse },
       { id: "artifacts", label: `Artifacts${c.artifacts || c.catalog ? ` (${(c.artifacts || 0) + (c.catalog || 0)})` : ""}`, html: artifacts },
       { id: "timeline", label: "Timeline", html: timeline },
@@ -2966,6 +3004,19 @@ function wireRegistry(root, caseId) {
   pane.addEventListener("click", async (ev) => {
     const a = ev.target.closest("a, button");
     if (!a || !pane.contains(a)) return;
+    if (a.hasAttribute("data-reg-ftoggle")) {
+      ev.preventDefault();
+      const row = pane.querySelector(`[data-reg-fdetail="${a.getAttribute("data-reg-ftoggle")}"]`);
+      row.hidden = !row.hidden;
+      a.textContent = (row.hidden ? "▸ " : "▾ ") + a.textContent.slice(2);
+      return;
+    }
+    if (a.hasAttribute("data-reg-fall")) {
+      const open = a.getAttribute("data-reg-fall") === "1";
+      pane.querySelectorAll("[data-reg-fdetail]").forEach((r) => { r.hidden = !open; });
+      pane.querySelectorAll("[data-reg-ftoggle]").forEach((x) => { x.textContent = (open ? "▾ " : "▸ ") + x.textContent.slice(2); });
+      return;
+    }
     if (a.hasAttribute("data-reg-open")) {
       ev.preventDefault();
       const tab = pane.querySelector('.itab[data-itab-group="registry"][data-itab="browse"]');
@@ -3567,7 +3618,8 @@ async function openComponents(analysisId, keepTab, viewId) {
     }
     const rgm = mods.registry;
     if (rgm && rgm.status === "ok") {
-      sections.push({ id: "registry", label: `Registry (${(rgm.findings || []).length})`, html: paneRegistry(rgm) });
+      sections.push({ id: "registry", label: `Registry (${(rgm.findings || []).length})`,
+        html: paneRegistry(rgm, findings.filter((f) => f.source === "registry")) });
     } else if (rgm) {                     // a hive / .reg that could not be loaded: say why, never hide it
       sections.push({ id: "registry", label: "Registry ⚠", html: `<p class="hint-line">The registry data of this case
         could not be loaded: <span class="mono">${escapeHtml(rgm.error || rgm.status || "unknown error")}</span>.</p>
