@@ -3479,6 +3479,12 @@ async function openComponents(analysisId, keepTab, viewId) {
     const rgm = mods.registry;
     if (rgm && rgm.status === "ok") {
       sections.push({ id: "registry", label: `Registry (${(rgm.findings || []).length})`, html: paneRegistry(rgm) });
+    } else if (rgm) {                     // a hive / .reg that could not be loaded: say why, never hide it
+      sections.push({ id: "registry", label: "Registry ⚠", html: `<p class="hint-line">The registry data of this case
+        could not be loaded: <span class="mono">${escapeHtml(rgm.error || rgm.status || "unknown error")}</span>.</p>
+        <p class="hint-line">Restart DocuTraceX with <span class="mono">python run.py</span> (it installs the missing
+        packages into the portable Python, or run <span class="mono">python scripts/setup_portable_python.py</span>)
+        and use <b>Re-run · Full case</b>.</p>` });
     }
     const mdm = mods.memdump;
     if (mdm && mdm.status === "ok") {
