@@ -202,13 +202,114 @@ def analyze_html(html: str, location: str = "body") -> list[dict[str, Any]]:
         out.append(_finding("tracking_pixel", "low", f"{len(remote_px)} remote 1x1 tracking image(s)"
                             + (f" — {', '.join(vendors)}" if vendors else "") + " (opening the email tells the sender)",
                             location, remote_px[0][:300]))
-    hidden = re.findall(r"<[^>]+style\s*=\s*[\"'][^\"']*(?:font-size\s*:\s*0(?:px|pt)?\b|display\s*:\s*none|"
+    hidden = re.findall(r"<[^>]+style\s*=\s*[\"'][^\"']*(?:font-size\s*:\s*0(?:px|pt|em|%)?\b|display\s*:\s*none|"
+                        r"visibility\s*:\s*hidden|opacity\s*:\s*0(?:\.0+)?\s*(?:;|[\"'])|"
+                        r"(?:left|top|right|bottom|text-indent)\s*:\s*-\d{3,5}px|"
                         r"color\s*:\s*(?:#fff(?:fff)?|white)\b[^\"']*background(?:-color)?\s*:\s*(?:#fff(?:fff)?|white))",
                         html, re.IGNORECASE)
     if len(hidden) >= 2:
         out.append(_finding("hidden_text", "low",
                             f"{len(hidden)} element(s) with zero-size/hidden/invisible text (filter evasion)",
                             location, hidden[0][:300]))
+    out += _html_surface(html, low, location)
+    return out
+
+
+# --- HTML surface: forms, scripts, frames, obfuscation, URI schemes -----------------------
+_PAY_FIELD = re.compile(r"<input\b[^>]*(?:name|id|autocomplete|placeholder)\s*=\s*[\"']?[^\"'>]*"
+                        r"(?:card.?num|cc-?num|cc-?number|cardnumber|cvv|cvc|ccv|csc|cc-?exp|expir|ssn|"
+                        r"social.?security|pin\b|iban|tarjeta|caducidad)", re.IGNORECASE)
+_JS_REDIRECT = re.compile(r"(?:\b(?:window|document|top|parent|self)\.)?location(?:\.href)?\s*=(?!=)|"
+                          r"location\.(?:replace|assign)\s*\(|window\.open\s*\(\s*[\"']https?:", re.IGNORECASE)
+_OBF_SIGNS = (("eval(", r"\beval\s*\("), ("new Function(", r"new\s+Function\s*\("), ("atob(", r"\batob\s*\("),
+              ("unescape(", r"\bunescape\s*\("), ("String.fromCharCode", r"String\.fromCharCode\s*\("),
+              ("decodeURIComponent of a long string", r"decodeURI(?:Component)?\s*\(\s*[\"'][^\"']{60,}"),
+              ("\\x / \\u escapes", r"(?:\\x[0-9a-fA-F]{2}|\\u[0-9a-fA-F]{4}){20,}"),
+              ("split('').reverse().join('')", r"\.split\(\s*[\"']{2}\s*\)\s*\.reverse\(\)\s*\.join\("),
+              ("setTimeout with a string", r"setTimeout\s*\(\s*[\"']"))
+_EXFIL_SINKS = re.compile(r"\bfetch\s*\(|XMLHttpRequest|navigator\.sendBeacon|\$\.(?:ajax|post)\s*\(|axios\.", re.IGNORECASE)
+_EXFIL_CHANNELS = re.compile(r"api\.telegram\.org/bot|discord(?:app)?\.com/api/webhooks/|hooks\.slack\.com/|"
+                             r"formspree\.io/|getform\.io/|submit-form\.com/|script\.google\.com/macros/", re.IGNORECASE)
+# URI schemes that open local programs: Windows Search over a remote share (search-ms), the
+# diagnostics tool (ms-msdt, Follina), App Installer, Office opening a remote document, file shares
+_BAD_SCHEMES = re.compile(
+    r"(?:href|src|action|location(?:\.href)?)\s*=\s*[\"']?\s*("
+    r"search-ms:|search:|ms-msdt:|ms-appinstaller:|ms-officecmd:|ms-cxh(?:-full)?:|ms-settings:|"
+    r"ms-(?:word|excel|powerpoint|visio|access|project|publisher):(?:ofe|ofv|nft)\||"
+    r"file:(?://)?|\\\\[\w.-]+\\|shell:|itms-services:|mk:@MSITStore|ms-its:|"
+    r"vbscript:|jar:|ldap:)[^\"'\s>]{0,160}", re.IGNORECASE)
+_ENTITY_RUN = re.compile(r"(?:&#x?[0-9a-fA-F]{2,6};){8,}")
+_HREF_ENTITY = re.compile(r"href\s*=\s*[\"']?[^\"'>]*(?:&#x?[0-9a-fA-F]{2,6};){3,}", re.IGNORECASE)
+
+
+def _html_surface(html: str, low: str, location: str) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    scripts = "\n".join(re.findall(r"<script\b[^>]*>(.*?)</script>", html, re.IGNORECASE | re.DOTALL))
+    handlers = "\n".join(re.findall(r"\bon(?:load|error|click|mouseover|focus|submit)\s*=\s*[\"']([^\"']{1,400})",
+                                    html, re.IGNORECASE))
+    code = scripts + "\n" + handlers
+    forms = list(re.finditer(r"<form\b[^>]*>", html, re.IGNORECASE))
+    # payment-card / identity fields
+    pay = [m.group(0)[:200] for m in _PAY_FIELD.finditer(html)]
+    if pay:
+        out.append(_finding("html_payment_form", "high",
+                            f"HTML asks for payment-card / identity data ({len(pay)} field(s): card, CVV, expiry, SSN, PIN, IBAN)",
+                            location, "\n".join(pay[:4])))
+    for m in forms:
+        action = re.search(r"action\s*=\s*[\"']?\s*mailto:([^\"'\s>]+)", m.group(0), re.IGNORECASE)
+        if action:
+            out.append(_finding("html_form_mailto", "medium",
+                                f"HTML form sends what is typed by email to {action.group(1)}", location, m.group(0)[:300]))
+            break
+    if forms and re.search(r"\.submit\s*\(\s*\)", code):
+        out.append(_finding("html_auto_submit", "medium",
+                            "A script submits the form by itself (the data is sent without the reader pressing anything)",
+                            location, re.search(r".{0,80}\.submit\s*\(\s*\).{0,40}", code).group(0)[:200]))
+    # where typed data goes: a chat bot / webhook / form relay, or a script posting a password form
+    chan = sorted({m.group(0).lower() for m in _EXFIL_CHANNELS.finditer(html)})
+    has_pw = re.search(r"type\s*=\s*[\"']?password", low) is not None
+    if chan or (has_pw and _EXFIL_SINKS.search(code)):
+        out.append(_finding("html_exfil_script", "high",
+                            "The page sends what is typed to " + (", ".join(chan) if chan else "a server, from a script")
+                            + " (credentials posted by script, not by the form)", location,
+                            (chan[0] if chan else _EXFIL_SINKS.search(code).group(0))))
+    # frames
+    frames = re.findall(r"<iframe\b[^>]*>", html, re.IGNORECASE)
+    hidden_f = [f for f in frames if re.search(r"(?:width|height)\s*=\s*[\"']?0\b|display\s*:\s*none|"
+                                               r"visibility\s*:\s*hidden|(?:width|height)\s*:\s*0(?:px)?\b", f, re.IGNORECASE)]
+    if hidden_f:
+        out.append(_finding("html_hidden_iframe", "medium",
+                            f"{len(hidden_f)} invisible iframe(s): a page loads in the background", location, hidden_f[0][:300]))
+    elif any(re.search(r"src\s*=\s*[\"']?https?://", f, re.IGNORECASE) for f in frames):
+        out.append(_finding("html_remote_iframe", "low", f"{len(frames)} iframe(s) loading a remote page",
+                            location, frames[0][:300]))
+    # scripts that move the reader, decode themselves or load more script
+    red = _JS_REDIRECT.search(code)
+    if red:
+        out.append(_finding("html_js_redirect", "medium", "A script sends the reader to another page",
+                            location, code[max(0, red.start() - 60):red.end() + 100].strip()[:250]))
+    obf = [name for name, rx in _OBF_SIGNS if re.search(rx, code)]
+    if len(obf) >= 2:
+        out.append(_finding("html_script_obfuscated", "medium",
+                            f"Obfuscated script ({', '.join(obf)})", location, ", ".join(obf)))
+    if (re.search(r"createElement\s*\(\s*[\"']script[\"']\s*\)", code, re.IGNORECASE)
+            or re.search(r"document\.write\s*\(\s*(?:unescape|atob|decodeURI|String\.fromCharCode)", code, re.IGNORECASE)):
+        out.append(_finding("html_dynamic_script", "medium",
+                            "A script writes / injects more script at run time (the real code is not in the message)",
+                            location, ""))
+    # HTML entity obfuscation (text and links spelled as &#x..;)
+    ent = _ENTITY_RUN.search(html) or _HREF_ENTITY.search(html)
+    if ent:
+        out.append(_finding("html_entity_obfuscation", "medium",
+                            "Text or links written as runs of HTML character entities (hides words and URLs from filters)",
+                            location, ent.group(0)[:200]))
+    # URI schemes that launch local programs or reach file shares
+    bad = sorted({m.group(1)[:120] for m in _BAD_SCHEMES.finditer(html)})
+    if bad:
+        out.append(_finding("html_dangerous_uri", "high",
+                            "Link / form with a URI scheme that opens a local program or a file share "
+                            "(search-ms, ms-msdt, ms-appinstaller, Office ofe|, file://, UNC…)", location,
+                            "\n".join(bad[:5])))
     return out
 
 

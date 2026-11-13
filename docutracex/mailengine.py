@@ -115,6 +115,20 @@ _LEGIT_PERSONAL = re.compile(r"(?i)unsub|opt-?out|preferen|manage|subscri|newsle
                              r"/baja|darse-de-baja|abmelden|desinscri")
 
 
+# URL shorteners (the destination is hidden until the click).
+SHORTENERS = frozenset("""
+bit.ly bitly.com tinyurl.com t.co goo.gl rebrand.ly is.gd buff.ly cutt.ly rb.gy soo.gd s2r.co clicky.me short.io
+shorte.st adf.ly bc.vc ouo.io u.to t2m.io tiny.cc chilp.it clck.ru v.gd yourls.org x.co po.st qr.ae bl.ink
+hyperurl.co urlz.fr clk.sh shorturl.at 1url.com smarturl.it lstu.fr sh.st gg.gg ur1.ca s.id link.zip
+t.ly tiny.one shrtco.de ow.ly lnkd.in rotf.lol 2no.co qrco.de trib.al dub.sh
+""".split())
+
+
+def shortener(host: str) -> bool:
+    h = (host or "").lower()
+    return h in SHORTENERS or (h.startswith("www.") and h[4:] in SHORTENERS)
+
+
 def _recipient_forms(addr: str) -> set[str]:
     import base64
     from urllib.parse import quote
@@ -129,7 +143,7 @@ def _phish_url_patterns(links: list[str], recipients: list[str], sdom: str) -> d
     paths, unfilled campaign merge tags, user-info and punycode tricks."""
     from . import mailintel, urlwrap
     forms = {f for r in recipients for f in _recipient_forms(r)}
-    rcpt, kitp, holes, userinfo, puny = [], [], [], [], []
+    rcpt, kitp, holes, userinfo, puny, deep = [], [], [], [], [], []
     for u in links:
         try:
             p = urlparse(u)
@@ -143,6 +157,12 @@ def _phish_url_patterns(links: list[str], recipients: list[str], sdom: str) -> d
             userinfo.append(u)
         if any(lbl.startswith("xn--") for lbl in host.split(".")):
             puny.append(u)
+        # login.microsoftonline.com.secure-check.verify.example.top: a trusted name buried in a long chain
+        sub = host[: -len(_registrable(host))].rstrip(".") if _registrable(host) else ""
+        if ((sub.count(".") >= 3 or re.search(r"(?:^|\.)[a-z0-9-]{2,}\.(?:com|net|org|gov|edu|co|es)(?:\.|$)", sub))
+                and not mailintel.tracker(host) and not urlwrap.is_gateway_host(host)
+                and not re.fullmatch(r"[\d.]+", host)):
+            deep.append(u)
         legit = (mailintel.tracker(host) or urlwrap.is_gateway_host(host)
                  or (sdom and _registrable(host) == _registrable(sdom))
                  or _LEGIT_PERSONAL.search(p.path + "?" + p.query))
@@ -163,7 +183,7 @@ def _phish_url_patterns(links: list[str], recipients: list[str], sdom: str) -> d
             if long_glued or len(stems) >= 3 or wp:
                 kitp.append(u)
     return {"recipient_in_url": rcpt[:10], "kit_path": kitp[:10], "placeholder": holes[:10],
-            "userinfo": userinfo[:10], "punycode": puny[:10]}
+            "userinfo": userinfo[:10], "punycode": puny[:10], "deep_subdomain": deep[:10]}
 
 
 # --- Microsoft 365 headers and tenant ----------------------------------------
@@ -646,6 +666,8 @@ def facts(email: dict[str, Any], mailrules: dict[str, Any], case_root: Path | No
                               if mailintel.hosting_service(h) and _registrable(h) != _registrable(sdom)][:10],
                   "download": [u for u in links if urlparse(u).path.lower().endswith(_DOWNLOAD_EXT)][:10],
                   "ip": [h for h in hosts if is_ip(h)][:10], "redirects": redirects[:10],
+                  "shortener": [h for h in hosts if shortener(h)][:10],
+                  "ftp": sorted(set(re.findall(r"(?i)\bftps?://[^\s<>\"')\]]{3,200}", html + "\n" + body)))[:10],
                   "own_lookalike": next((x for x in (own_lookalike(h, own) for h in hosts) if x), ""),
                   **kit},
         "attachments": att,

@@ -76,6 +76,7 @@ hushmail.com fastmail.com
 ABUSED_TLDS = set("""
 top xyz cfd sbs click shop buzz rest cyou icu online site live work support bond lat mom beauty quest
 monster autos boats hair skin makeup lol cam surf tk ml ga cf gq pw cc ws today cloud run fun space best
+motorcycles xin vip win help ink fyi website
 """.split())
 
 # Email service providers: header markers and their click-tracking hosts.

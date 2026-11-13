@@ -100,6 +100,17 @@ each analysed with its own family's tools, many levels deep.
       is rendered and nothing is loaded.
     - The **links in the HTML**, the HTML source, and the **links rewritten by mail gateways**
       decoded back to their original destination.
+    - The HTML of the body and of HTML attachments is checked for what phishing pages do:
+      password and **payment-card** fields, forms that post elsewhere or **by email**
+      (`mailto:`), scripts that **submit the form by themselves** or **send what is typed** to a
+      chat bot or webhook (Telegram, Discord…), **invisible iframes**, scripts that **redirect**,
+      **decode themselves** (atob, eval, fromCharCode…) or **inject more script**, text and links
+      spelled as **HTML entities**, text pushed **off-screen** or made transparent, and links with
+      **URI schemes that open local programs or file shares** (`search-ms:`, `ms-msdt:`,
+      `ms-appinstaller:`, Office `ofe|`, `file://`, UNC).
+    - Links through **URL shorteners**, hosts that bury a trusted name in a **long subdomain
+      chain** (`login.microsoftonline.com.secure-check.…`), **FTP** links, and the classic
+      wording (urgency + lure + call to action, refunds) add to the verdict.
 
     ![Body of sample.eml](../assets/shots/email/body.webp){ .shot }
 
