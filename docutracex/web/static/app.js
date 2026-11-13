@@ -2753,6 +2753,12 @@ function paneMemdump(m) {
 }
 
 // --- Registry (hives / .reg in the case database) ------------------------------
+// the same query as store.RECOVERED_SQL (CSV export goes through the read-only SQL endpoint)
+const REG_RECOVERED_SQL = `SELECT v.src, v."key", v.name, v.type, v.data, v.size, k.last_write AS key_last_write
+FROM vals v LEFT JOIN keys k ON k.src = v.src AND k.path = v."key" WHERE v.op = 'recovered'
+UNION ALL SELECT k.src, k.path, NULL, NULL, NULL, NULL, k.last_write FROM keys k
+WHERE k.op = 'recovered' AND NOT EXISTS (SELECT 1 FROM vals v WHERE v.src = k.src AND v."key" = k.path AND v.op = 'recovered')`;
+
 const REG_SQL_EXAMPLES = [
   ["Autoruns", `SELECT v.src, v."key", v.name, v.data, k.last_write FROM vals v
   LEFT JOIN keys k ON k.src = v.src AND k.path = v."key"
@@ -2777,6 +2783,7 @@ UNION ALL SELECT ts, 'artifact: ' || plugin, summary FROM artifacts WHERE ts IS 
 ORDER BY ts DESC LIMIT 500`],
   ["A field of the decoded entries", `SELECT ts, json_extract_string(entry, '$.name') AS program,
   json_extract(entry, '$.run_counter') AS runs FROM artifacts WHERE plugin = 'user_assist' ORDER BY ts DESC`],
+  ["Recovered (deleted)", REG_RECOVERED_SQL],
   ["Tables", `DESCRIBE vals`],
 ];
 
@@ -2792,7 +2799,7 @@ function regTime(t) {
   const h = _regTz.offset / 60;
   return `${l} (UTC${h >= 0 ? "+" : ""}${h})`;
 }
-const REG_TIME_COLS = ["ts", "last_write", "timestamp", "first", "last", "install_date", "last_shutdown"];
+const REG_TIME_COLS = ["ts", "last_write", "key_last_write", "timestamp", "first", "last", "install_date", "last_shutdown"];
 
 // A binary value read every usual way (Registry Explorer's data interpreter).
 function regInterpret(hex) {
@@ -2949,6 +2956,13 @@ function paneRegistry(rg, marked) {
         : "(batch files not downloaded yet: they arrive on the next start with Internet access, then Re-run the case)"}.</p>
       <div class="reg-cols"><div id="reg-a-list" class="reg-keys"><p class="hint-line">Loading…</p></div>
         <div id="reg-a-out" class="reg-vals"><p class="hint-line">Pick a plugin or a category.</p></div></div>`;
+  const recovered = `<p class="hint-line">Keys and values deleted from the hive but still in its free cells (Windows only
+      marks the space free). Placed under their old parent when it is known; otherwise under
+      <span class="mono">(recovered, parent unknown)</span> / <span class="mono">(recovered values without a key)</span>.
+      Hives only: a .reg has no free cells.</p>
+      <div class="row">${regSourcesSelect(sources, "reg-r-src")}
+      <button class="btn btn-primary btn-sm" id="reg-r-go" type="button">Load</button>
+      <button class="btn btn-ghost btn-sm" id="reg-r-csv" type="button">Export CSV</button></div><div id="reg-r-out"></div>`;
   const timeline = `<div class="row">${regSourcesSelect(sources, "reg-t-src")}
       <button class="btn btn-primary btn-sm" id="reg-t-go" type="button">Load</button>
       <button class="btn btn-ghost btn-sm" id="reg-t-body" type="button" title="Whole timeline as a bodyfile (mactime -b / Plaso)">Export bodyfile</button>
@@ -2973,6 +2987,7 @@ function paneRegistry(rg, marked) {
       { id: "browse", label: "Browse", html: browse },
       { id: "artifacts", label: `Artifacts${c.artifacts || c.catalog ? ` (${(c.artifacts || 0) + (c.catalog || 0)})` : ""}`, html: artifacts },
       { id: "timeline", label: "Timeline", html: timeline },
+      ...(c.recovered ? [{ id: "recovered", label: `Recovered (${c.recovered})`, html: recovered }] : []),
       { id: "search", label: "Search", html: search },
       { id: "sql", label: "SQL", html: sql },
     ])}</div>`;
@@ -3137,6 +3152,14 @@ function wireRegistry(root, caseId) {
       window.location.href = `${base}/export.reg?src=${cur.src}&path=${encodeURIComponent(cur.path)}`;
     } else if (a.id === "reg-t-body" || a.id === "reg-t-csv") {
       window.location.href = `${base}/timeline.export?fmt=${a.id === "reg-t-csv" ? "csv" : "bodyfile"}&src=${$("reg-t-src").value}`;
+    } else if (a.id === "reg-r-go") {
+      const out = $("reg-r-out");
+      out.innerHTML = `<p class="hint-line">Loading…</p>`;
+      try { out.innerHTML = regTable(await regFetch(`${base}/recovered?src=${$("reg-r-src").value}`), true); }
+      catch (e) { out.innerHTML = `<p class="bad-text">${escapeHtml(e.message)}</p>`; }
+    } else if (a.id === "reg-r-csv") {
+      const src = Number($("reg-r-src").value) || 0;
+      regDownload(caseId, { sql: `SELECT * FROM (${REG_RECOVERED_SQL})${src ? ` WHERE src = ${src}` : ""}` });
     } else if (a.id === "reg-t-go") {
       const out = $("reg-t-out");
       out.innerHTML = `<p class="hint-line">Loading…</p>`;
@@ -3185,6 +3208,7 @@ function wireRegistry(root, caseId) {
   pane.querySelector("#reg-b-src")?.addEventListener("change", (ev) => { if (Number(ev.target.value)) loadBookmarks(Number(ev.target.value)); });
   pane.querySelectorAll('.itab[data-itab-group="registry"]').forEach((t) => t.addEventListener("click", () => {
     if (t.getAttribute("data-itab") === "artifacts" && !pane.dataset.artLoaded) { pane.dataset.artLoaded = "1"; loadArtifacts(); }
+    if (t.getAttribute("data-itab") === "recovered" && !pane.dataset.recLoaded) { pane.dataset.recLoaded = "1"; $("reg-r-go").click(); }
     if (t.getAttribute("data-itab") === "timeline" && !pane.dataset.tlLoaded) { pane.dataset.tlLoaded = "1"; $("reg-t-go").click(); }
   }));
   pane.querySelector("#reg-s-q")?.addEventListener("keydown", (ev) => { if (ev.key === "Enter") $("reg-s-go").click(); });

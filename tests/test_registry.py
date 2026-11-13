@@ -609,3 +609,16 @@ def test_machine_sized_sample_small_scale(tmp_path: Path) -> None:
     db = store.db_path(tmp_path / "c")
     q = store.user_query(db, "SELECT count(*) FROM artifacts WHERE plugin = 'shimcache' AND summary ILIKE '%sync.exe%'")
     assert q["rows"][0][0] >= 1
+
+
+def test_recovered_list(analysed) -> None:
+    case, res = analysed
+    db = store.db_path(case)
+    r = store.recovered(db)
+    rows = [dict(zip(r["columns"], x)) for x in r["rows"]]
+    assert {"Url", "Path", "FacturaSync"} <= {x["name"] for x in rows}
+    assert all(x["src"] == 2 for x in rows)                                 # the hive, not the .reg
+    assert store.recovered(db, src=1)["rows"] == []
+    # the same query, through the read-only SQL of the tab (CSV export)
+    q = store.user_query(db, f"SELECT * FROM ({store.RECOVERED_SQL.rsplit('ORDER BY', 1)[0]})")
+    assert len(q["rows"]) == len(rows)

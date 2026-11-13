@@ -77,6 +77,10 @@ otherwise under `(recovered, parent unknown)`; values no recovered key claims go
 `(recovered values without a key)`. Browse marks them **recovered**, the rules see them too
 (a finding says how many entries were recovered), and deleted entries pointing at a script
 host, a URL or a user-writable folder are a finding of their own: clean-up after the fact.
+The **Recovered** sub-tab lists them all at once (source, key — opening it in Browse — value,
+type, data, last write of the key), with a CSV export.
+
+![Recovered entries](../assets/shots/registry/recovered.webp){ .shot }
 
 ## The machine (several hives together)
 

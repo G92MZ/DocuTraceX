@@ -88,6 +88,13 @@ async def registry_artifact_rows(analysis_id: str, src: int, plugin: str = "", c
                        limit=min(max(limit, 1), 5000), offset=max(offset, 0))
 
 
+@router.get("/{analysis_id}/registry/recovered")
+async def registry_recovered(analysis_id: str, src: int = 0, limit: int = 2000, offset: int = 0) -> dict:
+    """Deleted keys and values recovered from free cells."""
+    return await _call("recovered", path=_db(analysis_id), src=src, limit=min(max(limit, 1), 5000),
+                       offset=max(offset, 0))
+
+
 @router.get("/{analysis_id}/registry/timeline")
 async def registry_timeline(analysis_id: str, src: int = 0, limit: int = 2000, offset: int = 0) -> dict:
     """Key last-writes and artifact timestamps, newest first."""
