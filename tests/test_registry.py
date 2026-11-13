@@ -92,7 +92,10 @@ def test_rules_are_well_formed() -> None:
     ids = [r["id"] for r in rules.RULES]
     assert len(ids) == len(set(ids))
     for r in rules.RULES:
-        assert r["severity"] in ("high", "medium", "low", "info") and r["attack"] and r["key"]
+        assert r["severity"] in ("high", "medium", "low", "info") and r["attack"] and (r.get("key") or r.get("custom"))
+        if r.get("custom"):
+            assert r["custom"].lstrip().upper().startswith("SELECT")
+            continue
         sql, args = rules.sql_for(r)
         assert sql.lstrip().upper().startswith("SELECT") and isinstance(args, list)
 
@@ -438,3 +441,129 @@ def test_artifact_keys_are_mounted(tmp_path: Path) -> None:
     r = store.artifact_rows(db, 1, plugin="ntuser_persistence")
     keys = {row[r["columns"].index("key")] for row in r["rows"]}
     assert keys == {"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"}
+
+
+# --- deleted entries, hiding, machine context, IOCs, exports ------------------------------------
+def test_recovers_deleted_keys_and_values(tmp_path: Path) -> None:
+    from docutracex.registry import recover
+    tree = {"Software": {"GrupoEjemplo": {"@values": [("Version", "REG_DWORD", 1)]}}}
+    data = regkit.build(tree, file_name="ntuser.dat",
+                        deleted_keys=[("Software\\GrupoEjemplo", "Instalador",
+                                       [("Url", "REG_SZ", "https://cdn-update.example.net/x.msi"),
+                                        ("Blob", "REG_BINARY", b"MZ" + b"\0" * 40)])],
+                        deleted_values=[("FacturaSync", "REG_SZ", "powershell.exe -w hidden")])
+    p = _write(tmp_path, "NTUSER.DAT", data)
+    rows = list(recover.recover(p, "HKCU"))
+    keys = {r[0] for w, r in rows if w == "key"}
+    vals = {(r[0], r[1]): r for w, r in rows if w == "value"}
+    assert "HKCU\\Software\\GrupoEjemplo\\Instalador" in keys
+    assert "HKCU\\Software\\GrupoEjemplo" not in keys                      # the live key is not repeated
+    assert vals[("HKCU\\Software\\GrupoEjemplo\\Instalador", "Url")][3].endswith("x.msi")
+    assert vals[("HKCU\\Software\\GrupoEjemplo\\Instalador", "Blob")][5][:2] == b"MZ"
+    assert vals[(f"HKCU\\{recover.ORPHAN_VALUES}", "FacturaSync")][6] == "recovered"
+    # nothing to recover in a clean hive
+    clean = _write(tmp_path, "clean.dat", regkit.build(tree, file_name="ntuser.dat"))
+    assert list(recover.recover(clean, "HKCU")) == []
+
+
+def test_recovered_entries_in_the_case(analysed) -> None:
+    case, res = analysed
+    db = store.db_path(case)
+    by = {f["rule"]: f for f in res["findings"]}
+    assert res["counts"]["recovered"] >= 3
+    assert "reg_recovered_suspicious" in by and "recovered" in by["reg_recovered_suspicious"]["evidence"]
+    sub = store.children(db, 2, "HKCU\\Software\\GrupoEjemplo")["subkeys"]
+    assert any(k["name"] == "Instalador" and k["op"] == "recovered" for k in sub)
+
+
+def test_hiding_tricks(analysed) -> None:
+    _case, res = analysed
+    by = {f["rule"]: f for f in res["findings"]}
+    assert "␀InvoiceHelper" in by["reg_hidden_name"]["evidence"]
+    assert "reg_script_in_autostart" in by
+
+
+def test_timestamps_in_the_future(tmp_path: Path) -> None:
+    future = (4102444800 + 11644473600) * 10_000_000 - 86400 * 10_000_000 * 30   # late 2099
+    p = _write(tmp_path, "NTUSER.DAT", regkit.build({"Software": {"X": {}}}, file_name="ntuser.dat", timestamp=future))
+    res = registry.analyze([(p, p.name)], tmp_path / "c", tmp_path / "w")
+    assert "reg_future_timestamp" in {f["rule"] for f in res["findings"]}
+
+
+def test_machine_context_across_hives(tmp_path: Path) -> None:
+    import zipfile
+    import io as _io
+    zipfile.ZipFile(_io.BytesIO(ms.registry_machine_hives_zip())).extractall(tmp_path / "x")
+    files = [(p, str(p.relative_to(tmp_path / "x"))) for p in sorted((tmp_path / "x").rglob("*")) if p.is_file()]
+    res = registry.analyze(files, tmp_path / "c", tmp_path / "w")
+    m = res["context"]["machine"]
+    assert m["computer_name"] == "FACT-PC01" and m["utc_offset_min"] == 60 and m["control_set"] == "ControlSet001"
+    assert m["product"] == "Windows 11 Pro" and m["install_date"].startswith("2025-01-10")
+    assert m["last_shutdown"].startswith("2025-11-07")
+    nt = next(s for s in res["sources"] if s["hive_type"] == "ntuser")
+    assert nt["user"].startswith("facturacion (S-1-5-21-")
+    db = store.db_path(tmp_path / "c")
+    assert store.user_query(db, "SELECT value FROM context WHERE item = 'computer_name'")["rows"] == [["FACT-PC01"]]
+    # the SYSTEM service in Public is a finding; nothing is "before install"
+    rules_hit = {f["rule"] for f in res["findings"]}
+    assert "reg_service" in rules_hit and "reg_before_install" not in rules_hit
+
+
+def test_iocs_only_from_findings(analysed) -> None:
+    from docutracex import ioc
+    _case, res = analysed
+    texts = " ".join(i["text"] for i in res["ioc_sources"])
+    assert "cdn-update.example.net" in texts and "198.51.100.7" in texts
+    assert "OneDrive.exe" not in texts                                    # a benign autorun is not an IOC source
+    srcs = ioc.sources_from_modules({"registry": res})
+    assert srcs and all(s["module"] == "registry" for s in srcs)
+    assert len(srcs) == len([i for i in res["ioc_sources"] if i["text"].strip()])   # not the whole result walked
+
+
+def test_reg_export_round_trip(analysed, tmp_path: Path) -> None:
+    from docutracex.registry import export
+    case, _res = analysed
+    db = store.db_path(case)
+    tree = store.subtree(db, 2, "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer")
+    text = export.reg_text(tree, "test")
+    p = _write(tmp_path, "out.reg", text)
+    keys, vals = parse.iter_reg(p)
+    got = {(r[0], r[1]): r for r in vals}
+    ua = [k for k in got if k[0].endswith("\\Count")]
+    assert ua and got[ua[0]][2] == "REG_BINARY" and len(got[ua[0]][5]) == 72
+    assert got[("HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\TypedPaths", "url1")][3] == "\\\\198.51.100.23\\facturas"
+    # DWORD / EXPAND_SZ / MULTI_SZ survive too
+    t2 = export.reg_text({"keys": [["HKLM\\SOFTWARE\\X", ""]], "values": [
+        ["HKLM\\SOFTWARE\\X", "D", "REG_DWORD", "4294967236", None, ""],
+        ["HKLM\\SOFTWARE\\X", "E", "REG_EXPAND_SZ", "%TEMP%\\a", None, ""],
+        ["HKLM\\SOFTWARE\\X", "M", "REG_MULTI_SZ", "a\nb", None, ""],
+        ["HKLM\\SOFTWARE\\X", "(default)", "REG_SZ", 'say "hi"', None, ""]]})
+    _k, v2 = parse.iter_reg(_write(tmp_path, "t2.reg", t2))
+    d2 = {r[1]: r for r in v2}
+    assert d2["D"][3] == "4294967236" and d2["E"][3] == "%TEMP%\\a" and d2["M"][3] == "a\nb"
+    assert d2["(default)"][3] == 'say "hi"'
+
+
+def test_timeline_bodyfile_streams_in_pages(analysed) -> None:
+    from docutracex.registry import export
+    case, _res = analysed
+    db = store.db_path(case)
+    calls = []
+
+    def fetch(limit, offset):  # noqa: ANN001, ANN202
+        calls.append(offset)
+        return store.timeline(db, 0, limit, offset)
+    body = b"".join(export.timeline_chunks(fetch, "bodyfile", chunk=10)).decode()
+    lines = body.strip().splitlines()
+    total = len(store.timeline(db, 0, 100000, 0)["rows"])
+    assert len(lines) == total and len(calls) > 1 and all(x.count("|") == 10 for x in lines)
+    assert any("user_assist" in x for x in lines)
+    csv_text = b"".join(export.timeline_chunks(fetch, "csv", chunk=1000)).decode()
+    assert csv_text.startswith("ts_utc,src,what,key,detail")
+
+
+def test_exports_are_audited() -> None:
+    from docutracex import audit
+    assert audit.audits_get("/api/cases/x/registry/export.reg")
+    assert audit.audits_get("/api/cases/x/registry/timeline.export")
+    assert not audit.audits_get("/api/cases/x/registry/key")

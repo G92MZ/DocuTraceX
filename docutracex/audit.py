@@ -42,6 +42,8 @@ _ACTIONS: list[tuple[str, str, str]] = [
     ("POST", r"^/api/cases/[^/]+/hex/extract", "extracted bytes from the hex view"),
     ("POST", r"^/api/cases/[^/]+/registry/sql$", "queried the registry (SQL)"),
     ("POST", r"^/api/cases/[^/]+/registry/export\.csv$", "exported registry rows (CSV)"),
+    ("GET", r"^/api/cases/[^/]+/registry/export\.reg$", "exported a registry key (.reg)"),
+    ("GET", r"^/api/cases/[^/]+/registry/timeline\.export$", "exported the registry timeline"),
     ("POST", r"^/api/cases/[^/]+/password", "gave a password to unlock a file"),
     ("POST", r"^/api/cases/[^/]+/wordlist", "tried a password list"),
     ("POST", r"^/api/cases/[^/]+/reveal", "opened the case folder"),
@@ -78,6 +80,11 @@ def describe(method: str, path: str) -> str:
             if hit:
                 return hit.expand(words) if "\\" in words else words
     return f"{method} {path}"
+
+
+def audits_get(path: str) -> bool:
+    """GET requests are not audited, except the exports listed above (they take data out)."""
+    return any(m == "GET" and rx.search(path) for m, rx, _w in _COMPILED)
 
 
 def case_of(path: str) -> str:

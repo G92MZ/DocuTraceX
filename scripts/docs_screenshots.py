@@ -58,7 +58,8 @@ SHOTS: dict[str, list[tuple[str, list[tuple[str, str, str | None]]]]] = {
     "pdf": [("pdf/sample.pdf", [("pdf", "pdf", None), ("pdftools", "pdftools", None), ("embedded", "embedded", None),
                                 ("javascript", "javascript", None)])],
     "onenote": [("onenote/sample_notes.one", [("onenote", "onenote", None)])],
-    "registry": [("registry/sample_persistence.reg", [("registry", "findings", None), ("registry", "sql", None)]),
+    "registry": [("registry/sample_machine_hives.zip", [("registry", "machine", None)]),
+                 ("registry/sample_persistence.reg", [("registry", "findings", None), ("registry", "sql", None)]),
                  ("registry/sample_NTUSER.DAT", [("registry", "browse", None), ("registry", "search", None),
                                                  ("registry", "artifacts", None), ("registry", "timeline", None)])],
     "shortcuts": [("shortcuts/sample_shortcut.pdf.lnk", [("shortcut", "shortcut", None)])],
@@ -114,7 +115,9 @@ _CLICKS = {("windows-pe", "binary"): '[data-itab="pefile"]', ("other-binaries", 
            ("registry", "search"): ['[data-itab="search"]', "@fill:#reg-s-q=mshta", "#reg-s-go"],
            ("registry", "sql"): ['[data-itab="sql"]', "#reg-q-go"],
            ("registry", "artifacts"): ['[data-itab="artifacts"]', '[data-reg-art-plugin="user_assist"]'],
-           ("registry", "timeline"): ['[data-itab="timeline"]']}
+           ("registry", "timeline"): ['[data-itab="timeline"]'],
+           ("registry", "findings"): ['[data-itab="findings"]', '[data-reg-fall="1"]'],
+           ("registry", "machine"): ['[data-itab="browse"]', "@fill:#reg-b-path=HKCU\\Software\\GrupoEjemplo", "#reg-b-go"]}
 
 # a YARA rule for the YARA page (inert: it matches the campaign's own indicators)
 _YARA_RULE = b"""rule Invoice_Fraud_Campaign_Indicators

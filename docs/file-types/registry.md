@@ -19,6 +19,7 @@ reads that database directly: nothing is parsed again.
 | `vals` | `src`, `key`, `name`, `type`, `data`, `size`, `raw`, `op` |
 | `catalog` | `src`, `category`, `description`, `comment`, `batch`, `key`, `name`, `type`, `data`, `last_write` |
 | `artifacts` | `src`, `plugin`, `ts`, `key`, `summary`, `entry` (JSON) |
+| `context` | `src`, `item`, `value` — the machine (`src` 0) and the user of each NTUSER |
 
 Hives are mounted where Windows mounts them (`NTUSER.DAT` → `HKCU`, `UsrClass.dat` →
 `HKCU\Software\Classes`, `SOFTWARE` → `HKLM\SOFTWARE`, `SYSTEM` → `HKLM\SYSTEM`…), so paths
@@ -58,6 +59,41 @@ ORDER BY k.last_write DESC
 
 The same database is available to the AI chat and to MCP clients through the
 `query_registry` tool (sources and schema, SQL, search, or one key's contents).
+
+## Deleted keys and values
+
+A deleted key or value stays in the hive until its space is reused: Windows only marks the
+cell free. Every free cell of a hive is read for key (`nk`) and value (`vk`) records; what
+passes the sanity checks (printable names, plausible times, data that fits) is loaded with
+`op = recovered` — under its old parent when that key still exists (or was recovered too),
+otherwise under `(recovered, parent unknown)`; values no recovered key claims go under
+`(recovered values without a key)`. Browse marks them **recovered**, the rules see them too
+(a finding says how many entries were recovered), and deleted entries pointing at a script
+host, a URL or a user-writable folder are a finding of their own: clean-up after the fact.
+
+## The machine (several hives together)
+
+With the SYSTEM and SOFTWARE hives of a machine in the case (an archive of a collection
+works), the tab shows its computer name, Windows edition / version / build, install date,
+registered owner, time zone, control set in use, last shutdown and user profiles (SID → user),
+and which user each NTUSER / UsrClass belongs to (from the path stored in the hive, or the
+file path). Times stay UTC; a switch shows them in the machine's local time (the bias in
+force when the hive was saved). The install date also feeds a rule: keys written before
+Windows was installed.
+
+![The machine, and a deleted key recovered](../assets/shots/registry/machine.webp){ .shot }
+
+## Exports and the data interpreter
+
+- **Export .reg** (Browse): the open key and everything under it, as regedit writes it
+  (UTF-16, binary values wrapped as hex) — to reproduce it in a lab or share it.
+- **Export bodyfile / CSV** (Timeline): the whole timeline, streamed in pages, so a full
+  SOFTWARE hive works. The bodyfile reads with `mactime -b` or Plaso.
+- Clicking a binary value shows it read every usual way: DWORD / QWORD, FILETIME,
+  SYSTEMTIME, Unix time, GUID, SID, IPv4, UTF-16 and ASCII.
+
+IOCs come only from the entries behind the findings (and rogue root certificates): a whole
+hive would bury the IOCs tab under paths and GUIDs.
 
 ## Artifacts and catalogue, kept up to date
 
@@ -107,6 +143,11 @@ Rules over the database, each with its ATT&CK technique:
   handler of an auto-elevating program (fodhelper, eventvwr, sdclt), PowerShell script block /
   module logging or transcription off, AMSI off for Windows Script Host, event logs, firewall or
   administrative tools disabled, LSA protection off.
+- **Hiding and anti-forensics** — key or value names with a NUL, control or right-to-left
+  character (hidden from regedit, Poweliks / Kovter), autostarts running script code through
+  `rundll32 javascript:` / `mshtml,RunHTMLApplication`, RunOnce entries forced in Safe Mode,
+  key times in the future or before Windows NT, keys written before the install date, values
+  over 512 KB, deleted entries that pointed at a payload.
 - **Credentials and access** — WDigest clear-text passwords, RDP enabled, a proxy set for the
   user, certificates added to the trusted root / publisher stores (with their subject and issuer).
 - **What any value holds** — malicious-looking command lines (encoded commands, download cradles,

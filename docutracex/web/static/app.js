@@ -2780,6 +2780,66 @@ ORDER BY ts DESC LIMIT 500`],
   ["Tables", `DESCRIBE vals`],
 ];
 
+// Registry times are UTC; with the machine's time zone known (SYSTEM hive), they can be shown local.
+let _regTz = { offset: null, local: false };
+function regTime(t) {
+  if (!t) return "";
+  const s = String(t);
+  if (!_regTz.local || _regTz.offset === null) return s;
+  const d = new Date(s.replace(" ", "T").replace(/(\+00:00|Z)?$/, "Z"));
+  if (isNaN(d)) return s;
+  const l = new Date(d.getTime() + _regTz.offset * 60000).toISOString().replace("T", " ").slice(0, 19);
+  const h = _regTz.offset / 60;
+  return `${l} (UTC${h >= 0 ? "+" : ""}${h})`;
+}
+const REG_TIME_COLS = ["ts", "last_write", "timestamp", "first", "last", "install_date", "last_shutdown"];
+
+// A binary value read every usual way (Registry Explorer's data interpreter).
+function regInterpret(hex) {
+  const b = (hex.match(/../g) || []).map((x) => parseInt(x, 16));
+  if (!b.length) return [];
+  const u = (i, n) => { let v = 0n; for (let k = n - 1; k >= 0; k--) v = (v << 8n) | BigInt(b[i + k] || 0); return v; };
+  const out = [];
+  if (b.length >= 4) {
+    out.push(["DWORD (LE)", String(u(0, 4))]);
+    out.push(["DWORD (BE)", String(((b[0] << 24) >>> 0) + (b[1] << 16) + (b[2] << 8) + b[3])]);
+    out.push(["IPv4", b.slice(0, 4).join(".")]);
+    const ep = Number(u(0, 4));
+    if (ep > 315532800 && ep < 4102444800) out.push(["Unix time (32-bit)", new Date(ep * 1000).toISOString().replace("T", " ").slice(0, 19)]);
+  }
+  if (b.length >= 8) {
+    out.push(["QWORD (LE)", String(u(0, 8))]);
+    const ft = u(0, 8);
+    if (ft > 0n) {
+      const ms = Number(ft / 10000n) - 11644473600000;
+      if (ms > 315532800000 && ms < 4102444800000) out.push(["FILETIME", new Date(ms).toISOString().replace("T", " ").slice(0, 23)]);
+    }
+  }
+  if (b.length >= 16) {
+    const h = (a) => a.map((x) => x.toString(16).padStart(2, "0")).join("");
+    const g = `{${h(b.slice(0, 4).reverse())}-${h(b.slice(4, 6).reverse())}-${h(b.slice(6, 8).reverse())}-${h(b.slice(8, 10))}-${h(b.slice(10, 16))}}`.toUpperCase();
+    out.push(["GUID", g]);
+    const y = b[0] | (b[1] << 8), mo = b[2] | (b[3] << 8), d = b[6] | (b[7] << 8);
+    if (y > 1990 && y < 2100 && mo >= 1 && mo <= 12 && d >= 1 && d <= 31) {
+      const p2 = (n) => String(n).padStart(2, "0");
+      out.push(["SYSTEMTIME", `${y}-${p2(mo)}-${p2(d)} ${p2(b[8] | (b[9] << 8))}:${p2(b[10] | (b[11] << 8))}:${p2(b[12] | (b[13] << 8))}`]);
+    }
+  }
+  if (b[0] === 1 && b.length >= 8 && b.length === 8 + 4 * b[1]) {
+    let sid = `S-1-${b.slice(2, 8).reduce((a, x) => a * 256 + x, 0)}`;
+    for (let i = 0; i < b[1]; i++) sid += `-${u(8 + 4 * i, 4)}`;
+    out.push(["SID", sid]);
+  }
+  if (b.length >= 4 && b.length % 2 === 0) {
+    let t = "";
+    for (let i = 0; i + 1 < b.length; i += 2) { const c = b[i] | (b[i + 1] << 8); if (!c) break; t += String.fromCharCode(c); }
+    if (t.length >= 2 && /^[\x20-\x7e\u00a0-\uffff]+$/.test(t)) out.push(["UTF-16 string", t]);
+  }
+  const ascii = b.map((x) => (x >= 32 && x < 127 ? String.fromCharCode(x) : ".")).join("");
+  out.push(["ASCII", ascii.slice(0, 200)]);
+  return out;
+}
+
 function regSourcesSelect(sources, id) {
   return `<select id="${id}"><option value="0">All sources</option>${sources.map((s) =>
     `<option value="${s.id}">${escapeHtml(`${s.id} · ${s.label}`)}</option>`).join("")}</select>`;
@@ -2799,8 +2859,8 @@ function regFindingsHtml(rg, marked) {
       return `<table class="cases"><thead><tr><th>Src</th><th>Key</th><th>Value</th><th>Data</th><th>Last write</th></tr></thead><tbody>
         ${h.items.map((it) => `<tr${it.suspicious ? ' class="reg-sus"' : ""}><td class="reg-nowrap">${it.src}</td>
           <td class="mono"><a href="#" data-reg-open="${escapeHtml(it.key)}" data-reg-src="${it.src}">${escapeHtml(it.key)}</a></td>
-          <td class="mono reg-nowrap">${escapeHtml(it.name || "")}</td><td class="mono">${escapeHtml(it.data || "")}${it.suspicious ? ' <span class="badge badge-bad">suspicious</span>' : ""}</td>
-          <td class="reg-nowrap">${escapeHtml(it.last_write || "")}</td></tr>`).join("")}</tbody></table>
+          <td class="mono reg-nowrap">${escapeHtml(it.name || "")}</td><td class="mono">${escapeHtml(it.data || "")}${it.suspicious ? ' <span class="badge badge-bad">suspicious</span>' : ""}${it.op === "recovered" ? ' <span class="badge badge-bad">recovered</span>' : ""}</td>
+          <td class="reg-nowrap">${escapeHtml(regTime(it.last_write))}</td></tr>`).join("")}</tbody></table>
         ${h.count > h.items.length ? `<p class="hint-line">${h.items.length} of ${h.count} shown — the rest in Search / SQL.</p>` : ""}`;
     }
     return f.evidence ? `<pre class="text-sample">${escapeHtml(f.evidence)}</pre>` : "";
@@ -2831,12 +2891,30 @@ function regFindingsHtml(rg, marked) {
     <tbody>${rows}</tbody></table>` : `<p class="hint-line">No findings.</p>`) + infoHtml;
 }
 
+function regContextHtml(ctx) {
+  const m = (ctx && ctx.machine) || {};
+  _regTz.offset = m.utc_offset_min ?? null;
+  if (!Object.keys(m).length && !((ctx && ctx.users) || []).length) return "";
+  const off = m.utc_offset_min;
+  const tz = off !== undefined ? `UTC${off >= 0 ? "+" : ""}${off / 60}` : "";
+  const items = [["Computer", m.computer_name], ["Windows", [m.product, m.display_version, m.build ? `build ${m.build}` : ""].filter(Boolean).join(" · ")],
+    ["Installed", m.install_date ? `${m.install_date} UTC` : ""], ["Last shutdown", m.last_shutdown ? `${m.last_shutdown} UTC` : ""],
+    ["Time zone", [m.timezone || m.timezone_std, tz].filter(Boolean).join(" · ")], ["Control set in use", m.control_set],
+    ["Registered owner", [m.owner, m.organization].filter(Boolean).join(" · ")],
+    ["Users", ((ctx.users) || []).map((u) => `${u.name} (${u.sid})`).join(", ")]].filter((x) => x[1]);
+  return `<details class="disclose" open><summary><b>Machine</b> ${escapeHtml(m.computer_name || "")}
+      <span class="hint-line">from the SYSTEM / SOFTWARE hives of the case</span></summary>${kv(items)}
+      ${off !== undefined ? `<label class="hint-line"><input type="checkbox" data-reg-localtime${_regTz.local ? " checked" : ""}> show times in the machine's local time (${escapeHtml(tz)}, the bias when the hive was saved)</label>` : ""}</details>`;
+}
+
 function paneRegistry(rg, marked) {
   const c = rg.counts || {};
   const sources = rg.sources || [];
   const srcRows = sources.map((s) => `<tr><td>${s.id}</td><td class="mono">${escapeHtml(s.label)}</td>
     <td>${escapeHtml(s.kind === "hive" ? `hive (${s.hive_type || "?"})` : ".reg")}</td><td class="mono">${escapeHtml(s.mount || "")}</td>
-    <td>${s.keys}</td><td>${s.values}</td><td>${escapeHtml((s.logs || []).join(", "))}</td>
+    <td>${escapeHtml(s.user || "")}</td><td>${s.keys}</td><td>${s.values}</td>
+    <td>${s.recovered ? `<span class="badge badge-warn" title="Deleted keys / values recovered from free cells">${s.recovered}</span>` : ""}</td>
+    <td>${escapeHtml((s.logs || []).join(", "))}</td>
     <td>${s.error ? `<span class="bad-text">${escapeHtml(s.error)}</span>` : ""}</td></tr>`).join("");
   const certs = (rg.certificates || []).length ? `<h4>Certificates added to trusted stores</h4><table class="cases"><thead><tr>
       <th>Thumbprint</th><th>Subject</th><th>Issuer</th><th>Valid</th></tr></thead><tbody>${rg.certificates.map((x) => `<tr>
@@ -2851,7 +2929,8 @@ function paneRegistry(rg, marked) {
         <input id="reg-b-path" type="text" class="mono" placeholder="Key path — HKCU\\Software\\…" spellcheck="false" style="flex:1">
         <button class="btn btn-ghost btn-sm" id="reg-b-go" type="button">Open</button>
         <button class="btn btn-ghost btn-sm" id="reg-b-up" type="button" title="Parent key">↑</button>
-        <select id="reg-b-bm" title="Keys the RECmd batch files point at in this source"><option value="">★ Bookmarks…</option></select></div>
+        <select id="reg-b-bm" title="Keys the RECmd batch files point at in this source"><option value="">★ Bookmarks…</option></select>
+        <button class="btn btn-ghost btn-sm" id="reg-b-export" type="button" title="This key and everything under it as a .reg file">Export .reg</button></div>
       <div id="reg-b-meta" class="hint-line"></div>
       <div class="reg-cols"><div id="reg-b-keys" class="reg-keys"></div><div id="reg-b-vals" class="reg-vals"></div></div>
       <pre id="reg-b-value" class="text-sample" hidden></pre></div>`;
@@ -2872,6 +2951,8 @@ function paneRegistry(rg, marked) {
         <div id="reg-a-out" class="reg-vals"><p class="hint-line">Pick a plugin or a category.</p></div></div>`;
   const timeline = `<div class="row">${regSourcesSelect(sources, "reg-t-src")}
       <button class="btn btn-primary btn-sm" id="reg-t-go" type="button">Load</button>
+      <button class="btn btn-ghost btn-sm" id="reg-t-body" type="button" title="Whole timeline as a bodyfile (mactime -b / Plaso)">Export bodyfile</button>
+      <button class="btn btn-ghost btn-sm" id="reg-t-csv" type="button">Export CSV</button>
       <span class="hint-line">Key last-write times and artifact timestamps, newest first.</span></div><div id="reg-t-out"></div>`;
   const sql = `<p class="hint-line">Read-only SQL (DuckDB) over <span class="mono">sources</span>, <span class="mono">keys</span>
       (src, path, parent, name, last_write, subkeys, nvalues, op), <span class="mono">vals</span> (src, "key", name, type,
@@ -2884,8 +2965,9 @@ function paneRegistry(rg, marked) {
   return `<div data-reg-pane><p class="hint-line">${c.sources || 0} source(s) · ${c.keys || 0} keys · ${c.values || 0} values,
       loaded once into the case database (<span class="mono">${escapeHtml(rg.db || "")}</span>): browse, search and query them
       without re-parsing, now or when the case is reopened.</p>
-    <table class="cases"><thead><tr><th>#</th><th>Source</th><th>Kind</th><th>Mounted as</th><th>Keys</th><th>Values</th>
-      <th>Logs applied</th><th></th></tr></thead><tbody>${srcRows}</tbody></table>
+    ${regContextHtml(rg.context)}
+    <table class="cases"><thead><tr><th>#</th><th>Source</th><th>Kind</th><th>Mounted as</th><th>User</th><th>Keys</th><th>Values</th>
+      <th title="Deleted keys and values recovered from free cells">Recovered</th><th>Logs applied</th><th></th></tr></thead><tbody>${srcRows}</tbody></table>
     ${innerTabs("registry", [
       { id: "findings", label: `Findings (${(rg.findings || []).length})`, html: `${regFindingsHtml(rg, marked)}${certs}${carved}` },
       { id: "browse", label: "Browse", html: browse },
@@ -2905,6 +2987,7 @@ function regTable(res, linkCols) {
     "timestamp", "plugin", "run_counter", "focus_count", "session_id"].includes(c));
   const body = res.rows.map((r) => `<tr>${r.map((v, i) => {
     const t = v === null || v === undefined ? "" : String(v);
+    if (REG_TIME_COLS.includes(res.columns[i]) && t) return `<td class="mono reg-nowrap">${escapeHtml(regTime(t))}</td>`;
     if (linkCols && i === kcol && t) {
       return `<td class="mono"><a href="#" data-reg-open="${escapeHtml(t)}" data-reg-src="${scol >= 0 ? escapeHtml(String(r[scol])) : "0"}">${escapeHtml(t)}</a></td>`;
     }
@@ -2988,12 +3071,12 @@ function wireRegistry(root, caseId) {
     try {
       const d = await regFetch(`${base}/key?src=${cur.src}&path=${encodeURIComponent(cur.path)}`);
       const m = d.meta;
-      $("reg-b-meta").textContent = m ? `${m.path} · last write ${m.last_write || "—"} · ${m.subkeys ?? "?"} subkey(s), ${m.values ?? "?"} value(s)${m.op === "delete" ? " · DELETED by the .reg" : ""}` : (cur.path || "Roots");
+      $("reg-b-meta").textContent = m ? `${m.path} · last write ${regTime(m.last_write) || "—"} · ${m.subkeys ?? "?"} subkey(s), ${m.values ?? "?"} value(s)${m.op === "delete" ? " · DELETED by the .reg" : ""}${m.op === "recovered" ? " · RECOVERED from a free cell (deleted)" : ""}` : (cur.path || "Roots");
       $("reg-b-keys").innerHTML = d.subkeys.length ? `<ul class="reg-keylist">${d.subkeys.map((k) => `<li><a href="#" data-reg-open="${escapeHtml(k.path)}" data-reg-src="${k.src}">
-          ${escapeHtml(cur.path ? k.name : `${k.src} · ${k.path}`)}</a>${k.op === "delete" ? ' <span class="badge badge-warn">deleted</span>' : ""}
-          ${k.last_write ? `<span class="hint-line">${escapeHtml(k.last_write)}</span>` : ""}</li>`).join("")}</ul>` : `<p class="hint-line">No subkeys.</p>`;
+          ${escapeHtml(cur.path ? k.name : `${k.src} · ${k.path}`)}</a>${k.op === "delete" ? ' <span class="badge badge-warn">deleted</span>' : ""}${k.op === "recovered" ? ' <span class="badge badge-bad" title="Deleted, recovered from a free cell">recovered</span>' : ""}
+          ${k.last_write ? `<span class="hint-line">${escapeHtml(regTime(k.last_write))}</span>` : ""}</li>`).join("")}</ul>` : `<p class="hint-line">No subkeys.</p>`;
       $("reg-b-vals").innerHTML = d.values.length ? `<table class="cases"><thead><tr><th>Name</th><th>Type</th><th>Data</th><th>Size</th></tr></thead><tbody>
-        ${d.values.map((v) => `<tr><td class="mono reg-nowrap"><a href="#" data-reg-value="${escapeHtml(v.name)}">${escapeHtml(v.name)}</a>${v.op === "delete" ? ' <span class="badge badge-warn">deleted</span>' : ""}</td>
+        ${d.values.map((v) => `<tr><td class="mono reg-nowrap"><a href="#" data-reg-value="${escapeHtml(v.name)}">${escapeHtml(v.name)}</a>${v.op === "delete" ? ' <span class="badge badge-warn">deleted</span>' : ""}${v.op === "recovered" ? ' <span class="badge badge-bad" title="Deleted, recovered from a free cell">recovered</span>' : ""}</td>
           <td class="reg-nowrap">${escapeHtml(v.type || "")}</td><td class="mono">${escapeHtml(String(v.data ?? "").slice(0, 300))}</td><td>${v.size ?? ""}</td></tr>`).join("")}</tbody></table>`
         : (cur.path ? `<p class="hint-line">No values.</p>` : "");
     } catch (e) {
@@ -3028,7 +3111,9 @@ function wireRegistry(root, caseId) {
         const v = await regFetch(`${base}/value?src=${cur.src}&path=${encodeURIComponent(cur.path)}&name=${encodeURIComponent(a.getAttribute("data-reg-value"))}`);
         const pre = $("reg-b-value");
         pre.hidden = false;
+        const interp = v.hex ? regInterpret(v.hex.slice(0, 4096)) : [];
         pre.textContent = `${a.getAttribute("data-reg-value")} (${v.type}, ${v.size} bytes)\n\n${v.data || ""}` +
+          (interp.length ? `\n\nData interpreter (from offset 0):\n${interp.map(([k, x]) => `  ${k.padEnd(20)} ${x}`).join("\n")}` : "") +
           (v.hex ? `\n\nhex:\n${v.hex.match(/.{1,64}/g).join("\n")}` : "");
       } catch (e) { alertRegError(e.message); }
     } else if (a.hasAttribute("data-reg-art-plugin") || a.hasAttribute("data-reg-art-cat")) {
@@ -3046,6 +3131,11 @@ function wireRegistry(root, caseId) {
         }
         out.innerHTML = regTable(r, true);
       } catch (e) { out.innerHTML = `<p class="bad-text">${escapeHtml(e.message)}</p>`; }
+    } else if (a.id === "reg-b-export") {
+      if (!cur.path || !cur.src) { $("reg-b-meta").textContent = "Open a key first (a source and a path), then export it."; return; }
+      window.location.href = `${base}/export.reg?src=${cur.src}&path=${encodeURIComponent(cur.path)}`;
+    } else if (a.id === "reg-t-body" || a.id === "reg-t-csv") {
+      window.location.href = `${base}/timeline.export?fmt=${a.id === "reg-t-csv" ? "csv" : "bodyfile"}&src=${$("reg-t-src").value}`;
     } else if (a.id === "reg-t-go") {
       const out = $("reg-t-out");
       out.innerHTML = `<p class="hint-line">Loading…</p>`;
@@ -3080,6 +3170,11 @@ function wireRegistry(root, caseId) {
         st.textContent = `${Math.round(performance.now() - t0)} ms`;
       } catch (e) { st.className = "hint-line bad-text"; st.textContent = e.message; $("reg-q-out").innerHTML = ""; }
     }
+  });
+  pane.querySelector("[data-reg-localtime]")?.addEventListener("change", (ev) => {
+    _regTz.local = ev.target.checked;
+    openKey(cur.src, cur.path);
+    if (pane.dataset.tlLoaded) $("reg-t-go").click();
   });
   pane.querySelector("#reg-b-bm")?.addEventListener("change", (ev) => {
     const key = ev.target.value;

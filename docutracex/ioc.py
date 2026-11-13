@@ -1054,6 +1054,12 @@ def sources_from_modules(
             continue
         if name in _SKIP_MODULES or not isinstance(data, (dict, list)):
             continue
+        if name == "registry" and isinstance(data, dict):
+            # only what the registry findings point at: a whole hive would flood the IOCs
+            for item in data.get("ioc_sources") or []:
+                if isinstance(item, dict) and isinstance(item.get("text"), str) and item["text"].strip():
+                    sources.append({"module": "registry", "location": item.get("location", ""), "text": item["text"]})
+            continue
 
         if name == "email":
             if isinstance(data, dict):
