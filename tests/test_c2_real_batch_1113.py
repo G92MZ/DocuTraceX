@@ -277,3 +277,31 @@ def test_elf_without_upx_is_left_alone(tmp_path):
     p.write_bytes(bk.elf(strings=["inert"]))
     it = msi.analyze_binary(p, p.name, tmp_path / "unpacked")
     assert "unpack" not in it and not it.get("_children")
+
+
+def test_upx_recognised_by_layout_when_names_and_header_are_wiped():
+    from types import SimpleNamespace as NS
+
+    from docutracex.parsers import unpack
+
+    def sec(va, vsize, raw, ent):
+        return NS(Name=b"\x84\x9e\xeb0", VirtualAddress=va, Misc_VirtualSize=vsize, SizeOfRawData=raw,
+                  PointerToRawData=0x400, get_entropy=lambda: ent)
+    pe = NS(sections=[sec(0x1000, 0xD2000, 0, 0.0), sec(0xD3000, 0x417000, 0x416200, 7.82), sec(0x4EA000, 0x1000, 0x200, 1.9)],
+            OPTIONAL_HEADER=NS(AddressOfEntryPoint=0x4E8D60))
+    hits = unpack.heuristics(b"MZ" + b"\0" * 64, pe)
+    assert hits and hits[0]["family"] == "upx" and hits[0]["by"] == "layout"
+    # an ordinary binary: a first section with data
+    pe.sections[0] = sec(0x1000, 0xD2000, 0xD2000, 6.1)
+    assert not unpack.heuristics(b"MZ" + b"\0" * 64, pe)
+
+
+def test_upx_wiped_sample_is_recognised():
+    import pefile
+
+    from docutracex.parsers import unpack
+    if unpack.upx_exe() is None:
+        pytest.skip("UPX (tools/upx) not installed")
+    b = ms.upx_wiped_exe()
+    assert b"UPX!" not in b
+    assert [h["by"] for h in unpack.heuristics(b, pefile.PE(data=b))] == ["layout"]
