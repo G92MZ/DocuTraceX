@@ -58,7 +58,7 @@ SHOTS: dict[str, list[tuple[str, list[tuple[str, str, str | None]]]]] = {
     "pdf": [("pdf/sample.pdf", [("pdf", "pdf", None), ("pdftools", "pdftools", None), ("embedded", "embedded", None),
                                 ("javascript", "javascript", None)])],
     "onenote": [("onenote/sample_notes.one", [("onenote", "onenote", None)])],
-    "registry": [("registry/sample_machine_hives.zip", [("registry", "machine", None)]),
+    "registry": [("registry/sample_machine_hives.zip", [("registry", "machine", None), ("registry", "recovered", None)]),
                  ("registry/sample_persistence.reg", [("registry", "findings", None), ("registry", "sql", None)]),
                  ("registry/sample_NTUSER.DAT", [("registry", "browse", None), ("registry", "search", None),
                                                  ("registry", "artifacts", None), ("registry", "timeline", None)])],
@@ -116,6 +116,7 @@ _CLICKS = {("windows-pe", "binary"): '[data-itab="pefile"]', ("other-binaries", 
            ("registry", "sql"): ['[data-itab="sql"]', "#reg-q-go"],
            ("registry", "artifacts"): ['[data-itab="artifacts"]', '[data-reg-art-plugin="user_assist"]'],
            ("registry", "timeline"): ['[data-itab="timeline"]'],
+           ("registry", "recovered"): ['[data-itab="recovered"]'],
            ("registry", "findings"): ['[data-itab="findings"]', '[data-reg-fall="1"]'],
            ("registry", "machine"): ['[data-itab="browse"]', "@fill:#reg-b-path=HKCU\\Software\\GrupoEjemplo", "#reg-b-go"]}
 

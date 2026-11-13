@@ -331,6 +331,20 @@ def timeline(path: Path, src: int = 0, limit: int = 2000, offset: int = 0) -> di
         con.close()
 
 
+RECOVERED_SQL = """SELECT v.src, v."key", v.name, v.type, v.data, v.size, k.last_write AS key_last_write
+FROM vals v LEFT JOIN keys k ON k.src = v.src AND k.path = v."key" WHERE v.op = 'recovered'
+UNION ALL SELECT k.src, k.path, NULL, NULL, NULL, NULL, k.last_write FROM keys k
+WHERE k.op = 'recovered' AND NOT EXISTS (SELECT 1 FROM vals v WHERE v.src = k.src AND v."key" = k.path AND v.op = 'recovered')
+ORDER BY 1, 2, 3 NULLS FIRST"""
+
+
+def recovered(path: Path, src: int = 0, limit: int = 2000, offset: int = 0) -> dict[str, Any]:
+    """Every deleted key and value recovered from free cells (a key with recovered values is
+    listed through them; an empty one on its own)."""
+    sql = f"SELECT * FROM ({RECOVERED_SQL}) WHERE (? = 0 OR src = ?) LIMIT {int(limit) + 1} OFFSET {int(offset)}"
+    return query(path, sql, [src, src], limit)
+
+
 def subtree(path: Path, src: int, key: str, limit: int = 200_000) -> dict[str, Any]:
     """A key and everything under it (for a .reg export): keys and values, binary data as hex."""
     con = connect_ro(path)
