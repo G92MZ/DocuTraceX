@@ -15,6 +15,8 @@
       <span class="brand-sub">static document forensics</span>
     </div>
     <span class="version">v{{ version }}</span>
+    <span class="user-chip"><span id="me-name" class="mono"></span>
+      <button id="logout-btn" class="btn btn-ghost btn-sm" type="button" title="Sign out">Sign out</button></span>
   </header>
 
   <nav class="tabs" aria-label="Main navigation">
@@ -53,6 +55,7 @@
       <span class="tab-group-label" title="Configuration and health of the tools">System</span>
       <div class="tab-group-items">
       <button class="tab" type="button" data-view="settings" title="Settings"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>Settings</span></button>
+      <button class="tab" type="button" data-view="users" title="Users, your password and the audit trail"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.6 3.3-6 6.5-6s5.9 2.4 6.5 6"/><path class="thin" d="M16 4.5a3.5 3.5 0 0 1 0 7M18.5 14.5c1.7.9 2.8 2.8 3 5.5"/></svg><span>Users</span></button>
       <button class="tab" type="button" data-view="diagnostics" title="Diagnostics">
       <svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span>Diagnostics</span> <span id="diag-dot" class="diag-dot"></span>
     </button>
@@ -364,6 +367,47 @@
     </div>
 
     <!-- Settings -->
+    <div class="view" data-view="users" hidden>
+      <section class="panel">
+        <div class="diag-head"><h2>Users</h2><span id="users-status" class="status"></span></div>
+        <h3 class="formats-title">Your account</h3>
+        <p class="hint-line">Signed in as <b id="acct-name"></b> (<span id="acct-role"></span>). Everyone sees the same
+          cases and uses every feature; the admin also manages users and reads the audit trail.</p>
+        <form id="own-pw-form" class="settings-form" autocomplete="off">
+          <div class="settings-grid">
+            <label>Current password<input type="password" id="own-pw-cur" autocomplete="current-password"></label>
+            <label>New password<input type="password" id="own-pw-new" autocomplete="new-password"></label>
+            <label>Repeat it<input type="password" id="own-pw-new2" autocomplete="new-password"></label>
+          </div>
+          <div class="row" style="margin-top:12px;gap:8px"><button class="btn btn-primary" type="submit">Change my password</button>
+            <span id="own-pw-msg" class="status"></span></div>
+        </form>
+        <div id="users-admin" hidden>
+          <h3 class="formats-title">Users</h3>
+          <div id="users-table"></div>
+          <form id="user-new-form" class="settings-form" autocomplete="off">
+            <div class="settings-grid">
+              <label>New user<input type="text" id="user-new-name" placeholder="name.surname" autocomplete="off"></label>
+              <label>Password<input type="password" id="user-new-pw" autocomplete="new-password"></label>
+              <label>Role<select id="user-new-role"><option value="user">user</option><option value="admin">admin</option></select></label>
+            </div>
+            <div class="row" style="margin-top:12px;gap:8px"><button class="btn btn-primary" type="submit">Create user</button>
+              <span id="user-new-msg" class="status"></span></div>
+          </form>
+          <h3 class="formats-title">Audit trail</h3>
+          <p class="hint-line">Who did what: uploads, analyses and modules run, network checks, marks and comments, settings,
+            users and sign-ins (newest first; never a password). The file is <span class="mono">config/audit.log</span>.</p>
+          <div class="settings-grid">
+            <label>User<input type="text" id="audit-user" placeholder="any"></label>
+            <label>Action contains<input type="text" id="audit-action" placeholder="module, marked, sign…"></label>
+            <label>Case<input type="text" id="audit-case" placeholder="analysis id"></label>
+          </div>
+          <div class="row" style="margin-top:12px;gap:8px"><button id="audit-load" class="btn btn-ghost btn-sm" type="button">Filter</button>
+            <a id="audit-csv" class="btn btn-ghost btn-sm" href="/api/audit.csv">Export CSV</a></div>
+          <div id="audit-table" style="margin-top:12px"></div>
+        </div>
+      </section>
+    </div>
     <div class="view" data-view="settings" hidden>
       <section class="panel">
         <div class="diag-head">

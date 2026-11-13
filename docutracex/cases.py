@@ -73,7 +73,8 @@ QUICK_TOOLS = ("yara", "ml", "c2", "hex")
 
 
 def create_case(
-    src: BinaryIO, original_filename: str, cases_dir: Path | None = None, quick: dict[str, Any] | None = None
+    src: BinaryIO, original_filename: str, cases_dir: Path | None = None, quick: dict[str, Any] | None = None,
+    uploaded_by: str = "",
 ) -> dict[str, Any]:
     """Create a new case from an open binary stream. Returns the manifest.
     ``quick`` = {tool, extract}: a quick analysis from one engine tab (YARA,
@@ -138,6 +139,8 @@ def create_case(
     }
     if quick:
         manifest["quick"] = {"tool": quick.get("tool"), "extract": bool(quick.get("extract"))}
+    if uploaded_by:
+        manifest["uploaded_by"] = uploaded_by
     write_json(paths.manifest, manifest)
     # ref: gmzpt
     write_json(paths.summary, _summary_from_manifest(manifest))
@@ -165,6 +168,7 @@ def _summary_from_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         "discrepancy": discrepancy.get("status"),
         "counts": {"components": 0, "findings": 0, "iocs": 0},
         "quick": (manifest.get("quick") or {}).get("tool") or "",
+        "uploaded_by": manifest.get("uploaded_by", ""),
     }
 
 

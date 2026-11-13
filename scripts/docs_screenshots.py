@@ -97,6 +97,8 @@ SHOTS: dict[str, list[tuple[str, list[tuple[str, str, str | None]]]]] = {
     "yara": [("email/sample.eml", [("@yara", "yara", None)])],
     "hex": [("windows-pe/sample_win32_invoice_calc.dll", [("@hex", "hex", None)])],
     "reports": [("email/sample.eml", [("@reports", "report", None)])],
+    # no sample: the Users view (signed in as admin; first-start.webp is taken before signing in)
+    "access": [(None, [("@users", "users", None)])],
     # no sample: the Settings view, filled with invented example values (not saved)
     "configuration": [(None, [("@settings", "proxy", "#settings-status|#free-status"),
                               ("@settings", "organisation", "#allowed-countries-msg|#email-msg")])],
@@ -129,6 +131,7 @@ _ENGINE_JS = {
             " hexResetCase(id); renderHexView(); }",
     "@reports": "async (id) => { _openCaseId = id; showTab('reports'); loadReports(id); }",
     "@settings": "async () => { showTab('settings'); loadSettings(); }",
+    "@users": "async () => { showTab('users'); await loadUsersView(); }",
 }
 
 # run after the view has loaded: example values for the pictures (never saved)
@@ -203,6 +206,29 @@ def _webp(png: bytes, path: Path) -> None:
     Image.open(io.BytesIO(png)).convert("RGB").save(path, "WEBP", quality=80, method=6)
 
 
+_ADMIN_PW = "docs-screenshots-only"
+
+
+def _sign_in(page, base: str, first_start_shot: bool) -> None:
+    """The app is behind a sign-in: take the first-start screen if asked, set the
+    admin password of this throw-away installation, add two example users and
+    a few audited actions for the Users page."""
+    hdr = {"X-DTX": "1"}
+    if first_start_shot:
+        (OUT / "access").mkdir(parents=True, exist_ok=True)
+        page.goto(base + "/login")
+        page.wait_for_load_state("networkidle")
+        page.fill("#pw1", _ADMIN_PW)
+        page.fill("#pw2", _ADMIN_PW)
+        _webp(page.locator(".login-card").screenshot(), OUT / "access" / "first-start.webp")
+        print(f"  {(OUT / 'access' / 'first-start.webp').relative_to(ROOT)}")
+    page.request.post(base + "/api/auth/setup", data={"password": _ADMIN_PW}, headers=hdr)
+    for name in ("analista.uno", "analista.dos"):
+        page.request.post(base + "/api/users", data={"username": name, "password": "example-pass-1"}, headers=hdr)
+    page.request.put(base + "/api/settings/email", headers=hdr,
+                     data={"own_domains": ["grupoejemplo.example"], "brands": ["grupoejemplo"]})
+
+
 def _shoot(base: str, ids: dict[str, str], pages: list[str], scale: int) -> None:
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
@@ -211,6 +237,7 @@ def _shoot(base: str, ids: dict[str, str], pages: list[str], scale: int) -> None
             ctx = browser.new_context(viewport={"width": WIDTH, "height": HEIGHT}, device_scale_factor=scale,
                                       color_scheme=theme)
             page = ctx.new_page()
+            _sign_in(page, base, "access" in pages)
             page.goto(base + "/")
             page.wait_for_load_state("networkidle")
             for pg in pages:
@@ -264,6 +291,8 @@ def main() -> None:
         return
     os.environ.setdefault("DOCUTRACEX_TENANT_LOOKUP", "0")      # no lookups: the docs show only the sample
     os.environ.setdefault("DOCUTRACEX_OFFLINE", "1")
+    tmp_cfg = tempfile.mkdtemp(prefix="dtx-docshots-config-")
+    os.environ["DOCUTRACEX_CONFIG_DIR"] = tmp_cfg             # users, sessions, audit: throw-away
     with tempfile.TemporaryDirectory(prefix="dtx-docshots-") as tmp:
         cases = Path(tmp) / "cases"
         cases.mkdir()

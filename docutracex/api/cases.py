@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Body, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from .. import analyze as analysis
@@ -45,14 +45,27 @@ def _save_password(analysis_id: str, password: str) -> None:
     _save_unlock(analysis_id, password=password)
 
 
+def _user(request: Request) -> str:
+    return getattr(request.state, "user", "") or ""
+
+
+def _audit_upload(request: Request, manifest: dict, what: str) -> None:
+    from .. import audit
+    audit.record(_user(request), what, case=manifest["analysis_id"],
+                 addr=request.client.host if request.client else "",
+                 request=f"{request.method} {request.url.path}", status=201,
+                 detail=manifest["original"]["filename"])
+
+
 @router.post("")
-async def create_case(file: UploadFile = File(...), password: str = Form("")) -> JSONResponse:
+async def create_case(request: Request, file: UploadFile = File(...), password: str = Form("")) -> JSONResponse:
     """Upload a file, create a case, and queue its analysis (runs in the
     background worker — one analysis per instance, the rest queued).
     ``password`` (optional) unlocks an encrypted document/archive."""
     from ..tasks import manager
 
-    manifest = case_service.create_case(file.file, file.filename or "upload.bin")
+    manifest = case_service.create_case(file.file, file.filename or "upload.bin", uploaded_by=_user(request))
+    _audit_upload(request, manifest, "uploaded a file for analysis")
     if password:
         _save_password(manifest["analysis_id"], password)
     task = manager.submit("analyze", manifest["analysis_id"],
@@ -63,7 +76,7 @@ async def create_case(file: UploadFile = File(...), password: str = Form("")) ->
 
 
 @router.post("/quick")
-async def create_quick_case(file: UploadFile = File(...), tool: str = Form(...),
+async def create_quick_case(request: Request, file: UploadFile = File(...), tool: str = Form(...),
                             extract: bool = Form(False)) -> JSONResponse:
     """Quick analysis from an engine tab (YARA, Machine Learning, C2, Hex): a
     light case that runs only that engine — not the full pipeline. ``extract``
@@ -75,7 +88,9 @@ async def create_quick_case(file: UploadFile = File(...), tool: str = Form(...),
     if tool not in case_service.QUICK_TOOLS:
         raise HTTPException(status_code=400, detail=f"tool must be one of {', '.join(case_service.QUICK_TOOLS)}")
     manifest = case_service.create_case(file.file, file.filename or "upload.bin",
-                                        quick={"tool": tool, "extract": extract and tool != "hex"})
+                                        quick={"tool": tool, "extract": extract and tool != "hex"},
+                                        uploaded_by=_user(request))
+    _audit_upload(request, manifest, f"analysed a loose file ({tool})")
     aid, name = manifest["analysis_id"], manifest["original"]["filename"]
     tasks = []
     if extract and tool != "hex":

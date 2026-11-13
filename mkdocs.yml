@@ -76,6 +76,7 @@ nav:
   - Home: index.md
   - Getting started: getting-started.md
   - Configuration: configuration.md
+  - Users, sign-in and audit: users.md
   - File types:
       - Email: file-types/email.md
       - Word, Excel and PowerPoint: file-types/office.md

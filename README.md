@@ -38,7 +38,7 @@ on your Python; the analysis runs on a portable toolchain that `install.py` down
 `tools/`.
 
 ```bash
-python install.py             # once: sets everything up
+python install.py             # once: sets everything up (first start then asks for the admin password)
 python run.py                 # every time: checks for updates (asks y/N), then starts → http://127.0.0.1:8000
 ```
 
@@ -59,7 +59,8 @@ and [Configuration](https://g92mz.github.io/DocuTraceX/configuration/).
 - 🪆 **Recursion** — everything a file carries is analysed in turn, many levels deep.
 - 📡 **C2 · YARA · ML · Hex** — implant configurations, your rules, a machine-learning second opinion, a hex viewer.
 - 🌐 **Network checks** — on demand, through your proxy, like a real victim with a fake identity.
-- 🤖 **AI and MCP** — ask about a case through your AI provider, a local model or an MCP client, read-only.
+- 🤖 **AI and MCP** — ask about a case through your AI provider, a local model or an MCP client (over HTTP with a token), read-only.
+- 👥 **Users and audit** — sign-in for everyone, an admin who manages the accounts, and an audit trail of who ran, checked and marked what.
 - 🏷️ **Triage and report** — mark findings and IOCs, export a self-contained HTML report.
 
 <!-- rev: MH22fELbKP -->

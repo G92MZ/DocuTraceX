@@ -18,6 +18,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import __version__
 from .api.ai_api import router as ai_router
+from .api.auth_api import router as auth_router
 from .api.cases import router as cases_router
 from .api.settings_api import router as settings_router
 from .api.yara import router as yara_router
@@ -72,6 +73,7 @@ def create_app() -> FastAPI:
         log.warning("Application error: %s", exc)
         return JSONResponse(status_code=400, content={"error": str(exc)})
 
+    app.include_router(auth_router)
     app.include_router(cases_router)
     app.include_router(yara_router)
     app.include_router(settings_router)
@@ -116,12 +118,25 @@ def create_app() -> FastAPI:
                                 content={"error": "Task cannot be cancelled (unknown or already finished)."})
         return JSONResponse(content={"cancelled": task_id, "task": manager.get(task_id)})
 
+    @app.get("/login", response_class=HTMLResponse)
+    async def login_page(request: Request) -> HTMLResponse:
+        from . import users
+        return _TEMPLATES.TemplateResponse(
+            request, "login.html",
+            {"version": __version__, "asset_version": _asset_version(static_dir),
+             "setup": users.needs_setup(), "min_password": users.MIN_PASSWORD},
+        )
+
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
         return _TEMPLATES.TemplateResponse(
             request, "index.html",
             {"version": __version__, "asset_version": _asset_version(static_dir)},
         )
+
+    # every request: sign-in gate, CSRF header for changes, audit trail (authmw.py)
+    from .authmw import AuthAudit
+    app.add_middleware(AuthAudit)
 
     log.info("DocuTraceX %s ready", __version__)
     return app

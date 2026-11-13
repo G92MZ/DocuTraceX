@@ -1021,3 +1021,7 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
   h2 { font-size: 20px; }
   .hint-line { overflow-wrap: anywhere; }
 }
+
+/* signed-in user + sign out, at the right of the top bar */
+.topbar .version { margin-left: auto; }
+.user-chip { margin-left: 14px; display: inline-flex; align-items: center; gap: 8px; color: var(--text-dim); font-size: 12px; }

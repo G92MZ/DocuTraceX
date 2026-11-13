@@ -1,16 +1,18 @@
 # Configuration
 
 DocuTraceX works out of the box, but a few settings make it yours. Do them once after the first
-start: they live in `config/` (`config/settings.json`, your rules in `config/rules/`) and survive
-updates.
+start: they live in `config/` (`config/settings.json`, your rules in `config/rules/`, the users,
+sessions, audit trail and MCP token) and survive updates.
 
 !!! tip "Ready in five minutes"
-    1. **Settings → Network — proxy**: the proxy for network checks (or a free public one).
-    2. **Settings → Email rules: your organisation**: your own domains and the brands to protect.
-    3. **Settings → Generic legitimate domains**: the providers you use, so they are not reported as look-alikes.
-    4. **Settings → Email reputation lists / Microsoft 365 tenants**: optional keys and lookups.
-    5. **New analysis**: how many analyses run at once.
-    6. Optional: **YARA** rules, the **AI** endpoint or **MCP**, and a look at **Diagnostics**.
+    1. **First start**: set the admin password, then create your colleagues' accounts in **Users**
+       ([Users, sign-in and audit](users.md)).
+    2. **Settings → Network — proxy**: the proxy for network checks (or a free public one).
+    3. **Settings → Email rules: your organisation**: your own domains and the brands to protect.
+    4. **Settings → Generic legitimate domains**: the providers you use, so they are not reported as look-alikes.
+    5. **Settings → Email reputation lists / Microsoft 365 tenants**: optional keys and lookups.
+    6. **New analysis**: how many analyses run at once.
+    7. Optional: **YARA** rules, the **AI** endpoint or **MCP**, and a look at **Diagnostics**.
 
 ## Network checks: the proxy
 
@@ -86,8 +88,9 @@ built-in lists. Only the look-alike checks use them: every other rule still judg
   (faster for big sets), then **Recompile**. They run on demand on any case ([YARA](engines/yara.md)).
 - **AI**: the endpoint, model and key of your OpenAI-compatible API (a company LiteLLM, a provider)
   or of a local model (Ollama, LM Studio). The key stays in your browser.
-- **MCP**: the **AI → MCP** tab has the configuration for Claude Desktop / Claude Code and the
-  command to serve it over HTTP for other machines ([Reports, AI and MCP](engines/reports.md)).
+- **MCP**: the **AI → MCP** tab has the configuration for Claude Desktop / Claude Code, and the
+  command, URL and **token** to serve it over HTTP to other machines (OpenCode, Claude Code…):
+  [MCP over HTTP and its token](engines/reports.md#mcp-over-http-and-its-token).
 
 ## Diagnostics
 

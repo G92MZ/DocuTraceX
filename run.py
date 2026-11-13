@@ -82,4 +82,12 @@ if __name__ == "__main__":
     # env is set so settings pick up the overrides.
     from docutracex.__main__ import main
 
+    try:                                    # first start: say where the admin password is set
+        from docutracex import users
+        if users.needs_setup():
+            print("\n[run] First start: open the app in a browser and set the password of the "
+                  "'admin' user.\n      Forgot it later? python -m docutracex.users reset-admin\n")
+    except Exception:  # noqa: BLE001
+        pass
+
     main()
