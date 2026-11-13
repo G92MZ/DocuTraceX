@@ -246,9 +246,12 @@ def analyze(path: Path, *, mode: str, names: list[dict[str, Any]] | None, out_fi
                 summary["warnings"].append(f"only the first {INVENTORY_MAX} program functions are analysed")
         else:
             r = rz.run(path, [("afl", "aflj")], timeout=min(left(), BUDGET_S), mem_mb=MEM_MB, prelude=prelude)
+            afl = rz.as_json(r["outputs"].get("afl")) or []
             if r.get("killed"):
                 summary["warnings"].append(f"Rizin analysis stopped: {r['killed']}")
-            afl = rz.as_json(r["outputs"].get("afl")) or []
+                # every later step re-runs the same analysis (the prelude): it would only be
+                # killed again, each time with the rest of the hard limit — stop here
+                afl = []
             for f in afl:
                 nm = f.get("name") or ""
                 if nm.startswith(("sym.imp.", "loc.imp.", "reloc.")):

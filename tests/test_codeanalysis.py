@@ -590,3 +590,24 @@ def test_func_value_call_resolved(tmp_path: Path) -> None:
     assert {"from": hook, "to": beacon, "kind": "closure"} in code_case.graph(full)["edges"]
     fv = code_case.function_view(full, hook)
     assert fv["closure_targets"] == [{"addr": beacon, "name": "main.beacon"}] and fv["file"].endswith("/main.go")
+
+
+def test_first_pass_over_budget_stops_the_analysis(tmp_path, monkeypatch):
+    """A 5 MB native PE whose analysis ran out of time: every later step re-runs the same
+    analysis prelude with the rest of the hard limit (21 minutes in a real case) — stop instead."""
+    import docutracex.codeanalysis as ca
+    from docutracex.codeanalysis import rz
+    monkeypatch.setattr(ca, "available", lambda: True)
+    monkeypatch.setattr(rz, "executable", lambda: tmp_path / "rizin")
+    monkeypatch.setattr(rz, "version", lambda exe=None: "rizin test")
+    monkeypatch.setattr(rz, "run", lambda *a, **k: {"outputs": {"afl": '[{"name": "entry0", "offset": 4198400, "size": 9}]'},
+                                                    "killed": "time limit (240 s)"})
+
+    def no_more(*_a, **_k):
+        raise AssertionError("rizin run again after the budget was spent")
+    monkeypatch.setattr(rz, "run_groups", no_more)
+    b = tmp_path / "x.exe"
+    b.write_bytes(b"MZ" + b"\0" * 1024)
+    s = ca.analyze(b, mode="native", names=None, out_file=tmp_path / "x.json", lock_path=tmp_path / "lock")
+    assert any("stopped" in w for w in s["warnings"])
+    assert s["functions_total"] == 0
