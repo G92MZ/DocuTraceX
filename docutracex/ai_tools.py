@@ -27,6 +27,9 @@ Tools:
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from contextvars import ContextVar
+
 import json
 import re
 from pathlib import Path
@@ -71,8 +74,29 @@ def _paths(case_id: str) -> CasePaths:
     return paths
 
 
+# The AI chat keeps its answers short (each tool call fills the model's context); the Markdown
+# export (``mdreport``) reads the same helpers inside ``no_limits()`` and gets everything.
+_FULL: ContextVar[bool] = ContextVar("dtx_ai_tools_full", default=False)
+
+
+@contextmanager
+def no_limits():  # noqa: ANN201
+    tok = _FULL.set(True)
+    try:
+        yield
+    finally:
+        _FULL.reset(tok)
+
+
+def _n(n: int) -> int | None:
+    """A list cap for the chat; None (no cap) inside ``no_limits()``."""
+    return None if _FULL.get() else n
+
+
 def _clip(s: Any, n: int = 600) -> str:
     s = "" if s is None else str(s)
+    if _FULL.get():
+        return s
     return s if len(s) <= n else s[:n] + f"… (+{len(s) - n} chars)"
 
 
@@ -102,7 +126,7 @@ def case_summary(case_id: str) -> dict[str, Any]:
             "detected": {"mime": (fmt.get("detected") or {}).get("mime"), "name": (fmt.get("detected") or {}).get("name"),
                          "match": (fmt.get("discrepancy") or {}).get("status")},
             "state": m.get("state"), "counts": s.get("counts", {}), "modules_run": s.get("modules_run", []),
-            "steps": [{k: st.get(k) for k in ("step", "status", "findings", "note")} for st in s.get("steps", [])][:60]}
+            "steps": [{k: st.get(k) for k in ("step", "status", "findings", "note")} for st in s.get("steps", [])][:_n(60)]}
 
 
 def get_findings(case_id: str, severity: str | None = None, source: str | None = None, mark: str | None = None,
@@ -169,7 +193,7 @@ def get_network_checks(case_id: str) -> dict[str, Any]:
         rec: dict[str, Any] = {"kind": c.get("kind"), "target": c.get("target"), "checked_utc": c.get("checked_utc"),
                                "via": c.get("via"),
                                "findings": [f"{f.get('severity')} {f.get('rule')}: {_clip(f.get('detail'), 200)}"
-                                            for f in c.get("findings", [])][:30]}
+                                            for f in c.get("findings", [])][:_n(30)]}
         if c.get("views"):  # URL checks, and the website of a checked domain
             views = {}
             for name, v in (c.get("views") or {}).items():
@@ -373,7 +397,7 @@ def get_function(case_id: str, object: str, function: str, max_chars: int = 1200
 def get_decrypted(case_id: str, limit: int = 80) -> dict[str, Any]:
     """Everything the analyses decrypted or decoded statically, with the routine used."""
     paths = _paths(case_id)
-    lim = max(1, min(int(limit or 80), 200))
+    lim = max(1, min(int(limit or 80), 200)) if not _FULL.get() else 10 ** 9
     out: list[dict[str, Any]] = []
     for o in (read_json(paths.subresult("dotnet")) or {}).get("objects") or []:
         r = o.get("result") or {}
@@ -417,8 +441,9 @@ def get_decrypted(case_id: str, limit: int = 80) -> dict[str, Any]:
 def get_nested_tree(case_id: str, max_depth: int = 6) -> dict[str, Any]:
     """The chain of children: extracted, unpacked, hidden and decrypted stages."""
     paths = _paths(case_id)
-    depth_cap = max(1, min(int(max_depth or 6), 12))
+    depth_cap = max(1, min(int(max_depth or 6), 12)) if not _FULL.get() else 10 ** 6
     count = [0]
+    node_cap, kid_cap = (300, 60) if not _FULL.get() else (10 ** 9, None)
 
     def node(n: dict[str, Any], d: int) -> dict[str, Any]:
         count[0] += 1
@@ -432,13 +457,13 @@ def get_nested_tree(case_id: str, max_depth: int = 6) -> dict[str, Any]:
         if n.get("stego"):
             out["hidden_payload"] = n["stego"]
         kids = n.get("children") or []
-        if kids and d < depth_cap and count[0] < 300:
-            out["children"] = [node(k, d + 1) for k in kids[:60]]
+        if kids and d < depth_cap and count[0] < node_cap:
+            out["children"] = [node(k, d + 1) for k in kids[:kid_cap]]
         elif kids:
             out["children_not_shown"] = len(kids)
         return out
     tree = (read_json(paths.subresult("nested")) or {}).get("tree") or []
-    return {"tree": [node(n, 1) for n in tree[:80]], "nodes_shown": count[0]}
+    return {"tree": [node(n, 1) for n in tree[:_n(80)]], "nodes_shown": count[0]}
 
 
 def get_ml(case_id: str) -> dict[str, Any]:
@@ -453,11 +478,11 @@ def get_ml(case_id: str) -> dict[str, Any]:
                       "verdict": x.get("verdict"), "status": x.get("status"),
                       "unusual_for_model": a.get("atypical"), "unusual_features": a.get("examples"),
                       "top_features": [f"{t.get('plain') or t.get('feature')} ({t.get('contribution', 0):+.2f})"
-                                       for t in (x.get("top_features") or [])[:6]],
-                      "family_guess": [(f.get("name"), f.get("confidence")) for f in ((x.get("labels") or {}).get("family") or [])[:3]],
+                                       for t in (x.get("top_features") or [])[:_n(6)]],
+                      "family_guess": [(f.get("name"), f.get("confidence")) for f in ((x.get("labels") or {}).get("family") or [])[:_n(3)]],
                       "similar": [{"similarity": s.get("similarity"), "case": s.get("case"), "object": s.get("label"),
                                    "same_file": s.get("same_file")} for s in x.get("similar") or []]})
-    return {"chain": ml.get("chain"), "items": items[:60],
+    return {"chain": ml.get("chain"), "items": items[:_n(60)],
             "note": "complementary indicator, not a verdict; results are not findings until marked"}
 
 

@@ -16,8 +16,8 @@ from typing import Any, Callable
 from . import ai_tools
 from .storage import read_json
 
-MAX_SECTION = 400_000          # characters per section
-MAX_MODULE = 80_000            # per raw module in "Modules"
+# No size limits: this export is read by an LLM (or attached to a ticket) as the whole analysis.
+# A case big enough to matter (tens of thousands of IOCs) is rare and better complete than cut.
 PSEUDOCODE_FUNCS = 25          # decompiled functions written out per binary
 
 
@@ -39,8 +39,9 @@ def _fence(text: str, lang: str = "") -> str:
     return f"{fence}{lang}\n{t}\n{fence}\n"
 
 
-def _cap(text: str, n: int = MAX_SECTION) -> str:
-    return text if len(text) <= n else text[:n] + f"\n\n_… section truncated ({len(text) - n} more characters)_\n"
+def _cap(text: str, n: int | None = None) -> str:
+    """Kept for callers: sections are no longer truncated."""
+    return text
 
 
 # --- sections ---------------------------------------------------------------------
@@ -78,7 +79,7 @@ def _iocs(cid: str) -> str:
             return f"tenant {i['tenant'].get('name', '')}: {i['tenant'].get('why', '')}"
         return f"RMM: {i['rmm'].get('product', '')}" if i.get("rmm") else ""
     rows = [[i.get("type"), i.get("value"), i.get("count"),
-             "; ".join(sorted({f"{o.get('module')}/{o.get('location')}" for o in i.get("occurrences", [])})[:4]), tag(i)]
+             "; ".join(sorted({f"{o.get('module')}/{o.get('location')}" for o in i.get("occurrences", [])})), tag(i)]
             for i in items]
     return f"# IOCs ({len(items)})\n\n" + _table(["Type", "Value", "Count", "Seen in", "Tag"], rows)
 
@@ -128,17 +129,17 @@ def _code(cid: str) -> str:
                 f"sha256 `{sha}` · {len(fns)} functions · {sum(1 for x in fns if x.get('decompiled'))} decompiled", ""]
         sm = full.get("summary") or {}
         if sm:
-            out += [_fence(json.dumps(sm, ensure_ascii=False, indent=1, default=str)[:4000], "json")]
+            out += [_fence(json.dumps(sm, ensure_ascii=False, indent=1, default=str), "json")]
         out += ["### Functions by priority", "",
                 _table(["#", "Function", "Address", "Score", "Behaviour", "Size", "Why"],
                        [[x.get("rank"), x.get("name"), hex(x["addr"]), x.get("score"), ", ".join(x.get("categories") or []),
-                         x.get("size"), "; ".join((x.get("reasons") or [])[:3])] for x in fns[:150]])]
+                         x.get("size"), "; ".join(x.get("reasons") or [])] for x in fns])]
         caps = (full.get("capabilities") or {}).get("items") or (full.get("capabilities") or {}).get("capabilities") or []
         if caps:
-            out += ["### Capabilities", "", _fence(json.dumps(caps, ensure_ascii=False, default=str)[:20000], "json")]
+            out += ["### Capabilities", "", _fence(json.dumps(caps, ensure_ascii=False, default=str), "json")]
         crypto = full.get("crypto") or {}
         if crypto:
-            out += ["### Crypto", "", _fence(json.dumps(crypto, ensure_ascii=False, default=str)[:20000], "json")]
+            out += ["### Crypto", "", _fence(json.dumps(crypto, ensure_ascii=False, default=str), "json")]
         out += ["### Pseudocode of the decompiled functions (by priority)", ""]
         n = 0
         for x in fns:
@@ -150,12 +151,12 @@ def _code(cid: str) -> str:
             v = code_case.function_view(full, x["addr"]) or {}
             n += 1
             out += [f"#### {x.get('name')} @ {hex(x['addr'])} — {', '.join(x.get('categories') or []) or 'no category'}", "",
-                    f"callers: {', '.join(c['name'] for c in (v.get('callers') or [])[:15]) or '—'}  ",
-                    f"calls: {', '.join([c['name'] for c in (v.get('callees') or [])[:15]] + (v.get('callee_names') or [])[:15]) or '—'}", "",
-                    _fence(dec["code"][:30000], "c")]
+                    f"callers: {', '.join(c['name'] for c in (v.get('callers') or [])) or '—'}  ",
+                    f"calls: {', '.join([c['name'] for c in (v.get('callees') or [])] + (v.get('callee_names') or [])) or '—'}", "",
+                    _fence(dec["code"], "c")]
         if not n:
             out += ["_(no function decompiled: use Code → Decompile all, then regenerate)_", ""]
-    return _cap("\n".join(out))
+    return "\n".join(out)
 
 
 def _dotnet(cid: str) -> str:
@@ -175,9 +176,9 @@ def _dotnet(cid: str) -> str:
                 f"- references: {', '.join(x['name'] for x in r.get('references') or [])}", "",
                 "### Methods of interest", "",
                 _table(["Method", "Behaviour", "Calls", "Strings", "Static arrays"],
-                       [[m.get("method"), ", ".join(m.get("categories") or []), ", ".join((m.get("calls") or [])[:12]),
-                         " · ".join((m.get("strings") or [])[:8]), " · ".join(m.get("arrays") or [])]
-                        for m in (cil.get("interesting") or [])[:120]]),
+                       [[m.get("method"), ", ".join(m.get("categories") or []), ", ".join(m.get("calls") or []),
+                         " · ".join(m.get("strings") or []), " · ".join(m.get("arrays") or [])]
+                        for m in (cil.get("interesting") or [])]),
                 "### Strings decrypted statically", "",
                 _table(["Plain", "Encrypted", "Decryptor", "Caller", "How"],
                        [[d.get("output"), ai_tools._clip(d.get("input"), 120), d.get("decryptor"), d.get("caller"), d.get("how")]
@@ -196,8 +197,8 @@ def _dotnet(cid: str) -> str:
                 out.append(f"  - {e.get('name')} ({e.get('type')}, {e.get('size')})"
                            + (f" = {ai_tools._clip(e.get('value'), 300)}" if e.get("value") else "")
                            + (f" · hidden {e['stego'].get('type')} in pixels ({e['stego'].get('how')})" if e.get("stego") else ""))
-        out += ["", "### User strings (#US)", "", _fence("\n".join((r.get("strings") or [])[:3000]))]
-    return _cap("\n".join(out))
+        out += ["", "### User strings (#US)", "", _fence("\n".join(r.get("strings") or []))]
+    return "\n".join(out)
 
 
 def _ml(cid: str) -> str:
@@ -237,11 +238,11 @@ def _c2(cid: str) -> str:
         norm = c.get("normalized") or []
         if norm:
             out += ["", "| field | value | status | read by | confidence |", "|---|---|---|---|---|"]
-            out += [f"| {n['name']} | {str(n['value']).replace('|', '/')[:200]} | {n['status']} | {n['extractor']} | {n['confidence']} |"
-                    for n in norm[:300]]
+            out += [f"| {n['name']} | {str(n['value']).replace('|', '/')} | {n['status']} | {n['extractor']} | {n['confidence']} |"
+                    for n in norm]
         out += ["", _fence(json.dumps({"summary": c.get("summary"), "sections": c.get("sections"),
                                        "fields": c.get("fields")}, ensure_ascii=False,
-                                      indent=1, default=str)[:20000], "json")]
+                                      indent=1, default=str), "json")]
     for pr in c2.get("protected") or []:
         out += ["", f"- **protected** — {pr.get('object')}: "
                 + ", ".join(f"{x.get('name')} ({x.get('evidence')})" for x in pr.get("protectors") or [])
@@ -253,13 +254,13 @@ def _c2(cid: str) -> str:
 
 def _network(cid: str) -> str:
     return "# Network checks\n\n" + _fence(json.dumps(ai_tools.get_network_checks(cid), ensure_ascii=False,
-                                                       indent=1, default=str)[:MAX_SECTION], "json")
+                                                       indent=1, default=str), "json")
 
 
 def _modules(cid: str) -> str:
     paths = ai_tools._paths(cid)
     out = ["# Raw module results", "",
-           "_Every module's JSON result, as stored (long ones truncated). The sections above are the readable view._", ""]
+           "_Every module's JSON result, as stored, complete. The sections above are the readable view._", ""]
     for p in sorted(paths.results_dir.glob("*.json")):
         if p.stem in ("summary", "findings"):
             continue
@@ -267,8 +268,8 @@ def _modules(cid: str) -> str:
             text = json.dumps(json.loads(p.read_text(encoding="utf-8")), ensure_ascii=False, indent=1, default=str)
         except (OSError, ValueError):
             continue
-        out += [f"## {p.stem}", "", _fence(text[:MAX_MODULE] + (f"\n… (+{len(text) - MAX_MODULE} chars)" if len(text) > MAX_MODULE else ""), "json")]
-    return _cap("\n".join(out), MAX_SECTION * 3)
+        out += [f"## {p.stem}", "", _fence(text, "json")]
+    return "\n".join(out)
 
 
 def _yara(cid: str) -> str:
@@ -283,14 +284,14 @@ def _yara(cid: str) -> str:
     for h in y.get("scanned") or []:
         for m in h.get("matches") or []:
             meta = m.get("meta") or {}
-            strings = "; ".join(f"{x.get('id')}@{x.get('offset')}: {str(x.get('text', ''))[:40]}"
-                                for x in (m.get("strings") or [])[:5])
+            strings = "; ".join(f"{x.get('id')}@{x.get('offset')}: {str(x.get('text', ''))}"
+                                for x in (m.get("strings") or []))
             rows.append([m.get("rule"), h.get("file"), meta.get("description") or meta.get("desc") or "",
                          ", ".join(m.get("tags") or []), strings])
     out += ["", _table(["rule", "object", "description", "tags", "matched strings"], rows)]
     if y.get("errors"):
-        out += ["", "**Rule errors:**", ""] + [f"- {_md(e)}" for e in y["errors"][:50]]
-    return _cap("\n".join(out), MAX_SECTION)
+        out += ["", "**Rule errors:**", ""] + [f"- {_md(e)}" for e in y["errors"]]
+    return "\n".join(out)
 
 
 def _rmm(cid: str) -> str:
@@ -308,18 +309,18 @@ def _rmm(cid: str) -> str:
     if about:
         out += ["", about]
     rows = [[c.get("family", "")[5:], c.get("kind"), ", ".join((c.get("summary") or {}).get("C2") or []) or "—",
-             c.get("object", ""), ", ".join(f"{k}: {v}" for k, v in (c.get("fields") or {}).items())[:300]] for c in cfgs]
+             c.get("object", ""), ", ".join(f"{k}: {v}" for k, v in (c.get("fields") or {}).items())] for c in cfgs]
     out += ["", "## Products in the objects", "", _table(["product", "kind", "instance", "object", "settings"], rows)]
     ms = r.get("mentions") or []
     out += ["## Named in the text", "", _table(["product", "severity", "why", "where", "context"],
                                                [[m.get("product"), m.get("severity"), m.get("why"), m.get("location"),
-                                                 str(m.get("snippet", ""))[:200]] for m in ms])]
+                                                 str(m.get("snippet", ""))] for m in ms])]
     iocs = read_json(paths.subresult("iocs")) or {}
     tagged = [i for i in iocs.get("iocs") or [] if i.get("rmm")]
     out += ["## IOCs of a product", "", _table(["type", "value", "product", "why"],
                                                [[i["type"], i["value"], i["rmm"].get("product"), i["rmm"].get("why")]
-                                                for i in tagged[:300]])]
-    return _cap("\n".join(out), MAX_SECTION)
+                                                for i in tagged])]
+    return "\n".join(out)
 
 
 SECTIONS: list[tuple[str, str, Callable[[str], str]]] = [
@@ -337,7 +338,8 @@ def build(case_id: str) -> list[dict[str, Any]]:
     out = []
     for sid, title, fn in SECTIONS:
         try:
-            md = fn(case_id)
+            with ai_tools.no_limits():       # the chat's caps do not apply to the export
+                md = fn(case_id)
         except Exception as exc:  # noqa: BLE001
             md = f"# {title}\n\n_(could not build this section: {exc})_\n"
         out.append({"id": sid, "title": title, "markdown": md, "chars": len(md)})
