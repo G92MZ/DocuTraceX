@@ -196,3 +196,31 @@ def test_reads_on_the_portable_when_the_host_has_no_duckdb(analysed, tmp_path: P
     assert remote.call("children", path=db, src=0, key="")["subkeys"]
     with pytest.raises(ValueError):
         remote.call("user_query", path=db, sql="DROP TABLE vals", limit=10)
+
+
+def test_less_common_autostarts_and_tampering(tmp_path: Path) -> None:
+    """sample_system_tampering.reg: each technique is flagged, the ordinary value next to it is not."""
+    p = _write(tmp_path, "sample_system_tampering.reg", ms.registry_system_tampering_reg())
+    res = registry.analyze([(p, p.name)], tmp_path / "c", tmp_path / "w")
+    by = {f["rule"]: f for f in res["findings"]}
+    for rule in ("reg_windows_load", "reg_active_setup", "reg_boot_execute", "reg_appcert_dlls", "reg_print_monitor",
+                 "reg_cmd_autorun", "reg_service", "reg_service_dll", "reg_service_masquerade", "reg_com_script_moniker",
+                 "reg_file_association", "reg_script_logging_disabled", "reg_amsi_disabled", "reg_obfuscated_script",
+                 "reg_base64_blob", "reg_wmi_consumer", "reg_ransomware_extension", "reg_ransomware_file"):
+        assert rule in by, rule
+    assert "ie4uinit" not in by["reg_active_setup"]["evidence"]
+    assert "tcpmon" not in by["reg_print_monitor"]["evidence"]
+    assert "reg_ifeo_debugger" not in by                       # a Visual Studio JIT debugger only
+    assert "fsync.exe" in by["reg_boot_execute"]["evidence"]
+    assert by["reg_service"]["severity"] == "high" and "fupd.exe" in by["reg_service"]["evidence"]
+
+
+def test_generic_rules_do_not_repeat_reported_values(analysed) -> None:
+    _case, res = analysed
+    rules_by_value: dict = {}
+    for f in res["findings"]:
+        for line in f["evidence"].splitlines():
+            rules_by_value.setdefault(line.split(" = ")[0], set()).add(f["rule"])
+    generic = {"reg_command_in_value", "reg_obfuscated_script", "reg_base64_blob", "reg_long_string", "reg_file_association"}
+    for value, rs in rules_by_value.items():
+        assert len(rs & generic) == 0 or len(rs - {"reg_payload_in_value", "reg_root_certificate"}) == 1, (value, rs)
