@@ -52,11 +52,13 @@ checks, your own domains and brands, and the rest of Settings.
 
 ## Your first case
 
-1. Extract a sample from `samples/samples.zip` (password **`infected`**) — for example
+1. **First start**: the app asks for the password of the **admin** user (see
+   [Users, sign-in and audit](users.md)); then create accounts for your colleagues in **Users**.
+2. Extract a sample from `samples/samples.zip` (password **`infected`**) — for example
    `email/sample.eml` — or run `python scripts/samplegen.py --extract`.
-2. **New analysis** → drop the file. The original is copied, hashed and never modified; the
+3. **New analysis** → drop the file. The original is copied, hashed and never modified; the
    analysis is queued and **Tasks** shows it step by step.
-3. **Cases** → open it. **Components** has a tab per analysis: see the page for each
+4. **Cases** → open it. **Components** has a tab per analysis: see the page for each
    [file type](file-types/email.md).
 
 !!! note "The samples are inert"

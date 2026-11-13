@@ -31,29 +31,48 @@ def test_main_http(monkeypatch: pytest.MonkeyPatch) -> None:
     assert got == {"host": "0.0.0.0", "port": 8123}
 
 
-def test_run_http_mcp2_and_mcp1() -> None:
-    class V2:                                    # mcp >= 2: host / port as run() kwargs
-        def run(self, transport, **kw):
-            self.got = (transport, kw)
-    s = V2()
-    mcp_server.run_http(s, "0.0.0.0", 8001)
-    assert s.got[0] == "streamable-http" and s.got[1]["host"] == "0.0.0.0" and s.got[1]["port"] == 8001
-    assert "transport_security" in s.got[1]     # reachable by IP: DNS-rebinding protection off
+def test_http_app_mcp2_and_mcp1_behind_token(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+
+    monkeypatch.setenv("DOCUTRACEX_CONFIG_DIR", str(tmp_path))
+    from docutracex import users
+
+    async def inner(scope, receive, send):                 # what the SDK app would answer
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    class V2:                                             # mcp >= 2: options as arguments
+        def streamable_http_app(self, **kw):
+            self.kw = kw
+            return inner
+    s2 = V2()
+    app = mcp_server.http_app(s2, "0.0.0.0")
+    assert "transport_security" in s2.kw                  # reachable by IP: DNS-rebinding protection off
 
     class Settings:
-        host, port, transport_security = "127.0.0.1", 8000, None
+        host, transport_security = "127.0.0.1", None
 
-    class V1:                                    # mcp 1.x: run(transport) only, host / port in settings
+    class V1:                                             # mcp 1.x: options in the settings
         settings = Settings()
 
-        def run(self, transport="stdio", **kw):
+        def streamable_http_app(self, **kw):
             if kw:
                 raise TypeError("unexpected keyword")
-            self.got = transport
+            return inner
     s1 = V1()
-    mcp_server.run_http(s1, "127.0.0.1", 8002)
-    assert s1.got == "streamable-http" and (s1.settings.host, s1.settings.port) == ("127.0.0.1", 8002)
-    assert s1.settings.transport_security is None   # loopback keeps the protection
+    mcp_server.http_app(s1, "127.0.0.1")
+    assert s1.settings.transport_security is None          # loopback keeps the protection
+
+    def call(headers):
+        out = []
+
+        async def send(msg):
+            out.append(msg)
+        asyncio.run(app({"type": "http", "headers": headers}, None, send))
+        return out[0]["status"]
+    assert call([]) == 401
+    assert call([(b"authorization", b"Bearer wrong")]) == 401
+    assert call([(b"authorization", f"Bearer {users.mcp_token()}".encode())]) == 200
 
 
 def test_own_domains_not_capped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

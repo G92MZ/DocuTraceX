@@ -1,5 +1,24 @@
 "use strict";
 
+// --- Sign-in: every change carries X-DTX (CSRF guard); a lost session goes back to /login
+(() => {
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = async (input, init = {}) => {
+    const url = typeof input === "string" ? input : (input && input.url) || "";
+    const sameOrigin = url.startsWith("/") || url.startsWith(location.origin);
+    if (sameOrigin) {
+      const h = new Headers(init.headers || (typeof input !== "string" && input.headers) || {});
+      h.set("X-DTX", "1");
+      init = { ...init, headers: h };
+    }
+    const r = await nativeFetch(input, init);
+    if (sameOrigin && r.status === 401 && url.includes("/api/") && !url.includes("/api/auth/")) {
+      location.href = "/login";
+    }
+    return r;
+  };
+})();
+
 // --- Supported formats grid (upload section only) ----------------------------
 const FORMATS = [
   { name: "Word", color: "#2b7cd3", glyph: "W",
@@ -5654,11 +5673,23 @@ async function loadMcpInfo() {
     h += mcpBlock("2 · Claude Desktop — Settings → Developer → Edit Config (claude_desktop_config.json)", j.claude_desktop);
     h += mcpBlock("2 · (alternative) Claude Code", j.claude_code);
     if (j.http_run) {
+      let tok = { token: "", can_regenerate: false };
+      try { tok = await fetch("/api/mcp/token").then((r) => r.json()); } catch (_e) { /* shown empty */ }
+      const t = tok.token || "<token>";
       h += `<h3 class="formats-title">Over HTTP — for clients on other machines or apps that only speak HTTP</h3>
-        <p class="hint-line">The same server on <b>streamable HTTP</b> (endpoint <span class="mono">/mcp</span>). Leave it running in a terminal; clients connect to the URL. With <span class="mono">--host 0.0.0.0</span> it listens on every interface and accepts connections by IP or host name. <b>It has no authentication</b>: open the port only on a network you trust (firewall / VPN), or use <span class="mono">--host 127.0.0.1</span> for this machine only.</p>`;
-      h += mcpBlock("Start the server over HTTP", j.http_run);
-      h += mcpBlock("URL for the client (from another machine, use this computer's IP or name)", j.http_url);
-      h += mcpBlock("Claude Code over HTTP", j.claude_code_http);
+        <p class="hint-line">The same server on <b>streamable HTTP</b> (endpoint <span class="mono">/mcp</span>). Leave it running in a terminal; clients connect to the URL. With <span class="mono">--host 0.0.0.0</span> it listens on every interface and accepts connections by IP or host name; <span class="mono">--host 127.0.0.1</span> keeps it on this machine.</p>
+        <p class="hint-line"><b>Every request needs the token</b> in the header <span class="mono">Authorization: Bearer &lt;token&gt;</span> — without it the server answers 401. The token is generated the first time (stored in <span class="mono">config/mcp_token.txt</span>, kept across updates); on the console of this machine, <span class="mono">python -m docutracex.users mcp-token</span> prints it. ${tok.can_regenerate
+          ? "<b>Regenerate</b> makes a new one at once: every client must then be updated with it (no restart needed)."
+          : "Only the admin can regenerate it."}</p>
+        <div class="row" style="gap:8px;align-items:center"><span class="mono" id="mcp-token-val">${escapeHtml(t)}</span>
+          <button class="btn btn-ghost btn-sm" type="button" data-copy="${escapeHtml(t)}">Copy token</button>
+          ${tok.can_regenerate ? '<button class="btn btn-ghost btn-sm" type="button" id="mcp-token-regen">Regenerate</button>' : ""}</div>`;
+      h += mcpBlock("1 · Start the server over HTTP (leave it running)", j.http_run);
+      h += mcpBlock("2 · URL for the client (from another machine, use this computer's IP or name)", j.http_url);
+      h += mcpBlock("Claude Code over HTTP", `${j.claude_code_http} --header "Authorization: Bearer ${t}"`);
+      h += mcpBlock("OpenCode (opencode.json)", JSON.stringify({ mcp: { docutracex: { type: "remote", url: j.http_url,
+        headers: { Authorization: `Bearer ${t}` }, enabled: true } } }, null, 2));
+      h += mcpBlock("Any other client: a remote / HTTP MCP server with this header", `Authorization: Bearer ${t}`);
     }
     h += `<h3 class="formats-title">3 · Available tools</h3><ul class="hint-list">${(j.tools || []).map((t) => `<li><span class="mono">${escapeHtml(t.signature)}</span> — ${escapeHtml(t.description)}</li>`).join("")}</ul>`;
     h += `<p class="hint-line">All read-only. Paths above are this installation's (portable Python ${escapeHtml(j.mcp_version ? "· mcp " + j.mcp_version : "")}).</p>`;
@@ -5667,6 +5698,12 @@ async function loadMcpInfo() {
       try { await navigator.clipboard.writeText(b.getAttribute("data-copy")); b.textContent = "Copied ✓"; }
       catch (err) { b.textContent = "Select and copy"; }
     }));
+    const rg = document.getElementById("mcp-token-regen");
+    if (rg) rg.addEventListener("click", async () => {
+      if (!confirm("Make a new MCP token? Clients using the current one stop working until you update them.")) return;
+      await fetch("/api/mcp/token", { method: "POST" });
+      loadMcpInfo();
+    });
   } catch (err) { el.innerHTML = `<p class="bad-text">Could not load MCP info.</p>`; }
 }
 
@@ -7106,6 +7143,7 @@ function setupTabs() {
       if (target === "c2") loadC2View().then(() => quickNote("c2", document.getElementById("c2-case")));
       if (target === "hex") loadHexView().then(() => quickNote("hex", document.getElementById("hex-case")));
       if (target === "settings") loadSettings();
+      if (target === "users") loadUsersView();
       if (target === "ai") loadAiCases();
     });
   });
@@ -7136,3 +7174,151 @@ document.addEventListener("click", (e) => {
   e.preventDefault();
   openComponents(a.getAttribute("data-open-case"));
 });
+
+
+// --- Users: your account, the user list and the audit trail (admin) ------------
+let _me = { user: "", role: "" };
+
+async function loadMe() {
+  try {
+    const r = await fetch("/api/auth/status");
+    _me = await r.json();
+  } catch (_e) { /* the page redirects on 401 */ }
+  const n = document.getElementById("me-name");
+  if (n) n.textContent = _me.user ? `${_me.user}${_me.role === "admin" ? " · admin" : ""}` : "";
+}
+
+async function jsonOrError(r) {
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || j.error || r.statusText);
+  return j;
+}
+
+async function loadUsersView() {
+  await loadMe();
+  document.getElementById("acct-name").textContent = _me.user;
+  document.getElementById("acct-role").textContent = _me.role;
+  const admin = _me.role === "admin";
+  document.getElementById("users-admin").hidden = !admin;
+  if (!admin) return;
+  await renderUsers();
+  await renderAudit();
+}
+
+async function renderUsers() {
+  const box = document.getElementById("users-table");
+  try {
+    const j = await jsonOrError(await fetch("/api/users"));
+    const rows = j.users.map((u) => `<tr data-user="${escapeHtml(u.username)}">
+      <td class="mono">${escapeHtml(u.username)}</td>
+      <td><select class="u-role" ${u.username === "admin" ? "disabled" : ""}>
+        <option value="user"${u.role === "user" ? " selected" : ""}>user</option>
+        <option value="admin"${u.role === "admin" ? " selected" : ""}>admin</option></select></td>
+      <td>${u.active ? '<span class="badge badge-ok">active</span>' : '<span class="badge badge-warn">disabled</span>'}</td>
+      <td>${escapeHtml((u.last_login || "").replace("T", " "))}</td>
+      <td>${escapeHtml((u.created || "").replace("T", " "))}</td>
+      <td class="row" style="gap:6px">
+        <button class="btn btn-ghost btn-sm u-pw" type="button">Set password</button>
+        ${u.username === "admin" ? "" : `<button class="btn btn-ghost btn-sm u-active" type="button">${u.active ? "Disable" : "Enable"}</button>
+        <button class="btn btn-ghost btn-sm u-del" type="button">Delete</button>`}
+      </td></tr>`).join("");
+    box.innerHTML = table(["User", "Role", "State", "Last sign-in", "Created", ""], rows);
+    box.querySelectorAll("tr[data-user]").forEach((tr) => {
+      const name = tr.getAttribute("data-user");
+      const put = async (body) => {
+        try { await jsonOrError(await fetch(`/api/users/${encodeURIComponent(name)}`, {
+          method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }));
+          setStatus(`${name} updated`, "ok"); renderUsers(); renderAudit();
+        } catch (e) { setStatus(e.message, "bad"); }
+      };
+      tr.querySelector(".u-role").addEventListener("change", (ev) => put({ role: ev.target.value }));
+      tr.querySelector(".u-pw").addEventListener("click", () => {
+        const pw = prompt(`New password for ${name} (their sessions are closed):`);
+        if (pw) put({ password: pw });
+      });
+      const act = tr.querySelector(".u-active");
+      if (act) act.addEventListener("click", () => put({ active: act.textContent.trim() === "Enable" }));
+      const del = tr.querySelector(".u-del");
+      if (del) del.addEventListener("click", async () => {
+        if (!confirm(`Delete user ${name}? Their cases and marks stay.`)) return;
+        try { await jsonOrError(await fetch(`/api/users/${encodeURIComponent(name)}`, { method: "DELETE" }));
+          setStatus(`${name} deleted`, "ok"); renderUsers(); renderAudit();
+        } catch (e) { setStatus(e.message, "bad"); }
+      });
+    });
+  } catch (e) { box.innerHTML = `<p class="hint-line bad-text">${escapeHtml(e.message)}</p>`; }
+}
+
+function setStatus(text, kind) {
+  const st = document.getElementById("users-status");
+  st.className = `status ${kind === "ok" ? "ok-text" : "bad-text"}`;
+  st.textContent = text;
+}
+
+function auditQuery() {
+  const q = new URLSearchParams();
+  for (const [k, id] of [["user", "audit-user"], ["action", "audit-action"], ["case", "audit-case"]]) {
+    const v = document.getElementById(id).value.trim();
+    if (v) q.set(k, v);
+  }
+  return q.toString();
+}
+
+async function renderAudit() {
+  const box = document.getElementById("audit-table");
+  const q = auditQuery();
+  document.getElementById("audit-csv").href = `/api/audit.csv${q ? `?${q}` : ""}`;
+  try {
+    const j = await jsonOrError(await fetch(`/api/audit?limit=500${q ? `&${q}` : ""}`));
+    if (!j.entries.length) { box.innerHTML = '<p class="hint-line">Nothing recorded yet.</p>'; return; }
+    const rows = j.entries.map((e) => `<tr>
+      <td class="mono">${escapeHtml((e.time || "").replace("T", " "))}</td>
+      <td class="mono">${escapeHtml(e.user || "")}</td>
+      <td>${escapeHtml(e.action || "")}${e.detail ? ` <span class="muted">· ${escapeHtml(e.detail)}</span>` : ""}</td>
+      <td class="mono">${e.case ? `<a href="#" class="audit-case" data-case="${escapeHtml(e.case)}">${escapeHtml(e.case)}</a>` : ""}</td>
+      <td class="mono">${escapeHtml(String(e.status ?? ""))}</td>
+      <td class="mono">${escapeHtml(e.addr || "")}</td></tr>`).join("");
+    box.innerHTML = table(["Time", "User", "Action", "Case", "Status", "From"], rows);
+    box.querySelectorAll(".audit-case").forEach((a) => a.addEventListener("click", (ev) => {
+      ev.preventDefault(); openComponents(a.getAttribute("data-case"));
+    }));
+  } catch (e) { box.innerHTML = `<p class="hint-line bad-text">${escapeHtml(e.message)}</p>`; }
+}
+
+(function wireUsers() {
+  const own = document.getElementById("own-pw-form");
+  if (own) own.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const msg = document.getElementById("own-pw-msg");
+    const nw = document.getElementById("own-pw-new").value;
+    if (nw !== document.getElementById("own-pw-new2").value) {
+      msg.className = "status bad-text"; msg.textContent = "The two new passwords differ."; return;
+    }
+    try {
+      await jsonOrError(await fetch("/api/auth/password", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ current: document.getElementById("own-pw-cur").value, new: nw }) }));
+      msg.className = "status ok-text"; msg.textContent = "Password changed (your other sessions were closed).";
+      own.reset();
+    } catch (e) { msg.className = "status bad-text"; msg.textContent = e.message; }
+  });
+  const nu = document.getElementById("user-new-form");
+  if (nu) nu.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const msg = document.getElementById("user-new-msg");
+    try {
+      const u = await jsonOrError(await fetch("/api/users", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: document.getElementById("user-new-name").value,
+          password: document.getElementById("user-new-pw").value, role: document.getElementById("user-new-role").value }) }));
+      msg.className = "status ok-text"; msg.textContent = `${u.username} created`;
+      nu.reset(); renderUsers(); renderAudit();
+    } catch (e) { msg.className = "status bad-text"; msg.textContent = e.message; }
+  });
+  const al = document.getElementById("audit-load");
+  if (al) al.addEventListener("click", renderAudit);
+  const lo = document.getElementById("logout-btn");
+  if (lo) lo.addEventListener("click", async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    location.href = "/login";
+  });
+  loadMe();
+})();

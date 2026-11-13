@@ -8,10 +8,12 @@ language without going through the web app:
     python -m docutracex.mcp_server --http                           # http://127.0.0.1:8001/mcp
     python -m docutracex.mcp_server --http --host 0.0.0.0 --port 8001  # reachable from other machines
 
-Over HTTP (MCP "streamable HTTP") the endpoint is ``/mcp``. Bound to a
-non-loopback address, the SDK's DNS-rebinding protection is turned off so
-clients can reach it by IP or host name; there is no authentication, so
-expose it only on a network you trust (or behind a firewall / VPN).
+Over HTTP (MCP "streamable HTTP") the endpoint is ``/mcp`` and every request
+needs ``Authorization: Bearer <token>``: the token is generated on first use
+(``config/mcp_token.txt``), shown in the app's AI -> MCP tab (where the admin
+regenerates it) and printed by ``python -m docutracex.users mcp-token``. Bound
+to a non-loopback address, the SDK's DNS-rebinding protection is turned off so
+clients can reach it by IP or host name.
 
 It reads the same ``cases/`` folder as the web app (``DOCUTRACEX_CASES_DIR``
 overrides it). Tools (see ``ai_tools``): list_cases, case_summary,
@@ -23,6 +25,7 @@ can modify a case or touch the network.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -125,8 +128,35 @@ def build_server():
 _LOOPBACK = ("127.0.0.1", "localhost", "::1")
 
 
-def run_http(server, host: str = "127.0.0.1", port: int = 8001) -> None:
-    """Serve over MCP streamable HTTP (endpoint ``/mcp``), on mcp 2.x or 1.x."""
+class BearerToken:
+    """ASGI wrapper: every HTTP request needs ``Authorization: Bearer <token>``
+    (the token of ``config/mcp_token.txt``, read on each request so a token
+    regenerated in the app works at once and the old one stops)."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope.get("type") == "http":
+            from . import users
+            auth = ""
+            for k, v in scope.get("headers") or []:
+                if k == b"authorization":
+                    auth = v.decode("latin-1")
+            token = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
+            if not users.mcp_token_ok(token):
+                body = b'{"error": "DocuTraceX MCP: missing or wrong token (Authorization: Bearer <token>; see AI -> MCP)"}'
+                await send({"type": "http.response.start", "status": 401,
+                            "headers": [(b"content-type", b"application/json"),
+                                        (b"www-authenticate", b'Bearer realm="docutracex-mcp"'),
+                                        (b"content-length", str(len(body)).encode())]})
+                await send({"type": "http.response.body", "body": body})
+                return
+        await self.app(scope, receive, send)
+
+
+def http_app(server, host: str = "127.0.0.1"):
+    """The MCP streamable-HTTP app (endpoint ``/mcp``) behind the bearer token, on mcp 2.x or 1.x."""
     sec = None
     if host not in _LOOPBACK:                        # reachable by IP / name: no Host-header allow-list
         try:
@@ -134,16 +164,30 @@ def run_http(server, host: str = "127.0.0.1", port: int = 8001) -> None:
             sec = TransportSecuritySettings(enable_dns_rebinding_protection=False)
         except Exception:  # noqa: BLE001  (older SDK without it: nothing to turn off)
             sec = None
-    try:                                             # mcp >= 2: host / port go to run()
-        kw = {"host": host, "port": port}
+    try:                                             # mcp >= 2: options are arguments
+        kw = {"host": host}
         if sec is not None:
             kw["transport_security"] = sec
-        server.run(transport="streamable-http", **kw)
+        app = server.streamable_http_app(**kw)
     except TypeError:                                # mcp 1.x: they live in the settings
-        server.settings.host, server.settings.port = host, port
+        server.settings.host = host
         if sec is not None and hasattr(server.settings, "transport_security"):
             server.settings.transport_security = sec
-        server.run(transport="streamable-http")
+        app = server.streamable_http_app()
+    return BearerToken(app)
+
+
+def run_http(server, host: str = "127.0.0.1", port: int = 8001) -> None:
+    """Serve over MCP streamable HTTP (endpoint ``/mcp``); clients must send the token."""
+    import uvicorn
+
+    from . import users
+    users.mcp_token()                                # created on first use
+    shown = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    print(f"DocuTraceX MCP over HTTP: http://{shown}:{port}/mcp\n"
+          "Clients must send 'Authorization: Bearer <token>'. The token is in AI -> MCP (web app), in\n"
+          "config/mcp_token.txt, or: python -m docutracex.users mcp-token", file=sys.stderr, flush=True)
+    uvicorn.run(http_app(server, host), host=host, port=port, log_level="info")
 
 
 def main(argv: list[str] | None = None) -> None:

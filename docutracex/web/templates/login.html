@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DocuTraceX · {{ "First start" if setup else "Sign in" }}</title>
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg" />
+  <link rel="stylesheet" href="/static/app.css?v={{ asset_version }}" />
+  <style>
+    .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .login-card { width: 100%; max-width: 420px; }
+    .login-card h2 { margin: 0 0 6px; }
+    .login-grid { grid-template-columns: 1fr; }
+    .login-grid input { width: 100%; box-sizing: border-box; font-size: 14px; }
+    .login-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+    .login-msg { min-height: 1.4em; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div class="login-wrap">
+    <section class="panel login-card">
+      <div class="login-brand">
+        <img class="brand-logo" src="/static/logo.svg" alt="" width="34" height="34" />
+        <span class="brand-mark">DocuTrace<span class="brand-x">X</span></span>
+        <span class="version">v{{ version }}</span>
+      </div>
+      {% if setup %}
+      <h2>First start</h2>
+      <p class="hint-line">Set the password of the <b>admin</b> user. The admin uses every feature and is the only one who
+        creates users and reads the audit trail. At least {{ min_password }} characters.</p>
+      <form id="login-form" autocomplete="off"><div class="settings-grid login-grid">
+        <label>User<input type="text" value="admin" disabled></label>
+        <label>New password<input type="password" id="pw1" autocomplete="new-password" required autofocus></label>
+        <label>Repeat it<input type="password" id="pw2" autocomplete="new-password" required></label>
+        </div><div class="row" style="margin-top:16px"><button class="btn btn-primary" type="submit">Set password and enter</button></div>
+      </form>
+      <p class="hint-line">Forgot it later? On this machine: <span class="mono">python -m docutracex.users reset-admin</span></p>
+      {% else %}
+      <h2>Sign in</h2>
+      <form id="login-form"><div class="settings-grid login-grid">
+        <label>User<input type="text" id="user" autocomplete="username" required autofocus></label>
+        <label>Password<input type="password" id="pw1" autocomplete="current-password" required></label>
+        </div><div class="row" style="margin-top:16px"><button class="btn btn-primary" type="submit">Sign in</button></div>
+      </form>
+      {% endif %}
+      <p id="login-msg" class="status login-msg"></p>
+    </section>
+  </div>
+  <script>
+    (() => {
+      const setup = {{ "true" if setup else "false" }};
+      const form = document.getElementById("login-form");
+      const msg = document.getElementById("login-msg");
+      form.addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        msg.className = "status login-msg";
+        msg.textContent = "…";
+        const pw = document.getElementById("pw1").value;
+        let url = "/api/auth/login", body;
+        if (setup) {
+          if (pw !== document.getElementById("pw2").value) {
+            msg.className = "status login-msg bad-text"; msg.textContent = "The two passwords differ."; return;
+          }
+          url = "/api/auth/setup"; body = { password: pw };
+        } else {
+          body = { username: document.getElementById("user").value, password: pw };
+        }
+        try {
+          const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", "X-DTX": "1" },
+                                       body: JSON.stringify(body) });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(j.detail || j.error || r.statusText);
+          location.href = "/";
+        } catch (e) {
+          msg.className = "status login-msg bad-text"; msg.textContent = e.message;
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
