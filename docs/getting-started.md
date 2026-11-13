@@ -14,28 +14,41 @@ limits the analysis. No compiler, Build Tools or Java needed.
 
 ```bash
 python install.py             # once: sets everything up
-python run.py                 # then open http://127.0.0.1:8000
+python run.py                 # every time: checks for updates, then starts the app
 ```
+
+Every `python run.py` first **checks GitHub for a new version** and asks
+`Update X.Y.Z -> A.B.C? [y/N]`. On `y` it updates, re-provisions the toolchain
+(new tools get installed) and starts; on `N` (or with no Internet) it simply starts.
+Then open `http://127.0.0.1:8000`.
 
 ??? tip "Other ways to run it"
     ```bash
-    python run.py --port 8001     # next to another local app
+    python run.py --port 8001       # next to another local app
+    python run.py --host 127.0.0.1  # this computer only
+    python run.py --no-update       # skip the update check (offline, scripts)
     ```
-    `http://<this machine's IP>:8000` works from another computer or a phone; set
-    `DOCUTRACEX_HOST=127.0.0.1` to keep it local.
+    By default it listens on every interface, so `http://<this machine's IP>:8000` works from
+    another computer or a phone. `HOST` / `PORT` environment variables work too.
 
     Prefer pip? `pip install -r requirements.txt` installs the web service, and `python run.py`
     heals the portable toolchain on start. `install.py --force` reprovisions it.
 
 ## Updating
 
-`python run.py` checks for a new version on every start and asks before updating. On demand,
-keeping your cases, rules, settings and tools:
+`python run.py` already offers each new version when it starts (see above). To update without
+starting the app — your cases, rules, settings and tools are kept:
 
 ```bash
 python update.py            # check and update (asks first)
 python update.py --check    # only check
+python update.py --yes      # update without asking
 ```
+
+Cloned with git? `git pull` works too.
+
+Once it runs, take five minutes for the [configuration](configuration.md): the proxy for network
+checks, your own domains and brands, and the rest of Settings.
 
 ## Your first case
 

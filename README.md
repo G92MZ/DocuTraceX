@@ -39,13 +39,15 @@ on your Python; the analysis runs on a portable toolchain that `install.py` down
 
 ```bash
 python install.py             # once: sets everything up
-python run.py                 # then open http://127.0.0.1:8000
+python run.py                 # every time: checks for updates (asks y/N), then starts → http://127.0.0.1:8000
 ```
 
 <!-- rev: gmzpt -->
 
-`python run.py` checks for updates on every start (`python update.py` does it on demand), keeping
-your cases, rules, settings and tools. More in [Getting started](https://g92mz.github.io/DocuTraceX/getting-started/).
+Every start of `python run.py` checks for a new version and asks before updating (`--no-update`
+skips it; `python update.py` updates without starting), keeping your cases, rules, settings and
+tools. Then set up the proxy, your own domains and brands: [Getting started](https://g92mz.github.io/DocuTraceX/getting-started/)
+and [Configuration](https://g92mz.github.io/DocuTraceX/configuration/).
 
 ## ✨ What it does
 

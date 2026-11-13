@@ -97,6 +97,9 @@ SHOTS: dict[str, list[tuple[str, list[tuple[str, str, str | None]]]]] = {
     "yara": [("email/sample.eml", [("@yara", "yara", None)])],
     "hex": [("windows-pe/sample_win32_invoice_calc.dll", [("@hex", "hex", None)])],
     "reports": [("email/sample.eml", [("@reports", "report", None)])],
+    # no sample: the Settings view, filled with invented example values (not saved)
+    "configuration": [(None, [("@settings", "proxy", "#settings-status|#free-status"),
+                              ("@settings", "organisation", "#allowed-countries-msg|#email-msg")])],
 }
 
 # inner tab to open before the picture, by (page, picture)
@@ -125,6 +128,20 @@ _ENGINE_JS = {
     "@hex": "async (id) => { showTab('hex'); await loadHexView(); await fillCaseSelect(document.getElementById('hex-case'), id);"
             " hexResetCase(id); renderHexView(); }",
     "@reports": "async (id) => { _openCaseId = id; showTab('reports'); loadReports(id); }",
+    "@settings": "async () => { showTab('settings'); loadSettings(); }",
+}
+
+# run after the view has loaded: example values for the pictures (never saved)
+_AFTER_JS = {
+    "@settings": "() => { const set = (i, v) => { const e = document.getElementById(i); if (e) e.value = v; };"
+                 " document.getElementById('proxy-enabled').checked = true; set('proxy-scheme', 'socks5');"
+                 " set('proxy-host', '127.0.0.1'); set('proxy-port', '9050');"
+                 " set('email-own', ['grupoejemplo.example', 'grupoejemplo-servicios.example',"
+                 " 'proveedor-iberia.example'].join(String.fromCharCode(10)));"
+                 " set('email-brands', ['grupoejemplo', 'suministros-iberia'].join(String.fromCharCode(10)));"
+                 " [['sim-short-len', 4], ['sim-short-dist', 1], ['sim-long-len', 9], ['sim-long-dist', 2],"
+                 " ['sim-xlong-dist', 3], ['sim-min-len', 4]].forEach(([i, v]) => {"
+                 " const e = document.getElementById(i); if (e && e.value === '') e.value = v; }); }",
 }
 _ENGINE_MODULE = {"@c2": "c2", "@ml": "ml", "@yara": "yara"}
 
@@ -201,13 +218,17 @@ def _shoot(base: str, ids: dict[str, str], pages: list[str], scale: int) -> None
                 for sample, tabs in SHOTS[pg]:
                     for tab, pic, focus in tabs:
                         if tab.startswith("@"):
-                            page.evaluate(_ENGINE_JS[tab], ids[sample])
+                            page.evaluate(_ENGINE_JS[tab], ids.get(sample))
                             host, default = ".view:not([hidden]) .panel", ".view:not([hidden]) .panel"
                         else:
                             page.evaluate("([id, tab]) => openComponents(id, tab)", [ids[sample], tab])
                             host, default = "#comp-body", "#comp-body .subtabs|#comp-body .subpane"
                         page.wait_for_load_state("networkidle")
                         page.wait_for_timeout(1500 if tab.startswith("@") else 700)
+                        if tab in _AFTER_JS:
+                            page.wait_for_timeout(2500)
+                            page.evaluate(_AFTER_JS[tab])
+                            page.wait_for_timeout(200)
                         if (pg, pic) in _CLICKS:
                             page.locator(_CLICKS[(pg, pic)]).first.click()
                             page.wait_for_timeout(400)
@@ -251,7 +272,7 @@ def main() -> None:
         settings.yara_dir = Path(tmp) / "yara"
         yara_engine.add_upload("invoice_campaign.yar", _YARA_RULE)
         list(yara_engine.compile_stream())                      # compile (and cache) the ruleset
-        samples = sorted({s for pg in pages for s, _ in SHOTS[pg]})
+        samples = sorted({s for pg in pages for s, _ in SHOTS[pg] if s})
         modules: dict[str, set[str]] = {}
         for pg in pages:
             for smp, tabs in SHOTS[pg]:
