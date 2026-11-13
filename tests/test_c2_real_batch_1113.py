@@ -190,3 +190,22 @@ def test_installer_bomb_still_refused(tmp_path, monkeypatch):
     p.write_bytes(ms.padded_msi())
     r = unlock.extract_msi(p, tmp_path / "out")
     assert not r["extracted"] and "size limit" in (r.get("error") or "")
+
+
+def test_padded_member_of_a_cab_is_debloated(tmp_path):
+    """The same padding in a plain cabinet (a WiX 'WrappedSetupProgram' carried one): 7-Zip + debloat."""
+    from docutracex import unlock
+    from docutracex.parsers import debloat_pe
+    from docutracex.parsers.unpack import sevenzip_exe
+    if sevenzip_exe() is None or not debloat_pe.available():
+        pytest.skip("7-Zip (tools/7zip) or debloat not installed")
+    import binkit as bk
+    stub = bk.pe(bits=64, gui=True, imports={"kernel32.dll": ["ExitProcess"]}, strings=["inert"])
+    cab = ms._build_cab_mszip({"1.js": b"// inert\r\n", "setup.exe": stub + b"\x41" * (ms.PADDED_SIZE - len(stub))})
+    p = tmp_path / "wrapped.cab"
+    p.write_bytes(cab)
+    r = unlock.extract_archive(p, tmp_path / "out", [{"password": "", "source": "none"}])
+    assert not r.get("error")
+    setup = next(e for e in r["entries"] if e["name"] == "setup.exe")
+    assert setup["debloated"]["size_before"] == ms.PADDED_SIZE and setup["size"] < 64 * 1024
+    assert any(f["rule"] == "installer_padded_file" for f in r["findings"])
