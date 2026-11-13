@@ -202,3 +202,37 @@ def test_history_snapshot_written_on_rerun(client: TestClient, tmp_path: Path) -
     _wait(lambda: client.get("/api/tasks").json()["active"], lambda a: a == 0)
     hist_dir = CasePaths(cid).results_dir / "history"
     assert hist_dir.exists() and any(hist_dir.iterdir())
+
+
+def test_tasks_of_one_case_never_overlap(tmp_path: Path) -> None:
+    """With several workers, two tasks of the same case run one after the other (a quick
+    YARA / ML / C2 run waits for the full analysis of its file); other cases run alongside."""
+    import threading
+    events: list[tuple[str, str, float]] = []
+    lock = threading.Lock()
+
+    def fake(case_root, module=None):  # noqa: ANN001
+        name = Path(case_root).name
+        with lock:
+            events.append((name, "start", time.monotonic()))
+        time.sleep(0.4)
+        with lock:
+            events.append((name, "end", time.monotonic()))
+
+    import docutracex.analyze as az
+    orig = az.run_analysis
+    az.run_analysis = fake
+    mgr = TaskManager(max_workers=3)
+    try:
+        a1 = mgr.submit("analyze", "c1", "a", cases_dir=tmp_path)
+        a2 = mgr.submit("analyze", "c1", "a", cases_dir=tmp_path)
+        b = mgr.submit("analyze", "c2", "b", cases_dir=tmp_path)
+        for t in (a1, a2, b):
+            _wait(lambda t=t: mgr.get(t.id)["state"], lambda s: s in ("completed", "partial", "failed"))
+    finally:
+        az.run_analysis = orig
+    c1 = [e for e in events if e[0] == "c1"]
+    assert [e[1] for e in c1] == ["start", "end", "start", "end"]          # never two c1 at once
+    c2_start = next(e[2] for e in events if e[0] == "c2" and e[1] == "start")
+    first_c1_end = c1[1][2]
+    assert c2_start < first_c1_end                                          # c2 did not wait for c1

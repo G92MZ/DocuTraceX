@@ -295,6 +295,17 @@ class TaskManager:
         me = threading.current_thread()
         while True:
             tid = self._queue.get()
+            # One task at a time per case, in order: a quick YARA / ML / C2 run queued after the
+            # full analysis of the same file waits for it instead of reading half-written results.
+            with self._lock:
+                t = self._tasks.get(tid)
+                busy = t is not None and t.state == QUEUED and any(
+                    o.analysis_id == t.analysis_id and o.state == RUNNING and o.id != tid for o in self._tasks.values())
+            if busy:
+                self._queue.task_done()
+                time.sleep(0.3)
+                self._queue.put(tid)
+                continue
             try:
                 self._process(tid)
             except Exception as exc:  # noqa: BLE001  (never let one task kill the worker)

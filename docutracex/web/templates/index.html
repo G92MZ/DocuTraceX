@@ -219,8 +219,8 @@
         </div>
         <form id="yara-quick-form" class="upload quick-form">
           <span class="hint-line"><b>Or a loose file</b> (quick analysis, no full case):</span>
-          <input type="file" id="yara-quick-file" class="file-native" />
-          <label for="yara-quick-file" class="btn btn-ghost btn-sm">Choose file</label>
+          <input type="file" id="yara-quick-file" class="file-native" multiple />
+          <label for="yara-quick-file" class="btn btn-ghost btn-sm" title="One or more files: each becomes a quick case; they run as many at a time as New analysis allows">Choose file(s)</label>
           <span class="file-name">No file selected</span>
           <label class="hint-line quick-extract" title="Runs the full analysis first, so the engine also sees what the file carries (attachments, resources, decrypted stages)"><input type="checkbox" name="extract"> also its contents</label>
           <button type="submit" class="btn btn-primary btn-sm">Analyse</button>
@@ -247,8 +247,8 @@
         </div>
         <form id="ml-quick-form" class="upload quick-form">
           <span class="hint-line"><b>Or a loose file</b> (quick analysis, no full case):</span>
-          <input type="file" id="ml-quick-file" class="file-native" />
-          <label for="ml-quick-file" class="btn btn-ghost btn-sm">Choose file</label>
+          <input type="file" id="ml-quick-file" class="file-native" multiple />
+          <label for="ml-quick-file" class="btn btn-ghost btn-sm" title="One or more files: each becomes a quick case; they run as many at a time as New analysis allows">Choose file(s)</label>
           <span class="file-name">No file selected</span>
           <label class="hint-line quick-extract" title="Runs the full analysis first, so the engine also sees what the file carries (attachments, resources, decrypted stages)"><input type="checkbox" name="extract"> also its contents</label>
           <button type="submit" class="btn btn-primary btn-sm">Analyse</button>
@@ -272,8 +272,8 @@
         </div>
         <form id="c2-quick-form" class="upload quick-form">
           <span class="hint-line"><b>Or a loose file</b> (quick analysis, no full case):</span>
-          <input type="file" id="c2-quick-file" class="file-native" />
-          <label for="c2-quick-file" class="btn btn-ghost btn-sm">Choose file</label>
+          <input type="file" id="c2-quick-file" class="file-native" multiple />
+          <label for="c2-quick-file" class="btn btn-ghost btn-sm" title="One or more files: each becomes a quick case; they run as many at a time as New analysis allows">Choose file(s)</label>
           <span class="file-name">No file selected</span>
           <label class="hint-line quick-extract" title="Runs the full analysis first, so the engine also sees what the file carries (attachments, resources, decrypted stages)"><input type="checkbox" name="extract"> also its contents</label>
           <button type="submit" class="btn btn-primary btn-sm">Analyse</button>
