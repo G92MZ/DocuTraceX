@@ -6225,33 +6225,53 @@ async function quickAnalyse(tool, form, onDone) {
   const fileEl = form.querySelector("input[type=file]");
   const status = form.querySelector(".status");
   const btn = form.querySelector("button[type=submit]");
-  const f = fileEl && fileEl.files && fileEl.files[0];
-  if (!f) { status.textContent = "Choose a file first."; return; }
-  const fd = new FormData();
-  fd.append("file", f);
-  fd.append("tool", tool);
+  const files = Array.from((fileEl && fileEl.files) || []);
+  if (!files.length) { status.textContent = "Choose a file first."; return; }
   const ex = form.querySelector("input[name=extract]");
-  fd.append("extract", ex && ex.checked ? "true" : "false");
   btn.disabled = true;
-  status.textContent = "Uploading…";
+  // One quick case per file; the server's task queue runs them as many at a time as
+  // "Analyze at a time" (New analysis) allows, like a normal upload.
+  const cases = [];
+  const ids = [];
+  const failed = [];
   try {
-    const r = await fetch("/api/cases/quick", { method: "POST", body: fd });
-    const m = await r.json();
-    if (!r.ok) throw new Error(m.detail || r.statusText);
-    const ids = (m.tasks || []).map((t) => t.id);
+    for (const [i, f] of files.entries()) {
+      status.textContent = files.length > 1 ? `Uploading ${i + 1}/${files.length}: ${f.name}…` : "Uploading…";
+      const fd = new FormData();
+      fd.append("file", f);
+      fd.append("tool", tool);
+      fd.append("extract", ex && ex.checked ? "true" : "false");
+      try {
+        const r = await fetch("/api/cases/quick", { method: "POST", body: fd });
+        const m = await r.json();
+        if (!r.ok) throw new Error(m.detail || r.statusText);
+        cases.push(m.analysis_id);
+        ids.push(...(m.tasks || []).map((t) => t.id));
+      } catch (err) {
+        failed.push(`${f.name}: ${err.message || err}`);
+      }
+    }
     startTaskPoller();
     for (let i = 0; i < 7200 && ids.length; i++) {
       const all = (await fetch("/api/tasks").then((x) => x.json())).tasks;
       const mine = ids.map((id) => all.find((x) => x.id === id) || {});
-      if (mine.every((t) => ["completed", "failed", "cancelled"].includes(t.state))) {
-        status.textContent = mine.every((t) => t.state === "completed") ? "Done." : `Finished: ${mine.map((t) => t.state).join(", ")}.`;
+      const done = mine.filter((t) => ["completed", "failed", "cancelled"].includes(t.state));
+      if (done.length === mine.length) {
+        const bad = mine.filter((t) => t.state !== "completed").length;
+        status.textContent = (cases.length > 1 ? `${cases.length} files done` : "Done") +
+          (bad ? ` (${bad} task(s) failed or cancelled)` : "") + "." +
+          (cases.length > 1 ? " Pick each one in the case list above (marked as quick)." : "");
         break;
       }
-      status.textContent = `${QUICK_NAMES[tool]}… (${mine.map((t) => t.state || "queued").join(" → ")})`;
+      const running = mine.filter((t) => t.state === "running").length;
+      status.textContent = files.length > 1
+        ? `${QUICK_NAMES[tool]}… ${done.length}/${mine.length} task(s) done · ${running} running · the rest queued`
+        : `${QUICK_NAMES[tool]}… (${mine.map((t) => t.state || "queued").join(" → ")})`;
       await new Promise((res) => setTimeout(res, 1000));
     }
-    if (!ids.length) status.textContent = "Stored.";
-    await onDone(m.analysis_id);
+    if (!ids.length && cases.length) status.textContent = "Stored.";
+    if (failed.length) status.textContent += ` ⚠ Not uploaded: ${failed.join("; ")}`;
+    if (cases.length) await onDone(cases[0]);
   } catch (err) {
     status.textContent = `⚠ ${err.message || err}`;
   } finally {
@@ -6264,7 +6284,11 @@ function wireQuick(tool, onDone) {
   if (!form) return;
   const fileEl = form.querySelector("input[type=file]");
   const name = form.querySelector(".file-name");
-  if (fileEl && name) fileEl.addEventListener("change", () => { name.textContent = fileEl.files[0] ? fileEl.files[0].name : "No file selected"; });
+  if (fileEl && name) fileEl.addEventListener("change", () => {
+    const n = fileEl.files.length;
+    name.textContent = !n ? "No file selected" : n === 1 ? fileEl.files[0].name : `${n} files`;
+    if (n > 1) name.title = Array.from(fileEl.files).map((f) => f.name).join("\n");
+  });
   form.addEventListener("submit", (ev) => { ev.preventDefault(); quickAnalyse(tool, form, onDone); });
 }
 
