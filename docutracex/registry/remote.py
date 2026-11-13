@@ -28,6 +28,36 @@ def _portable() -> Path | None:
     return None
 
 
+_LOCAL: bool | None = None
+
+
+def _duckdb_version(py: Path | None) -> str | None:
+    """DuckDB version of an interpreter (None: not installed)."""
+    if py is None:
+        try:
+            import duckdb
+            return duckdb.__version__
+        except ImportError:
+            return None
+    try:
+        r = subprocess.run([str(py), "-I", "-c", "import duckdb; print(duckdb.__version__)"], capture_output=True,
+                           text=True, timeout=60)
+        return r.stdout.strip() or None if r.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _local_ok() -> bool:
+    """Read in this process only with the DuckDB that writes the database: the portable's.
+    The web app's Python may carry another (older) version, which cannot open the file."""
+    global _LOCAL
+    if _LOCAL is None:
+        here = _duckdb_version(None)
+        py = _portable()
+        _LOCAL = bool(here) and (py is None or _duckdb_version(py) == here)
+    return _LOCAL
+
+
 def available() -> bool:
     from . import store
     return store.available() or _portable() is not None
@@ -38,8 +68,15 @@ def call(fn: str, **kw: Any) -> Any:
     if fn not in FUNCS:
         raise ValueError(f"unknown registry call: {fn}")
     from . import store
-    if store.available():
-        return getattr(store, fn)(**kw)
+    if _local_ok():
+        try:
+            return getattr(store, fn)(**kw)
+        except Exception as exc:  # noqa: BLE001
+            # a database written by a newer DuckDB (the portable's) than this interpreter's
+            if "version" not in str(exc).lower() or _portable() is None:
+                raise
+            global _LOCAL
+            _LOCAL = False
     py = _portable()
     if py is None:
         raise RuntimeError("DuckDB is not installed (run scripts/setup_portable_python.py).")
