@@ -160,3 +160,33 @@ def test_decoded_ole_blob_that_is_an_msi_keeps_msi():
     assert decrypted._magic_ext(msi) == ".msi"
     p = decrypted.payload_child(msi, "javascript-base64", "x", recipe=["base64"])
     assert p["ext"] == ".msi"
+
+
+def test_padded_installer_member_is_debloated(tmp_path):
+    """A ~180 KB MSI whose CAB expands to a 101 MB padded PE: extracted and debloated, not refused."""
+    from docutracex import unlock
+    from docutracex.parsers import debloat_pe
+    from docutracex.parsers.unpack import sevenzip_exe
+    if sevenzip_exe() is None or not debloat_pe.available():
+        pytest.skip("7-Zip (tools/7zip) or debloat not installed")
+    p = tmp_path / "padded.msi"
+    p.write_bytes(ms.padded_msi())
+    r = unlock.extract_msi(p, tmp_path / "out")
+    assert r["extracted"] and not r.get("error")
+    (e,) = r["entries"]
+    assert e["name"] == "InvoiceSearch.exe" and e["size"] < 64 * 1024
+    assert e["debloated"]["size_before"] == ms.PADDED_SIZE
+    assert any(f["rule"] == "installer_padded_file" for f in r["findings"])
+
+
+def test_installer_bomb_still_refused(tmp_path, monkeypatch):
+    """Without the padding signature (several huge members), the size limits stand."""
+    from docutracex import unlock
+    from docutracex.parsers.unpack import sevenzip_exe
+    if sevenzip_exe() is None:
+        pytest.skip("7-Zip (tools/7zip) not installed")
+    monkeypatch.setattr(unlock, "PADDED_MAX", 1024)        # padded members above this: not padding
+    p = tmp_path / "padded.msi"
+    p.write_bytes(ms.padded_msi())
+    r = unlock.extract_msi(p, tmp_path / "out")
+    assert not r["extracted"] and "size limit" in (r.get("error") or "")

@@ -10,6 +10,12 @@ recursively — a trojanised installer that drops an RMM client or a loader show
 **Nested** — and the strings of `_StringData` (a PowerShell downloader in a custom action) go
 through the scripting engine.
 
+A file **padded** to hundreds of MB inside the installer (a small PE plus one repeated byte, so
+scanners and size limits skip it) is still extracted: when a few huge members make the installer
+expand far beyond its own size, they are **debloated** on the way out and only the real binary is
+analysed (finding *installer_padded_file*, T1027.001). Without that signature the size limits
+stand, as a guard against archive bombs.
+
 ![MSI tab of sample_installer.msi](../assets/shots/installers/msi.webp){ .shot }
 
 Other installers (Inno Setup, NSIS, WinRAR / 7-Zip SFX…) are unpacked from the

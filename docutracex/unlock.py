@@ -49,6 +49,11 @@ import os as _os
 MAX_ENTRIES = int(_os.environ.get("DOCUTRACEX_ARCHIVE_MAX_ENTRIES", "1000") or 1000)
 MAX_FILE = 100 * 1024 * 1024
 MAX_TOTAL = int(_os.environ.get("DOCUTRACEX_ARCHIVE_MAX_MB", "500") or 500) * 1024 * 1024
+# Binary padding (T1027.001): an installer that expands far beyond its own size holds a
+# pumped file (a small PE + hundreds of MB of one repeated byte). Such a member is
+# extracted up to this size and only its debloated binary is kept.
+PADDED_MAX = int(_os.environ.get("DOCUTRACEX_PADDED_MAX_MB", "1024") or 1024) * 1024 * 1024
+PADDED_RATIO = 20      # expanded size / container size above which a big member counts as padded
 
 _7Z_MAGIC = b"7z\xbc\xaf\x27\x1c"
 # RAR 1.5-4.x and RAR 5.0 signatures.
@@ -771,6 +776,22 @@ def extract_with_7z(path: Path, out_dir: Path, tries: list[dict[str, str]],
     return _extract_with(path, out_dir, tries, det, _sevenzip_generic_extract, location, name)
 
 
+def _debloat_member(fp: Path, rel: str, location: str, rec: dict[str, Any]) -> tuple[Path, dict[str, Any] | None]:
+    """A pumped member of an installer: the real binary without its padding (debloat), or as is."""
+    from .parsers import debloat_pe
+    out = fp.with_name(fp.name + ".debloated")
+    r = debloat_pe.run(fp, out)
+    if r.get("status") != "debloated" or not out.is_file():
+        return fp, None
+    fp.unlink(missing_ok=True)
+    rec["findings"].append(_finding(
+        "installer_padded_file", "high",
+        f"'{rel}' is padded to {debloat_pe._mb(r['size_before'])} to get past size limits "
+        f"({r.get('method')}); the real {debloat_pe._mb(r['size_after'])} binary is analysed · T1027.001",
+        location))
+    return out, {"method": r.get("method", ""), "size_before": r["size_before"], "size_after": r["size_after"]}
+
+
 def extract_msi(path: Path, out_dir: Path, location: str = "document",
                 name: str | None = None) -> dict[str, Any]:
     """Extract an MSI with 7-Zip only (never invoke Windows Installer).
@@ -800,13 +821,19 @@ def extract_msi(path: Path, out_dir: Path, location: str = "document",
     else:
         listed = [e for e in _slt_entries(listing.get("out") or "") if not e.get("dir")]
         rec["listed_files"] = len(listed)
+        sizes = [max(0, int(e.get("size") or 0)) for e in listed]
+        big = [n for n in sizes if n > MAX_FILE]
+        # a few huge members in a small installer: padding, not a bomb — extract and debloat them
+        padded = bool(big) and len(big) <= 3 and max(big) <= PADDED_MAX \
+            and sum(sizes) > path.stat().st_size * PADDED_RATIO \
+            and sum(n for n in sizes if n <= MAX_FILE) <= MAX_TOTAL
         if not listed:
             rec["error"] = "7-Zip listing returned no files"
         elif len(listed) > MAX_ENTRIES:
             rec["error"] = f"too many MSI entries ({len(listed)}; limit {MAX_ENTRIES})"
-        elif sum(max(0, int(e.get("size") or 0)) for e in listed) > MAX_TOTAL:
+        elif sum(sizes) > MAX_TOTAL and not padded:
             rec["error"] = f"MSI expands beyond the total size limit ({MAX_TOTAL} bytes)"
-        elif any(int(e.get("size") or 0) > MAX_FILE for e in listed):
+        elif big and not padded:
             rec["error"] = f"an MSI entry exceeds the per-file size limit ({MAX_FILE} bytes)"
         else:
             shutil.rmtree(out_dir, ignore_errors=True)
@@ -829,13 +856,18 @@ def extract_msi(path: Path, out_dir: Path, location: str = "document",
                             continue
                         size = fp.stat().st_size
                         rel = fp.relative_to(root).as_posix()
+                        deb: dict[str, Any] | None = None
+                        if size > MAX_FILE and padded:
+                            fp, deb = _debloat_member(fp, rel, location, rec)
+                            size = fp.stat().st_size if deb else size
                         if size > MAX_FILE or total + size > MAX_TOTAL:
                             rec["entries"].append({"name": rel, "size": size, "skipped": "size limit"})
                             continue
                         target = out_dir / _safe_name(rel, used)
                         shutil.move(str(fp), target)
                         total += size
-                        rec["entries"].append({"name": rel, "size": size, "file": str(target)})
+                        rec["entries"].append({"name": rel, "size": size, "file": str(target),
+                                               **({"debloated": deb} if deb else {})})
                     skipped = any(e.get("skipped") for e in rec["entries"])
                     incomplete = rx.get("rc") == 1 or skipped or len(got) < len(listed)
                     if incomplete:
