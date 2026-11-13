@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from . import parse, rules, store
+from . import artifacts, catalog, parse, rules, store
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +56,9 @@ def ingest(files: list[tuple[Path, str]], case_root: Path, work_dir: Path) -> di
                                embedded_name=info["embedded_name"])
                     for what, row in parse.iter_hive(use, info["mount"]):
                         (loader.key if what == "key" else loader.value)(row)
+                    arows, rec["plugins"] = artifacts.run(use, info["hive_type"])
+                    artifacts.store(con, i, arows, info["mount"])
+                    rec["artifacts"] = len(arows)
                 else:
                     keys, vals = parse.iter_reg(path)
                     rec.update(kind="reg", hive_type="", mount="")
@@ -71,9 +74,17 @@ def ingest(files: list[tuple[Path, str]], case_root: Path, work_dir: Path) -> di
                         [i, label, rec["file"], rec.get("kind", ""), rec.get("hive_type", ""), rec.get("mount", ""),
                          rec["keys"], rec["values"], ",".join(rec["logs"]), rec["error"]])
             sources.append(rec)
+        try:                                    # what each key means (RECmd batch files)
+            catalog_rows = catalog.match(con, sources)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("registry catalogue: %s", exc)
+            catalog_rows = 0
     finally:
         store.finish_db(con)
-    return {"db": str(dbp.relative_to(case_root)), "sources": sources}
+    cat = catalog.status()
+    return {"db": str(dbp.relative_to(case_root)), "sources": sources,
+            "catalog": {"rows": catalog_rows, "entries": cat["entries"], "files": cat["files"],
+                        "updated": cat["updated"], "url": cat["url"]}}
 
 
 def run_rules(dbp: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -241,6 +252,8 @@ def analyze(files: list[tuple[Path, str]], case_root: Path, work_dir: Path) -> d
     res.update(hits=hits, certificates=certs, carved=[{k: v for k, v in c.items() if k != "_path"} for c in carved],
                _carved_paths=[(c["_path"], c["file"]) for c in carved], findings=findings,
                counts={"sources": len(res["sources"]), "keys": sum(s["keys"] for s in res["sources"]),
+                       "artifacts": sum(s.get("artifacts", 0) for s in res["sources"]),
+                       "catalog": res.get("catalog", {}).get("rows", 0),
                        "values": sum(s["values"] for s in res["sources"]), "findings": len(findings),
                        "carved": len(carved)})
     return res

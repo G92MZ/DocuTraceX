@@ -487,7 +487,11 @@ def query_registry(case_id: str, sql: str | None = None, q: str | None = None, k
         res = remote.call("query", path=db, sql="SELECT * FROM sources ORDER BY id", limit=100)
         res["schema"] = {"sources": "id, label, file, kind (hive|reg), hive_type, mount, keys, vals, logs, error",
                          "keys": "src, path, parent, name, last_write, subkeys, nvalues, op (delete = .reg removal)",
-                         "vals": 'src, "key", name, type, data (text), size, raw (bytes of binary values), op'}
+                         "vals": 'src, "key", name, type, data (text), size, raw (bytes of binary values), op',
+                         "catalog": 'src, category, description, comment, batch, "key", name, type, data, last_write '
+                                    '(RECmd batch files: what each key means; rows without name are the keys)',
+                         "artifacts": 'src, plugin, ts, "key", summary, entry (JSON) — regipy plugins: user_assist, '
+                                      'shimcache, amcache, background_activity_moderator, ntuser_shellbag_plugin, usbstor_plugin…'}
         return res
     res["rows"] = [[_clip(c, 1000) if isinstance(c, str) else c for c in r] for r in res["rows"]]
     return res
@@ -572,8 +576,10 @@ SCHEMAS = [
                                       "parameters": {"type": "object", "properties": _CASE, "required": ["case_id"]}}},
     {"type": "function", "function": {"name": "query_registry",
                                       "description": "Registry hives / .reg files of the case, loaded in a database. No other argument: sources and schema. "
-                                                     "sql: one read-only SELECT over sources(id, label, kind, hive_type, mount…), keys(src, path, parent, name, last_write…) "
-                                                     "and vals(src, \"key\", name, type, data, size, raw); q: text search; key: subkeys and values of one key path (with src).",
+                                                     "sql: one read-only SELECT over sources(id, label, kind, hive_type, mount…), keys(src, path, parent, name, last_write…), "
+                                                     "vals(src, \"key\", name, type, data, size, raw), catalog(src, category, description, \"key\", name, data…: what each key means) "
+                                                     "and artifacts(src, plugin, ts, \"key\", summary, entry JSON: UserAssist, ShimCache, BAM, ShellBags, USB…); "
+                                                     "q: text search; key: subkeys and values of one key path (with src).",
                                       "parameters": {"type": "object", "properties": {
                                           **_CASE, "sql": {"type": "string"}, "q": {"type": "string"},
                                           "key": {"type": "string", "description": "Full key path, e.g. HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run."},

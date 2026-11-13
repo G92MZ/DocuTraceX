@@ -17,6 +17,8 @@ reads that database directly: nothing is parsed again.
 | `sources` | `id`, `label`, `file`, `kind` (`hive` / `reg`), `hive_type`, `mount`, `keys`, `vals`, `logs`, `error` |
 | `keys` | `src`, `path`, `parent`, `name`, `last_write`, `subkeys`, `nvalues`, `op` |
 | `vals` | `src`, `key`, `name`, `type`, `data`, `size`, `raw`, `op` |
+| `catalog` | `src`, `category`, `description`, `comment`, `batch`, `key`, `name`, `type`, `data`, `last_write` |
+| `artifacts` | `src`, `plugin`, `ts`, `key`, `summary`, `entry` (JSON) |
 
 Hives are mounted where Windows mounts them (`NTUSER.DAT` → `HKCU`, `UsrClass.dat` →
 `HKCU\Software\Classes`, `SOFTWARE` → `HKLM\SOFTWARE`, `SYSTEM` → `HKLM\SYSTEM`…), so paths
@@ -27,7 +29,10 @@ multi-strings one per line, binary as hex); `raw` keeps the bytes of binary valu
 ## The Registry tab
 
 - **Findings** — what the rules found, with the keys and values behind each one.
-- **Browse** — the key tree of each source, with the values and last-write time of each key.
+- **Browse** — the key tree of each source, with the values and last-write time of each key, and
+  **★ Bookmarks**: the keys of that source the RECmd batch files point at, by category.
+- **Artifacts** — decoded artifacts and the catalogue (below), per source.
+- **Timeline** — key last-write times and artifact timestamps together, newest first.
 - **Search** — key paths, value names and data, as text or as a regular expression.
 - **SQL** — one read-only `SELECT` over the three tables, with examples to start from.
 
@@ -53,6 +58,37 @@ ORDER BY k.last_write DESC
 
 The same database is available to the AI chat and to MCP clients through the
 `query_registry` tool (sources and schema, SQL, search, or one key's contents).
+
+## Artifacts and catalogue, kept up to date
+
+Two public sources, so new artifacts arrive without a DocuTraceX release:
+
+- **regipy's plugins** (MIT, the hive parser already in use) decode artifacts from each hive:
+  UserAssist (ROT13 names, run count, focus time, last run), ShimCache / AppCompatCache, Amcache,
+  BAM / DAM, ShellBags, USB and USBSTOR, mounted devices, network lists, typed paths and URLs,
+  WordWheelQuery, terminal services history, SAM accounts, services, WinSCP / PuTTY sessions,
+  WSL… whatever the installed regipy offers for the hive type (validated plugins only). They
+  come with regipy updates in the portable Python. A `.reg` export has no hive to decode.
+- The **RECmd batch files** of Eric Zimmerman (`Kroll_Batch.reb`, `DFIRBatch.reb`, MIT) say,
+  per hive type, which keys and values matter and what they mean (system info, devices, program
+  execution, user activity, autoruns, third-party applications, cloud storage, threat hunting…).
+  They are downloaded into `tools/recmd/` on install and refreshed in the background every 7
+  days; only the batch files are downloaded, nothing about a case is sent. Matching keys become
+  bookmarks and their values catalogue rows; binary values are converted as the batch file says
+  (FILETIME, EPOCH, SYSTEMTIME, IP) and UTF-16 strings shown as text. They also apply to `.reg`
+  exports, through the mount of each hive type.
+
+```sql
+-- what ran, from UserAssist, with its run count
+SELECT ts, json_extract_string(entry, '$.name') AS program, json_extract(entry, '$.run_counter') AS runs
+FROM artifacts WHERE plugin = 'user_assist' ORDER BY ts DESC
+```
+
+![Decoded artifacts](../assets/shots/registry/artifacts.webp){ .shot }
+
+![Timeline](../assets/shots/registry/timeline.webp){ .shot }
+
+Cases analysed before this version keep working; Re-run the case to add artifacts and catalogue.
 
 ## Detection
 
@@ -85,6 +121,3 @@ folder (`%TEMP%`, `C:\Users\Public`…) raise the severity of the rule that foun
 decodes to a binary, an encoded PowerShell command (fileless malware) — are carved and analysed
 as nested objects, like any other file.
 
-!!! note "Forensic artifacts"
-    UserAssist, ShimCache, Amcache entries, ShellBags and the like are in the database and can be
-    queried with SQL, but are not decoded into timelines yet.

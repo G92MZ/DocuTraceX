@@ -66,6 +66,35 @@ async def registry_search(analysis_id: str, q: str, where: str = "any", src: int
                        limit=min(max(limit, 1), 5000), offset=max(offset, 0))
 
 
+@router.get("/{analysis_id}/registry/bookmarks")
+async def registry_bookmarks(analysis_id: str, src: int) -> dict:
+    """Keys the RECmd batch files point at in one source, by category."""
+    return await _call("bookmarks", path=_db(analysis_id), src=src)
+
+
+@router.get("/{analysis_id}/registry/artifacts")
+async def registry_artifacts(analysis_id: str) -> dict:
+    """Catalogue categories and decoded artifacts (regipy plugins) per source, with counts."""
+    from ..registry import catalog
+    res = await _call("artifact_summary", path=_db(analysis_id))
+    res["catalogue"] = catalog.status()
+    return res
+
+
+@router.get("/{analysis_id}/registry/artifacts/rows")
+async def registry_artifact_rows(analysis_id: str, src: int, plugin: str = "", category: str = "",
+                                 limit: int = 2000, offset: int = 0) -> dict:
+    return await _call("artifact_rows", path=_db(analysis_id), src=src, plugin=plugin, category=category,
+                       limit=min(max(limit, 1), 5000), offset=max(offset, 0))
+
+
+@router.get("/{analysis_id}/registry/timeline")
+async def registry_timeline(analysis_id: str, src: int = 0, limit: int = 2000, offset: int = 0) -> dict:
+    """Key last-writes and artifact timestamps, newest first."""
+    return await _call("timeline", path=_db(analysis_id), src=src, limit=min(max(limit, 1), 5000),
+                       offset=max(offset, 0))
+
+
 @router.post("/{analysis_id}/registry/sql")
 async def registry_sql(analysis_id: str, payload: dict = Body(...)) -> dict:
     """A read-only SQL query (SELECT / WITH / DESCRIBE) over sources, keys and vals."""
