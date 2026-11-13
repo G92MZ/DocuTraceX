@@ -125,3 +125,29 @@ def test_hex_here_string_payload_and_key():
     assert lits
     p = decrypted.payload_child(lits[0][1], "powershell-hex", "x", keys=keys, recipe=["hex here-string"])
     assert p and p["recipe"][1].startswith("xor(key ") and "$stageBytes = (77,90," in p["text"]
+
+
+def test_stage2_base64_xor_base64_with_string_key():
+    """XOR of base64 text with a printable key stays printable: the key that yields
+    base64 of a file must win over a single byte that only yields 'text'."""
+    import base64
+    import re
+
+    from docutracex import decrypted
+    code = ms.hex_herestring_ps1().decode()
+    keys = decrypted.harvest_keys(code)
+    lit = next(raw for k, raw in decrypted._decode_literals(code) if k == "hex here-string")
+    stage2 = decrypted.payload_child(lit, "powershell-hex", "x", keys=keys)["text"]
+    assert decrypted.sniff_ext(stage2) == ".ps1"
+    k2 = decrypted.harvest_keys(stage2)
+    blob = base64.b64decode(re.search(r"\$encodedBlob = '([^']+)'", stage2).group(1))
+    p = decrypted.payload_child(blob, "powershell-base64", "x", keys=k2, recipe=["base64"])
+    assert p["ext"] == ".exe" and p["data"].startswith(b"MZThis is an inert DocuTraceX sample")
+    assert p["recipe"][-2:] == ["base64", "exe"]
+
+
+def test_resource_magic_needs_more_than_two_bytes():
+    from docutracex.dotnet.strdec import _payload
+    assert _payload(b"\x1f\x8b\xfb\x3b" + b"\0" * 60) is None          # gzip magic, impossible method
+    assert _payload(b"\x1f\x8b\x08\x00" + b"\0" * 60) == "gz"
+    assert _payload(b"MZ" + b"\x90" * 0x3A + (0x40).to_bytes(4, "little") + b"XX\0\0" + b"\0" * 32) is None

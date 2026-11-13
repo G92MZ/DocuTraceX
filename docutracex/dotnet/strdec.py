@@ -226,9 +226,16 @@ def _entropy(b: bytes) -> float:
 
 
 def _payload(b: bytes) -> str | None:
-    if b.startswith(_MAGIC):
-        return {b"MZ": "exe", b"PK": "zip", b"%P": "pdf", b"\x1f\x8b": "gz", b"\x89P": "png"}.get(b[:2], "bin")
-    return None
+    if not b.startswith(_MAGIC):
+        return None
+    # 2-byte magics come out of a wrong key by chance (1 in 65536 per try): ask for more
+    if b[:2] == b"\x1f\x8b" and not (len(b) >= 4 and b[2] == 8 and b[3] < 0x20):
+        return None
+    if b[:2] == b"MZ" and len(b) >= 0x40:
+        off = int.from_bytes(b[0x3C:0x40], "little")
+        if off + 4 <= len(b) and b[off:off + 4] != b"PE\0\0" and b"This program" not in b[:256]:
+            return None
+    return {b"MZ": "exe", b"PK": "zip", b"%P": "pdf", b"\x1f\x8b": "gz", b"\x89P": "png"}.get(b[:2], "bin")
 
 
 MAX_BLOB_KEYS = 300        # assembly-wide fallback: key strings tried at most
