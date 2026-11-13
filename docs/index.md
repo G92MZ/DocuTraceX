@@ -20,9 +20,9 @@ really is, what it would do, what it carries inside, and where it would connect.
 
     ---
 
-    Install it, run it, analyse your first sample from the inert set that ships with it.
+    Install it, run it, set up the proxy and your own domains, analyse your first sample.
 
-    [:octicons-arrow-right-24: Getting started](getting-started.md)
+    [:octicons-arrow-right-24: Getting started](getting-started.md) · [Configuration](configuration.md)
 
 -   :material-file-document-multiple-outline:{ .lg .middle } **File types**
 
