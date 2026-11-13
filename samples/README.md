@@ -441,6 +441,16 @@ zone *Romance Standard Time* (UTC+1, with a switch to show every time in local t
 `ControlSet001`, last shutdown, the user profiles, and the NTUSER's owner `facturacion (S-1-5-21-…-1001)`.
 The SYSTEM hive also has an auto-start service in `C:\Users\Public` (*Service image path*, high).
 
+`registry/sample_commands.reg` holds the command lines an intruder leaves in values (a task's
+action, a tool's configuration, a staged step), one per family of the command rules:
+
+| Values | Finding |
+|---|---|
+| `Paso01`–`Paso09`: comsvcs MiniDump of LSASS, ntdsutil IFM, `vssadmin delete shadows`, regsvr32 squiblydoo, Kerberoasting, `net localgroup administrators … /add`, `reg save HKLM\SAM`, `schtasks /create … powershell`, a Cobalt Strike default pipe | *Value holding a high-signal attack command* (high) — one indicator is enough |
+| `Paso10`–`Paso14`: certutil + attrib, whoami + net user + nltest, rclone + Compress-Archive, chisel + portproxy, wevtutil + taskkill MsMpEng; and `FacturaRecon` in the Run key (cmd redirect + whoami + tasklist) | *Value combining two or more suspicious command techniques* — medium, **high** because one sits in an autostart key |
+| `Nota` = `whoami` | nothing: one medium indicator alone |
+| `SCCM`, `Defender` (CCM / MpCmdRun) | cleared by the allowlist (listed as info, no finding) |
+
 **A machine-sized sample (generated on demand, not in `samples.zip`).** For a feel of a real
 case — and of the times — the generator writes the hives of an ordinary Windows 11 machine used
 for a year: SOFTWARE ~81 MB, SYSTEM ~19 MB, NTUSER.DAT ~6 MB, UsrClass.dat ~4 MB (about 380 000

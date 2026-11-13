@@ -227,6 +227,17 @@ RULES: list[dict[str, Any]] = [
         JOIN sources s ON s.id = v.src LEFT JOIN keys k ON k.src = v.src AND k.path = v."key"
         WHERE v.size > 524288 AND NOT regexp_matches(v."key", '(?i)\\\\(Component Based Servicing|SideBySide|Installer\\\\Products|DriverDatabase|WINEVT)(\\\\|$)')
         LIMIT 500""", "dedupe": True},
+    # --- suspicious Windows command lines in any value (registry/commands.py) ------------------
+    {"id": "reg_cmd_critical", "severity": "high", "attack": ["T1059"], "engine": "commands", "level": "critical",
+     "title": "Value holding a high-signal attack command (encoded PowerShell, LSASS / NTDS dump, AMSI bypass, "
+              "squiblydoo, shadow-copy deletion, Kerberoasting…)"},
+    {"id": "reg_cmd_combination", "severity": "medium", "autostart_severity": "high", "attack": ["T1059"],
+     "engine": "commands", "level": "combination",
+     "title": "Value combining two or more suspicious command techniques (LOLBins, recon, lateral movement, "
+              "exfiltration, tunnelling…)"},
+    {"id": "reg_cmd_allowlisted", "severity": "info", "attack": ["T1059"], "engine": "commands", "level": "allowed",
+     "title": "Suspicious-looking command in a value cleared by the allowlist (SCCM, MpCmdRun, Windows Update, "
+              "management suites)"},
     # --- what values hold, wherever they are --------------------------------------------------
     {"id": "reg_command_in_value", "severity": "medium", "attack": ["T1059.001", "T1027"],
      "title": "Malicious-looking command line stored in a value",

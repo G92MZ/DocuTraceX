@@ -92,7 +92,10 @@ def test_rules_are_well_formed() -> None:
     ids = [r["id"] for r in rules.RULES]
     assert len(ids) == len(set(ids))
     for r in rules.RULES:
-        assert r["severity"] in ("high", "medium", "low", "info") and r["attack"] and (r.get("key") or r.get("custom"))
+        assert r["severity"] in ("high", "medium", "low", "info") and r["attack"] and (r.get("key") or r.get("custom") or r.get("engine"))
+        if r.get("engine"):
+            assert r["engine"] == "commands" and r["level"] in ("critical", "combination", "allowed")
+            continue
         if r.get("custom"):
             assert r["custom"].lstrip().upper().startswith("SELECT")
             continue
@@ -641,3 +644,46 @@ def test_hives_in_an_archive_do_not_flood_the_iocs(tmp_path: Path, monkeypatch: 
     assert len(items) < 60, len(items)
     nested = read_json(paths.subresult("nested")) or {}
     assert '"read_as": "registry"' in __import__("json").dumps(nested)
+
+
+# --- suspicious Windows commands in values -------------------------------------------------------
+def test_every_command_indicator_has_a_working_example() -> None:
+    import re as _re
+
+    from docutracex.registry import commands
+    examples = ms.registry_command_examples()
+    assert set(examples) == set(commands.CRITICAL) | set(commands.MEDIUM)
+    pre = _re.compile(commands.PREFILTER)
+    for k, text in examples.items():
+        got = commands.classify(text)
+        assert k in got["critical"] + got["medium"], k
+        assert pre.search(text), f"prefilter misses {k}"
+
+
+def test_command_rules_on_the_sample(tmp_path: Path) -> None:
+    p = _write(tmp_path, "sample_commands.reg", ms.registry_commands_reg())
+    res = registry.analyze([(p, p.name)], tmp_path / "c", tmp_path / "w")
+    hits = {h["rule"]: h for h in res["hits"]}
+    crit = {it["name"] for it in hits["reg_cmd_critical"]["items"]}
+    combo = {it["name"] for it in hits["reg_cmd_combination"]["items"]}
+    allowed = {it["name"] for it in hits["reg_cmd_allowlisted"]["items"]}
+    assert crit == {f"Paso0{i}" for i in range(1, 10)}
+    assert combo == {"Paso10", "Paso11", "Paso12", "Paso13", "Paso14", "FacturaRecon"}
+    assert allowed == {"SCCM", "Defender"}
+    assert "Nota" not in crit | combo                                  # one medium alone
+    assert hits["reg_cmd_combination"]["severity"] == "high"           # one pair sits in a Run key
+    by = {f["rule"]: f for f in res["findings"]}
+    assert "T1003.001" in by["reg_cmd_critical"]["detail"] and "comsvcs" in by["reg_cmd_critical"]["evidence"]
+    assert "reg_cmd_allowlisted" not in by                             # info only
+    # the generic rule does not repeat them, nor the allowlisted ones
+    gen = {it["name"] for it in (hits.get("reg_command_in_value") or {}).get("items", [])}
+    assert not gen & (crit | combo | allowed)
+
+
+def test_command_pairs_outside_autostart_stay_medium(tmp_path: Path) -> None:
+    text = ("Windows Registry Editor Version 5.00\r\n\r\n[HKEY_CURRENT_USER\\Software\\GrupoEjemplo\\Cfg]\r\n"
+            '"A"="whoami /all & tasklist /v"\r\n')
+    p = _write(tmp_path, "x.reg", text.encode("utf-16"))
+    res = registry.analyze([(p, p.name)], tmp_path / "c", tmp_path / "w")
+    f = next(f for f in res["findings"] if f["rule"] == "reg_cmd_combination")
+    assert f["severity"] == "medium"
