@@ -151,3 +151,12 @@ def test_resource_magic_needs_more_than_two_bytes():
     assert _payload(b"\x1f\x8b\xfb\x3b" + b"\0" * 60) is None          # gzip magic, impossible method
     assert _payload(b"\x1f\x8b\x08\x00" + b"\0" * 60) == "gz"
     assert _payload(b"MZ" + b"\x90" * 0x3A + (0x40).to_bytes(4, "little") + b"XX\0\0" + b"\0" * 32) is None
+
+
+def test_decoded_ole_blob_that_is_an_msi_keeps_msi():
+    """A JS dropper's base64 MSI was written as .doc and never opened as an installer."""
+    from docutracex import decrypted
+    msi = ms.rmm_screenconnect_msi()
+    assert decrypted._magic_ext(msi) == ".msi"
+    p = decrypted.payload_child(msi, "javascript-base64", "x", recipe=["base64"])
+    assert p["ext"] == ".msi"

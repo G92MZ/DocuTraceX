@@ -77,10 +77,23 @@ def sniff_ext(text: str) -> str:
     return ".txt"
 
 
+def _ole_kind(raw: bytes) -> str:
+    """An OLE/CFB blob: .msi when it holds Windows Installer's tables, else .doc."""
+    import tempfile
+    try:
+        from .parsers.msi import is_msi_file
+        with tempfile.TemporaryDirectory(prefix="dtx_ole_") as t:
+            p = Path(t) / "blob.cfb"
+            p.write_bytes(raw)
+            return ".msi" if is_msi_file(p) else ".doc"
+    except Exception:  # noqa: BLE001
+        return ".doc"
+
+
 def _magic_ext(raw: bytes) -> str | None:
     for magic, ext in _MAGIC:
         if raw.startswith(magic):
-            return ext
+            return _ole_kind(raw) if ext == ".doc" else ext
     return None
 
 
