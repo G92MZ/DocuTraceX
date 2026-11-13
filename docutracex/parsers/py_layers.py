@@ -33,7 +33,7 @@ import zlib
 from typing import Any, Callable
 
 MAX_LAYERS = 120
-MAX_SIZE = 8 * 1024 * 1024
+MAX_SIZE = 96 * 1024 * 1024        # a layer can carry a whole PE as "\\x.." escapes (58 MB seen)
 
 
 class _Marshal(bytes):
@@ -122,6 +122,12 @@ class _Eval:
             elif isinstance(node, ast.ImportFrom) and node.module:
                 for a in node.names:
                     self.alias[a.asname or a.name] = f"{node.module}.{a.name}"
+            elif (isinstance(node, ast.FunctionDef) and len(node.body) == 1 and isinstance(node.body[0], ast.Return)
+                  and node.body[0].value is not None and not node.args.vararg and not node.args.kwarg
+                  and not node.decorator_list):
+                # def f(x): return <expr> — the same decoder as a lambda
+                counts[node.name] = counts.get(node.name, 0) + 1
+                self.lambdas[node.name] = ast.Lambda(args=node.args, body=node.body[0].value)
             elif isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
                 name = node.targets[0].id
                 counts[name] = counts.get(name, 0) + 1

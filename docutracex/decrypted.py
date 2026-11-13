@@ -381,10 +381,29 @@ _DEC_LIST = re.compile(r"(?:-?\d{1,3}\s*,\s*(?:_\s*\r?\n\s*)?){63,}-?\d{1,3}")
 _ESC_GLUE = 24          # quotes / concatenation between two "\x.." runs of one array
 
 
+def _pe_after_stub(raw: bytes) -> int:
+    """Offset of a PE that a short shellcode stub precedes (sRDI / Donut-style: ``jmp`` or ``call``
+    over a few bytes, then MZ), or 0."""
+    if len(raw) < 0x200 or raw[:2] == b"MZ" or raw[0] not in (0xE9, 0xE8, 0xEB, 0x4D, 0x90, 0x55, 0x56, 0x48):
+        return 0
+    i = raw.find(b"MZ", 1, 0x100)
+    while 0 < i < 0x100:
+        off = int.from_bytes(raw[i + 0x3C:i + 0x40], "little")
+        if 0x40 <= off < 0x400 and raw[i + off:i + off + 4] == b"PE\0\0":
+            return i
+        i = raw.find(b"MZ", i + 1, 0x100)
+    return 0
+
+
 def payload_child(raw: bytes, how: str, origin: str, keys: dict[str, list[bytes]] | None = None,
                   recipe: list[str] | None = None) -> dict[str, Any] | None:
     """``classify``, except that shellcode stays the exact bytes (never text)."""
     from .parsers.ps_deobf import _is_binary_payload
+    pe_at = _pe_after_stub(raw)
+    if pe_at:               # a reflective-loader stub (jmp over a few bytes) in front of a whole PE
+        return {"how": how, "ext": ".exe", "data": raw[pe_at:],
+                "recipe": list(recipe or []) + ["shellcode stub", f"PE at +0x{pe_at:x}"],
+                "origin": f"{origin} → shellcode stub + PE at offset 0x{pe_at:x} ({len(raw) - pe_at} bytes)"}
     if _is_binary_payload(raw) and not _magic_ext(raw):
         return {"how": how, "ext": ".bin", "data": raw, "recipe": list(recipe or []) + ["shellcode"],
                 "origin": f"{origin} → shellcode ({len(raw)} bytes)"}

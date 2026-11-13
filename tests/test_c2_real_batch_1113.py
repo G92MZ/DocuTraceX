@@ -209,3 +209,32 @@ def test_padded_member_of_a_cab_is_debloated(tmp_path):
     setup = next(e for e in r["entries"] if e["name"] == "setup.exe")
     assert setup["debloated"]["size_before"] == ms.PADDED_SIZE and setup["size"] < 64 * 1024
     assert any(f["rule"] == "installer_padded_file" for f in r["findings"])
+
+
+def test_python_hidden_behind_a_docstring(tmp_path):
+    """A trojanised installer's extension-less Python: HTML in a docstring, a one-line decoder
+    function, exec of reversed base64 + zlib, a shellcode stub in front of a PE."""
+    import base64
+
+    from docutracex import decrypted, nested
+    from docutracex.parsers import py_layers, python
+    data = ms.python_hidden_dropper()
+    p = tmp_path / "Kit0"
+    p.write_bytes(data)
+    assert nested._kind(p, "Kit0") == "python"
+    lay = py_layers.unwrap(data.decode())
+    assert lay["layers"] == 1 and lay["steps"] == ["reverse", "base64", "zlib"]
+    (st,) = python._binary_stages(lay)
+    child = decrypted.payload_child(base64.b64decode(st["data_b64"]), "python-stage", "x", recipe=st["recipe"])
+    assert child["ext"] == ".exe" and child["data"][:2] == b"MZ"
+    assert child["recipe"][-2:] == ["shellcode stub", "PE at +0x10"]
+
+
+def test_html_and_licence_text_are_not_python(tmp_path):
+    from docutracex import nested
+    p = tmp_path / "Kit2"
+    p.write_bytes(b"A. HISTORY OF THE SOFTWARE\n==========================\n\nPython was created in the early 1990s\n")
+    assert nested._kind(p, "Kit2") == "other"
+    h = tmp_path / "page"
+    h.write_bytes(b"'''<html><body>import x\nfrom a import b\n</body></html>'''\n<p>just text</p>\n")
+    assert nested._kind(h, "page") == "other"

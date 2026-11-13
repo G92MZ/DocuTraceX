@@ -195,6 +195,35 @@ def binary_format(data: bytes, name: str = "") -> str:
     return "PE"
 
 
+_PY_STMT = re.compile(rb"(?m)^(?:import [A-Za-z_]|from [A-Za-z_][\w.]* import |def [A-Za-z_]\w*\(.*\):|"
+                      rb"exec\(|class [A-Za-z_]\w*[(:])")
+_TRIPLE = (b"'" * 3, b'"' * 3)
+
+
+def _python_source(path: Path, head: bytes) -> bool:
+    """Python source with no .py extension. Droppers hide it behind a huge string literal
+    (an HTML page or a licence as a triple-quoted docstring): the code follows the closing
+    quotes, so look there too."""
+    try:
+        if path.stat().st_size > 64 * 1024 * 1024:
+            return False
+        with path.open("rb") as fh:
+            data = fh.read(256 * 1024)
+            q = data.lstrip(b"\xef\xbb\xbf \t\r\n")[:3]
+            if q in _TRIPLE:
+                fh.seek(0)
+                whole = fh.read()
+                start = whole.find(q)
+                end = whole.find(q, start + 3)
+                tail = whole[end + 3:end + 3 + 65536] if end > 0 else b""
+                return len(_PY_STMT.findall(tail)) >= 2
+    except OSError:
+        return False
+    if head[:2] == b"#!" and b"python" in data[:128]:
+        return True
+    return len(_PY_STMT.findall(data)) >= 4 and b"<html" not in data[:4096].lower()
+
+
 def _kind(path: Path, name: str) -> str:
     """Decide how to analyze a child: by extension, then by content sniff."""
     ext = _ext(name)
@@ -272,6 +301,8 @@ def _kind(path: Path, name: str) -> str:
             pass
     if head[:4] == b"\xca\xfe\xba\xbe":
         return "java"  # JVM class magic (not a Mach-O fat binary in this case)
+    if _python_source(path, head):
+        return "python"
     if head[:4] == b"PK\x03\x04":
         try:
             with zipfile.ZipFile(path) as zf:

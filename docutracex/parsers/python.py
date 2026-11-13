@@ -291,6 +291,25 @@ def collect(original: Path, extracted_dir: Path, fallback: bool = False,
     return uniq[:_MAX_ITEMS]
 
 
+_MAX_BIN_STAGE = 32 * 1024 * 1024
+
+
+def _binary_stages(lay: dict[str, Any]) -> list[dict[str, Any]]:
+    """Payloads written as bytes in the last peeled layer (``b"\\xe9\\x23…"`` shellcode, a PE):
+    the layer's text is cut for display, so they are carved from the whole of it."""
+    import base64
+
+    from ..decrypted import byte_arrays
+    code = lay.get("code") or ""
+    if not lay.get("layers") or lay.get("kind") != "source" or len(code) < 4096:
+        return []
+    out = []
+    for kind, raw in byte_arrays(code, binary_only=False)[:4]:
+        if 512 <= len(raw) <= _MAX_BIN_STAGE:
+            out.append({"recipe": _squash(lay["steps"]) + [kind], "data_b64": base64.b64encode(raw).decode()})
+    return out
+
+
 def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any] | None = None,
             fallback: bool = False, fallback_text: str | None = None) -> dict[str, Any]:
     res: dict[str, Any] = {"module": "python", "status": "ok", "scripts": [], "findings": []}
@@ -344,7 +363,8 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any] | None 
             "deob_methods": deob_methods, "deob_schemes": [],
             "decoded_stages": ([{"recipe": _squash(lay["steps"]) + (["code object"] if lay["kind"] == "marshal" else []),
                                  "text": (lay.get("code") or "")[:400_000]}]
-                               if not is_pyc and lay.get("layers") and (lay.get("code") or "").strip() else []),
+                               if not is_pyc and lay.get("layers") and (lay.get("code") or "").strip() else [])
+                              + _binary_stages(lay),
             "source": source_kind, "python_version": pyver,
             "hits": hits, "metrics": mets, "_full_code": code,
         }
