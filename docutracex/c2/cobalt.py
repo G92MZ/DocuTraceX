@@ -86,7 +86,9 @@ def _binary_like(data: bytes) -> bool:
 
 # Media / font formats: binary but never a beacon carrier worth three 1768.py runs.
 _SKIP_MAGIC = (b"\x89PNG", b"\xff\xd8\xff", b"GIF8", b"BM", b"RIFF", b"wOFF", b"wOF2",
-               b"\x00\x01\x00\x00\x00", b"OTTO", b"ID3", b"fLaC", b"OggS")
+               b"\x00\x01\x00\x00\x00", b"OTTO", b"ID3", b"fLaC", b"OggS",
+               # ELF / Mach-O: Cobalt Strike beacons are Windows code (a Linux "beacon" is another tool)
+               b"\x7fELF", b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe", b"\xcf\xfa\xed\xfe")
 
 
 def _is_dotnet(data: bytes) -> bool:

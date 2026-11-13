@@ -251,6 +251,7 @@ def test_no_deep_1768_retries_on_dotnet():
     assert cobalt._is_dotnet(dotnet)
     if cobalt._script() is not None:
         assert not cobalt.deep_candidate(dotnet) and cobalt.deep_candidate(native)
+        assert not cobalt.deep_candidate(bk.elf(strings=["inert"], extra=[(".data", bk.noise(0x4000, 3))]))
 
 
 def test_upx_packed_elf_is_unpacked(tmp_path):
