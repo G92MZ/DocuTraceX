@@ -66,6 +66,10 @@ tools = [
     # .NET analysis: CLR metadata and CIL (MIT, pure Python)
     "dnfile>=0.15",
     "dncil>=1.0",
+    # Registry tab: hives (regf, with transaction logs) read by regipy (MIT); every key and value goes
+    # into a per-case DuckDB database (MIT) so it is queried without re-parsing.
+    "regipy>=5.0",
+    "duckdb>=1.1",
     "signify==0.7.1",
     # Encrypted Office detection + default-password decryption (evasion check).
     "msoffcrypto-tool>=5.1",

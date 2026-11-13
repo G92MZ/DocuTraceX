@@ -171,6 +171,9 @@ def _subject(paths: CasePaths, original: Path) -> Path:
 
 
 def _effective_family(manifest: dict[str, Any], subject: Path, unlock_rec: dict[str, Any]) -> str | None:
+    from . import registry
+    if registry.is_registry_file(subject):
+        return "registry"            # a hive (regf) or a .reg export, whatever its extension
     family = _family(manifest, subject)
     # An encrypted .docx/.xlsx that couldn't be unlocked is an OLE container
     # (EncryptionInfo + EncryptedPackage), not a ZIP package.
@@ -844,6 +847,27 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                 write_subresult(paths, "nested", nested_res)
                 ran.append("nested")
                 findings_total += nested_res.get("counts", {}).get("findings", 0)
+    elif family == "registry":
+        # Registry hive / .reg: every key and value into the case database (explored later
+        # from the Registry tab without re-parsing), persistence / evasion rules, and the
+        # payloads kept in values analysed as nested objects.
+        from . import nested
+
+        rres = run("registry: ingest hive / .reg into the case database · persistence and evasion rules",
+                   lambda: _registry(paths, [(original, original.name)])) or {}
+        rfiles = rres.pop("_carved_paths", [])
+        if rres:
+            write_subresult(paths, "registry", rres)
+            ran.append("registry")
+            findings_total += rres.get("counts", {}).get("findings", 0)
+        items = [{"path": f, "filename": n} for f, n in rfiles]
+        if items:
+            nested_res = run("nested: payloads stored in registry values",
+                             lambda: nested.scan_children(items, paths, unlock_ctx={"user": user_pw}))
+            if nested_res.get("tree"):
+                write_subresult(paths, "nested", nested_res)
+                ran.append("nested")
+                findings_total += nested_res.get("counts", {}).get("findings", 0)
     elif family in ("zip", "7z", "rar", "container"):
         # Archive or container (.zip/.7z/.rar/.tar(.gz)/.cab/.iso/.img/.udf): extract
         # with bounds (and the analyst's / usual passwords for encrypted ZIP/7z)
@@ -1306,6 +1330,25 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
                     ran.append("ml")
         except Exception as exc:  # noqa: BLE001  (an optional layer never fails the case)
             log.warning("ML classification skipped for %s: %s", paths.root.name, exc)
+    if family != "registry":
+        # Hives / .reg files inside the sample (a triage collection zip, a dropper's .reg):
+        # the same database and rules; their payloads are listed in the Registry tab.
+        try:
+            from . import hexview, registry
+            tree = (read_json(paths.subresult("nested")) or {}).get("tree") or []
+            regs = [(paths.root / f["path"], f["label"]) for f in hexview.list_files(paths.root, tree, "")
+                    if registry.is_registry_file(paths.root / f["path"])]
+            if regs:
+                rres = run("registry: hives / .reg found in the sample → case database · rules",
+                           lambda: _registry(paths, regs)) or {}
+                rres.pop("_carved_paths", None)
+                if rres:
+                    write_subresult(paths, "registry", rres)
+                    if "registry" not in ran:
+                        ran.append("registry")
+                    findings_total += rres.get("counts", {}).get("findings", 0)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("registry step skipped for %s: %s", paths.root.name, exc)
     if "c2" in auto:
         # C2 / implant configurations (Cobalt Strike, Metasploit, Remcos, AsyncRAT /
         # DcRAT / Quasar) over every object of the case, statically. Findings + IOCs.
@@ -1453,7 +1496,12 @@ _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto"
                "powershell", "vbscript", "batch", "shortcut", "msi", "python", "java", "onenote", "ml", "c2", "golang", "code", "dotnet")
 # Modules whose findings feed the consolidated view (includes derived ones).
 _COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file", "pyinstaller", "domainsim", "rmm",
-                               "memdump")
+                               "memdump", "registry")
+
+
+def _registry(paths: CasePaths, files: list[tuple[Path, str]]) -> dict[str, Any]:
+    from . import registry
+    return registry.analyze(files, paths.root, paths.extracted_dir / "registry")
 
 
 def _rmm(paths: CasePaths, modules: dict[str, Any], ioc_result: dict[str, Any],
