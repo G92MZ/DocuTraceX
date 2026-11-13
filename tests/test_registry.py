@@ -224,3 +224,47 @@ def test_generic_rules_do_not_repeat_reported_values(analysed) -> None:
     generic = {"reg_command_in_value", "reg_obfuscated_script", "reg_base64_blob", "reg_long_string", "reg_file_association"}
     for value, rs in rules_by_value.items():
         assert len(rs & generic) == 0 or len(rs - {"reg_payload_in_value", "reg_root_certificate"}) == 1, (value, rs)
+
+
+def test_host_duckdb_of_another_version_reads_through_the_portable(analysed, tmp_path: Path,
+                                                                  monkeypatch: pytest.MonkeyPatch) -> None:
+    """The web app's Python has a DuckDB other than the portable's (which wrote the file): reads go
+    to the portable instead of failing with a storage-version error."""
+    import os
+
+    from docutracex.registry import remote
+    if os.name == "nt":
+        pytest.skip("shell shim")
+    case, _res = analysed
+    shim = tmp_path / "portable-python"
+    shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+    shim.chmod(0o755)
+    monkeypatch.setenv("DOCUTRACEX_PYTHON", str(shim))
+    real = remote._duckdb_version
+    monkeypatch.setattr(remote, "_duckdb_version", lambda py: "0.0.1" if py is None else real(py))
+    monkeypatch.setattr(remote, "_LOCAL", None)
+    called = []
+    monkeypatch.setattr(store, "children", lambda **kw: called.append(kw) or {})
+    res = remote.call("children", path=store.db_path(case), src=0, key="")
+    assert not called and res["subkeys"]          # not read in-process; the portable answered
+
+
+def test_storage_version_error_falls_back_to_the_portable(analysed, tmp_path: Path,
+                                                         monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+
+    from docutracex.registry import remote
+    if os.name == "nt":
+        pytest.skip("shell shim")
+    case, _res = analysed
+    shim = tmp_path / "portable-python"
+    shim.write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n')
+    shim.chmod(0o755)
+    monkeypatch.setenv("DOCUTRACEX_PYTHON", str(shim))
+    monkeypatch.setattr(remote, "_LOCAL", True)
+
+    def old(**kw):  # noqa: ANN003, ANN202
+        raise OSError("IO Error: Trying to read a database file with version number 69, but we can only read 64-68")
+    monkeypatch.setattr(store, "search", old)
+    res = remote.call("search", path=store.db_path(case), q="mshta", where="data", src=0, regex=False, limit=5, offset=0)
+    assert res["rows"] and remote._LOCAL is False
