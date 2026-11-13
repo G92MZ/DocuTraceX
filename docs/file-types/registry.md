@@ -27,6 +27,13 @@ read the same in a hive and in a .reg. `data` is readable text (strings, numbers
 multi-strings one per line, binary as hex); `raw` keeps the bytes of binary values. In a .reg,
 `op = delete` marks the keys and values it removes (`[-key]`, `"name"=-`).
 
+**Size.** Keys and values are read straight from the hive's bytes (a regipy fallback takes over
+if a structure is not understood), so a full machine — SOFTWARE, SYSTEM, NTUSER and UsrClass,
+some 380 000 keys and 690 000 values — loads, with rules, recovery, artifacts and catalogue, in
+about half a minute, and the tab answers in tens of milliseconds. A key with tens of thousands of
+subkeys (`Classes\CLSID`) lists the first 3 000 in Browse; Search and SQL see them all. To try it:
+`python scripts/samplegen.py --large-registry` (see `samples/README.md`).
+
 ## The Registry tab
 
 - **Findings** — what the rules found, with the keys and values behind each one.

@@ -23,8 +23,10 @@ log = logging.getLogger(__name__)
 MAX_FINDINGS_ROWS = 40          # rows quoted per rule in a finding / the summary
 MAX_CARVED = 50
 _B64 = re.compile(r"[A-Za-z0-9+/]{200,}={0,2}")
-_SCRIPTY = re.compile(r"(?i)(powershell|pwsh|frombase64string|invoke-expression|\biex\b|-e(nc|ncodedcommand)?\s+[A-Za-z0-9+/=]{40,}|"
-                      r"mshta\s|wscript\.shell|createobject\(|\$env:|new-object\s+net\.webclient)")
+# a command line, not a word: "PowerShell" in a device description or a setting name is not one
+_SCRIPTY = re.compile(r"(?i)(\b(powershell|pwsh)(\.exe)?[\"']?\s+(-|/|[\"']?[a-z]:\\|\$|iex|\(|&)|frombase64string|"
+                      r"invoke-expression|\biex\s*\(|-e(nc|ncodedcommand)?\s+[A-Za-z0-9+/=]{40,}|"
+                      r"\bmshta(\.exe)?[\"']?\s+\S|wscript\.shell|createobject\(|\$env:|new-object\s+net\.webclient)")
 
 
 def is_registry_file(path: Path) -> bool:

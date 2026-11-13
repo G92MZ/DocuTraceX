@@ -12,6 +12,8 @@ Enough for regipy, Registry Explorer and DocuTraceX to read; nothing else.
 deletion: ``[(parent_path, name, [(vname, type, data)...])]`` (the parent is a key of ``tree``,
 ``"Software\\X"``) and ``[(vname, type, data)]`` (values no key points to).
 
+A node's ``"@ts"`` (FILETIME) sets its key's last-write time; the others take ``timestamp``.
+
 Value types: REG_SZ, REG_EXPAND_SZ, REG_MULTI_SZ (list), REG_DWORD (int), REG_QWORD (int),
 REG_BINARY (bytes), REG_NONE (bytes).
 """
@@ -80,7 +82,8 @@ def build(tree: dict, root_name: str = "ROOT", file_name: str = "hive", timestam
 
     def write_key(name: str, node: dict, parent: int, is_root: bool, path: str = "") -> int:
         values = node.get("@values") or []
-        subs = [(k, v) for k, v in node.items() if k != "@values"]
+        subs = [(k, v) for k, v in node.items() if not k.startswith("@")]
+        key_ts = node.get("@ts", timestamp)
         # values
         vk_offs = []
         for vname, vtype, vdata in values:
@@ -106,7 +109,7 @@ def build(tree: dict, root_name: str = "ROOT", file_name: str = "hive", timestam
         max_vname = max((len(v[0]) * 2 for v in values), default=0)
         max_vdata = max((len(_value_data(v[1], v[2])) for v in values), default=0)
         max_sub = max((len(k) * 2 for k, _ in subs), default=0)
-        nk = (b"nk" + struct.pack("<HQ4s" + "I" * 14, flags, timestamp, b"\0" * 4, parent, len(child_offs), 0,
+        nk = (b"nk" + struct.pack("<HQ4s" + "I" * 14, flags, key_ts, b"\0" * 4, parent, len(child_offs), 0,
                                   slist, 0xFFFFFFFF, len(vk_offs), vlist, 0xFFFFFFFF, 0xFFFFFFFF,
                                   max_sub, 0, max_vname, max_vdata, 0)
               + struct.pack("<HH", len(nm), 0) + nm)

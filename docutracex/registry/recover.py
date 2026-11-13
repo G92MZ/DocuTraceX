@@ -139,16 +139,13 @@ def recover(path: Path, mount: str) -> Iterator[tuple[str, tuple]]:
         return
     h = _Hive(data)
     allocated: dict[int, dict] = {}
+    nk_cells: list[int] = []
     free_spans: list[tuple[int, int]] = []
     for off, size in h.iter_cells():
-        if size < 0:
-            buf = data[BASE + off + 4:BASE + off - size]
-            if buf[:2] == b"nk":
-                nk = _nk(buf)
-                if nk:
-                    allocated[off] = nk
-        else:
+        if size > 0:
             free_spans.append((off, size))
+        elif data[BASE + off + 4:BASE + off + 6] == b"nk":
+            nk_cells.append(off)
 
     paths: dict[int, str] = {}
 
@@ -190,6 +187,17 @@ def recover(path: Path, mount: str) -> Iterator[tuple[str, tuple]]:
                     break
             q += 8
 
+    if not found_keys and not found_vals:
+        return
+    if found_keys:                         # the live keys' names and parents, to place the deleted ones
+        for off in nk_cells:
+            p = BASE + off + 4
+            flags = struct.unpack_from("<H", data, p + 2)[0]
+            parent = struct.unpack_from("<I", data, p + 16)[0]
+            nlen = struct.unpack_from("<H", data, p + 72)[0]
+            raw = data[p + 76:p + 76 + nlen]
+            allocated[off] = {"flags": flags, "parent": parent,
+                              "name": raw.decode("latin-1") if flags & 0x20 else raw.decode("utf-16-le", "replace")}
     live = {path_of(o) for o in allocated}
     claimed: set[int] = set()
     emitted: set[str] = set()

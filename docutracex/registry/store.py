@@ -31,6 +31,7 @@ from typing import Any, Iterable
 
 DB_NAME = "registry.duckdb"
 MAX_ROWS = 5000
+MAX_CHILDREN = 3000
 QUERY_TIMEOUT = 30.0
 
 SCHEMA = """
@@ -109,6 +110,31 @@ class Loader:
             p.unlink()
         self.tmp.rmdir()
         return self.nk, self.nv
+
+
+def bulk_insert(con, table: str, columns: list[tuple[str, str]], rows: Iterable[Iterable[Any]]) -> int:  # noqa: ANN001
+    """Many rows at once through a CSV file (DuckDB's executemany goes row by row: minutes
+    for tens of thousands of artifacts)."""
+    tmp = Path(tempfile.mkdtemp(prefix="dtx_regb_"))
+    f = tmp / "rows.csv"
+    n = 0
+    try:
+        with f.open("w", newline="", encoding="utf-8") as fh:
+            w = csv.writer(fh)
+            for r in rows:
+                w.writerow(["" if v is None else (v.isoformat(sep=" ") if hasattr(v, "isoformat") else v) for v in r])
+                n += 1
+        if n:
+            cols = ", ".join(f"'c{i}': 'VARCHAR'" for i in range(len(columns)))
+            sel = ", ".join(f"TRY_CAST(NULLIF(c{i}, '') AS {t})" if t != "VARCHAR" else f"NULLIF(c{i}, '')"
+                            for i, (_n, t) in enumerate(columns))
+            con.execute(f"""INSERT INTO {table} ({", ".join('"' + c + '"' for c, _t in columns)})
+                SELECT {sel} FROM read_csv('{_sq(f)}', header=false, quote='"', escape='"', delim=',',
+                    columns={{{cols}}})""")
+    finally:
+        f.unlink(missing_ok=True)
+        tmp.rmdir()
+    return n
 
 
 def _clean(s: str) -> str:
@@ -226,8 +252,9 @@ def children(path: Path, src: int, key: str) -> dict[str, Any]:
         con.close()
     return {"key": key, "src": src,
             "meta": dict(zip(("path", "last_write", "subkeys", "values", "op"), map(_cell, meta))) if meta else None,
+            "subkeys_total": len(subs),          # a key such as Classes\CLSID has tens of thousands
             "subkeys": [dict(zip(("src", "path", "name", "last_write", "subkeys", "values", "op"), map(_cell, r)))
-                        for r in subs],
+                        for r in subs[:MAX_CHILDREN]],
             "values": [dict(zip(("name", "type", "data", "size", "op", "has_raw"), map(_cell, r))) for r in vals]}
 
 

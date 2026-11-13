@@ -567,3 +567,45 @@ def test_exports_are_audited() -> None:
     assert audit.audits_get("/api/cases/x/registry/export.reg")
     assert audit.audits_get("/api/cases/x/registry/timeline.export")
     assert not audit.audits_get("/api/cases/x/registry/key")
+
+
+# --- the fast walker and a machine-sized sample -------------------------------------------------
+def _norm(rows):  # noqa: ANN001, ANN202
+    return sorted((w, r[0], r[1], r[2], str(r[3])[:19], r[-1]) if w == "key" else (w, r[0], r[1], r[2], r[3], r[-1])
+                  for w, r in rows)
+
+
+def test_fast_walker_matches_regipy(tmp_path: Path) -> None:
+    hives = ms.registry_large_hives(0.02)
+    for name, mount in (("NTUSER.DAT", "HKCU"), ("SYSTEM", "HKLM\\SYSTEM")):
+        p = _write(tmp_path, name, hives[name])
+        fast = list(parse.iter_hive(p, mount))
+        assert _norm(fast) == _norm(parse._iter_hive_regipy(p, mount))
+    p = _write(tmp_path, "sample_NTUSER.DAT", ms.registry_ntuser_hive())
+    assert _norm(parse.iter_hive(p, "HKCU")) == _norm(parse._iter_hive_regipy(p, "HKCU"))
+
+
+def test_fast_walker_falls_back_on_a_broken_structure(tmp_path: Path) -> None:
+    data = bytearray(ms.registry_ntuser_hive())
+    i = data.index(b"lh", 0x1000)
+    data[i:i + 2] = b"zz"                                  # an unknown subkey-list signature
+    p = _write(tmp_path, "NTUSER.DAT", bytes(data))
+    rows = list(parse.iter_hive(p, "HKCU"))                 # regipy takes over; nothing raises
+    assert rows and rows[0][0] == "key"
+
+
+def test_machine_sized_sample_small_scale(tmp_path: Path) -> None:
+    """The generator behind `samplegen.py --large-registry`, at 3 % of its size."""
+    hives = ms.registry_large_hives(0.03)
+    files = [(_write(tmp_path, n, d), n) for n, d in hives.items()]
+    res = registry.analyze(files, tmp_path / "c", tmp_path / "w")
+    got = {f["rule"] for f in res["findings"]}
+    for rule in ("reg_autorun", "reg_defender_exclusion", "reg_service", "reg_wdigest", "reg_com_server_path",
+                 "reg_recovered_suspicious"):
+        assert rule in got, rule
+    assert "reg_ifeo_debugger" not in got                  # only a Visual Studio JIT debugger
+    assert not any("DeviceDesc" in c["name"] for c in res["carved"])     # "PowerShell" in a name is not a script
+    assert res["context"]["machine"]["computer_name"] == "FACT-PC01"
+    db = store.db_path(tmp_path / "c")
+    q = store.user_query(db, "SELECT count(*) FROM artifacts WHERE plugin = 'shimcache' AND summary ILIKE '%sync.exe%'")
+    assert q["rows"][0][0] >= 1

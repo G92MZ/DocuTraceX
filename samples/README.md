@@ -441,6 +441,23 @@ zone *Romance Standard Time* (UTC+1, with a switch to show every time in local t
 `ControlSet001`, last shutdown, the user profiles, and the NTUSER's owner `facturacion (S-1-5-21-…-1001)`.
 The SYSTEM hive also has an auto-start service in `C:\Users\Public` (*Service image path*, high).
 
+**A machine-sized sample (generated on demand, not in `samples.zip`).** For a feel of a real
+case — and of the times — the generator writes the hives of an ordinary Windows 11 machine used
+for a year: SOFTWARE ~81 MB, SYSTEM ~19 MB, NTUSER.DAT ~6 MB, UsrClass.dat ~4 MB (about 380 000
+keys and 690 000 values: COM classes and interfaces, file associations, servicing packages,
+event-log channels, installed programs, services and drivers in two control sets, device
+enumeration, BAM, ShimCache, UserAssist, MRUs, CloudStore blobs…). Invented and inert, with the
+invoice-fraud traces hidden among them: a Run entry with an encoded command, a Defender exclusion,
+a service and a COM server in user-writable folders, WDigest, the dropper in UserAssist / BAM /
+ShimCache, and a deleted service key and Run value in free cells.
+
+    python scripts/samplegen.py --large-registry            # samples/registry/registry_large_machine.zip
+    python scripts/samplegen.py --large-registry DIR --scale 0.5
+
+The zip (~25 MB, password `infected`) keeps the collection layout (`FACT-PC01/Windows/System32/config/…`,
+`FACT-PC01/Users/facturacion/…`). Uploaded as is, the Registry tab loads it in about half a
+minute, with the Machine box, 8 findings and the decoded artifacts.
+
 Try in the SQL tab: `SELECT "key", name, data FROM vals WHERE regexp_matches(data, 'powershell|mshta', 'i')`.
 
 ## FLOSS and capa: speed
