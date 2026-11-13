@@ -89,11 +89,25 @@ _SKIP_MAGIC = (b"\x89PNG", b"\xff\xd8\xff", b"GIF8", b"BM", b"RIFF", b"wOFF", b"
                b"\x00\x01\x00\x00\x00", b"OTTO", b"ID3", b"fLaC", b"OggS")
 
 
+def _is_dotnet(data: bytes) -> bool:
+    """A managed assembly (CLR header + metadata): beacons are native, and a .NET loader's beacon
+    is still found by the default run, the 4-byte-XOR scan and the carving."""
+    if not _is_pe(data):
+        return False
+    try:
+        import pefile
+        pe = pefile.PE(data=data[:0x1000], fast_load=True)
+        return pe.OPTIONAL_HEADER.DATA_DIRECTORY[14].Size > 0 and b"BSJB" in data
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def deep_candidate(data: bytes) -> bool:
-    """Objects that get the -x / -e retries even without a config header."""
+    """Objects that get the -x / -e retries even without a config header (each retry is a full
+    1768.py run: about a minute on a few MB). Not for .NET assemblies."""
     return (_deep_enabled() and _script() is not None and len(data) <= _deep_max_size()
             and not data.startswith(_SKIP_MAGIC)
-            and (_is_pe(data) or _binary_like(data)))
+            and (_is_pe(data) or _binary_like(data)) and not _is_dotnet(data))
 
 
 def _run_1768(path: Path, data: bytes, deep: bool = True) -> dict[str, Any] | None:

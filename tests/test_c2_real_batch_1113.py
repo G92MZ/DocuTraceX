@@ -238,3 +238,16 @@ def test_html_and_licence_text_are_not_python(tmp_path):
     h = tmp_path / "page"
     h.write_bytes(b"'''<html><body>import x\nfrom a import b\n</body></html>'''\n<p>just text</p>\n")
     assert nested._kind(h, "page") == "other"
+
+
+def test_no_deep_1768_retries_on_dotnet():
+    """Each -x / -e retry is a full 1768.py run (~1 min per few MB): 23 minutes on a trojanised
+    installer full of .NET DLLs. Managed assemblies get the default run only."""
+    from docutracex.c2 import cobalt
+    import binkit as bk
+    native = bk.pe(bits=32, gui=True, imports={"kernel32.dll": ["ExitProcess"]}, strings=["x"])
+    assert not cobalt._is_dotnet(native)
+    dotnet = ms.agenttesla_exe()
+    assert cobalt._is_dotnet(dotnet)
+    if cobalt._script() is not None:
+        assert not cobalt.deep_candidate(dotnet) and cobalt.deep_candidate(native)
