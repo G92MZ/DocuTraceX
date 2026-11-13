@@ -38,6 +38,18 @@ _B64 = re.compile(r"""["']([A-Za-z0-9+/\r\n]{200,}={0,2})["']""")
 # any quoted base64 / hex literal worth decoding (shorter, but strict alphabet)
 _B64_LIT = re.compile(r"""(?:["']|-e(?:nc|ncodedcommand)?\s+)([A-Za-z0-9+/]{100,}={0,2})(?:["']|\s|$)""")
 _HEX_LIT = re.compile(r"""["']((?:[0-9A-Fa-f]{2}){48,})["']""")
+# PowerShell here-strings (@'…'@ / @"…"@) holding hex split over lines: a payload
+# when long, key material when short (``$k = @'<32 hex bytes>'@`` + a -bxor loop)
+_HERE = re.compile(r"""@(['"])[ \t]*\r?\n(.*?)\r?\n\1@""", re.S)
+
+
+def _here_hex(code: str) -> list[bytes]:
+    out = []
+    for m in _HERE.finditer(code or ""):
+        body = re.sub(r"\s+", "", m.group(2))
+        if len(body) >= 8 and len(body) % 2 == 0 and re.fullmatch(r"[0-9A-Fa-f]+", body):
+            out.append(bytes.fromhex(body))
+    return out
 _MAGIC = ((b"MZ", ".exe"), (b"PK\x03\x04", ".zip"), (b"%PDF", ".pdf"),
           (b"\xd0\xcf\x11\xe0", ".doc"), (b"{\\rt", ".rtf"), (b"\x4c\x00\x00\x00", ".lnk"))
 
@@ -127,6 +139,9 @@ def harvest_keys(code: str) -> dict[str, list[bytes]]:
         for b in (t.encode("latin-1", "replace"), t.encode("utf-16-le")):
             if b not in strings:
                 strings.append(b)
+    for b in _here_hex(code):
+        if 2 <= len(b) <= 64 and b not in arrays:
+            arrays.append(b)
     return {"arrays": arrays[:40], "strings": strings[:60]}
 
 
@@ -360,6 +375,7 @@ def _decode_literals(code: str) -> list[tuple[str, bytes]]:
             found.append(("hex", bytes.fromhex(m.group(1))))
         except ValueError:
             continue
+    found += [("hex here-string", b) for b in _here_hex(code) if len(b) >= 48]
     return found
 
 

@@ -113,3 +113,15 @@ def test_discord_webhook_alone_is_an_indicator():
     data = b"MZ inert " + b"https://discord.com/api/webhooks/100000000000000002/" + b"x" * 68
     r = stealers.discord_webhook(data)
     assert r is not None and r["kind"] == "indicators" and r["family"] == "Discord webhook"
+
+
+def test_hex_here_string_payload_and_key():
+    """A loader's next stage as hex in a here-string, XOR-ed with a key written as another hex here-string."""
+    from docutracex import decrypted
+    code = ms.hex_herestring_ps1().decode()
+    keys = decrypted.harvest_keys(code)
+    assert any(len(k) == 32 for k in keys["arrays"])
+    lits = [(k, raw) for k, raw in decrypted._decode_literals(code) if k == "hex here-string"]
+    assert lits
+    p = decrypted.payload_child(lits[0][1], "powershell-hex", "x", keys=keys, recipe=["hex here-string"])
+    assert p and p["recipe"][1].startswith("xor(key ") and "$stageBytes = (77,90," in p["text"]
