@@ -622,3 +622,22 @@ def test_recovered_list(analysed) -> None:
     # the same query, through the read-only SQL of the tab (CSV export)
     q = store.user_query(db, f"SELECT * FROM ({store.RECOVERED_SQL.rsplit('ORDER BY', 1)[0]})")
     assert len(q["rows"]) == len(rows)
+
+
+def test_hives_in_an_archive_do_not_flood_the_iocs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hives inside a zip are read by the Registry module, not string-mined as unknown binaries."""
+    from docutracex import analyze, cases as cs
+    from docutracex.config import settings
+    from docutracex.storage import CasePaths, read_json
+    monkeypatch.setattr(settings, "cases_dir", tmp_path)
+    m = cs.create_case(io.BytesIO(ms.registry_machine_hives_zip()), "sample_machine_hives.zip", cases_dir=tmp_path)
+    cid = m["analysis_id"]
+    analyze.analyze_case(tmp_path / cid)
+    paths = CasePaths(cid, cases_dir=tmp_path)
+    iocs = read_json(paths.subresult("iocs")) or {}
+    items = iocs.get("iocs") or iocs.get("items") or []
+    provs = " ".join(str(x) for x in items)
+    assert "› strings" not in provs and "› text" not in provs
+    assert len(items) < 60, len(items)
+    nested = read_json(paths.subresult("nested")) or {}
+    assert '"read_as": "registry"' in __import__("json").dumps(nested)

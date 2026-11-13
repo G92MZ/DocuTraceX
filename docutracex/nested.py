@@ -622,9 +622,15 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
         s = dict(s)
         s["location"] = f"{this_chain} › {s.get('location') or s.get('module', '')}"
         sources_out.append(s)
+    # A registry hive or .reg export is read by the Registry module (its database, rules and
+    # the IOCs of its findings): mining all its strings would bury the IOCs under every path,
+    # DLL and GUID of the machine.
+    from .registry.parse import is_registry_bytes
+    if node["kind"] == "other" and not mods and is_registry_bytes(data[:512]):
+        node["read_as"] = "registry"
     # A plain-text child no analyzer claims (a decoded config, an .ini/.xml/
     # .txt/.log stage…) is still mined for IOCs as text.
-    if node["kind"] == "other" and not mods and node.get("entropy") is None:
+    elif node["kind"] == "other" and not mods and node.get("entropy") is None:
         try:
             text = data[:2 * 1024 * 1024].decode("utf-8", "replace")
         except Exception:  # noqa: BLE001

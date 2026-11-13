@@ -43,6 +43,10 @@ def _reg_head(path: Path) -> str:
             head = fh.read(256)
     except OSError:
         return ""
+    return _head_text(head)
+
+
+def _head_text(head: bytes) -> str:
     if head.startswith(codecs.BOM_UTF16_LE):
         return head[2:].decode("utf-16-le", "ignore")
     if head[1:2] == b"\0" and head[:1] != b"\0":
@@ -52,6 +56,14 @@ def _reg_head(path: Path) -> str:
 
 def is_reg_text(path: Path) -> bool:
     h = _reg_head(path).lstrip()
+    return h.startswith("Windows Registry Editor Version 5.00") or h.startswith("REGEDIT4")
+
+
+def is_registry_bytes(data: bytes) -> bool:
+    """A hive or a .reg export, from its first bytes."""
+    if data[:4] == b"regf":
+        return True
+    h = _head_text(data[:256]).lstrip()
     return h.startswith("Windows Registry Editor Version 5.00") or h.startswith("REGEDIT4")
 
 

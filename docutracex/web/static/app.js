@@ -3239,6 +3239,7 @@ function originBadge(n) {
 function readAsBadge(n) {
   const im = n.image || {};
   const dims = im.width ? ` ${im.width}×${im.height}` : "";
+  if (n.read_as === "registry") return '<span class="badge badge-ok" title="Loaded into the Registry tab (database, rules); its IOCs come from the registry findings only">registry · see the Registry tab</span>';
   if (n.read_as === "text") return '<span class="badge badge-ok" title="Read as text: its IOCs are in the IOCs tab">text · read for IOCs</span>';
   if (n.read_as === "strings") return `<span class="badge badge-ok" title="Structured binary data: its readable strings (ANSI and UTF-16) were mined for IOCs">binary · ${n.strings_count || 0} string(s) read for IOCs</span>`;
   if (n.read_as === "image") return `<span class="badge badge-ok" title="Image: checked for a file appended after its end or hidden in its pixels">${escapeHtml(im.format || "image")}${escapeHtml(dims)} · checked for hidden data</span>`;
