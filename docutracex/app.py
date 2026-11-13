@@ -61,6 +61,12 @@ def create_app() -> FastAPI:
             lolrmm.refresh_in_background(appsettings.proxy_url())
         except Exception as exc:  # noqa: BLE001
             log.warning("LOLRMM catalogue not refreshed: %s", exc)
+        try:                                       # RECmd batch files (registry catalogue): weekly
+            from . import appsettings
+            from .registry import catalog as reg_catalog
+            reg_catalog.refresh_in_background(appsettings.proxy_url())
+        except Exception as exc:  # noqa: BLE001
+            log.warning("RECmd batch files not refreshed: %s", exc)
 
     app = FastAPI(title="DocuTraceX", version=__version__)
 

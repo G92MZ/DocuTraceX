@@ -2767,6 +2767,16 @@ ORDER BY 1`],
 WHERE raw IS NOT NULL AND size > 4096 ORDER BY size DESC`],
   ["Commands in values", `SELECT src, "key", name, data FROM vals
 WHERE regexp_matches(data, '(?i)(powershell|mshta|rundll32|regsvr32|cmd(\\.exe)? /c|https?://)')`],
+  ["Program execution (UserAssist, BAM, ShimCache…)", `SELECT ts, plugin, summary FROM artifacts
+WHERE plugin IN ('user_assist', 'background_activity_moderator', 'shimcache', 'amcache')
+ORDER BY ts DESC NULLS LAST`],
+  ["Catalogue: Threat Hunting", `SELECT description, "key", name, data, last_write FROM catalog
+WHERE category = 'Threat Hunting' AND name IS NOT NULL ORDER BY description`],
+  ["Timeline", `SELECT last_write AS ts, 'key written' AS what, path AS detail FROM keys WHERE last_write IS NOT NULL
+UNION ALL SELECT ts, 'artifact: ' || plugin, summary FROM artifacts WHERE ts IS NOT NULL
+ORDER BY ts DESC LIMIT 500`],
+  ["A field of the decoded entries", `SELECT ts, json_extract_string(entry, '$.name') AS program,
+  json_extract(entry, '$.run_counter') AS runs FROM artifacts WHERE plugin = 'user_assist' ORDER BY ts DESC`],
   ["Tables", `DESCRIBE vals`],
 ];
 
@@ -2802,7 +2812,8 @@ function paneRegistry(rg) {
       <div class="row">${regSourcesSelect(sources, "reg-b-src")}
         <input id="reg-b-path" type="text" class="mono" placeholder="Key path — HKCU\\Software\\…" spellcheck="false" style="flex:1">
         <button class="btn btn-ghost btn-sm" id="reg-b-go" type="button">Open</button>
-        <button class="btn btn-ghost btn-sm" id="reg-b-up" type="button" title="Parent key">↑</button></div>
+        <button class="btn btn-ghost btn-sm" id="reg-b-up" type="button" title="Parent key">↑</button>
+        <select id="reg-b-bm" title="Keys the RECmd batch files point at in this source"><option value="">★ Bookmarks…</option></select></div>
       <div id="reg-b-meta" class="hint-line"></div>
       <div class="reg-cols"><div id="reg-b-keys" class="reg-keys"></div><div id="reg-b-vals" class="reg-vals"></div></div>
       <pre id="reg-b-value" class="text-sample" hidden></pre></div>`;
@@ -2814,9 +2825,20 @@ function paneRegistry(rg) {
       <button class="btn btn-primary btn-sm" id="reg-s-go" type="button">Search</button>
       <button class="btn btn-ghost btn-sm" id="reg-s-csv" type="button">Export CSV</button></div>
       <div id="reg-s-out"></div>`;
+  const cat = rg.catalog || {};
+  const artifacts = `<p class="hint-line">Decoded artifacts (regipy plugins: UserAssist, ShimCache, Amcache, BAM, ShellBags, USB…)
+      and the keys the <a href="${escapeHtml(cat.url || "#")}" target="_blank" rel="noopener">RECmd batch files</a> point at, by category
+      ${cat.files && cat.files.length ? `(${escapeHtml(cat.files.join(", "))}, ${cat.entries} entries, updated ${escapeHtml(cat.updated || "?")})`
+        : "(batch files not downloaded yet: they arrive on the next start with Internet access, then Re-run the case)"}.</p>
+      <div class="reg-cols"><div id="reg-a-list" class="reg-keys"><p class="hint-line">Loading…</p></div>
+        <div id="reg-a-out" class="reg-vals"><p class="hint-line">Pick a plugin or a category.</p></div></div>`;
+  const timeline = `<div class="row">${regSourcesSelect(sources, "reg-t-src")}
+      <button class="btn btn-primary btn-sm" id="reg-t-go" type="button">Load</button>
+      <span class="hint-line">Key last-write times and artifact timestamps, newest first.</span></div><div id="reg-t-out"></div>`;
   const sql = `<p class="hint-line">Read-only SQL (DuckDB) over <span class="mono">sources</span>, <span class="mono">keys</span>
-      (src, path, parent, name, last_write, subkeys, nvalues, op) and <span class="mono">vals</span> (src, "key", name, type,
-      data, size, raw, op). Examples: ${REG_SQL_EXAMPLES.map(([n], i) => `<a href="#" data-reg-example="${i}">${escapeHtml(n)}</a>`).join(" · ")}</p>
+      (src, path, parent, name, last_write, subkeys, nvalues, op), <span class="mono">vals</span> (src, "key", name, type,
+      data, size, raw, op), <span class="mono">catalog</span> (src, category, description, comment, batch, "key", name, type, data,
+      last_write) and <span class="mono">artifacts</span> (src, plugin, ts, "key", summary, entry JSON). Examples: ${REG_SQL_EXAMPLES.map(([n], i) => `<a href="#" data-reg-example="${i}">${escapeHtml(n)}</a>`).join(" · ")}</p>
       <textarea id="reg-q-sql" class="mono" rows="6" spellcheck="false" style="width:100%">${escapeHtml(REG_SQL_EXAMPLES[0][1])}</textarea>
       <div class="row"><button class="btn btn-primary btn-sm" id="reg-q-go" type="button">Run</button>
         <button class="btn btn-ghost btn-sm" id="reg-q-csv" type="button">Export CSV</button><span id="reg-q-status" class="hint-line"></span></div>
@@ -2829,6 +2851,8 @@ function paneRegistry(rg) {
     ${innerTabs("registry", [
       { id: "findings", label: `Findings (${(rg.findings || []).length})`, html: `${netFindingsList(rg.findings || [])}${hits ? `<h4>Rule hits</h4>${hits}` : ""}${certs}${carved}` || "-" },
       { id: "browse", label: "Browse", html: browse },
+      { id: "artifacts", label: `Artifacts${c.artifacts || c.catalog ? ` (${(c.artifacts || 0) + (c.catalog || 0)})` : ""}`, html: artifacts },
+      { id: "timeline", label: "Timeline", html: timeline },
       { id: "search", label: "Search", html: search },
       { id: "sql", label: "SQL", html: sql },
     ])}</div>`;
@@ -2839,7 +2863,8 @@ function regTable(res, linkCols) {
   const kcol = res.columns.findIndex((c) => c === "key" || c === "path");
   const scol = res.columns.indexOf("src");
   const head = res.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("");
-  const narrow = res.columns.map((c) => ["src", "name", "type", "size", "op", "last_write", "kind", "id"].includes(c));
+  const narrow = res.columns.map((c) => ["src", "name", "type", "size", "op", "last_write", "kind", "id", "ts", "what",
+    "timestamp", "plugin", "run_counter", "focus_count", "session_id"].includes(c));
   const body = res.rows.map((r) => `<tr>${r.map((v, i) => {
     const t = v === null || v === undefined ? "" : String(v);
     if (linkCols && i === kcol && t) {
@@ -2881,10 +2906,44 @@ function wireRegistry(root, caseId) {
   const $ = (id) => pane.querySelector(`#${id}`);
   let cur = { src: 0, path: "" };
 
+  const bmLoaded = {};
+  async function loadBookmarks(src) {
+    const sel = $("reg-b-bm");
+    if (!sel || !src || bmLoaded.cur === src) return;
+    bmLoaded.cur = src;
+    sel.innerHTML = '<option value="">★ Bookmarks…</option>';
+    try {
+      const d = await regFetch(`${base}/bookmarks?src=${src}`);
+      const groups = {};
+      d.bookmarks.forEach((b) => { (groups[b.category] = groups[b.category] || []).push(b); });
+      sel.innerHTML = `<option value="">★ Bookmarks (${d.bookmarks.length})…</option>` + Object.entries(groups).map(([g, bs]) =>
+        `<optgroup label="${escapeHtml(g)}">${bs.map((b) => `<option value="${escapeHtml(b.key)}" title="${escapeHtml(b.comment || "")}">${escapeHtml(b.description)}${b.values ? ` (${b.values})` : ""} — ${escapeHtml(b.key.split("\\").slice(-2).join("\\"))}</option>`).join("")}</optgroup>`).join("");
+    } catch (e) { sel.innerHTML = `<option value="">★ Bookmarks: ${escapeHtml(e.message)}</option>`; }
+  }
+
+  async function loadArtifacts() {
+    const list = $("reg-a-list");
+    try {
+      const d = await regFetch(`${base}/artifacts`);
+      const bySrc = {};
+      d.plugins.forEach((p) => { (bySrc[p.src] = bySrc[p.src] || { plugins: [], cats: [] }).plugins.push(p); });
+      d.catalog.forEach((c) => { (bySrc[c.src] = bySrc[c.src] || { plugins: [], cats: [] }).cats.push(c); });
+      const names = {};
+      pane.querySelectorAll("#reg-b-src option").forEach((o) => { names[o.value] = o.textContent; });
+      list.innerHTML = Object.keys(bySrc).length ? Object.entries(bySrc).map(([src, x]) => `<h4>${escapeHtml(names[src] || src)}</h4>
+        ${x.plugins.length ? `<p class="hint-line">Decoded artifacts</p><ul class="reg-keylist">${x.plugins.map((p) => `<li><a href="#" data-reg-art-plugin="${escapeHtml(p.plugin)}" data-reg-src="${src}">${escapeHtml(p.plugin)}</a>
+          <span class="hint-line">${p.rows}${p.last ? ` · up to ${escapeHtml(String(p.last).slice(0, 16))}` : ""}</span></li>`).join("")}</ul>` : ""}
+        ${x.cats.length ? `<p class="hint-line">RECmd catalogue</p><ul class="reg-keylist">${x.cats.map((c) => `<li><a href="#" data-reg-art-cat="${escapeHtml(c.category)}" data-reg-src="${src}">${escapeHtml(c.category)}</a>
+          <span class="hint-line">${c.values} value(s) · ${c.keys} key(s)</span></li>`).join("")}</ul>` : ""}`).join("")
+        : `<p class="hint-line">Nothing decoded (artifacts need a hive; the catalogue needs the RECmd batch files).</p>`;
+    } catch (e) { list.innerHTML = `<p class="bad-text">${escapeHtml(e.message)}</p>`; }
+  }
+
   async function openKey(src, path) {
     cur = { src: Number(src) || 0, path: path || "" };
     if (cur.path && !cur.src) cur.src = 1;
     $("reg-b-src").value = String(cur.src);
+    loadBookmarks(cur.src || Number(pane.querySelector("#reg-b-src option:nth-child(2)")?.value || 0));
     $("reg-b-path").value = cur.path;
     $("reg-b-value").hidden = true;
     $("reg-b-keys").innerHTML = `<p class="hint-line">Loading…</p>`;
@@ -2921,6 +2980,26 @@ function wireRegistry(root, caseId) {
         pre.textContent = `${a.getAttribute("data-reg-value")} (${v.type}, ${v.size} bytes)\n\n${v.data || ""}` +
           (v.hex ? `\n\nhex:\n${v.hex.match(/.{1,64}/g).join("\n")}` : "");
       } catch (e) { alertRegError(e.message); }
+    } else if (a.hasAttribute("data-reg-art-plugin") || a.hasAttribute("data-reg-art-cat")) {
+      ev.preventDefault();
+      pane.querySelectorAll("#reg-a-list a.is-active").forEach((x) => x.classList.remove("is-active"));
+      a.classList.add("is-active");
+      const qs = new URLSearchParams({ src: a.getAttribute("data-reg-src"), plugin: a.getAttribute("data-reg-art-plugin") || "",
+        category: a.getAttribute("data-reg-art-cat") || "" });
+      const out = $("reg-a-out");
+      out.innerHTML = `<p class="hint-line">Loading…</p>`;
+      try {
+        const r = await regFetch(`${base}/artifacts/rows?${qs}`);
+        if (r.columns.includes("key") && !r.columns.includes("src")) {
+          r.columns = ["src", ...r.columns]; r.rows = r.rows.map((x) => [qs.get("src"), ...x]);
+        }
+        out.innerHTML = regTable(r, true);
+      } catch (e) { out.innerHTML = `<p class="bad-text">${escapeHtml(e.message)}</p>`; }
+    } else if (a.id === "reg-t-go") {
+      const out = $("reg-t-out");
+      out.innerHTML = `<p class="hint-line">Loading…</p>`;
+      try { out.innerHTML = regTable(await regFetch(`${base}/timeline?src=${$("reg-t-src").value}`), true); }
+      catch (e) { out.innerHTML = `<p class="bad-text">${escapeHtml(e.message)}</p>`; }
     } else if (a.hasAttribute("data-reg-example")) {
       ev.preventDefault();
       $("reg-q-sql").value = REG_SQL_EXAMPLES[Number(a.getAttribute("data-reg-example"))][1];
@@ -2951,6 +3030,16 @@ function wireRegistry(root, caseId) {
       } catch (e) { st.className = "hint-line bad-text"; st.textContent = e.message; $("reg-q-out").innerHTML = ""; }
     }
   });
+  pane.querySelector("#reg-b-bm")?.addEventListener("change", (ev) => {
+    const key = ev.target.value;
+    if (key) openKey(bmLoaded.cur, key);
+    ev.target.value = "";
+  });
+  pane.querySelector("#reg-b-src")?.addEventListener("change", (ev) => { if (Number(ev.target.value)) loadBookmarks(Number(ev.target.value)); });
+  pane.querySelectorAll('.itab[data-itab-group="registry"]').forEach((t) => t.addEventListener("click", () => {
+    if (t.getAttribute("data-itab") === "artifacts" && !pane.dataset.artLoaded) { pane.dataset.artLoaded = "1"; loadArtifacts(); }
+    if (t.getAttribute("data-itab") === "timeline" && !pane.dataset.tlLoaded) { pane.dataset.tlLoaded = "1"; $("reg-t-go").click(); }
+  }));
   pane.querySelector("#reg-s-q")?.addEventListener("keydown", (ev) => { if (ev.key === "Enter") $("reg-s-go").click(); });
   pane.querySelector("#reg-b-path")?.addEventListener("keydown", (ev) => { if (ev.key === "Enter") $("reg-b-go").click(); });
   pane.querySelector("#reg-q-sql")?.addEventListener("keydown", (ev) => {

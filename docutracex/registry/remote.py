@@ -17,7 +17,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-FUNCS = ("query", "user_query", "children", "value", "search")
+FUNCS = ("query", "user_query", "children", "value", "search", "bookmarks", "artifact_summary", "artifact_rows",
+         "timeline")
 
 
 def _portable() -> Path | None:

@@ -487,6 +487,27 @@ def install_lolrmm(force: bool = False) -> bool:
     return dest.is_file()
 
 
+def install_recmd_batches(force: bool = False) -> bool:
+    """RECmd batch files (Eric Zimmerman, MIT) into tools/recmd/: what each registry key
+    means, for the Registry tab's bookmarks and catalogue. Refreshed when older than 7 days
+    (the app also refreshes them in the background); without them the tab still works."""
+    sys.path.insert(0, str(ROOT))
+    try:
+        from docutracex.registry import catalog
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] RECmd batch files: {exc}")
+        return False
+    if not force and not catalog.stale():
+        return True
+    try:
+        print("[>] Downloading the RECmd batch files (github.com/EricZimmerman/RECmd)")
+        catalog.download()
+        return True
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] RECmd batch files not downloaded: {exc}")
+    return bool(catalog.paths())
+
+
 def _ipdb_ok() -> bool:
     return all((IPDB_DIR / f"dbip-{k}-lite.mmdb").is_file() for k in ("asn", "country"))
 
@@ -2031,6 +2052,7 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
     install_ipdb()
     install_tlds()
     install_lolrmm()
+    install_recmd_batches()
     install_chromium()
     _clear_mark("webcrack")   # an explicit full setup always retries these
     _clear_mark("boxps")
@@ -2369,6 +2391,7 @@ def ensure(version: str = DEFAULT_VERSION) -> bool:
             _ensure_optional()   # webcrack + box-ps (optional; marker-guarded)
             install_tlds()       # no-op while the cached IANA list is fresh
             install_lolrmm()     # no-op while the cached LOLRMM catalogue is fresh
+            install_recmd_batches()  # no-op while the RECmd batch files are fresh
             if deps_ok and didier_ok and oms_ok and vm_ok and ipdb_ok and chromium_ok:
                 print(f"[=] Portable Python present with tools OK at {PY_DIR}")
                 return True

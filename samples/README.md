@@ -410,6 +410,8 @@ as `HKCU`, with ordinary keys around:
 | `Environment\UserInitMprLogonScript` | *Logon script (UserInitMprLogonScript)* (high, T1037.001) |
 | `Internet Settings` proxy `198.51.100.7:8080` | *Proxy / PAC set for the user* (medium, T1090) |
 | a base64 `MZ` stub in a `REG_SZ` value | *payload(s) stored in registry values* (high) — carved; *Long base64 blob* (low) |
+| UserAssist: `C:\Users\Public\Facturas\sync.exe` run 3 times (last 2025-11-07 14:41), next to `explorer.exe` | **Artifacts → user_assist** (ROT13 decoded, run count, last run) and the Timeline |
+| TypedPaths `\\198.51.100.23\facturas`, WordWheelQuery `factura 0613` | **Artifacts → typed_paths / word_wheel_query**; with the RECmd batch files, bookmarks and the *User Activity* catalogue |
 
 `registry/sample_system_tampering.reg` goes after the machine (HKLM) and the less common
 autostarts. Each technique sits next to the ordinary value it imitates, which must stay quiet:

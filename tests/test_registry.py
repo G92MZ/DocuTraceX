@@ -268,3 +268,173 @@ def test_storage_version_error_falls_back_to_the_portable(analysed, tmp_path: Pa
     monkeypatch.setattr(store, "search", old)
     res = remote.call("search", path=store.db_path(case), q="mshta", where="data", src=0, regex=False, limit=5, offset=0)
     assert res["rows"] and remote._LOCAL is False
+
+
+# --- catalogue (RECmd batch files) and decoded artifacts (regipy plugins) -----------------------
+_REB = """Description: test batch
+Author: tests
+Version: 1
+Id: 00000000-0000-0000-0000-000000000000
+Keys:
+    -
+        Description: Run (NTUSER)
+        HiveType: NTUSER
+        Category: Autoruns
+        KeyPath: Software\\Microsoft\\Windows\\CurrentVersion\\Run
+        Recursive: false
+        Comment: "Program execution upon successful user logon"
+    -
+        Description: TypedPaths
+        HiveType: NTUSER
+        Category: User Activity
+        KeyPath: Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\TypedPaths
+        Recursive: false
+        Comment: "Paths typed in Explorer"
+    -
+        Description: WordWheelQuery
+        HiveType: NTUSER
+        Category: User Activity
+        KeyPath: Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\WordWheelQuery
+        ValueName: "0"
+        Recursive: false
+        Comment: "User searches"
+    -
+        Description: OneDrive
+        HiveType: NTUSER
+        Category: Cloud Storage
+        KeyPath: Environment
+        ValueName: OneDrive
+        Recursive: false
+        Comment: "absent in the sample: no bookmark"
+    -
+        Description: WDigest
+        HiveType: SYSTEM
+        Category: Threat Hunting
+        KeyPath: ControlSet00*\\Control\\SecurityProviders\\WDigest
+        ValueName: UseLogonCredential
+        Recursive: false
+        Comment: "clear-text passwords"
+    -
+        Description: Last shutdown
+        HiveType: SYSTEM
+        Category: System Info
+        KeyPath: ControlSet00*\\Control\\Windows
+        ValueName: ShutdownTime
+        BinaryConvert: FILETIME
+        Recursive: false
+        Comment: "FILETIME"
+    -
+        Description: not a hive type
+        HiveType: Nope
+        Category: Other
+        KeyPath: Anything
+        Recursive: false
+"""
+
+
+@pytest.fixture()
+def catalogue(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    from docutracex.config import settings
+    tools = tmp_path / "tools"
+    (tools / "recmd").mkdir(parents=True)
+    (tools / "recmd" / "Kroll_Batch.reb").write_text(_REB, encoding="utf-8")
+    monkeypatch.setattr(settings, "tools_dir", tools)
+    return tools
+
+
+def test_reb_parsing_and_paths() -> None:
+    from docutracex.registry import catalog
+    es = catalog.parse_reb(_REB, "t.reb")
+    assert len(es) == 6 and {e["hive"] for e in es} == {"ntuser", "system"}
+    lit, rx = catalog.key_regex("HKLM\\SYSTEM", "ControlSet00*\\Control\\Windows", False)
+    import re
+    assert re.match(rx, "HKLM\\SYSTEM\\ControlSet001\\Control\\Windows", re.I)
+    assert re.match(rx, "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Windows", re.I)
+    assert not re.match(rx, "HKLM\\SYSTEM\\ControlSet001\\Control\\Windows\\Sub", re.I)
+    _lit, rx2 = catalog.key_regex("HKCU", "Software\\X", True)
+    assert re.match(rx2, "HKCU\\Software\\X\\Y\\Z", re.I)
+    assert catalog.convert("FILETIME", (133542000000000000).to_bytes(8, "little"), "") == "2024-03-06 12:00:00"
+    assert catalog.convert("EPOCH", (1762526460).to_bytes(4, "little"), "") == "2025-11-07 14:41:00"
+    assert catalog.convert("IP", bytes([198, 51, 100, 7]), "") == "198.51.100.7"
+    assert catalog.convert(None, "factura".encode("utf-16-le") + b"\0\0", "hex") == "factura"
+    assert catalog.convert(None, bytes.fromhex("00000000ffffffff"), "hex") == "hex"
+
+
+def test_catalogue_bookmarks_and_artifacts_on_the_hive(tmp_path: Path, catalogue: Path) -> None:
+    from docutracex.registry import catalog
+    assert catalog.status()["entries"] == 7 and not catalog.stale() is None
+    p = _write(tmp_path, "sample_NTUSER.DAT", ms.registry_ntuser_hive())
+    res = registry.analyze([(p, p.name)], tmp_path / "case", tmp_path / "w")
+    db = store.db_path(tmp_path / "case")
+    assert res["counts"]["catalog"] > 0 and res["counts"]["artifacts"] > 0
+    bms = store.bookmarks(db, 1)["bookmarks"]
+    assert {b["description"] for b in bms} == {"Run (NTUSER)", "TypedPaths", "WordWheelQuery"}   # no OneDrive
+    ua = store.artifact_rows(db, 1, plugin="user_assist")
+    rows = [dict(zip(ua["columns"], r)) for r in ua["rows"]]
+    sync = [r for r in rows if r["name"].endswith("sync.exe")]
+    assert len(sync) == 1 and sync[0]["run_counter"] == 3 and sync[0]["timestamp"].startswith("2025-11-07T14:41")
+    act = store.artifact_rows(db, 1, category="User Activity")
+    vals = {r[2]: r[3] for r in act["rows"]}
+    assert vals["url1"] == "\\\\198.51.100.23\\facturas" and vals["0"] == "factura 0613"
+    summary = store.artifact_summary(db)
+    assert {"user_assist", "typed_paths", "word_wheel_query"} <= {p["plugin"] for p in summary["plugins"]}
+    tl = store.timeline(db)
+    assert tl["rows"][0][2] == "artifact: user_assist"
+    q = store.user_query(db, "SELECT json_extract_string(entry, '$.name') FROM artifacts WHERE plugin = 'user_assist'")
+    assert any(r[0].endswith("sync.exe") for r in q["rows"])
+
+
+def test_catalogue_on_a_reg_export_uses_the_mounts(tmp_path: Path, catalogue: Path) -> None:
+    p = _write(tmp_path, "sample_persistence.reg", ms.registry_persistence_reg())
+    registry.analyze([(p, p.name)], tmp_path / "case", tmp_path / "w")
+    db = store.db_path(tmp_path / "case")
+    bms = {b["description"]: b for b in store.bookmarks(db, 1)["bookmarks"]}
+    assert "WDigest" in bms and bms["WDigest"]["key"].startswith("HKLM\\SYSTEM\\CurrentControlSet")
+    assert "Run (NTUSER)" in bms
+    assert store.artifact_summary(db)["plugins"] == []          # a .reg has no hive to decode
+
+
+def test_older_databases_without_the_new_tables(tmp_path: Path) -> None:
+    import duckdb
+    db = tmp_path / "registry.duckdb"
+    con = duckdb.connect(str(db))
+    con.execute(store.SCHEMA.split("CREATE TABLE IF NOT EXISTS catalog")[0])
+    con.close()
+    assert store.bookmarks(db, 1) == {"bookmarks": []}
+    assert store.artifact_summary(db) == {"catalog": [], "plugins": []}
+    assert store.timeline(db)["rows"] == []
+
+
+def test_artifact_flattening() -> None:
+    from docutracex.registry import artifacts
+    rows = artifacts._rows("p", {"\\Software\\Run": {"timestamp": "2025-11-07T14:40:00+00:00",
+                                                       "values": [{"name": "a", "value": "x"}, {"name": "b", "value": "y"}]}})
+    assert len(rows) == 2 and rows[0][2] == "\\Software\\Run" and rows[0][1] == "2025-11-07 14:40:00"
+    dup = artifacts._rows("p", [{"name": "a"}, {"name": "a"}])
+    assert len(dup) == 1
+    assert artifacts._rows("p", {"error": "boom"}) == []
+    flat = artifacts._rows("p", {"last_write": "2025-11-07T14:40:00", "entries": [{"url1": "u"}]})
+    assert len(flat) == 1 and '"url1": "u"' in flat[0][4]
+
+
+def test_concurrent_reads_of_the_same_database(analysed) -> None:
+    """Browse and Bookmarks load at once: the second connection shares the locked instance."""
+    case, _res = analysed
+    db = store.db_path(case)
+    first = store.connect_ro(db)
+    try:
+        assert store.children(db, 0, "")["subkeys"]
+        assert store.bookmarks(db, 1) is not None
+        with pytest.raises(Exception):
+            store.user_query(db, "SELECT * FROM read_csv('/etc/passwd')")
+    finally:
+        first.close()
+
+
+def test_artifact_keys_are_mounted(tmp_path: Path) -> None:
+    p = _write(tmp_path, "sample_NTUSER.DAT", ms.registry_ntuser_hive())
+    registry.analyze([(p, p.name)], tmp_path / "case", tmp_path / "w")
+    db = store.db_path(tmp_path / "case")
+    r = store.artifact_rows(db, 1, plugin="ntuser_persistence")
+    keys = {row[r["columns"].index("key")] for row in r["rows"]}
+    assert keys == {"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"}

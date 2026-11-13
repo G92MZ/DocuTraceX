@@ -8,6 +8,11 @@ Tables
 - ``vals(src, key, name, type, data, size, raw, op)`` — ``data`` is readable text
   (strings, numbers, multi-strings one per line, binary as hex), ``raw`` the bytes of
   binary values (payloads stored in the registry).
+- ``catalog(src, category, description, comment, batch, key, name, type, data, last_write)``
+  — what the RECmd batch files say to look at (``catalog``): rows without ``name`` are
+  the keys (bookmarks), the others their values, binary ones converted.
+- ``artifacts(src, plugin, ts, key, summary, entry)`` — regipy plugin entries
+  (``artifacts``): UserAssist, ShimCache, BAM, ShellBags, USB… ``entry`` is JSON.
 
 Reads go through read-only connections with external access disabled: a query can
 look at these tables and nothing else on the machine.
@@ -33,6 +38,10 @@ CREATE TABLE IF NOT EXISTS keys (src INTEGER, path VARCHAR, parent VARCHAR, name
     subkeys INTEGER, nvalues INTEGER, op VARCHAR);
 CREATE TABLE IF NOT EXISTS vals (src INTEGER, "key" VARCHAR, name VARCHAR, type VARCHAR, data VARCHAR,
     size BIGINT, raw BLOB, op VARCHAR);
+CREATE TABLE IF NOT EXISTS catalog (src INTEGER, category VARCHAR, description VARCHAR, comment VARCHAR,
+    batch VARCHAR, "key" VARCHAR, name VARCHAR, type VARCHAR, data VARCHAR, last_write TIMESTAMP);
+CREATE TABLE IF NOT EXISTS artifacts (src INTEGER, plugin VARCHAR, ts TIMESTAMP, "key" VARCHAR, summary VARCHAR,
+    entry VARCHAR);
 """
 
 
@@ -106,10 +115,16 @@ def _sq(p: Path) -> str:
     return str(p).replace("\\", "/").replace("'", "''")
 
 
+def ensure_schema(con) -> None:  # noqa: ANN001
+    """Tables added after a case was analysed (older databases): empty, so queries work."""
+    con.execute(SCHEMA)
+
+
 def finish_db(con) -> None:  # noqa: ANN001
     con.execute("CREATE INDEX IF NOT EXISTS keys_path ON keys(path)")
     con.execute("CREATE INDEX IF NOT EXISTS keys_parent ON keys(parent)")
     con.execute('CREATE INDEX IF NOT EXISTS vals_key ON vals("key")')
+    con.execute('CREATE INDEX IF NOT EXISTS catalog_key ON catalog("key")')
     con.execute("CHECKPOINT")
     con.close()
 
@@ -118,8 +133,15 @@ def finish_db(con) -> None:  # noqa: ANN001
 def connect_ro(path: Path):  # noqa: ANN201
     import duckdb
     con = duckdb.connect(str(path), read_only=True)
-    con.execute("SET enable_external_access = false")
-    con.execute("SET lock_configuration = true")
+    try:
+        con.execute("SET enable_external_access = false")
+        con.execute("SET lock_configuration = true")
+    except duckdb.Error:
+        # another read of the same file is open: DuckDB shares that database instance, whose
+        # configuration is already locked. Use it only if it is locked down the same way.
+        if con.execute("SELECT current_setting('enable_external_access')").fetchone()[0] not in (False, "false"):
+            con.close()
+            raise
     return con
 
 
@@ -197,6 +219,79 @@ def children(path: Path, src: int, key: str) -> dict[str, Any]:
             "subkeys": [dict(zip(("src", "path", "name", "last_write", "subkeys", "values", "op"), map(_cell, r)))
                         for r in subs],
             "values": [dict(zip(("name", "type", "data", "size", "op", "has_raw"), map(_cell, r))) for r in vals]}
+
+
+def _has(con, table: str) -> bool:  # noqa: ANN001
+    return bool(con.execute("SELECT count(*) FROM information_schema.tables WHERE table_name = ?", [table]).fetchone()[0])
+
+
+def bookmarks(path: Path, src: int) -> dict[str, Any]:
+    """The catalogue keys of a source, by category (Browse → Bookmarks)."""
+    con = connect_ro(path)
+    try:
+        if not _has(con, "catalog"):
+            return {"bookmarks": []}
+        rows = con.execute("""SELECT category, description, "key", any_value(comment), count(name)
+            FROM catalog WHERE src = ? GROUP BY ALL ORDER BY category, description, "key" LIMIT 3000""", [src]).fetchall()
+    finally:
+        con.close()
+    return {"bookmarks": [dict(zip(("category", "description", "key", "comment", "values"), r)) for r in rows]}
+
+
+def artifact_summary(path: Path) -> dict[str, Any]:
+    """Per source: catalogue categories and regipy plugins with their row counts."""
+    con = connect_ro(path)
+    try:
+        cat = con.execute("""SELECT src, category, count(*) FILTER (WHERE name IS NOT NULL), count(DISTINCT "key")
+            FROM catalog GROUP BY ALL ORDER BY 1, 2""").fetchall() if _has(con, "catalog") else []
+        art = con.execute("""SELECT src, plugin, count(*), min(ts), max(ts) FROM artifacts GROUP BY ALL ORDER BY 1, 2""") \
+            .fetchall() if _has(con, "artifacts") else []
+    finally:
+        con.close()
+    return {"catalog": [dict(zip(("src", "category", "values", "keys"), r)) for r in cat],
+            "plugins": [dict(zip(("src", "plugin", "rows", "first", "last"), map(_cell, r))) for r in art]}
+
+
+def artifact_rows(path: Path, src: int, plugin: str = "", category: str = "", limit: int = 2000,
+                  offset: int = 0) -> dict[str, Any]:
+    """The rows of one regipy plugin (entries flattened into columns) or one catalogue category."""
+    import json as _json
+    con = connect_ro(path)
+    try:
+        if plugin:
+            rows = con.execute("""SELECT ts, "key", entry FROM artifacts WHERE src = ? AND plugin = ?
+                ORDER BY ts DESC NULLS LAST LIMIT ? OFFSET ?""", [src, plugin, limit + 1, offset]).fetchall()
+            more = len(rows) > limit
+            ents = [{**_json.loads(r[2]), **({"key": r[1]} if r[1] else {})} for r in rows[:limit]]
+            for e in ents:
+                e.pop("key_path", None)
+            cols: list[str] = []
+            for e in ents:
+                for k, v in e.items():
+                    if k not in cols and not isinstance(v, (dict, list)):
+                        cols.append(k)
+            cols = cols[:24]
+            return {"columns": cols, "rows": [[_cell(e.get(c)) for c in cols] for e in ents], "truncated": more}
+        res = _rows(con.execute("""SELECT description, "key", name, data, last_write, comment FROM catalog
+            WHERE src = ? AND category = ? AND name IS NOT NULL ORDER BY description, "key", name LIMIT ? OFFSET ?""",
+                                [src, category, limit + 1, offset]), limit)
+        return res
+    finally:
+        con.close()
+
+
+def timeline(path: Path, src: int = 0, limit: int = 2000, offset: int = 0) -> dict[str, Any]:
+    """Key last-writes and artifact timestamps, newest first."""
+    con = connect_ro(path)
+    try:
+        art = """UNION ALL SELECT ts, src, 'artifact: ' || plugin, "key", summary FROM artifacts
+            WHERE ts IS NOT NULL AND (? = 0 OR src = ?)""" if _has(con, "artifacts") else ""
+        args = [src, src] + ([src, src] if art else []) + [limit + 1, offset]
+        return _rows(con.execute(f"""SELECT * FROM (SELECT last_write AS ts, src, 'key written' AS what, path AS "key",
+            '' AS detail FROM keys WHERE last_write IS NOT NULL AND (? = 0 OR src = ?) {art})
+            ORDER BY ts DESC LIMIT ? OFFSET ?""", args), limit)
+    finally:
+        con.close()
 
 
 def value(path: Path, src: int, key: str, name: str) -> dict[str, Any]:
