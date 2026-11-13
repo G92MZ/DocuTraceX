@@ -86,14 +86,30 @@ def _binary_like(data: bytes) -> bool:
 
 # Media / font formats: binary but never a beacon carrier worth three 1768.py runs.
 _SKIP_MAGIC = (b"\x89PNG", b"\xff\xd8\xff", b"GIF8", b"BM", b"RIFF", b"wOFF", b"wOF2",
-               b"\x00\x01\x00\x00\x00", b"OTTO", b"ID3", b"fLaC", b"OggS")
+               b"\x00\x01\x00\x00\x00", b"OTTO", b"ID3", b"fLaC", b"OggS",
+               # ELF / Mach-O: Cobalt Strike beacons are Windows code (a Linux "beacon" is another tool)
+               b"\x7fELF", b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe", b"\xcf\xfa\xed\xfe")
+
+
+def _is_dotnet(data: bytes) -> bool:
+    """A managed assembly (CLR header + metadata): beacons are native, and a .NET loader's beacon
+    is still found by the default run, the 4-byte-XOR scan and the carving."""
+    if not _is_pe(data):
+        return False
+    try:
+        import pefile
+        pe = pefile.PE(data=data[:0x1000], fast_load=True)
+        return pe.OPTIONAL_HEADER.DATA_DIRECTORY[14].Size > 0 and b"BSJB" in data
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def deep_candidate(data: bytes) -> bool:
-    """Objects that get the -x / -e retries even without a config header."""
+    """Objects that get the -x / -e retries even without a config header (each retry is a full
+    1768.py run: about a minute on a few MB). Not for .NET assemblies."""
     return (_deep_enabled() and _script() is not None and len(data) <= _deep_max_size()
             and not data.startswith(_SKIP_MAGIC)
-            and (_is_pe(data) or _binary_like(data)))
+            and (_is_pe(data) or _binary_like(data)) and not _is_dotnet(data))
 
 
 def _run_1768(path: Path, data: bytes, deep: bool = True) -> dict[str, Any] | None:
@@ -141,7 +157,7 @@ def _run_1768_once(script: Path, path: Path, extra: list[str]) -> dict[str, Any]
         return None
     text: list[str] = []
     msgs = [m for m in out.get("messages") or [] if isinstance(m, str)]
-    if (not out.get("config") and any("Probably found shellcode" in m for m in msgs)
+    if (not out.get("config") and any(_SHELLCODE_MSG.match(m) for m in msgs)
             and not any(_HEXLINE.match(ln) for m in msgs for ln in m.splitlines())):
         # The JSON report may omit the hex dump: take it from the text report.
         text = _text_report(args[:2] + [a for a in args[2:] if a != "-J"], path)
@@ -208,12 +224,15 @@ def _text_report(args: list[str], path: Path) -> list[str]:
 
 _ALLOC_SIZES = {0x40, 0x1000, 0x2000, 0x3000, 0x4000, 0x400000}
 
-# --- Stager shellcode (1768.py "Probably found shellcode") ------------------------------
+# --- Stager shellcode (1768.py "Probably found shellcode" / "Found shellcode") -----------
+# 1768.py 0.0.23+ says "Found shellcode:", names it ("Identification: CS reverse http x86
+# shellcode") and reads the license id (watermark) the stager carries after its host.
+_SHELLCODE_MSG = re.compile(r"(?:Probably found|Found) shellcode")
 # block_api prologues (Stephen Fewer's PEB walk + ROR13 hashing), shared by Metasploit and
 # Cobalt Strike stagers.
 _PROLOGUES = {
     "x86": (b"\xfc\xe8\x82\x00\x00\x00\x60\x89\xe5", b"\xfc\xe8\x89\x00\x00\x00\x60\x89\xe5",
-            b"\xfc\xe8\x8f\x00\x00\x00\x60\x89\xe5"),
+            b"\xfc\xe8\x8f\x00\x00\x00\x60\x89\xe5", b"\xfc\xe8\x8f\x00\x00\x00\x60\x31\xd2\x64\x8b\x52\x30"),
     "x64": (b"\xfc\x48\x83\xe4\xf0\xe8\xc0\x00\x00\x00", b"\xfc\x48\x83\xe4\xf0\xe8\xc8\x00\x00\x00",
             b"\xfc\x48\x83\xe4\xf0\xe8\xcc\x00\x00\x00"),
 }
@@ -351,6 +370,13 @@ def _shellcode_config(sc: bytes) -> dict[str, Any]:
                 cfg.setdefault("headers", []).extend(headers)
         elif _HOSTLIKE.match(s):
             cfg.setdefault("hosts", []).append(s)
+    # Cobalt Strike stagers end with the host, its NUL and the 4-byte license id
+    # (big endian); Metasploit's end at the host's NUL.
+    if cfg.get("hosts"):
+        last = max(i for i, s in _cstrings(sc) if s == cfg["hosts"][-1])
+        tail = sc[last + len(cfg["hosts"][-1]) + 1:]
+        if len(tail) >= 4 and tail[:4] != b"\0\0\0\0" and not tail[4:].strip(b"\0"):
+            cfg["license-id"] = str(int.from_bytes(tail[:4], "big"))
     return cfg
 
 
@@ -370,7 +396,7 @@ def _stager_from_shellcode(data: bytes) -> dict[str, Any] | None:
     directly, when 1768.py gave nothing: same rules as its report."""
     if not _block_api_head(data):
         return None
-    res = _stager_from_messages(["Probably found shellcode (DocuTraceX shellcode reader)"], sc=data[:0x2000])
+    res = _stager_from_messages(["Probably found shellcode (DocuTraceX shellcode reader)"], sc=data[:0x2000].rstrip(b"\0"))
     if res:
         res["method"] = "shellcode reader (block_api stager)"
     return res
@@ -384,12 +410,18 @@ def _stager_from_messages(msgs: list[str], sc: bytes | None = None) -> dict[str,
     hex dump of the shellcode — rebuilt and read for the URI, HTTP headers, transport,
     request flags and API hashes that 1768.py does not list.
     """
-    if not any("Probably found shellcode" in m for m in msgs):
+    if not any(_SHELLCODE_MSG.match(m) for m in msgs):
         return None
     hosts, ports, strings = [], [], []
-    xor = size = ""
+    xor = size = ident = license_id = ""
     for m in msgs:
-        if m.startswith("Parameter:"):
+        if m.startswith("Identification:"):
+            ident = m.split(":", 1)[1].strip()
+        elif m.startswith("license-id:"):
+            parts = m.split()
+            if len(parts) >= 3 and parts[-1].isdigit():
+                license_id = parts[-1]
+        elif m.startswith("Parameter:"):
             parts = m.split(None, 2)
             if len(parts) == 3:
                 hosts.append(_bytes_lit(parts[2]))
@@ -418,10 +450,14 @@ def _stager_from_messages(msgs: list[str], sc: bytes | None = None) -> dict[str,
                                                             if ":" in s and not s.startswith("/")]))
     hdr = {h.split(":", 1)[0].strip().lower(): h.split(":", 1)[1].strip() for h in headers}
     transport = scfg.get("transport", "")
+    license_id = license_id or scfg.get("license-id", "")
+    cs_ident = ident.upper().startswith("CS ")
     # block_api shellcode alone is shared with Metasploit's stagers: call it Cobalt
-    # Strike only with something specific to it — the artifact-kit header that
-    # 1768.py decodes (payloadSize / intxorkey) or a checksum8 URI (92 x86, 93 x64).
-    if not (xor or size or _checksum8(uri) in (92, 93)):
+    # Strike only with something specific to it — 1768.py naming it a CS stager, the
+    # license id after the host, the artifact-kit header that 1768.py decodes
+    # (payloadSize / intxorkey) or Cobalt Strike's short checksum8 URI (/xxxx: 92 x86,
+    # 93 x64; Metasploit's URIs carry a 22+ character payload UUID).
+    if not (cs_ident or license_id or xor or size or (_checksum8(uri) in (92, 93) and len(uri) < 20)):
         return None
 
     def f(value: Any) -> dict[str, Any]:
@@ -447,6 +483,10 @@ def _stager_from_messages(msgs: list[str], sc: bytes | None = None) -> dict[str,
             fields[key] = f(scfg[key])
     if scfg.get("apis"):
         fields["apis (ror13)"] = f(", ".join(scfg["apis"]))
+    if license_id:
+        fields["license-id"] = f(int(license_id))
+    if ident:
+        fields["identification"] = f(ident)
     if xor:
         fields["xor key"] = f(xor)
     if size:
@@ -769,6 +809,7 @@ def _extract_carving(path: Path, data: bytes, _depth: int) -> dict[str, Any] | N
 # 4-byte key: [u32 ?][u32 length][4-byte key][4 bytes][payload ^ key]. Found by the key that
 # turns the bytes into a block_api prologue / a reflective-loader head.
 _XOR4_HEADS = (b"\xfc\xe8\x89\x00\x00\x00\x60\x89", b"\xfc\xe8\x8f\x00\x00\x00\x60\x89",
+               b"\xfc\xe8\x8f\x00\x00\x00\x60\x31",
                b"\xfc\xe8\x82\x00\x00\x00\x60\x89", b"\xfc\x48\x83\xe4\xf0\xe8\xc8\x00",
                b"\xfc\x48\x83\xe4\xf0\xe8\xc0\x00", b"\xfc\x48\x83\xe4\xf0\xe8\xcc\x00",
                b"MZARUH\x89\xe5", b"MZRE\x89\xe5\x81\xc3")

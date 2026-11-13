@@ -49,6 +49,11 @@ import os as _os
 MAX_ENTRIES = int(_os.environ.get("DOCUTRACEX_ARCHIVE_MAX_ENTRIES", "1000") or 1000)
 MAX_FILE = 100 * 1024 * 1024
 MAX_TOTAL = int(_os.environ.get("DOCUTRACEX_ARCHIVE_MAX_MB", "500") or 500) * 1024 * 1024
+# Binary padding (T1027.001): an installer that expands far beyond its own size holds a
+# pumped file (a small PE + hundreds of MB of one repeated byte). Such a member is
+# extracted up to this size and only its debloated binary is kept.
+PADDED_MAX = int(_os.environ.get("DOCUTRACEX_PADDED_MAX_MB", "1024") or 1024) * 1024 * 1024
+PADDED_RATIO = 20      # expanded size / container size above which a big member counts as padded
 
 _7Z_MAGIC = b"7z\xbc\xaf\x27\x1c"
 # RAR 1.5-4.x and RAR 5.0 signatures.
@@ -456,6 +461,38 @@ def _single_stream_extract(path: Path, out_dir: Path, used: set[str]) -> list[di
     return [{"name": name, "size": n, "file": str(target)}]
 
 
+def _cab_needs_7z(blob: bytes) -> bool:
+    """LZX / Quantum folders or a member over the per-file limit (padding): 7-Zip reads those,
+    when it is installed."""
+    import struct as _s
+    try:
+        from .parsers.unpack import sevenzip_exe
+        if sevenzip_exe() is None:
+            return False
+        coff_files, _r3, _vmin, _vmaj, c_folders, c_files, flags = _s.unpack_from("<IIBBHHH", blob, 16)
+        pos = 36
+        reserve = 0
+        if flags & 0x0004:
+            cb_header, reserve, _cb_data = _s.unpack_from("<HBB", blob, pos)
+            pos += 4 + cb_header
+        for bit in (0x0001, 0x0002):
+            if flags & bit:
+                for _ in range(2):
+                    pos = blob.index(b"\x00", pos) + 1
+        for _ in range(c_folders):
+            if _s.unpack_from("<IHH", blob, pos)[2] & 0x000F not in (0, 1):
+                return True
+            pos += 8 + reserve
+        pos = coff_files
+        for _ in range(min(c_files, MAX_ENTRIES)):
+            if _s.unpack_from("<I", blob, pos)[0] > MAX_FILE:
+                return True
+            pos = blob.index(b"\x00", pos + 16) + 1
+    except Exception:  # noqa: BLE001
+        return False
+    return False
+
+
 def _cab_extract(path: Path, out_dir: Path, pw: str | None) -> list[dict[str, Any]]:
     """Extract a Microsoft Cabinet (MSZIP / uncompressed). LZX/Quantum folders
     are listed but skipped (rare; need a dedicated decompressor)."""
@@ -465,6 +502,8 @@ def _cab_extract(path: Path, out_dir: Path, pw: str | None) -> list[dict[str, An
     blob = path.read_bytes()
     if blob[:4] != b"MSCF" or len(blob) < 36:
         raise ValueError("not a cabinet")
+    if _cab_needs_7z(blob):
+        return _rar_extract(path, out_dir, pw)
     coff_files, _r3, _vmin, _vmaj, c_folders, c_files, flags = _s.unpack_from("<IIBBHHH", blob, 16)
     pos = 36
     cb_folder_reserve = 0
@@ -655,7 +694,9 @@ def _rar_extract(path: Path, out_dir: Path, pw: str | None) -> list[dict[str, An
         raise ValueError(f"7-Zip could not list the RAR: {err or 'no entries'}")
     if len(files) > MAX_ENTRIES:
         raise ValueError(f"too many entries ({len(files)})")
-    if sum(e["size"] for e in files) > MAX_TOTAL:
+    padded = _is_padded([(str(e.get("name") or e.get("path") or ""), e["size"]) for e in files],
+                        path.stat().st_size)
+    if sum(e["size"] for e in files) > MAX_TOTAL and not padded:
         raise ValueError("archive expands beyond the size limit")
     entries: list[dict[str, Any]] = []
     used: set[str] = set()
@@ -676,13 +717,18 @@ def _rar_extract(path: Path, out_dir: Path, pw: str | None) -> list[dict[str, An
                 continue
             size = f.stat().st_size
             rel = f.relative_to(root).as_posix()
+            deb = None
+            if size > MAX_FILE and padded:
+                f, deb = _debloat_member(f, rel, "archive", {"findings": []})
+                size = f.stat().st_size if deb else size
             if size > MAX_FILE or total + size > MAX_TOTAL:
                 entries.append({"name": rel, "size": size, "skipped": "too large"})
                 continue
             target = out_dir / _safe_name(rel, used)
             shutil.move(str(f), target)
             total += size
-            entries.append({"name": rel, "size": size, "file": str(target), "encrypted": pw is not None})
+            entries.append({"name": rel, "size": size, "file": str(target), "encrypted": pw is not None,
+                            **({"debloated": deb} if deb else {})})
     if pw is not None and entries and all(e.get("size", 0) == 0 for e in entries):
         raise ValueError("empty output (wrong password?)")
     return entries
@@ -771,6 +817,45 @@ def extract_with_7z(path: Path, out_dir: Path, tries: list[dict[str, str]],
     return _extract_with(path, out_dir, tries, det, _sevenzip_generic_extract, location, name)
 
 
+_PADDED_EXTS = (".exe", ".dll", ".scr", ".com", ".cpl", ".ocx", ".sys", ".msi")
+
+
+def _is_padded(members: list[tuple[str, int]], container_size: int) -> bool:
+    """A few huge executables (or extension-less files) in a container that expands far beyond
+    its own size: binary padding (one repeated byte compresses to nothing), not a bomb — extract
+    them and keep only what debloat recovers (anything else over the limit is still skipped)."""
+    sizes = [n for _name, n in members]
+    big = [(name, n) for name, n in members if n > MAX_FILE]
+    if not big or any(not (name.lower().endswith(_PADDED_EXTS) or "." not in name.rsplit("/", 1)[-1])
+                      for name, _n in big):
+        return False
+    return (len(big) <= 3 and max(n for _name, n in big) <= PADDED_MAX
+            and sum(sizes) > container_size * PADDED_RATIO
+            and sum(n for n in sizes if n <= MAX_FILE) <= MAX_TOTAL)
+
+
+def _padded_finding(rel: str, deb: dict[str, Any], location: str) -> dict[str, Any]:
+    from .parsers import debloat_pe
+    return _finding(
+        "installer_padded_file", "high",
+        f"'{rel}' is padded to {debloat_pe._mb(deb['size_before'])} to get past size limits "
+        f"({deb.get('method')}); the real {debloat_pe._mb(deb['size_after'])} binary is analysed · T1027.001",
+        location)
+
+
+def _debloat_member(fp: Path, rel: str, location: str, rec: dict[str, Any]) -> tuple[Path, dict[str, Any] | None]:
+    """A pumped member of an installer: the real binary without its padding (debloat), or as is."""
+    from .parsers import debloat_pe
+    out = fp.with_name(fp.name + ".debloated")
+    r = debloat_pe.run(fp, out)
+    if r.get("status") != "debloated" or not out.is_file():
+        return fp, None
+    fp.unlink(missing_ok=True)
+    deb = {"method": r.get("method", ""), "size_before": r["size_before"], "size_after": r["size_after"]}
+    rec["findings"].append(_padded_finding(rel, deb, location))
+    return out, deb
+
+
 def extract_msi(path: Path, out_dir: Path, location: str = "document",
                 name: str | None = None) -> dict[str, Any]:
     """Extract an MSI with 7-Zip only (never invoke Windows Installer).
@@ -800,13 +885,17 @@ def extract_msi(path: Path, out_dir: Path, location: str = "document",
     else:
         listed = [e for e in _slt_entries(listing.get("out") or "") if not e.get("dir")]
         rec["listed_files"] = len(listed)
+        sizes = [max(0, int(e.get("size") or 0)) for e in listed]
+        big = [n for n in sizes if n > MAX_FILE]
+        padded = _is_padded([(str(e.get("path") or e.get("name") or ""), max(0, int(e.get("size") or 0)))
+                             for e in listed], path.stat().st_size)
         if not listed:
             rec["error"] = "7-Zip listing returned no files"
         elif len(listed) > MAX_ENTRIES:
             rec["error"] = f"too many MSI entries ({len(listed)}; limit {MAX_ENTRIES})"
-        elif sum(max(0, int(e.get("size") or 0)) for e in listed) > MAX_TOTAL:
+        elif sum(sizes) > MAX_TOTAL and not padded:
             rec["error"] = f"MSI expands beyond the total size limit ({MAX_TOTAL} bytes)"
-        elif any(int(e.get("size") or 0) > MAX_FILE for e in listed):
+        elif big and not padded:
             rec["error"] = f"an MSI entry exceeds the per-file size limit ({MAX_FILE} bytes)"
         else:
             shutil.rmtree(out_dir, ignore_errors=True)
@@ -829,13 +918,18 @@ def extract_msi(path: Path, out_dir: Path, location: str = "document",
                             continue
                         size = fp.stat().st_size
                         rel = fp.relative_to(root).as_posix()
+                        deb: dict[str, Any] | None = None
+                        if size > MAX_FILE and padded:
+                            fp, deb = _debloat_member(fp, rel, location, rec)
+                            size = fp.stat().st_size if deb else size
                         if size > MAX_FILE or total + size > MAX_TOTAL:
                             rec["entries"].append({"name": rel, "size": size, "skipped": "size limit"})
                             continue
                         target = out_dir / _safe_name(rel, used)
                         shutil.move(str(fp), target)
                         total += size
-                        rec["entries"].append({"name": rel, "size": size, "file": str(target)})
+                        rec["entries"].append({"name": rel, "size": size, "file": str(target),
+                                               **({"debloated": deb} if deb else {})})
                     skipped = any(e.get("skipped") for e in rec["entries"])
                     incomplete = rx.get("rc") == 1 or skipped or len(got) < len(listed)
                     if incomplete:
@@ -920,6 +1014,8 @@ def _extract_with(path: Path, out_dir: Path, tries: list[dict[str, str]], det: d
         if det["encrypted"]:
             rec.update(decrypted=True, password=t["password"], password_source=t["source"])
             rec["findings"] = _decrypted_findings(det["kind"], t, name or path.name, location)
+        rec["findings"] += [_padded_finding(e["name"], e["debloated"], location)
+                            for e in rec["entries"] if e.get("debloated")]
         return rec
     shutil.rmtree(out_dir, ignore_errors=True)
     rec["error"] = last_err

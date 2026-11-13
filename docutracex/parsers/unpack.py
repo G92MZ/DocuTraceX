@@ -254,6 +254,20 @@ def _sfx7z_offset(blob: bytes, start: int) -> int | None:
     return None
 
 
+def _upx_layout(pe: Any | None) -> bool:
+    """UPX's shape without its names or marker: section 1 has no raw data but a large virtual
+    size, section 2 is packed (entropy > 7.5) and holds the entry point."""
+    try:
+        if pe is None or len(pe.sections) < 3:
+            return False
+        s0, s1 = pe.sections[0], pe.sections[1]
+        ep = pe.OPTIONAL_HEADER.AddressOfEntryPoint
+        return (s0.SizeOfRawData == 0 and s0.Misc_VirtualSize >= 0x10000 and s1.SizeOfRawData >= 0x1000
+                and s1.get_entropy() > 7.5 and s1.VirtualAddress <= ep < s1.VirtualAddress + s1.Misc_VirtualSize)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def heuristics(blob: bytes, pe: Any | None) -> list[dict[str, str]]:
     """Cheap, dependency-free family detection. Returns [{family, label, by, evidence}]."""
     hits: list[dict[str, str]] = []
@@ -275,6 +289,9 @@ def heuristics(blob: bytes, pe: Any | None) -> list[dict[str, str]]:
         add("upx", "sections", ", ".join(names[:4]))
     elif b"UPX!" in head:
         add("upx", "marker", "UPX! marker in headers (section names altered?)")
+    elif _upx_layout(pe):
+        add("upx", "layout", "UPX section layout (an empty first section the stub unpacks into, a packed "
+                             "second one holding the entry point) with the names and UPX! header wiped")
     # AutoIt: script resource / overlay markers.
     if b"AU3!EA06" in blob or b"AU3!EA05" in blob:
         add("autoit", "marker", "AU3!EA0x script marker")

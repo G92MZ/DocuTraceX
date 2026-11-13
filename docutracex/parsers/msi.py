@@ -342,8 +342,40 @@ def analyze_binary(path: Path, rel: str, unpack_dir: Path | None = None) -> dict
         return item
     kind = native_kind(path)
     if kind == "native":
-        return analyze_native(path, rel)
+        item = analyze_native(path, rel)
+        if unpack_dir is not None:
+            _unpack_native_upx(path, rel, unpack_dir, item)
+        return item
     return analyze_pe(path, rel, unpack_dir)
+
+
+def _unpack_native_upx(path: Path, rel: str, unpack_dir: Path, item: dict[str, Any]) -> None:
+    """ELF / Mach-O packed with UPX (Go implants, Linux bots): ``upx -d`` statically, the real
+    binary analysed as a child (the PE path does the same in ``unpack.process``)."""
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(4096)
+    except OSError:
+        return
+    if b"UPX!" not in head:
+        return
+    from . import unpack
+    rec = unpack._unpack_upx(path, unpack_dir)
+    item["unpack"] = {k: v for k, v in rec.items()}
+    if rec.get("status") != "ok":
+        item["findings"].append({"tool": "unpack", "rule": "native_upx_not_unpacked", "severity": "low",
+                                 "detail": f"UPX-packed {item.get('format') or 'binary'}: {rec.get('detail', '')}",
+                                 "location": f"file:{rel}", "evidence": ""})
+        return
+    out = next((p for p in sorted(unpack_dir.glob(path.stem + ".unpacked*")) if p.is_file()), None)
+    if out is None:
+        return
+    item["findings"].append({"tool": "unpack", "rule": "native_upx_unpacked", "severity": "medium",
+                             "detail": f"UPX-packed {item.get('format') or 'binary'} unpacked with upx -d "
+                                       f"({out.stat().st_size} bytes) · T1027.002",
+                             "location": f"file:{rel}", "evidence": ""})
+    item["_children"] = [{"path": str(out), "filename": out.name, "source": "unpack",
+                          "origin": f"unpacked from {Path(rel).name} (upx -d)", "recipe": ["unpack", "UPX"]}]
 
 
 def analyze(original: Path, extracted_dir: Path | None = None,

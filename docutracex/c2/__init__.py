@@ -115,7 +115,31 @@ def _applicable(name: str, data: bytes) -> bool:
 
 def scan_object_detailed(path: Path, data: bytes) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """(configurations, runs): every registered extractor runs on the object and
-    says what happened (``registry.STATUSES``), with its RAW output."""
+    says what happened (``registry.STATUSES``), with its RAW output.
+
+    Shellcode wrapped in an encoder stub (shikata_ga_nai, x64/xor) is decoded
+    first (``sc_decoder``: the stub alone, emulated) and the extractors read
+    the decoded payload."""
+    from . import sc_decoder
+    if not sc_decoder.decoder(data):
+        return _scan_detailed(path, data)
+    dec = sc_decoder.decode(data)
+    if not dec:
+        return _scan_detailed(path, data)
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="dtx_sc_") as tmp:
+        dp = Path(tmp) / f"{path.stem}.decoded.bin"
+        dp.write_bytes(dec["data"])
+        out, runs = _scan_detailed(dp, dec["data"])
+    for cfg in out:
+        cfg["method"] = f"{cfg.get('method', '')} · {dec['encoder']} decoded by emulation".strip(" ·")
+        cfg["summary"] = {"Encoder": dec["note"], **(cfg.get("summary") or {})}
+        cfg.setdefault("fields", {})["encoder"] = dec["encoder"]
+        cfg["fields"]["decoded payload"] = f"{len(dec['data'])} bytes at offset 0x{dec['offset']:x}"
+    return out, runs
+
+
+def _scan_detailed(path: Path, data: bytes) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     import time as _time
 
     from . import cobalt, dotnet_more, dotnet_rats, metasploit, remcos, stealers

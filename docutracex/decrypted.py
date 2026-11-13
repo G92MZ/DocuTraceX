@@ -38,13 +38,27 @@ _B64 = re.compile(r"""["']([A-Za-z0-9+/\r\n]{200,}={0,2})["']""")
 # any quoted base64 / hex literal worth decoding (shorter, but strict alphabet)
 _B64_LIT = re.compile(r"""(?:["']|-e(?:nc|ncodedcommand)?\s+)([A-Za-z0-9+/]{100,}={0,2})(?:["']|\s|$)""")
 _HEX_LIT = re.compile(r"""["']((?:[0-9A-Fa-f]{2}){48,})["']""")
+# PowerShell here-strings (@'…'@ / @"…"@) holding hex split over lines: a payload
+# when long, key material when short (``$k = @'<32 hex bytes>'@`` + a -bxor loop)
+_HERE = re.compile(r"""@(['"])[ \t]*\r?\n(.*?)\r?\n\1@""", re.S)
+
+
+def _here_hex(code: str) -> list[bytes]:
+    out = []
+    for m in _HERE.finditer(code or ""):
+        body = re.sub(r"\s+", "", m.group(2))
+        if len(body) >= 8 and len(body) % 2 == 0 and re.fullmatch(r"[0-9A-Fa-f]+", body):
+            out.append(bytes.fromhex(body))
+    return out
 _MAGIC = ((b"MZ", ".exe"), (b"PK\x03\x04", ".zip"), (b"%PDF", ".pdf"),
           (b"\xd0\xcf\x11\xe0", ".doc"), (b"{\\rt", ".rtf"), (b"\x4c\x00\x00\x00", ".lnk"))
 
 # Content sniffing for decrypted *text* (first hit wins).
 _LANG = (
     (".ps1", re.compile(r"(?im)^\s*(?:powershell|pwsh)(?:\.exe)?\b|\b(?:iex|invoke-expression|new-object\s+net\.webclient|"
-                        r"downloadstring|start-process|set-executionpolicy|\[convert\]::frombase64string)\b|\$env:\w+")),
+                        r"downloadstring|start-process|set-executionpolicy|start-sleep|write-(?:host|output|warning|error))\b|"
+                        r"\[(?:system\.)?convert\]::frombase64string\b|\[cmdletbinding\(|"
+                        r"\[(?:system\.)?reflection\.assembly\]::load|\s-bxor\s|\$env:\w+")),
     (".hta", re.compile(r"(?i)<\s*hta:application|<\s*script[^>]+(?:vbscript|jscript)")),
     (".html", re.compile(r"(?i)<\s*(?:html|script|body|iframe)\b")),
     (".xml", re.compile(r"(?s)^\s*<(?:\?xml|[A-Za-z][\w:.-]*)[^<>]*>.*</[A-Za-z][\w:.-]*>\s*$")),
@@ -63,10 +77,23 @@ def sniff_ext(text: str) -> str:
     return ".txt"
 
 
+def _ole_kind(raw: bytes) -> str:
+    """An OLE/CFB blob: .msi when it holds Windows Installer's tables, else .doc."""
+    import tempfile
+    try:
+        from .parsers.msi import is_msi_file
+        with tempfile.TemporaryDirectory(prefix="dtx_ole_") as t:
+            p = Path(t) / "blob.cfb"
+            p.write_bytes(raw)
+            return ".msi" if is_msi_file(p) else ".doc"
+    except Exception:  # noqa: BLE001
+        return ".doc"
+
+
 def _magic_ext(raw: bytes) -> str | None:
     for magic, ext in _MAGIC:
         if raw.startswith(magic):
-            return ext
+            return _ole_kind(raw) if ext == ".doc" else ext
     return None
 
 
@@ -127,6 +154,9 @@ def harvest_keys(code: str) -> dict[str, list[bytes]]:
         for b in (t.encode("latin-1", "replace"), t.encode("utf-16-le")):
             if b not in strings:
                 strings.append(b)
+    for b in _here_hex(code):
+        if 2 <= len(b) <= 64 and b not in arrays:
+            arrays.append(b)
     return {"arrays": arrays[:40], "strings": strings[:60]}
 
 
@@ -154,6 +184,18 @@ def _good(raw: bytes) -> bool:
     return t is not None and len(t.strip()) >= MIN_TEXT
 
 
+def _b64_of_file(text: bytes) -> bool:
+    """Base64 text whose first bytes decode to a file signature (a PE, a zip…)."""
+    head = re.sub(rb"\s+", b"", text[:2048])
+    if len(head) < 64 or not re.fullmatch(rb"[A-Za-z0-9+/]+={0,2}", head[:1024]):
+        return False
+    try:
+        raw = base64.b64decode(head[:1024 - 1024 % 4])
+    except (binascii.Error, ValueError):
+        return False
+    return _strong_magic(raw) or _magic_ext(raw) is not None or raw[:3] == b"\x1f\x8b\x08"
+
+
 def _xor(data: bytes, key: bytes) -> bytes:
     if len(key) == 1:
         k = key[0]
@@ -173,16 +215,44 @@ def try_keys(raw: bytes, keys: dict[str, list[bytes]] | None) -> tuple[bytes, li
     the script itself defines (repeating XOR, AES-CBC/ECB). Returns
     (plaintext, recipe steps) for the first attempt that looks right."""
     head = raw[:256]
-    # 1) single-byte XOR (very common for embedded PEs)
+    # 1) single-byte XOR (very common for embedded PEs): a file signature wins at once;
+    # mere text is only a fallback (base64 XOR-ed with a printable byte stays printable)
+    text_byte = None
     for k in range(1, 256):
-        if _good(_xor(head, bytes([k]))) and _good(_xor(raw[:4096], bytes([k]))):
+        h = _xor(head, bytes([k]))
+        if _strong_magic(h):
             return _xor(raw, bytes([k])), [f"xor(0x{k:02x})"]
+        if text_byte is None and _good(h) and _good(_xor(raw[:4096], bytes([k]))):
+            text_byte = k
     keys = keys or {}
     material = list(keys.get("arrays") or []) + list(keys.get("strings") or [])
-    # 2) repeating-key XOR with the script's arrays / strings
+    # 2) repeating-key XOR with the script's arrays / strings. XOR of base64 text with
+    # any printable key is printable too, so a wrong key can look like "text": rank
+    # the keys — a file signature, then base64 that decodes to one, then text.
+    best: tuple[int, bytes] | None = None
     for key in material:
-        if len(key) >= 2 and _good(_xor(head, key)):
-            return _xor(raw, key), [f"xor(key {key[:16].hex()}{'…' if len(key) > 16 else ''})"]
+        if len(key) < 2:
+            continue
+        out = _xor(raw[:4096], key)
+        score = 0
+        if _strong_magic(out):
+            score = 3
+        elif _b64_of_file(out):
+            score = 2
+        elif _good(out[:256]):
+            score = 1
+        if score and (best is None or score > best[0]):
+            best = (score, key)
+            if score == 3:
+                break
+    if best and (best[0] >= 2 or text_byte is None):
+        key = best[1]
+        return _xor(raw, key), [f"xor(key {key[:16].hex()}{'…' if len(key) > 16 else ''})"]
+    if text_byte is not None:
+        return _xor(raw, bytes([text_byte])), [f"xor(0x{text_byte:02x})"]
+    if best:
+        key = best[1]
+        return _xor(raw, key), [f"xor(key {key[:16].hex()}{'…' if len(key) > 16 else ''})"]
     # 3) AES with the script's 16/24/32-byte keys, IVs = its 16-byte arrays or the blob's first block
     try:
         from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -234,6 +304,15 @@ def classify(raw: bytes, how: str, origin: str, depth: int = 0,
     if text is not None:
         if len(text.strip()) < MIN_TEXT:
             return None
+        if depth < 3 and _b64_of_file(raw):     # a decrypted layer that is base64 of a file
+            try:
+                dec = base64.b64decode(re.sub(rb"\s+", b"", raw) + b"===")
+            except (binascii.Error, ValueError):
+                dec = b""
+            if dec:
+                res = classify(dec, how + "-base64", f"{origin} → base64", depth + 1, keys, recipe + ["base64"])
+                if res:
+                    return res
         return {"how": how, "text": text, "origin": f"{origin} → text", "recipe": recipe + ["text"]}
     # key trials from 32 bytes (a small encrypted config is still worth it);
     # data full of NUL bytes is not ciphertext (UTF-16 text, structures)
@@ -302,10 +381,29 @@ _DEC_LIST = re.compile(r"(?:-?\d{1,3}\s*,\s*(?:_\s*\r?\n\s*)?){63,}-?\d{1,3}")
 _ESC_GLUE = 24          # quotes / concatenation between two "\x.." runs of one array
 
 
+def _pe_after_stub(raw: bytes) -> int:
+    """Offset of a PE that a short shellcode stub precedes (sRDI / Donut-style: ``jmp`` or ``call``
+    over a few bytes, then MZ), or 0."""
+    if len(raw) < 0x200 or raw[:2] == b"MZ" or raw[0] not in (0xE9, 0xE8, 0xEB, 0x4D, 0x90, 0x55, 0x56, 0x48):
+        return 0
+    i = raw.find(b"MZ", 1, 0x100)
+    while 0 < i < 0x100:
+        off = int.from_bytes(raw[i + 0x3C:i + 0x40], "little")
+        if 0x40 <= off < 0x400 and raw[i + off:i + off + 4] == b"PE\0\0":
+            return i
+        i = raw.find(b"MZ", i + 1, 0x100)
+    return 0
+
+
 def payload_child(raw: bytes, how: str, origin: str, keys: dict[str, list[bytes]] | None = None,
                   recipe: list[str] | None = None) -> dict[str, Any] | None:
     """``classify``, except that shellcode stays the exact bytes (never text)."""
     from .parsers.ps_deobf import _is_binary_payload
+    pe_at = _pe_after_stub(raw)
+    if pe_at:               # a reflective-loader stub (jmp over a few bytes) in front of a whole PE
+        return {"how": how, "ext": ".exe", "data": raw[pe_at:],
+                "recipe": list(recipe or []) + ["shellcode stub", f"PE at +0x{pe_at:x}"],
+                "origin": f"{origin} → shellcode stub + PE at offset 0x{pe_at:x} ({len(raw) - pe_at} bytes)"}
     if _is_binary_payload(raw) and not _magic_ext(raw):
         return {"how": how, "ext": ".bin", "data": raw, "recipe": list(recipe or []) + ["shellcode"],
                 "origin": f"{origin} → shellcode ({len(raw)} bytes)"}
@@ -360,6 +458,7 @@ def _decode_literals(code: str) -> list[tuple[str, bytes]]:
             found.append(("hex", bytes.fromhex(m.group(1))))
         except ValueError:
             continue
+    found += [("hex here-string", b) for b in _here_hex(code) if len(b) >= 48]
     return found
 
 

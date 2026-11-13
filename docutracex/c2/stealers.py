@@ -485,6 +485,40 @@ def darkgate(data: bytes) -> dict[str, Any] | None:
     return None
 
 
+# --- Discord-webhook exfiltration (token grabbers, small stealers) ------------------------
+_WEBHOOK = re.compile(rb"https://(?:(?:ptb|canary)\.)?discord(?:app)?\.com/api/webhooks/\d{15,21}/[A-Za-z0-9_-]{60,70}")
+_GRABBER = ((b"leveldb", "Discord / browser LevelDB"), (b"Login Data", "browser passwords"),
+            (b"Local State", "browser master key"), (b"Cookies", "browser cookies"), (b"wallet", "wallets"),
+            (b"Discord Tokens", "Discord tokens"), (b"[\\w-]{24}\\.[\\w-]{6}\\.[\\w-]{27}", "Discord token regex"),
+            (b"mfa\\.[\\w-]{84}", "Discord MFA token regex"))
+_STEALER_NAME = re.compile(r"\b([A-Z][A-Za-z0-9]{2,24}(?:Stealer|Grabber|Logger))\b")
+
+
+def discord_webhook(data: bytes) -> dict[str, Any] | None:
+    """A Discord webhook written in the binary (ASCII or UTF-16): where a token
+    grabber / small stealer posts what it took. The webhook URL is the
+    indicator (and what to report to Discord to have it removed)."""
+    hooks: list[str] = []
+    for blob in (data, data.replace(b"\x00", b"")):
+        hooks += [m.group(0).decode("ascii") for m in _WEBHOOK.finditer(blob)]
+    hooks = list(dict.fromkeys(hooks))
+    if not hooks:
+        return None
+    flat = data.replace(b"\x00", b"")
+    traits = list(dict.fromkeys(label for needle, label in _GRABBER if needle in flat))
+    name = next((m.group(1) for st in native_strings(data) for m in [_STEALER_NAME.search(st)] if m), "")
+    family = name or ("Discord-webhook stealer" if traits else "Discord webhook")
+    summary: dict[str, Any] = {"Channel": ["Discord webhook"], "Webhook": hooks}
+    if traits:
+        summary["Steals"] = traits[:8]
+    return {"family": family, "kind": "stealer" if traits else "indicators",
+            "method": "Discord webhook URL in the strings" + (f" + {len(traits)} grabber trait(s)" if traits else ""),
+            "confidence": "high" if traits else "medium", "summary": summary, "c2": hooks,
+            "fields": {**{f"webhook {i + 1}": h for i, h in enumerate(hooks)},
+                       **({"name in the binary": name} if name else {})},
+            "note": "the exfiltration channel is Discord itself: block / report the webhook URL, not the domain"}
+
+
 def extract_all(data: bytes) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     if data[:2] == b"MZ" and b"BSJB" in data:
@@ -501,6 +535,10 @@ def extract_all(data: bytes) -> list[dict[str, Any]]:
             out.append(best)
     if not out:
         r = darkgate(data)
+        if r:
+            out.append(r)
+    if not out or all(r.get("kind") == "indicators" for r in out):
+        r = discord_webhook(data)
         if r:
             out.append(r)
     return out
