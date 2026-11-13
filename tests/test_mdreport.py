@@ -42,3 +42,26 @@ def test_sections_and_downloads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     one = c.get(f"/api/cases/{cid}/mdreport.md?section=iocs")
     assert one.text.startswith("# IOCs") and c.get(f"/api/cases/{cid}/mdreport.md?section=x").status_code == 404
     assert c.get("/api/cases/nope/mdreport").status_code == 404
+
+
+def test_markdown_export_is_never_truncated(tmp_path, monkeypatch) -> None:
+    """The export is read whole by an LLM: no section or raw module is cut, however large."""
+    import json as _json
+
+    from docutracex import ai_tools, mdreport
+    from docutracex.storage import CasePaths
+
+    class P:
+        results_dir = tmp_path
+    big = {"items": [{"value": f"C:\\\\Windows\\\\System32\\\\lib{i}.dll", "n": i} for i in range(30000)]}
+    (tmp_path / "iocs.json").write_text(_json.dumps(big), encoding="utf-8")
+    monkeypatch.setattr(ai_tools, "_paths", lambda cid: P)
+    md = mdreport._modules("x")
+    assert "lib29999.dll" in md and "chars)" not in md and "truncated" not in md
+    assert len(md) > 1_200_000
+    # the chat keeps its caps; inside no_limits() they are gone
+    s = "x" * 5000
+    assert len(ai_tools._clip(s, 100)) < 200
+    with ai_tools.no_limits():
+        assert ai_tools._clip(s, 100) == s
+    _ = CasePaths

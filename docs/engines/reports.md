@@ -10,7 +10,9 @@ the nested tree and the Machine Learning results. Print it to PDF or attach it t
 
 **Markdown (raw, for an LLM)** has one sub-tab per part of the analysis — summary, findings,
 IOCs, stages, decrypted data, code, .NET, ML, C2, network checks, every module's raw JSON —
-each with **Copy** and **Download**: paste it into any model or a ticket.
+each with **Copy** and **Download**: paste it into any model or a ticket. Nothing in it is cut:
+every finding, IOC, stage and module result goes in whole, however large the case (the AI chat's
+tools keep their own short answers).
 
 ## AI and MCP
 
