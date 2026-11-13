@@ -58,15 +58,25 @@ The same database is available to the AI chat and to MCP clients through the
 
 Rules over the database, each with its ATT&CK technique:
 
-- **Persistence** — Run / RunOnce, Winlogon (`Shell`, `Userinit`, notify packages), services and
-  Safe Boot services, IFEO debuggers and SilentProcessExit monitors, AppInit_DLLs, LSA packages,
-  netsh helpers, COM servers registered per user (COM hijacking), logon scripts, screen savers,
-  Office add-ins / test keys, startup folders redirected.
+- **Persistence** — Run / RunOnce / RunOnceEx / policies Run, Windows `Load` / `Run`, Winlogon
+  (`Shell`, `Userinit`, notify packages), Active Setup `StubPath`, `BootExecute` / `SetupExecute`,
+  services (image paths in user-writable folders, `ServiceDll` outside System32, names posing as
+  Windows components) and Safe Boot services, IFEO debuggers (Visual Studio / WinDbg ones excepted)
+  and SilentProcessExit monitors, AppInit_DLLs, AppCertDLLs, LSA packages, print monitors / print
+  processors, netsh helpers, the cmd.exe `AutoRun`, COM servers registered per user or in a
+  user-writable folder, TypeLib / COM scriptlets (`script:` monikers, `.sct`), file associations
+  and protocol handlers running a script host, logon scripts, screen savers, Office add-ins /
+  test keys, startup folders redirected.
 - **Evasion** — Defender disabled or with exclusions, UAC disabled or bypassed through a per-user
-  handler of an auto-elevating program (fodhelper, eventvwr, sdclt), event logs, firewall or
+  handler of an auto-elevating program (fodhelper, eventvwr, sdclt), PowerShell script block /
+  module logging or transcription off, AMSI off for Windows Script Host, event logs, firewall or
   administrative tools disabled, LSA protection off.
 - **Credentials and access** — WDigest clear-text passwords, RDP enabled, a proxy set for the
   user, certificates added to the trusted root / publisher stores (with their subject and issuer).
+- **What any value holds** — malicious-looking command lines (encoded commands, download cradles,
+  AMSI tampering, base64 of those words), obfuscated script code, long base64 blobs and very long
+  strings, WMI event-consumer text, ransomware file extensions (registered, or in a path). These
+  generic rules leave out the values another rule already reported.
 
 Entries pointing to a script host, an encoded command, a URL, a UNC path or a user-writable
 folder (`%TEMP%`, `C:\Users\Public`…) raise the severity of the rule that found them.

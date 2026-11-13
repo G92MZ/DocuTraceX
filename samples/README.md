@@ -382,7 +382,7 @@ memory), and upload the `.dmp`. DocuTraceX itself never runs anything.
 
 ## Registry (the Registry tab)
 
-Two inert samples of what an invoice-fraud dropper leaves in the registry. Both are
+Three inert samples of what an invoice-fraud dropper leaves in the registry. Both are
 loaded into the case's registry database (`results/registry.duckdb`), checked by the
 registry rules, and can be browsed, searched and queried with SQL from the
 **Registry** tab (and the `query_registry` AI / MCP tool) without re-parsing.
@@ -406,10 +406,29 @@ as `HKCU`, with ordinary keys around:
 | What it holds | Finding |
 |---|---|
 | `Run` `InvoiceViewer` = `mshta.exe https://cdn-update.example.net/…/view.hta` (next to a benign OneDrive entry, not flagged) | *Autorun entry … with a suspicious command* (high) |
-| a CLSID `InprocServer32` under `HKCU\Software\Classes` → `C:\Users\Public\Facturas\vwr.dll` | *COM server registered per user* (medium, T1546.015) |
+| a CLSID `InprocServer32` under `HKCU\Software\Classes` → `C:\Users\Public\Facturas\vwr.dll` | *COM server registered per user* (medium, T1546.015) and *COM server in a user-writable folder* (high) |
 | `Environment\UserInitMprLogonScript` | *Logon script (UserInitMprLogonScript)* (high, T1037.001) |
 | `Internet Settings` proxy `198.51.100.7:8080` | *Proxy / PAC set for the user* (medium, T1090) |
-| a base64 `MZ` stub in a `REG_SZ` value | *payload(s) stored in registry values* (high) — carved |
+| a base64 `MZ` stub in a `REG_SZ` value | *payload(s) stored in registry values* (high) — carved; *Long base64 blob* (low) |
+
+`registry/sample_system_tampering.reg` goes after the machine (HKLM) and the less common
+autostarts. Each technique sits next to the ordinary value it imitates, which must stay quiet:
+
+| What it sets | Finding |
+|---|---|
+| `Windows NT\CurrentVersion\Windows` `Load` → `C:\ProgramData\GrupoEjemplo\fsync.exe` | *Windows Load / Run value* (high, T1547.001) |
+| Active Setup `StubPath` = `mshta.exe https://cdn-update.example.net/…` (next to an `ie4uinit.exe` one, not flagged) | *Active Setup StubPath* (high, T1547.014) |
+| `BootExecute` = `autocheck autochk *` + `fsync.exe` (the default line alone is not flagged) | *Session Manager BootExecute* (high, T1547) |
+| `Session Manager\AppCertDlls` | *AppCertDLLs* (high, T1546.009) |
+| print monitor `Factura Port` → `C:\ProgramData\…\fmon.dll` (next to `tcpmon.dll`, not flagged) | *Print monitor / print processor DLL with a path* (high, T1547.010) |
+| `Command Processor\AutoRun` | *Command Processor AutoRun* (high, T1546) |
+| service `FactSvcHlp` *Windows Helper Service*, `ServiceDll` in ProgramData; service `FactUpd` in AppData | *Service DLL outside System32* (high), *Service named like a Windows component* (medium, T1036.004), *Service image path* (high, T1543.003) |
+| an IFEO `Debugger` = `vsjitdebugger.exe` | not flagged (a debugger) |
+| a TypeLib `win32` = `script:https://…/tl.sct` | *COM / TypeLib registration that runs a scriptlet* (high, T1546.015) |
+| `txtfile\shell\open\command` = `wscript.exe … open.vbs` | *File association / protocol handler command* (high, T1546.001) |
+| `EnableScriptBlockLogging` = 0, `Windows Script\Settings\AmsiEnable` = 0 | *PowerShell logging turned off* (high, T1562.002), *AMSI turned off* (high, T1562.001) |
+| a `[char]87+[char]114…` script, a staged base64 configuration, a `CommandLineEventConsumer` text | *Obfuscated script code* (medium, T1027), *Long base64 blob* (low), *WMI event consumer text* (high, T1546.003) |
+| `HKCU\Software\Classes\.lockbit` and a path to `factura_0613.xlsx.lockbit` | *File extension of a known ransomware family* / *Path to a file with a known ransomware extension* (high, T1486) |
 
 Try in the SQL tab: `SELECT "key", name, data FROM vals WHERE regexp_matches(data, 'powershell|mshta', 'i')`.
 

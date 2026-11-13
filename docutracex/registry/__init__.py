@@ -79,9 +79,12 @@ def ingest(files: list[tuple[Path, str]], case_root: Path, work_dir: Path) -> di
 def run_rules(dbp: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """(hits per rule, findings)."""
     hits, findings = [], []
-    for r in rules.RULES:
+    reported: set[tuple] = set()          # (src, key, name) already in a finding
+    for r in sorted(rules.RULES, key=lambda x: bool(x.get("dedupe"))):
         sql, args = rules.sql_for(r)
         rows = store.query(dbp, sql, args, 500)["rows"]
+        if r.get("dedupe"):
+            rows = [x for x in rows if (x[0], x[1], x[2]) not in reported]
         if not rows and not r.get("name") and not r.get("data"):
             ksql, kargs = rules.keys_sql_for(r)
             rows = store.query(dbp, ksql, kargs, 500)["rows"]
@@ -101,6 +104,7 @@ def run_rules(dbp: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
                      "count": len(items), "suspicious": len(sus), "items": items[:MAX_FINDINGS_ROWS]})
         if severity == "info":
             continue
+        reported.update((it["src"], it["key"], it["name"]) for it in shown)
         ev = "\n".join(f"{it['key']}" + (f" :: {it['name']} = {it['data'][:160]}" if it["name"] else "")
                        for it in shown[:8])
         findings.append({"tool": "registry", "rule": r["id"], "severity": severity,
