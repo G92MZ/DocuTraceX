@@ -67,7 +67,8 @@ def _is_binary_payload(raw: bytes) -> bool:
         off = int.from_bytes(raw[0x3C:0x40], "little")
         if raw[off:off + 4] == b"PE\0\0":
             return True
-    return raw.startswith(_SHELLCODE_HEADS) or raw[:16].count(b"\x90") >= 8
+    return (raw.startswith(_SHELLCODE_HEADS) or raw[:16].count(b"\x90") >= 8
+            or 0 <= raw[:48].find(b"\xd9\x74\x24\xf4") <= 32)     # encoder stub (shikata_ga_nai GetPC)
 
 
 def _sq_value(lit: str) -> str:
@@ -131,6 +132,43 @@ def _t_encoded_command(code: str) -> tuple[str, int]:
         return "\n" + text + "\n"
 
     return _ENC_FLAG.sub(repl, code), n
+
+
+# The launcher's -EncodedCommand flag built at run time so no "-enc" is written
+# (Metasploit's psh-cmd template: ``sv a -;sv b ec;sv c ((gv a).value.toString()+
+# (gv b).value.toString());powershell (gv c).value.toString() '<base64>'``): a
+# quoted base64 argument of a powershell call that decodes to UTF-16LE text.
+_PS_B64_ARG = re.compile(r"(?i)\bpowershell(?:\.exe)?\b[^'\"\n;|]{0,200}?'([A-Za-z0-9+/]{64,}={0,2})'")
+
+
+def _utf16_script(b64: str) -> str | None:
+    try:
+        raw = base64.b64decode(b64 + "=" * (-len(b64) % 4))
+    except (binascii.Error, ValueError):
+        return None
+    if len(raw) < 32 or len(raw) % 2:
+        return None
+    try:
+        text = raw.decode("utf-16-le")
+    except UnicodeDecodeError:
+        return None
+    printable = sum(1 for c in text if c.isprintable() or c in "\r\n\t")
+    return text if printable >= 0.97 * len(text) else None
+
+
+def _t_powershell_b64_arg(code: str) -> tuple[str, int]:
+    n = 0
+
+    def repl(m: re.Match) -> str:
+        nonlocal n
+        text = _utf16_script(m.group(1))
+        if text is None:
+            return m.group(0)
+        n += 1
+        _stage(["base64 (powershell argument)", "utf-16le"], text, m.group(1))
+        return "\n" + text + "\n"
+
+    return _PS_B64_ARG.sub(repl, code), n
 
 
 _ENC_MAP = {"unicode": "utf-16-le", "bigendianunicode": "utf-16-be",
@@ -947,6 +985,7 @@ def _t_scriptblock(code: str) -> tuple[str, int]:
 
 _TRANSFORMS: list[tuple[str, Callable[[str], tuple[str, int]]]] = [
     ("encoded-command", _t_encoded_command),
+    ("powershell-base64-argument", _t_powershell_b64_arg),
     ("decompress", _t_decompress),
     ("xor-base64", _t_xor_base64),
     ("xor-char-array", _t_char_xor),

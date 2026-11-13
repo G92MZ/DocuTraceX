@@ -47,8 +47,9 @@ EXTRACTORS: dict[str, dict[str, Any]] = {
         "limits": "",
     },
     "metasploit": {
-        "name": "Metasploit / Meterpreter", "families": ["Metasploit / Meterpreter"], "version": "1.0",
-        "formats": ["shellcode", "PE with shellcode"], "engines": ["block_api shapes"], "dependencies": [],
+        "name": "Metasploit / Meterpreter", "families": ["Metasploit / Meterpreter"], "version": "1.1",
+        "formats": ["shellcode", "encoded shellcode (shikata_ga_nai, x64/xor)", "PE with shellcode"],
+        "engines": ["block_api shapes", "encoder stub emulation (Unicorn, no OS)"], "dependencies": [],
         "fields": ["LHOST", "LPORT", "transport", "URI"], "output": "stager configuration", "limits": "",
     },
     "dotnet_more": {
@@ -83,9 +84,9 @@ EXTRACTORS: dict[str, dict[str, Any]] = {
         "limits": "a bare literal is never taken as the C2 on its own; endpoints built at run time are not seen",
     },
     "stealers": {
-        "name": "AgentTesla-style stealers", "families": ["AgentTesla"], "version": "1.0",
+        "name": "AgentTesla-style stealers", "families": ["AgentTesla", "Discord-webhook grabbers"], "version": "1.1",
         "formats": [".NET assembly", "PE", "memory dump"], "engines": ["strings"], "dependencies": [],
-        "fields": ["SMTP / FTP / Telegram exfiltration", "accounts"], "output": "exfiltration channel",
+        "fields": ["SMTP / FTP / Telegram / Discord webhook exfiltration", "accounts"], "output": "exfiltration channel",
         "limits": "builds that encrypt their strings need the .NET string decryption or a memory dump",
     },
 }
@@ -103,7 +104,7 @@ REQUIRES: dict[str, list[tuple[str, str, bool, str]]] = {
     "remcos": [("python", "pefile", True, "PE resources (SETTINGS)")],
     "dotnet": [("python", "pefile", True, "PE / .NET reading"), ("python", "cryptography", True, "AES + HMAC settings"),
                ("python", "rat_king_parser", False, "second engine (AsyncRAT / DcRAT / Venom / Quasar / XWorm clones)")],
-    "metasploit": [],
+    "metasploit": [("python", "unicorn", False, "encoder stubs (shikata_ga_nai, x64/xor) decoded by emulation")],
     "dotnet_more": [("python", "cryptography", True, "AES / DES / RC4 settings")],
     "stealers": [("python", "pefile", False, "PE resources"), ("python", "cryptography", False, "3DES-encrypted strings")],
     "go": [],
