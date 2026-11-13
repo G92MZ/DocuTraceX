@@ -58,6 +58,8 @@ SHOTS: dict[str, list[tuple[str, list[tuple[str, str, str | None]]]]] = {
     "pdf": [("pdf/sample.pdf", [("pdf", "pdf", None), ("pdftools", "pdftools", None), ("embedded", "embedded", None),
                                 ("javascript", "javascript", None)])],
     "onenote": [("onenote/sample_notes.one", [("onenote", "onenote", None)])],
+    "registry": [("registry/sample_persistence.reg", [("registry", "findings", None), ("registry", "sql", None)]),
+                 ("registry/sample_NTUSER.DAT", [("registry", "browse", None), ("registry", "search", None)])],
     "shortcuts": [("shortcuts/sample_shortcut.pdf.lnk", [("shortcut", "shortcut", None)])],
     "scripts": [
         ("javascript/sample_obf_techniques.js", [("javascript", "javascript", None)]),
@@ -105,7 +107,11 @@ SHOTS: dict[str, list[tuple[str, list[tuple[str, str, str | None]]]]] = {
 }
 
 # inner tab to open before the picture, by (page, picture)
-_CLICKS = {("windows-pe", "binary"): '[data-itab="pefile"]', ("other-binaries", "elf"): '[data-itab="lief"]'}
+_CLICKS = {("windows-pe", "binary"): '[data-itab="pefile"]', ("other-binaries", "elf"): '[data-itab="lief"]',
+           ("registry", "browse"): ['[data-itab="browse"]', r"@fill:#reg-b-path=HKCU\Software\Microsoft\Windows\CurrentVersion\Run",
+                                     "#reg-b-go"],
+           ("registry", "search"): ['[data-itab="search"]', "@fill:#reg-s-q=mshta", "#reg-s-go"],
+           ("registry", "sql"): ['[data-itab="sql"]', "#reg-q-go"]}
 
 # a YARA rule for the YARA page (inert: it matches the campaign's own indicators)
 _YARA_RULE = b"""rule Invoice_Fraud_Campaign_Indicators
@@ -257,8 +263,14 @@ def _shoot(base: str, ids: dict[str, str], pages: list[str], scale: int) -> None
                             page.evaluate(_AFTER_JS[tab])
                             page.wait_for_timeout(200)
                         if (pg, pic) in _CLICKS:
-                            page.locator(_CLICKS[(pg, pic)]).first.click()
-                            page.wait_for_timeout(400)
+                            steps = _CLICKS[(pg, pic)]
+                            for sel in [steps] if isinstance(steps, str) else steps:
+                                if sel.startswith("@fill:"):
+                                    target, _, text = sel[6:].partition("=")
+                                    page.fill(target, text)
+                                else:
+                                    page.locator(sel).first.click()
+                                page.wait_for_timeout(700)
                         # crop to the tab bar + its pane (or to the element asked for), at most MAX_H tall
                         box = page.evaluate(
                             "([sel, host]) => { const [s1, s2] = sel.split('|');"

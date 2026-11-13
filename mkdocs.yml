@@ -93,6 +93,7 @@ nav:
       - Archives and disk images: file-types/archives.md
       - Images: file-types/images.md
       - Memory dumps: file-types/memdump.md
+      - Registry hives and .reg: file-types/registry.md
   - Analysis tools:
       - Findings, IOCs and marks: engines/findings-iocs.md
       - C2 / Beacons: engines/c2.md

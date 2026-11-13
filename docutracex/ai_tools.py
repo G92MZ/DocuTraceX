@@ -21,6 +21,8 @@ Tools:
   - get_decrypted(case_id, limit?)                 everything decrypted statically, with how
   - get_nested_tree(case_id, max_depth?)           the chain of extracted / hidden / decrypted stages
   - get_ml(case_id)                                ML scores, similar objects in other cases, chain
+  - query_registry(case_id, sql?, q?, key?, limit?) the case's registry database (hives / .reg):
+                                                   read-only SQL, text search or one key's contents
 """
 
 from __future__ import annotations
@@ -52,6 +54,7 @@ TOOLS_DOC = [
     ("get_decrypted(case_id, limit?)", "strings / configs / resources / stages decrypted statically, with the routine and method"),
     ("get_nested_tree(case_id, max_depth?)", "extracted, unpacked, hidden and decrypted stages with how each was obtained"),
     ("get_ml(case_id)", "ML scores, unusual-for-the-model flags, similar objects in other cases, highest score of the chain"),
+    ("query_registry(case_id, sql?, q?, key?, src?, limit?)", "registry hives / .reg of the case: read-only SQL over sources, keys, vals; text search; one key's subkeys and values"),
 ]
 
 
@@ -458,11 +461,44 @@ def get_ml(case_id: str) -> dict[str, Any]:
             "note": "complementary indicator, not a verdict; results are not findings until marked"}
 
 
+def query_registry(case_id: str, sql: str | None = None, q: str | None = None, key: str | None = None,
+                   src: int = 0, limit: int = 200) -> dict[str, Any]:
+    """The case's registry database: ``sql`` (one read-only SELECT over sources, keys, vals),
+    ``q`` (text search in key paths, value names and data) or ``key`` (its subkeys and values);
+    with none of them, the sources and the schema."""
+    from .registry import remote, store
+    paths = _paths(case_id)
+    db = store.db_path(paths.root)
+    if not db.is_file():
+        return {"error": "this case has no registry data (no hive / .reg was analysed)"}
+    if not remote.available():
+        return {"error": "DuckDB is not installed"}
+    limit = max(1, min(int(limit or 200), 1000))
+    if sql:
+        res = remote.call("user_query", path=db, sql=sql, limit=limit)
+    elif q:
+        res = remote.call("search", path=db, q=q, where="any", src=int(src or 0), regex=False, limit=limit, offset=0)
+    elif key:
+        res = remote.call("children", path=db, src=int(src or 1), key=key)
+        res["subkeys"] = res["subkeys"][:limit]
+        res["values"] = [{**v, "data": _clip(v.get("data"), 2000)} for v in res["values"][:limit]]
+        return res
+    else:
+        res = remote.call("query", path=db, sql="SELECT * FROM sources ORDER BY id", limit=100)
+        res["schema"] = {"sources": "id, label, file, kind (hive|reg), hive_type, mount, keys, vals, logs, error",
+                         "keys": "src, path, parent, name, last_write, subkeys, nvalues, op (delete = .reg removal)",
+                         "vals": 'src, "key", name, type, data (text), size, raw (bytes of binary values), op'}
+        return res
+    res["rows"] = [[_clip(c, 1000) if isinstance(c, str) else c for c in r] for r in res["rows"]]
+    return res
+
+
 TOOLS = {
     "list_cases": list_cases, "case_summary": case_summary, "get_findings": get_findings, "get_iocs": get_iocs,
     "get_module": get_module, "get_network_checks": get_network_checks, "search_case": search_case,
     "list_code_objects": list_code_objects, "list_functions": list_functions, "get_function": get_function,
     "get_decrypted": get_decrypted, "get_nested_tree": get_nested_tree, "get_ml": get_ml,
+    "query_registry": query_registry,
 }
 
 
@@ -534,4 +570,13 @@ SCHEMAS = [
     {"type": "function", "function": {"name": "get_ml",
                                       "description": "Machine Learning: score and verdict per object, unusual-for-the-model flag, top features, similar objects in other cases and the highest score of the chain.",
                                       "parameters": {"type": "object", "properties": _CASE, "required": ["case_id"]}}},
+    {"type": "function", "function": {"name": "query_registry",
+                                      "description": "Registry hives / .reg files of the case, loaded in a database. No other argument: sources and schema. "
+                                                     "sql: one read-only SELECT over sources(id, label, kind, hive_type, mount…), keys(src, path, parent, name, last_write…) "
+                                                     "and vals(src, \"key\", name, type, data, size, raw); q: text search; key: subkeys and values of one key path (with src).",
+                                      "parameters": {"type": "object", "properties": {
+                                          **_CASE, "sql": {"type": "string"}, "q": {"type": "string"},
+                                          "key": {"type": "string", "description": "Full key path, e.g. HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run."},
+                                          "src": {"type": "integer", "description": "Source id (from the sources list)."},
+                                          "limit": {"type": "integer"}}, "required": ["case_id"]}}},
 ]

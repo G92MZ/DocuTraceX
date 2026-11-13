@@ -925,7 +925,7 @@ const FINDING_SOURCE_LABEL = {
   msoffcrypto: "msoffcrypto", vipermonkey: "ViperMonkey", vbatools: "VBA tools", vba_deobf: "VBA deobfuscation",
   officemalscanner: "OfficeMalScanner", xlmdeobf: "XLM deobfuscator", mailrules: "Email rules", email: "Email",
   archive: "Archive", rtf: "RTF", onenote: "OneNote", shortcut: "Shortcut", netcheck: "Network checks",
-  manual: "Manual", hex: "Hex extracts", ole: "OLE", ooxml: "OOXML", memdump: "Memory dump",
+  manual: "Manual", hex: "Hex extracts", ole: "OLE", ooxml: "OOXML", memdump: "Memory dump", registry: "Registry",
 };
 const MARK_SHORT = { true_positive: "TP", false_positive: "FP", suspicious: "suspicious",
                      informational: "info", unreviewed: "unreviewed" };
@@ -2752,6 +2752,213 @@ function paneMemdump(m) {
     ${rows}${warn}${netFindingsList(m.findings || [])}${table}${modTable}`;
 }
 
+// --- Registry (hives / .reg in the case database) ------------------------------
+const REG_SQL_EXAMPLES = [
+  ["Autoruns", `SELECT v.src, v."key", v.name, v.data, k.last_write FROM vals v
+  LEFT JOIN keys k ON k.src = v.src AND k.path = v."key"
+WHERE regexp_matches(v."key", '\\\\CurrentVersion\\\\Run(Once)?$', 'i')
+ORDER BY k.last_write DESC NULLS LAST`],
+  ["Keys written last", `SELECT src, path, last_write, nvalues FROM keys
+WHERE last_write IS NOT NULL ORDER BY last_write DESC LIMIT 200`],
+  ["Services", `SELECT v."key", v.data AS image_path FROM vals v
+WHERE regexp_matches(v."key", '\\\\Services\\\\[^\\\\]+$', 'i') AND v.name = 'ImagePath'
+ORDER BY 1`],
+  ["Binary values > 4 KB", `SELECT src, "key", name, size FROM vals
+WHERE raw IS NOT NULL AND size > 4096 ORDER BY size DESC`],
+  ["Commands in values", `SELECT src, "key", name, data FROM vals
+WHERE regexp_matches(data, '(?i)(powershell|mshta|rundll32|regsvr32|cmd(\\.exe)? /c|https?://)')`],
+  ["Tables", `DESCRIBE vals`],
+];
+
+function regSourcesSelect(sources, id) {
+  return `<select id="${id}"><option value="0">All sources</option>${sources.map((s) =>
+    `<option value="${s.id}">${escapeHtml(`${s.id} · ${s.label}`)}</option>`).join("")}</select>`;
+}
+
+function paneRegistry(rg) {
+  const c = rg.counts || {};
+  const sources = rg.sources || [];
+  const srcRows = sources.map((s) => `<tr><td>${s.id}</td><td class="mono">${escapeHtml(s.label)}</td>
+    <td>${escapeHtml(s.kind === "hive" ? `hive (${s.hive_type || "?"})` : ".reg")}</td><td class="mono">${escapeHtml(s.mount || "")}</td>
+    <td>${s.keys}</td><td>${s.values}</td><td>${escapeHtml((s.logs || []).join(", "))}</td>
+    <td>${s.error ? `<span class="bad-text">${escapeHtml(s.error)}</span>` : ""}</td></tr>`).join("");
+  const hits = (rg.hits || []).map((h) => `<details class="disclose"><summary>
+      <span class="badge badge-${SEV_CLASS[h.severity] || "muted"}">${escapeHtml(h.severity)}</span>
+      <span class="mono">${escapeHtml(h.rule)}</span> ${escapeHtml(h.title)} — ${h.count}${h.suspicious ? ` (${h.suspicious} suspicious)` : ""}
+      <span class="hint-line">${escapeHtml((h.attack || []).join(", "))}</span></summary>
+      <table class="cases"><thead><tr><th>Source</th><th>Key</th><th>Value</th><th>Data</th><th>Last write</th></tr></thead><tbody>
+      ${(h.items || []).map((it) => `<tr><td>${it.src}</td><td class="mono"><a href="#" data-reg-open="${escapeHtml(it.key)}" data-reg-src="${it.src}">${escapeHtml(it.key)}</a></td>
+        <td class="mono">${escapeHtml(it.name || "")}</td><td class="mono">${escapeHtml(it.data || "")}</td>
+        <td>${escapeHtml(it.last_write || "")}</td></tr>`).join("")}</tbody></table></details>`).join("");
+  const certs = (rg.certificates || []).length ? `<h4>Certificates added to trusted stores</h4><table class="cases"><thead><tr>
+      <th>Thumbprint</th><th>Subject</th><th>Issuer</th><th>Valid</th></tr></thead><tbody>${rg.certificates.map((x) => `<tr>
+      <td class="mono">${escapeHtml(x.thumbprint || "")}</td><td>${escapeHtml(x.subject || "")}${x.self_signed ? ' <span class="badge badge-warn">self-signed</span>' : ""}</td>
+      <td>${escapeHtml(x.issuer || "")}</td><td>${escapeHtml((x.not_before || "").slice(0, 10))} → ${escapeHtml((x.not_after || "").slice(0, 10))}</td></tr>`).join("")}</tbody></table>` : "";
+  const carved = (rg.carved || []).length ? `<h4>Payloads stored in values (analysed in Nested)</h4><table class="cases"><thead><tr>
+      <th>Key</th><th>Value</th><th>How</th><th>Bytes</th><th>File</th></tr></thead><tbody>${rg.carved.map((x) => `<tr>
+      <td class="mono">${escapeHtml(x.key)}</td><td class="mono">${escapeHtml(x.name)}</td><td>${escapeHtml(x.how)}</td>
+      <td>${x.size}</td><td class="mono">${escapeHtml(x.file)}</td></tr>`).join("")}</tbody></table>` : "";
+  const browse = `<div class="reg-browse">
+      <div class="row">${regSourcesSelect(sources, "reg-b-src")}
+        <input id="reg-b-path" type="text" class="mono" placeholder="Key path — HKCU\\Software\\…" spellcheck="false" style="flex:1">
+        <button class="btn btn-ghost btn-sm" id="reg-b-go" type="button">Open</button>
+        <button class="btn btn-ghost btn-sm" id="reg-b-up" type="button" title="Parent key">↑</button></div>
+      <div id="reg-b-meta" class="hint-line"></div>
+      <div class="reg-cols"><div id="reg-b-keys" class="reg-keys"></div><div id="reg-b-vals" class="reg-vals"></div></div>
+      <pre id="reg-b-value" class="text-sample" hidden></pre></div>`;
+  const search = `<div class="row"><input id="reg-s-q" type="search" placeholder="Text in key paths, value names or data" style="flex:1">
+      <select id="reg-s-where"><option value="any">anywhere</option><option value="key">key path</option>
+        <option value="name">value name</option><option value="data">data</option></select>
+      ${regSourcesSelect(sources, "reg-s-src")}
+      <label class="hint-line"><input type="checkbox" id="reg-s-regex"> regex</label>
+      <button class="btn btn-primary btn-sm" id="reg-s-go" type="button">Search</button>
+      <button class="btn btn-ghost btn-sm" id="reg-s-csv" type="button">Export CSV</button></div>
+      <div id="reg-s-out"></div>`;
+  const sql = `<p class="hint-line">Read-only SQL (DuckDB) over <span class="mono">sources</span>, <span class="mono">keys</span>
+      (src, path, parent, name, last_write, subkeys, nvalues, op) and <span class="mono">vals</span> (src, "key", name, type,
+      data, size, raw, op). Examples: ${REG_SQL_EXAMPLES.map(([n], i) => `<a href="#" data-reg-example="${i}">${escapeHtml(n)}</a>`).join(" · ")}</p>
+      <textarea id="reg-q-sql" class="mono" rows="6" spellcheck="false" style="width:100%">${escapeHtml(REG_SQL_EXAMPLES[0][1])}</textarea>
+      <div class="row"><button class="btn btn-primary btn-sm" id="reg-q-go" type="button">Run</button>
+        <button class="btn btn-ghost btn-sm" id="reg-q-csv" type="button">Export CSV</button><span id="reg-q-status" class="hint-line"></span></div>
+      <div id="reg-q-out"></div>`;
+  return `<div data-reg-pane><p class="hint-line">${c.sources || 0} source(s) · ${c.keys || 0} keys · ${c.values || 0} values,
+      loaded once into the case database (<span class="mono">${escapeHtml(rg.db || "")}</span>): browse, search and query them
+      without re-parsing, now or when the case is reopened.</p>
+    <table class="cases"><thead><tr><th>#</th><th>Source</th><th>Kind</th><th>Mounted as</th><th>Keys</th><th>Values</th>
+      <th>Logs applied</th><th></th></tr></thead><tbody>${srcRows}</tbody></table>
+    ${innerTabs("registry", [
+      { id: "findings", label: `Findings (${(rg.findings || []).length})`, html: `${netFindingsList(rg.findings || [])}${hits ? `<h4>Rule hits</h4>${hits}` : ""}${certs}${carved}` || "-" },
+      { id: "browse", label: "Browse", html: browse },
+      { id: "search", label: "Search", html: search },
+      { id: "sql", label: "SQL", html: sql },
+    ])}</div>`;
+}
+
+function regTable(res, linkCols) {
+  if (!res.rows || !res.rows.length) return `<p class="hint-line">No rows.</p>`;
+  const kcol = res.columns.findIndex((c) => c === "key" || c === "path");
+  const scol = res.columns.indexOf("src");
+  const head = res.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("");
+  const narrow = res.columns.map((c) => ["src", "name", "type", "size", "op", "last_write", "kind", "id"].includes(c));
+  const body = res.rows.map((r) => `<tr>${r.map((v, i) => {
+    const t = v === null || v === undefined ? "" : String(v);
+    if (linkCols && i === kcol && t) {
+      return `<td class="mono"><a href="#" data-reg-open="${escapeHtml(t)}" data-reg-src="${scol >= 0 ? escapeHtml(String(r[scol])) : "0"}">${escapeHtml(t)}</a></td>`;
+    }
+    return `<td class="mono${narrow[i] && t.length <= 60 ? " reg-nowrap" : ""}">${escapeHtml(t.length > 600 ? t.slice(0, 600) + "…" : t)}</td>`;
+  }).join("")}</tr>`).join("");
+  return `<p class="hint-line">${res.rows.length} row(s)${res.truncated ? " (more: refine the query or export)" : ""}</p>
+    <div class="table-scroll"><table class="cases"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+async function regFetch(url, opts) {
+  const r = await fetch(url, opts);
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || j.error || r.statusText);
+  return j;
+}
+
+async function regDownload(caseId, body) {
+  const r = await fetch(`/api/cases/${encodeURIComponent(caseId)}/registry/export.csv`,
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (!r.ok) { const j = await r.json().catch(() => ({})); alertRegError(j.detail || r.statusText); return; }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(await r.blob());
+  a.download = `${caseId}_registry.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+function alertRegError(msg) {
+  const el = document.getElementById("reg-q-status");
+  if (el) { el.className = "hint-line bad-text"; el.textContent = msg; }
+}
+
+function wireRegistry(root, caseId) {
+  const pane = root.querySelector("[data-reg-pane]");
+  if (!pane) return;
+  const base = `/api/cases/${encodeURIComponent(caseId)}/registry`;
+  const $ = (id) => pane.querySelector(`#${id}`);
+  let cur = { src: 0, path: "" };
+
+  async function openKey(src, path) {
+    cur = { src: Number(src) || 0, path: path || "" };
+    if (cur.path && !cur.src) cur.src = 1;
+    $("reg-b-src").value = String(cur.src);
+    $("reg-b-path").value = cur.path;
+    $("reg-b-value").hidden = true;
+    $("reg-b-keys").innerHTML = `<p class="hint-line">Loading…</p>`;
+    try {
+      const d = await regFetch(`${base}/key?src=${cur.src}&path=${encodeURIComponent(cur.path)}`);
+      const m = d.meta;
+      $("reg-b-meta").textContent = m ? `${m.path} · last write ${m.last_write || "—"} · ${m.subkeys ?? "?"} subkey(s), ${m.values ?? "?"} value(s)${m.op === "delete" ? " · DELETED by the .reg" : ""}` : (cur.path || "Roots");
+      $("reg-b-keys").innerHTML = d.subkeys.length ? `<ul class="reg-keylist">${d.subkeys.map((k) => `<li><a href="#" data-reg-open="${escapeHtml(k.path)}" data-reg-src="${k.src}">
+          ${escapeHtml(cur.path ? k.name : `${k.src} · ${k.path}`)}</a>${k.op === "delete" ? ' <span class="badge badge-warn">deleted</span>' : ""}
+          ${k.last_write ? `<span class="hint-line">${escapeHtml(k.last_write)}</span>` : ""}</li>`).join("")}</ul>` : `<p class="hint-line">No subkeys.</p>`;
+      $("reg-b-vals").innerHTML = d.values.length ? `<table class="cases"><thead><tr><th>Name</th><th>Type</th><th>Data</th><th>Size</th></tr></thead><tbody>
+        ${d.values.map((v) => `<tr><td class="mono reg-nowrap"><a href="#" data-reg-value="${escapeHtml(v.name)}">${escapeHtml(v.name)}</a>${v.op === "delete" ? ' <span class="badge badge-warn">deleted</span>' : ""}</td>
+          <td class="reg-nowrap">${escapeHtml(v.type || "")}</td><td class="mono">${escapeHtml(String(v.data ?? "").slice(0, 300))}</td><td>${v.size ?? ""}</td></tr>`).join("")}</tbody></table>`
+        : (cur.path ? `<p class="hint-line">No values.</p>` : "");
+    } catch (e) {
+      $("reg-b-keys").innerHTML = `<p class="bad-text">${escapeHtml(e.message)}</p>`;
+    }
+  }
+
+  pane.addEventListener("click", async (ev) => {
+    const a = ev.target.closest("a, button");
+    if (!a || !pane.contains(a)) return;
+    if (a.hasAttribute("data-reg-open")) {
+      ev.preventDefault();
+      const tab = pane.querySelector('.itab[data-itab-group="registry"][data-itab="browse"]');
+      if (tab && !tab.classList.contains("is-active")) tab.click();
+      openKey(a.getAttribute("data-reg-src"), a.getAttribute("data-reg-open"));
+    } else if (a.hasAttribute("data-reg-value")) {
+      ev.preventDefault();
+      try {
+        const v = await regFetch(`${base}/value?src=${cur.src}&path=${encodeURIComponent(cur.path)}&name=${encodeURIComponent(a.getAttribute("data-reg-value"))}`);
+        const pre = $("reg-b-value");
+        pre.hidden = false;
+        pre.textContent = `${a.getAttribute("data-reg-value")} (${v.type}, ${v.size} bytes)\n\n${v.data || ""}` +
+          (v.hex ? `\n\nhex:\n${v.hex.match(/.{1,64}/g).join("\n")}` : "");
+      } catch (e) { alertRegError(e.message); }
+    } else if (a.hasAttribute("data-reg-example")) {
+      ev.preventDefault();
+      $("reg-q-sql").value = REG_SQL_EXAMPLES[Number(a.getAttribute("data-reg-example"))][1];
+    } else if (a.id === "reg-b-go") {
+      openKey($("reg-b-src").value, $("reg-b-path").value.trim().replace(/^\\+|\\+$/g, ""));
+    } else if (a.id === "reg-b-up") {
+      const p = cur.path.includes("\\") ? cur.path.slice(0, cur.path.lastIndexOf("\\")) : "";
+      openKey(p ? cur.src : $("reg-b-src").value, p);
+    } else if (a.id === "reg-s-go" || a.id === "reg-s-csv") {
+      const body = { q: $("reg-s-q").value, where: $("reg-s-where").value, src: Number($("reg-s-src").value), regex: $("reg-s-regex").checked };
+      if (a.id === "reg-s-csv") { regDownload(caseId, body); return; }
+      const out = $("reg-s-out");
+      out.innerHTML = `<p class="hint-line">Searching…</p>`;
+      try {
+        const qs = new URLSearchParams({ q: body.q, where: body.where, src: body.src, regex: body.regex });
+        out.innerHTML = regTable(await regFetch(`${base}/search?${qs}`), true);
+      } catch (e) { out.innerHTML = `<p class="bad-text">${escapeHtml(e.message)}</p>`; }
+    } else if (a.id === "reg-q-go" || a.id === "reg-q-csv") {
+      const sql = $("reg-q-sql").value;
+      if (a.id === "reg-q-csv") { regDownload(caseId, { sql }); return; }
+      const st = $("reg-q-status");
+      st.className = "hint-line"; st.textContent = "Running…";
+      try {
+        const t0 = performance.now();
+        $("reg-q-out").innerHTML = regTable(await regFetch(`${base}/sql`, { method: "POST",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sql }) }), true);
+        st.textContent = `${Math.round(performance.now() - t0)} ms`;
+      } catch (e) { st.className = "hint-line bad-text"; st.textContent = e.message; $("reg-q-out").innerHTML = ""; }
+    }
+  });
+  pane.querySelector("#reg-s-q")?.addEventListener("keydown", (ev) => { if (ev.key === "Enter") $("reg-s-go").click(); });
+  pane.querySelector("#reg-b-path")?.addEventListener("keydown", (ev) => { if (ev.key === "Enter") $("reg-b-go").click(); });
+  pane.querySelector("#reg-q-sql")?.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && (ev.ctrlKey || ev.metaKey)) $("reg-q-go").click();
+  });
+  openKey(0, "");
+}
+
 // Where a recovered child comes from (its batch kind).
 function originBadge(n) {
   const t = escapeHtml(n.decrypted_from || "");
@@ -2939,6 +3146,7 @@ function renderSubtabs() {
   wireInnerTabs(bodyEl);
   wireCodeExplorers(bodyEl, _openCaseId);
   wireDotnetDecompile(bodyEl, _openCaseId);
+  wireRegistry(bodyEl, _openCaseId);
   applyFind();
 }
 
@@ -3267,6 +3475,10 @@ async function openComponents(analysisId, keepTab, viewId) {
     if (cdm && (cdm.objects || []).some((o) => cxOk(o.code))) {
       const n = cdm.objects.filter((o) => cxOk(o.code)).length;
       sections.push({ id: "code", label: `Code (${n})`, html: paneCode(cdm) });
+    }
+    const rgm = mods.registry;
+    if (rgm && rgm.status === "ok") {
+      sections.push({ id: "registry", label: `Registry (${(rgm.findings || []).length})`, html: paneRegistry(rgm) });
     }
     const mdm = mods.memdump;
     if (mdm && mdm.status === "ok") {

@@ -380,6 +380,39 @@ sample in the lab VM, dump the process once it has unpacked (`procdump -ma <pid>
 or Task Manager → *Create dump file*; a *full* dump, because mini dumps carry no
 memory), and upload the `.dmp`. DocuTraceX itself never runs anything.
 
+## Registry (the Registry tab)
+
+Two inert samples of what an invoice-fraud dropper leaves in the registry. Both are
+loaded into the case's registry database (`results/registry.duckdb`), checked by the
+registry rules, and can be browsed, searched and queried with SQL from the
+**Registry** tab (and the `query_registry` AI / MCP tool) without re-parsing.
+
+`registry/sample_persistence.reg` is a `.reg` export (UTF-16, as regedit writes it):
+
+| What it sets | Finding |
+|---|---|
+| `HKCU\…\CurrentVersion\Run` `FacturaSync` = `powershell.exe -w hidden -nop -enc …` | *Autorun entry … with a suspicious command* (high, T1547.001) |
+| a Defender path exclusion for `C:\Users\Public\Facturas` | *Microsoft Defender exclusion* (high, T1562.001) |
+| `WDigest\UseLogonCredential` = 1 | *WDigest keeps clear-text passwords in memory* (high, T1003.001) |
+| `HKCU\Software\Classes\ms-settings\shell\open\command` (fodhelper) | *Per-user handler of an auto-elevating program* (high, T1548.002) |
+| IFEO `sethc.exe` → `Debugger` = `cmd.exe` (Sticky Keys) | *Image File Execution Options debugger* (high, T1546.012) |
+| an inert self-signed *Grupo Ejemplo Root CA* added to `SystemCertificates\Root` | *Certificate added to a trusted root / publisher store* (high, T1553.004), with its subject |
+| an `MZ` stub kept in a `REG_BINARY` value, `cdn-update.example.net` / `198.51.100.23` in a `REG_MULTI_SZ` | *payload(s) stored in registry values* (high, T1027.011) — carved as a **Nested** object |
+| `[-HKCU\Software\GrupoEjemplo\OldVersion]` | kept as a deleted key (`op = delete`) |
+
+`registry/sample_NTUSER.DAT` is a user hive (regf, built by `scripts/regkit.py`) mounted
+as `HKCU`, with ordinary keys around:
+
+| What it holds | Finding |
+|---|---|
+| `Run` `InvoiceViewer` = `mshta.exe https://cdn-update.example.net/…/view.hta` (next to a benign OneDrive entry, not flagged) | *Autorun entry … with a suspicious command* (high) |
+| a CLSID `InprocServer32` under `HKCU\Software\Classes` → `C:\Users\Public\Facturas\vwr.dll` | *COM server registered per user* (medium, T1546.015) |
+| `Environment\UserInitMprLogonScript` | *Logon script (UserInitMprLogonScript)* (high, T1037.001) |
+| `Internet Settings` proxy `198.51.100.7:8080` | *Proxy / PAC set for the user* (medium, T1090) |
+| a base64 `MZ` stub in a `REG_SZ` value | *payload(s) stored in registry values* (high) — carved |
+
+Try in the SQL tab: `SELECT "key", name, data FROM vals WHERE regexp_matches(data, 'powershell|mshta', 'i')`.
+
 ## FLOSS and capa: speed
 
 On each PE, FLOSS and capa run **at the same time** (two processes), and the PEs

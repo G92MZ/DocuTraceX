@@ -18,7 +18,7 @@ clients can reach it by IP or host name.
 It reads the same ``cases/`` folder as the web app (``DOCUTRACEX_CASES_DIR``
 overrides it). Tools (see ``ai_tools``): list_cases, case_summary,
 get_findings, get_iocs, get_module, get_network_checks, search_case,
-list_code_objects, list_functions, get_function, get_decrypted, get_nested_tree, get_ml — none
+list_code_objects, list_functions, get_function, get_decrypted, get_nested_tree, get_ml, query_registry — none
 can modify a case or touch the network.
 """
 
@@ -40,7 +40,8 @@ INSTRUCTIONS = ("Read-only access to DocuTraceX forensic cases (Office/PDF/RTF/e
                 "Start with list_cases, then case_summary / get_findings / get_iocs; use get_module for a tool's "
                 "raw output and get_network_checks for URL/domain/IP checks. For binaries: list_code_objects → "
                 "list_functions → get_function; get_decrypted for what was decrypted statically, "
-                "get_nested_tree for the chain of stages, get_ml for scores and similar objects in other cases.")
+                "get_nested_tree for the chain of stages, get_ml for scores and similar objects in other cases; "
+                "query_registry for registry hives / .reg files (SQL, search, browse).")
 
 
 def build_server():
@@ -121,6 +122,14 @@ def build_server():
     def get_ml(case_id: str) -> dict:
         """ML scores, unusual-for-the-model flags, similar objects in other cases, highest score of the chain."""
         return ai_tools.get_ml(case_id)
+
+    @server.tool()
+    def query_registry(case_id: str, sql: Optional[str] = None, q: Optional[str] = None, key: Optional[str] = None,
+                       src: int = 0, limit: int = 200) -> dict:
+        """Registry hives / .reg of the case. No argument: sources and schema. sql: one read-only SELECT over
+        sources, keys(src, path, parent, name, last_write…) and vals(src, "key", name, type, data, size, raw);
+        q: text search; key (+ src): subkeys and values of that key."""
+        return ai_tools.query_registry(case_id, sql, q, key, src, limit)
 
     return server
 

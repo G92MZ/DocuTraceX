@@ -40,6 +40,8 @@ _ACTIONS: list[tuple[str, str, str]] = [
     ("POST", r"^/api/cases/[^/]+/code/[^/]+/[^/]+/floss-full", "ran full FLOSS"),
     ("POST", r"^/api/cases/[^/]+/dotnet/[^/]+/decompile", "decompiled .NET code"),
     ("POST", r"^/api/cases/[^/]+/hex/extract", "extracted bytes from the hex view"),
+    ("POST", r"^/api/cases/[^/]+/registry/sql$", "queried the registry (SQL)"),
+    ("POST", r"^/api/cases/[^/]+/registry/export\.csv$", "exported registry rows (CSV)"),
     ("POST", r"^/api/cases/[^/]+/password", "gave a password to unlock a file"),
     ("POST", r"^/api/cases/[^/]+/wordlist", "tried a password list"),
     ("POST", r"^/api/cases/[^/]+/reveal", "opened the case folder"),

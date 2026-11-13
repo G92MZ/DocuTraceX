@@ -78,6 +78,8 @@ def _detail(path: str, body: bytes) -> str:
         return " ".join(str(data.get(k)) for k in ("state", "comment") if data.get(k))[:200]
     if path.startswith("/api/settings/"):
         return "fields: " + ", ".join(sorted(map(str, data)))[:200]
+    if "/registry/" in path:
+        return str(data.get("sql") or data.get("q") or "")[:200]
     if "/manual-findings" in path:
         return str(data.get("detail") or "")[:200]
     return ""

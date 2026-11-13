@@ -1,0 +1,93 @@
+"""Registry tab: browse, search and query the case's registry database (read-only)."""
+
+from __future__ import annotations
+
+import asyncio
+import csv
+import io
+import re
+
+from fastapi import APIRouter, Body, HTTPException
+from fastapi.responses import Response
+
+from .. import cases as case_service
+from ..errors import CaseError
+
+router = APIRouter(prefix="/api/cases", tags=["registry"])
+
+
+def _db(analysis_id: str):  # noqa: ANN202
+    from ..registry import remote, store
+    from ..storage import CasePaths
+    try:
+        case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    p = store.db_path(CasePaths(analysis_id).root)
+    if not p.is_file():
+        raise HTTPException(status_code=404, detail="This case has no registry data (no hive / .reg was analysed).")
+    if not remote.available():
+        raise HTTPException(status_code=503, detail="DuckDB is not installed (run scripts/setup_portable_python.py).")
+    return p
+
+
+async def _call(fn: str, **kw):  # noqa: ANN003, ANN202
+    """``store.<fn>`` in-process or on the portable Python (``registry.remote``), off the event loop."""
+    from ..registry import remote
+    try:
+        return await asyncio.to_thread(remote.call, fn, **kw)
+    except (ValueError, re.error) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001  (DuckDB errors: a bad query, an interrupted one)
+        raise HTTPException(status_code=400, detail=f"{type(exc).__name__}: {exc}"[:500]) from exc
+
+
+@router.get("/{analysis_id}/registry/sources")
+async def registry_sources(analysis_id: str) -> dict:
+    return await _call("query", path=_db(analysis_id), sql="SELECT * FROM sources ORDER BY id")
+
+
+@router.get("/{analysis_id}/registry/key")
+async def registry_key(analysis_id: str, src: int = 0, path: str = "") -> dict:
+    """Subkeys and values of one key (no path: each source's root)."""
+    return await _call("children", path=_db(analysis_id), src=src, key=path)
+
+
+@router.get("/{analysis_id}/registry/value")
+async def registry_value(analysis_id: str, src: int, path: str, name: str) -> dict:
+    """One value in full (the data text and, for binary values, all the bytes as hex)."""
+    return await _call("value", path=_db(analysis_id), src=src, key=path, name=name)
+
+
+@router.get("/{analysis_id}/registry/search")
+async def registry_search(analysis_id: str, q: str, where: str = "any", src: int = 0, regex: bool = False,
+                          limit: int = 500, offset: int = 0) -> dict:
+    return await _call("search", path=_db(analysis_id), q=q, where=where, src=src, regex=regex,
+                       limit=min(max(limit, 1), 5000), offset=max(offset, 0))
+
+
+@router.post("/{analysis_id}/registry/sql")
+async def registry_sql(analysis_id: str, payload: dict = Body(...)) -> dict:
+    """A read-only SQL query (SELECT / WITH / DESCRIBE) over sources, keys and vals."""
+    from ..registry import store
+    return await _call("user_query", path=_db(analysis_id), sql=str(payload.get("sql") or ""),
+                       limit=min(int(payload.get("limit") or store.MAX_ROWS), store.MAX_ROWS))
+
+
+@router.post("/{analysis_id}/registry/export.csv")
+async def registry_export(analysis_id: str, payload: dict = Body(...)) -> Response:
+    """CSV of a search ({q, where, src, regex}) or of a SQL query ({sql})."""
+    from ..registry import store
+    db = _db(analysis_id)
+    if payload.get("sql"):
+        res = await _call("user_query", path=db, sql=str(payload["sql"]), limit=store.MAX_ROWS)
+    else:
+        res = await _call("search", path=db, q=str(payload.get("q") or ""), where=str(payload.get("where") or "any"),
+                          src=int(payload.get("src") or 0), regex=bool(payload.get("regex")), limit=store.MAX_ROWS,
+                          offset=0)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(res["columns"])
+    w.writerows(res["rows"])
+    return Response(buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="{analysis_id}_registry.csv"'})

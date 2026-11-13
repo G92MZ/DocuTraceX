@@ -118,6 +118,16 @@ TOOL_DEPS: list[Dependency] = [
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
     ),
     Dependency(
+        "duckdb", "duckdb", "Registry tab: the case's registry database (hives / .reg)",
+        required=False,
+        install_hint="run scripts/setup_portable_python.py (installed into the portable)",
+    ),
+    Dependency(
+        "regipy", "regipy", "Registry tab: hive (regf) parsing and transaction logs",
+        required=False,
+        install_hint="run scripts/setup_portable_python.py (installed into the portable)",
+    ),
+    Dependency(
         "dncil", "dncil", ".NET analysis: CIL disassembly",
         required=False,
         install_hint="run scripts/setup_portable_python.py (installed into the portable)",
