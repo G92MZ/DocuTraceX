@@ -251,3 +251,29 @@ def test_no_deep_1768_retries_on_dotnet():
     assert cobalt._is_dotnet(dotnet)
     if cobalt._script() is not None:
         assert not cobalt.deep_candidate(dotnet) and cobalt.deep_candidate(native)
+
+
+def test_upx_packed_elf_is_unpacked(tmp_path):
+    """UPX-packed Go / Linux implants: the PE path unpacked UPX, ELF / Mach-O did not."""
+    from docutracex.parsers import msi
+    from docutracex.parsers.unpack import upx_exe
+    if upx_exe() is None:
+        pytest.skip("UPX (tools/upx) not installed")
+    p = tmp_path / "sample_elf_upx"
+    p.write_bytes(ms.upx_elf())
+    it = msi.analyze_binary(p, p.name, tmp_path / "unpacked")
+    assert it["unpack"]["status"] == "ok"
+    (child,) = it["_children"]
+    data = Path(child["path"]).read_bytes()
+    assert data[:4] == b"\x7fELF" and b"cdn-update.example.net" in data and b"UPX!" not in data[:4096]
+    assert any(f["rule"] == "native_upx_unpacked" for f in it["findings"])
+
+
+def test_elf_without_upx_is_left_alone(tmp_path):
+    import binkit as bk
+
+    from docutracex.parsers import msi
+    p = tmp_path / "plain"
+    p.write_bytes(bk.elf(strings=["inert"]))
+    it = msi.analyze_binary(p, p.name, tmp_path / "unpacked")
+    assert "unpack" not in it and not it.get("_children")

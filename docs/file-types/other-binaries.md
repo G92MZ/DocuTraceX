@@ -1,8 +1,10 @@
 # Linux, macOS and Android
 
 **ELF** and **Mach-O** binaries get the same static triage as Windows executables — header,
-sections and entropy, imports and libraries, packers (UPX) — plus the **Code** tab (functions,
-pseudocode, call graph) and the [Go](go.md) tab when they are Go.
+sections and entropy, imports and libraries, packers — plus the **Code** tab (functions,
+pseudocode, call graph) and the [Go](go.md) tab when they are Go. A UPX-packed ELF or Mach-O
+(common for Go implants and Linux bots) is unpacked with `upx -d` and the real binary is analysed
+in **Nested**.
 
 ![Binary tab of an ELF backdoor](../assets/shots/other-binaries/elf.webp){ .shot }
 
