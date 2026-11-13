@@ -305,3 +305,12 @@ def test_upx_wiped_sample_is_recognised():
     b = ms.upx_wiped_exe()
     assert b"UPX!" not in b
     assert [h["by"] for h in unpack.heuristics(b, pefile.PE(data=b))] == ["layout"]
+
+
+def test_garble_finding_without_package_share():
+    """Garble seen through a hidden pclntab has only a reason: the finding crashed the Go step."""
+    from docutracex import golang
+    item = {"label": "x.elf", "result": {"state": "Confirmed", "binary": {"format": "elf", "arch": "amd64"},
+                                         "traits": {"garble": {"reason": "pclntab hidden"}}}}
+    fs = golang._findings(item)
+    assert any(f["rule"] == "go:garble" and "pclntab hidden" in f["detail"] for f in fs)

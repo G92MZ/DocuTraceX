@@ -103,8 +103,9 @@ def _findings(item: dict[str, Any]) -> list[dict[str, Any]]:
                                   for e in r.get("evidence") or [])[:1500]}]
     if tr.get("garble"):
         g = tr["garble"]
-        out.append({"tool": "golang", "rule": "go:garble", "severity": "medium",
-                    "detail": f"Go binary with Garble-style obfuscated package names ({int(g['random_package_share'] * 100)}% of user functions)",
+        detail = (f"Go binary with Garble-style obfuscated package names ({int(g['random_package_share'] * 100)}% of user functions)"
+                  if "random_package_share" in g else f"Go binary obfuscated with Garble: {g.get('reason', '')}".rstrip(": "))
+        out.append({"tool": "golang", "rule": "go:garble", "severity": "medium", "detail": detail,
                     "location": loc, "evidence": ", ".join(g.get("examples") or [])})
     if tr.get("metadata_altered"):
         out.append({"tool": "golang", "rule": "go:metadata_altered", "severity": "low",
