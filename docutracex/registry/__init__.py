@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from . import artifacts, catalog, parse, rules, store
+from . import artifacts, catalog, context, parse, recover, rules, store
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +56,15 @@ def ingest(files: list[tuple[Path, str]], case_root: Path, work_dir: Path) -> di
                                embedded_name=info["embedded_name"])
                     for what, row in parse.iter_hive(use, info["mount"]):
                         (loader.key if what == "key" else loader.value)(row)
+                    try:                        # deleted keys / values still in free cells
+                        n_rec = 0
+                        for what, row in recover.recover(path, info["mount"]):
+                            (loader.key if what == "key" else loader.value)(row)
+                            n_rec += what == "value" or row[0].rsplit("\\", 1)[-1] not in (
+                                recover.ORPHAN_KEYS, recover.ORPHAN_VALUES)
+                        rec["recovered"] = n_rec
+                    except Exception as exc:  # noqa: BLE001
+                        log.warning("registry recovery: %s: %s", path, exc)
                     arows, rec["plugins"] = artifacts.run(use, info["hive_type"])
                     artifacts.store(con, i, arows, info["mount"])
                     rec["artifacts"] = len(arows)
@@ -74,6 +83,11 @@ def ingest(files: list[tuple[Path, str]], case_root: Path, work_dir: Path) -> di
                         [i, label, rec["file"], rec.get("kind", ""), rec.get("hive_type", ""), rec.get("mount", ""),
                          rec["keys"], rec["values"], ",".join(rec["logs"]), rec["error"]])
             sources.append(rec)
+        try:                                    # the machine: SYSTEM + SOFTWARE (+ NTUSER) together
+            machine = context.build(con, sources)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("registry context: %s", exc)
+            machine = {"machine": {}, "users": [], "owners": {}}
         try:                                    # what each key means (RECmd batch files)
             catalog_rows = catalog.match(con, sources)
         except Exception as exc:  # noqa: BLE001
@@ -82,27 +96,36 @@ def ingest(files: list[tuple[Path, str]], case_root: Path, work_dir: Path) -> di
     finally:
         store.finish_db(con)
     cat = catalog.status()
-    return {"db": str(dbp.relative_to(case_root)), "sources": sources,
+    for s in sources:
+        if machine["owners"].get(str(s["id"])):
+            s["user"] = machine["owners"][str(s["id"])]
+    return {"db": str(dbp.relative_to(case_root)), "sources": sources, "context": machine,
             "catalog": {"rows": catalog_rows, "entries": cat["entries"], "files": cat["files"],
                         "updated": cat["updated"], "url": cat["url"]}}
 
 
-def run_rules(dbp: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """(hits per rule, findings)."""
-    hits, findings = [], []
+def run_rules(dbp: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """(hits per rule, findings, IOC sources: the entries behind the findings)."""
+    hits, findings, iocs = [], [], []
     reported: set[tuple] = set()          # (src, key, name) already in a finding
     for r in sorted(rules.RULES, key=lambda x: bool(x.get("dedupe"))):
-        sql, args = rules.sql_for(r)
-        rows = store.query(dbp, sql, args, 500)["rows"]
+        if r.get("custom"):
+            try:
+                rows = store.query(dbp, r["custom"], (), 500)["rows"]
+            except Exception:  # noqa: BLE001  (a table the case has not: context of another machine)
+                rows = []
+        else:
+            sql, args = rules.sql_for(r)
+            rows = store.query(dbp, sql, args, 500)["rows"]
         if r.get("dedupe"):
             rows = [x for x in rows if (x[0], x[1], x[2]) not in reported]
-        if not rows and not r.get("name") and not r.get("data"):
+        if not rows and not r.get("name") and not r.get("data") and not r.get("custom"):
             ksql, kargs = rules.keys_sql_for(r)
             rows = store.query(dbp, ksql, kargs, 500)["rows"]
         if not rows:
             continue
         items = [{"src": x[0], "key": x[1], "name": x[2], "data": (x[3] or "")[:400], "last_write": x[4],
-                  "source": x[6], "type": x[7]} for x in rows]
+                  "source": x[6], "type": x[7], **({"op": x[5]} if x[5] else {})} for x in rows]
         sus = []
         if r.get("suspicious"):
             rx = re.compile(r["suspicious"])
@@ -119,12 +142,17 @@ def run_rules(dbp: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
             continue
         reported.update((it["src"], it["key"], it["name"]) for it in shown)
         ev = "\n".join(f"{it['key']}" + (f" :: {it['name']} = {it['data'][:160]}" if it["name"] else "")
-                       for it in shown[:8])
+                       + (" [recovered: deleted]" if it.get("op") == "recovered" else "") for it in shown[:8])
+        n_rec = sum(it.get("op") == "recovered" for it in shown)
+        iocs.extend({"location": f"registry:{it['key']}" + (f" :: {it['name']}" if it["name"] else ""),
+                     "text": it["data"] if it["name"] else it["key"]} for it in shown)
         findings.append({"tool": "registry", "rule": r["id"], "severity": severity,
                          "detail": f"{r['title']} — {len(shown)} entr{'y' if len(shown) == 1 else 'ies'}"
-                                   + (" with a suspicious command" if sus else "") + " · " + ", ".join(r["attack"]),
+                                   + (" with a suspicious command" if sus else "")
+                                   + (f" ({n_rec} recovered from deleted cells)" if n_rec else "")
+                                   + " · " + ", ".join(r["attack"]),
                          "location": f"registry:{shown[0]['source']}", "evidence": ev})
-    return hits, findings
+    return hits, findings, iocs
 
 
 def _root_cert_subjects(dbp: Path) -> list[dict[str, Any]]:
@@ -231,13 +259,16 @@ def analyze(files: list[tuple[Path, str]], case_root: Path, work_dir: Path) -> d
     res: dict[str, Any] = {"module": "registry", "status": "ok"}
     res.update(ingest(files, case_root, work_dir))
     dbp = store.db_path(case_root)
-    hits, findings = run_rules(dbp)
+    hits, findings, ioc_sources = run_rules(dbp)
     certs = _root_cert_subjects(dbp)
     for c in certs:
         if c.get("subject"):
             for f in findings:
                 if f["rule"] == "reg_root_certificate":
                     f["evidence"] += f"\n{c['thumbprint']}: {c['subject']} (issuer {c.get('issuer', '')})"
+    for c in certs:                              # a rogue root CA: its names are IOCs too
+        if c.get("subject"):
+            ioc_sources.append({"location": f"registry:{c['key']}", "text": f"{c['subject']} {c.get('issuer', '')}"})
     carved = carve_payloads(dbp, work_dir / "payloads")
     if carved:
         findings.append({"tool": "registry", "rule": "reg_payload_in_value", "severity": "high",
@@ -251,9 +282,10 @@ def analyze(files: list[tuple[Path, str]], case_root: Path, work_dir: Path) -> d
             findings.append({"tool": "registry", "rule": "reg_parse_error", "severity": "info",
                              "detail": f"{s['label']}: read with errors ({s['error']}); what could be read is loaded",
                              "location": f"registry:{s['label']}", "evidence": ""})
-    res.update(hits=hits, certificates=certs, carved=[{k: v for k, v in c.items() if k != "_path"} for c in carved],
+    res.update(hits=hits, certificates=certs, ioc_sources=ioc_sources[:2000], carved=[{k: v for k, v in c.items() if k != "_path"} for c in carved],
                _carved_paths=[(c["_path"], c["file"]) for c in carved], findings=findings,
                counts={"sources": len(res["sources"]), "keys": sum(s["keys"] for s in res["sources"]),
+                       "recovered": sum(s.get("recovered", 0) for s in res["sources"]),
                        "artifacts": sum(s.get("artifacts", 0) for s in res["sources"]),
                        "catalog": res.get("catalog", {}).get("rows", 0),
                        "values": sum(s["values"] for s in res["sources"]), "findings": len(findings),

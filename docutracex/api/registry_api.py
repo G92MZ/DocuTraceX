@@ -8,7 +8,7 @@ import io
 import re
 
 from fastapi import APIRouter, Body, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
 from .. import cases as case_service
 from ..errors import CaseError
@@ -93,6 +93,35 @@ async def registry_timeline(analysis_id: str, src: int = 0, limit: int = 2000, o
     """Key last-writes and artifact timestamps, newest first."""
     return await _call("timeline", path=_db(analysis_id), src=src, limit=min(max(limit, 1), 5000),
                        offset=max(offset, 0))
+
+
+@router.get("/{analysis_id}/registry/timeline.export")
+async def registry_timeline_export(analysis_id: str, fmt: str = "bodyfile", src: int = 0) -> StreamingResponse:
+    """The whole timeline, streamed: bodyfile (mactime / Plaso) or CSV."""
+    from ..registry import export, remote
+    db = _db(analysis_id)
+    fmt = "csv" if fmt == "csv" else "bodyfile"
+
+    def fetch(limit: int, offset: int) -> dict:
+        return remote.call("timeline", path=db, src=src, limit=limit, offset=offset)
+    name = f"{analysis_id}_registry_timeline.{'csv' if fmt == 'csv' else 'body'}"
+    return StreamingResponse(export.timeline_chunks(fetch, fmt), media_type="text/csv" if fmt == "csv" else "text/plain",
+                             headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@router.get("/{analysis_id}/registry/export.reg")
+async def registry_export_reg(analysis_id: str, src: int, path: str) -> Response:
+    """A key and everything under it as a .reg file (as regedit writes it)."""
+    from ..registry import export
+    if not path:
+        raise HTTPException(status_code=400, detail="Pick a key first.")
+    tree = await _call("subtree", path=_db(analysis_id), src=src, key=path)
+    if not tree["keys"] and not tree["values"]:
+        raise HTTPException(status_code=404, detail="No such key in this source.")
+    note = f"DocuTraceX case {analysis_id}, source {src}: {path}" + (" (truncated)" if tree.get("truncated") else "")
+    leaf = re.sub(r"[^A-Za-z0-9._-]+", "_", path.rsplit("\\", 1)[-1])[:60] or "key"
+    return Response(export.reg_text(tree, note), media_type="text/plain; charset=utf-16",
+                    headers={"Content-Disposition": f'attachment; filename="{analysis_id}_{leaf}.reg"'})
 
 
 @router.post("/{analysis_id}/registry/sql")

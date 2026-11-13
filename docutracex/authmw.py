@@ -117,7 +117,8 @@ class AuthAudit:
 
         audited = (is_api and method in _UNSAFE and user
                    and not any(path.startswith(p) for p in _SELF_AUDITED)
-                   and not (method == "POST" and path.rstrip("/") == "/api/cases"))
+                   and not (method == "POST" and path.rstrip("/") == "/api/cases")) \
+            or (is_api and method == "GET" and user and audit.audits_get(path))   # exports / downloads listed
         if not audited:
             await self.app(scope, receive, send)
             return

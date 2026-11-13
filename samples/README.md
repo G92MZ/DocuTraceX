@@ -412,6 +412,8 @@ as `HKCU`, with ordinary keys around:
 | a base64 `MZ` stub in a `REG_SZ` value | *payload(s) stored in registry values* (high) — carved; *Long base64 blob* (low) |
 | UserAssist: `C:\Users\Public\Facturas\sync.exe` run 3 times (last 2025-11-07 14:41), next to `explorer.exe` | **Artifacts → user_assist** (ROT13 decoded, run count, last run) and the Timeline |
 | TypedPaths `\\198.51.100.23\facturas`, WordWheelQuery `factura 0613` | **Artifacts → typed_paths / word_wheel_query**; with the RECmd batch files, bookmarks and the *User Activity* catalogue |
+| a Run value named `\0InvoiceHelper` (a NUL first: regedit cannot show it) running `rundll32.exe javascript:"\..\mshtml,RunHTMLApplication "…` | *Key or value name with a NUL…* (high, T1564) and *Autostart running script code through a LOLBin (Poweliks-style)* (high, T1218.011) |
+| deleted on clean-up, still in free cells: key `Software\GrupoEjemplo\Instalador` (`setup.exe`, a download URL) and a Run value `FacturaSync` (encoded PowerShell) | Browse shows them as **recovered**; *Deleted key / value … pointing at a script host, a URL or a user-writable folder* (medium) |
 
 `registry/sample_system_tampering.reg` goes after the machine (HKLM) and the less common
 autostarts. Each technique sits next to the ordinary value it imitates, which must stay quiet:
@@ -431,6 +433,13 @@ autostarts. Each technique sits next to the ordinary value it imitates, which mu
 | `EnableScriptBlockLogging` = 0, `Windows Script\Settings\AmsiEnable` = 0 | *PowerShell logging turned off* (high, T1562.002), *AMSI turned off* (high, T1562.001) |
 | a `[char]87+[char]114…` script, a staged base64 configuration, a `CommandLineEventConsumer` text | *Obfuscated script code* (medium, T1027), *Long base64 blob* (low), *WMI event consumer text* (high, T1546.003) |
 | `HKCU\Software\Classes\.lockbit` and a path to `factura_0613.xlsx.lockbit` | *File extension of a known ransomware family* / *Path to a file with a known ransomware extension* (high, T1486) |
+
+`registry/sample_machine_hives.zip` holds the SYSTEM, SOFTWARE and NTUSER.DAT of one invented
+machine (`FACT-PC01/…` paths, as collected). Read together they give the **Machine** box of the
+Registry tab: computer `FACT-PC01`, Windows 11 Pro 24H2 build 26100 installed 2025-01-10, time
+zone *Romance Standard Time* (UTC+1, with a switch to show every time in local time), control set
+`ControlSet001`, last shutdown, the user profiles, and the NTUSER's owner `facturacion (S-1-5-21-…-1001)`.
+The SYSTEM hive also has an auto-start service in `C:\Users\Public` (*Service image path*, high).
 
 Try in the SQL tab: `SELECT "key", name, data FROM vals WHERE regexp_matches(data, 'powershell|mshta', 'i')`.
 

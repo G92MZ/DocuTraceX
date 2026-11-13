@@ -185,6 +185,48 @@ RULES: list[dict[str, Any]] = [
     {"id": "reg_proxy", "severity": "medium", "attack": ["T1090"],
      "title": "Proxy / PAC set for the user (traffic through a proxy the attacker controls)",
      "key": _CV + r"\\Internet Settings$", "name": r"^(ProxyServer|AutoConfigURL)$", "data": r"\S"},
+    # --- anti-forensics and hiding --------------------------------------------------------------
+    {"id": "reg_hidden_name", "severity": "high", "attack": ["T1564", "T1112"],
+     "title": "Key or value name with a NUL, control or right-to-left character (hidden from regedit / spoofed)",
+     "custom": """SELECT v.src, v."key", v.name, v.data, k.last_write, v.op, s.label, v.type FROM vals v
+        JOIN sources s ON s.id = v.src LEFT JOIN keys k ON k.src = v.src AND k.path = v."key"
+        WHERE regexp_matches(v.name, '[\x01-\x1f\x7f␀‎‏‪-‮⁦-⁩]')
+        UNION ALL SELECT k.src, k.path, NULL, NULL, k.last_write, k.op, s.label, NULL FROM keys k
+        JOIN sources s ON s.id = k.src
+        WHERE regexp_matches(k.name, '[\x01-\x1f\x7f␀‎‏‪-‮⁦-⁩]')
+        LIMIT 500"""},
+    {"id": "reg_script_in_autostart", "severity": "high", "attack": ["T1218.011", "T1547.001", "T1027.011"],
+     "title": "Autostart running script code through a LOLBin (rundll32 javascript: / mshtml RunHTMLApplication, Poweliks-style)",
+     "key": r".", "types": _STR,
+     "data": r"(?i)(rundll32(\.exe)?\W.{0,60}(javascript:|vbscript:|mshtml\W{0,3}RunHTMLApplication)|mshta(\.exe)?\s+[\"']?(javascript|vbscript):)"},
+    {"id": "reg_runonce_safe_mode", "severity": "medium", "attack": ["T1547.001"],
+     "title": "RunOnce entry forced to run even in Safe Mode (name starts with *)",
+     "key": _CV + r"\\RunOnce(?:Ex)?$", "name": r"^\*"},
+    {"id": "reg_future_timestamp", "severity": "medium", "attack": ["T1070.006"],
+     "title": "Key last-write time in the future or before Windows NT existed (timestomped or forged)",
+     "custom": """SELECT k.src, k.path, NULL, CAST(k.last_write AS VARCHAR), k.last_write, k.op, s.label, NULL FROM keys k
+        JOIN sources s ON s.id = k.src WHERE k.last_write > now() + INTERVAL 2 DAY
+        OR (k.last_write < TIMESTAMP '1993-01-01' AND k.last_write > TIMESTAMP '1601-01-02') LIMIT 500"""},
+    {"id": "reg_before_install", "severity": "low", "attack": ["T1070.006"],
+     "title": "Key written before the operating system was installed (InstallDate of the same machine)",
+     "custom": """SELECT k.src, k.path, NULL, 'installed ' || CAST(c.value AS VARCHAR), k.last_write, k.op, s.label, NULL
+        FROM keys k JOIN sources s ON s.id = k.src JOIN context c ON c.item = 'install_date'
+        WHERE k.last_write < TRY_CAST(c.value AS TIMESTAMP) - INTERVAL 1 DAY
+          AND k.last_write > TIMESTAMP '1993-01-01'
+          AND NOT regexp_matches(k.path, '(?i)\\\\(Classes|Microsoft|Policies|Wow6432Node|Setup|ControlSet\\d+|Select|Clients)(\\\\|$)')
+        LIMIT 500""", "needs": "context"},
+    {"id": "reg_recovered_suspicious", "severity": "medium", "attack": ["T1070", "T1112"],
+     "title": "Deleted key / value (recovered from a free cell) pointing at a script host, a URL or a user-writable folder: clean-up after the fact",
+     "custom": """SELECT v.src, v."key", v.name, v.data, k.last_write, v.op, s.label, v.type FROM vals v
+        JOIN sources s ON s.id = v.src LEFT JOIN keys k ON k.src = v.src AND k.path = v."key"
+        WHERE v.op = 'recovered' AND regexp_matches(v.data, '""" + SUSPICIOUS_CMD.replace("'", "''") + """')
+        LIMIT 500"""},
+    {"id": "reg_huge_value", "severity": "low", "attack": ["T1027.011"],
+     "title": "Very large value (over 512 KB): data or a payload kept in the registry",
+     "custom": """SELECT v.src, v."key", v.name, 'size ' || v.size, k.last_write, v.op, s.label, v.type FROM vals v
+        JOIN sources s ON s.id = v.src LEFT JOIN keys k ON k.src = v.src AND k.path = v."key"
+        WHERE v.size > 524288 AND NOT regexp_matches(v."key", '(?i)\\\\(Component Based Servicing|SideBySide|Installer\\\\Products|DriverDatabase|WINEVT)(\\\\|$)')
+        LIMIT 500""", "dedupe": True},
     # --- what values hold, wherever they are --------------------------------------------------
     {"id": "reg_command_in_value", "severity": "medium", "attack": ["T1059.001", "T1027"],
      "title": "Malicious-looking command line stored in a value",
@@ -238,7 +280,7 @@ def sql_for(rule: dict[str, Any]) -> tuple[str, list[Any]]:
     if rule.get("source_kinds"):
         where.append("s.kind IN (" + ",".join("?" for _ in rule["source_kinds"]) + ")")
         args += rule["source_kinds"]
-    where.append("v.op = ''")
+    where.append("v.op IN ('', 'recovered')")
     sql = (f"""SELECT v.src, v."key", v.name, v.data, k.last_write, v.op, s.label, v.type FROM vals v
         JOIN sources s ON s.id = v.src LEFT JOIN keys k ON k.src = v.src AND k.path = v."key"
         WHERE {' AND '.join(where)} ORDER BY v.src, v."key", v.name LIMIT 500""")
@@ -248,5 +290,6 @@ def sql_for(rule: dict[str, Any]) -> tuple[str, list[Any]]:
 def keys_sql_for(rule: dict[str, Any]) -> tuple[str, list[Any]]:
     """Rules with only a key pattern also match keys that hold no values (an empty TreatAs, a SafeBoot entry)."""
     return ("""SELECT k.src, k.path, NULL, NULL, k.last_write, k.op, s.label, NULL FROM keys k
-        JOIN sources s ON s.id = k.src WHERE regexp_matches(k.path, ?, 'i') AND k.op = '' ORDER BY k.src, k.path
+        JOIN sources s ON s.id = k.src WHERE regexp_matches(k.path, ?, 'i') AND k.op IN ('', 'recovered')
+        ORDER BY k.src, k.path
         LIMIT 500""", [rule["key"]])
