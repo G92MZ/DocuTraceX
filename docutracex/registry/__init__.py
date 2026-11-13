@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from . import artifacts, catalog, context, parse, recover, rules, store
+from . import artifacts, catalog, commands, context, parse, recover, rules, store
 
 log = logging.getLogger(__name__)
 
@@ -106,12 +106,44 @@ def ingest(files: list[tuple[Path, str]], case_root: Path, work_dir: Path) -> di
                         "updated": cat["updated"], "url": cat["url"]}}
 
 
+_AUTOSTART = re.compile(r"(?i)\\(CurrentVersion\\(Run|RunOnce|RunOnceEx|RunServices|RunServicesOnce|Policies\\Explorer\\Run)|"
+                        r"Winlogon|Active Setup\\Installed Components|Command Processor|Image File Execution Options|"
+                        r"SilentProcessExit|Services\\[^\\]+|Session Manager|Environment|Windows NT\\CurrentVersion\\Windows)(\\|$)")
+
+
+def _command_scan(dbp: Path) -> dict[str, list[tuple]]:
+    """String values holding suspicious command lines (``commands``): rows for the
+    critical rule and for the combination rule, each with its indicators."""
+    rows = store.query(dbp, """SELECT v.src, v."key", v.name, v.data, k.last_write, v.op, s.label, v.type FROM vals v
+        JOIN sources s ON s.id = v.src LEFT JOIN keys k ON k.src = v.src AND k.path = v."key"
+        WHERE v.type IN ('REG_SZ', 'REG_EXPAND_SZ', 'REG_MULTI_SZ') AND length(v.data) >= 6
+          AND regexp_matches(v.data, ?) AND v.op IN ('', 'recovered')
+        ORDER BY v.src, v."key", v.name""", [commands.PREFILTER], 500_000)["rows"]
+    out: dict[str, list[tuple]] = {"critical": [], "combination": [], "allowed": []}
+    for x in rows:
+        c = commands.classify(x[3] or "")
+        if c["allowed"]:
+            out["allowed"].append((*x, c["critical"] + c["medium"]))
+        elif c["critical"]:
+            out["critical"].append((*x, c["critical"] + c["medium"]))
+        elif len(c["medium"]) >= 2:
+            out["combination"].append((*x, c["medium"]))
+    return out
+
+
 def run_rules(dbp: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     """(hits per rule, findings, IOC sources: the entries behind the findings)."""
     hits, findings, iocs = [], [], []
     reported: set[tuple] = set()          # (src, key, name) already in a finding
+    cmd_rows: dict[str, list[tuple]] | None = None
     for r in sorted(rules.RULES, key=lambda x: bool(x.get("dedupe"))):
-        if r.get("custom"):
+        indicators: dict[tuple, list[str]] = {}
+        if r.get("engine") == "commands":
+            if cmd_rows is None:
+                cmd_rows = _command_scan(dbp)
+            rows = [x[:8] for x in cmd_rows[r["level"]]]
+            indicators = {(x[0], x[1], x[2]): x[8] for x in cmd_rows[r["level"]]}
+        elif r.get("custom"):
             try:
                 rows = store.query(dbp, r["custom"], (), 500)["rows"]
             except Exception:  # noqa: BLE001  (a table the case has not: context of another machine)
@@ -121,13 +153,15 @@ def run_rules(dbp: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]], li
             rows = store.query(dbp, sql, args, 500)["rows"]
         if r.get("dedupe"):
             rows = [x for x in rows if (x[0], x[1], x[2]) not in reported]
-        if not rows and not r.get("name") and not r.get("data") and not r.get("custom"):
+        if not rows and not r.get("name") and not r.get("data") and not r.get("custom") and not r.get("engine"):
             ksql, kargs = rules.keys_sql_for(r)
             rows = store.query(dbp, ksql, kargs, 500)["rows"]
         if not rows:
             continue
         items = [{"src": x[0], "key": x[1], "name": x[2], "data": (x[3] or "")[:400], "last_write": x[4],
-                  "source": x[6], "type": x[7], **({"op": x[5]} if x[5] else {})} for x in rows]
+                  "source": x[6], "type": x[7], **({"op": x[5]} if x[5] else {}),
+                  **({"indicators": commands.describe(indicators[(x[0], x[1], x[2])])}
+                     if (x[0], x[1], x[2]) in indicators else {})} for x in rows]
         sus = []
         if r.get("suspicious"):
             rx = re.compile(r["suspicious"])
@@ -138,13 +172,24 @@ def run_rules(dbp: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]], li
         shown = items
         if sus:
             severity, shown = r.get("suspicious_severity", "high"), sus
-        hits.append({"rule": r["id"], "title": r["title"], "severity": severity, "attack": r["attack"],
+        attack = r["attack"]
+        if indicators:                    # the command rules: ATT&CK of what was found; autostart raises a pair
+            attack = commands.attacks([i for ids in indicators.values() for i in ids])
+            if r.get("autostart_severity") and any(_AUTOSTART.search(it["key"]) for it in items):
+                severity = r["autostart_severity"]
+                for it in items:
+                    if _AUTOSTART.search(it["key"]):
+                        it["suspicious"] = True
+        hits.append({"rule": r["id"], "title": r["title"], "severity": severity, "attack": attack,
                      "count": len(items), "suspicious": len(sus), "items": items[:MAX_FINDINGS_ROWS]})
         if severity == "info":
+            if r.get("level") == "allowed":       # cleared by the allowlist: no generic finding either
+                reported.update((it["src"], it["key"], it["name"]) for it in items)
             continue
         reported.update((it["src"], it["key"], it["name"]) for it in shown)
         ev = "\n".join(f"{it['key']}" + (f" :: {it['name']} = {it['data'][:160]}" if it["name"] else "")
-                       + (" [recovered: deleted]" if it.get("op") == "recovered" else "") for it in shown[:8])
+                       + (" [recovered: deleted]" if it.get("op") == "recovered" else "")
+                       + (f" [{'; '.join(it['indicators'])}]" if it.get("indicators") else "") for it in shown[:8])
         n_rec = sum(it.get("op") == "recovered" for it in shown)
         iocs.extend({"location": f"registry:{it['key']}" + (f" :: {it['name']}" if it["name"] else ""),
                      "text": it["data"] if it["name"] else it["key"]} for it in shown)
@@ -152,7 +197,7 @@ def run_rules(dbp: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]], li
                          "detail": f"{r['title']} — {len(shown)} entr{'y' if len(shown) == 1 else 'ies'}"
                                    + (" with a suspicious command" if sus else "")
                                    + (f" ({n_rec} recovered from deleted cells)" if n_rec else "")
-                                   + " · " + ", ".join(r["attack"]),
+                                   + " · " + ", ".join(attack),
                          "location": f"registry:{shown[0]['source']}", "evidence": ev})
     return hits, findings, iocs
 

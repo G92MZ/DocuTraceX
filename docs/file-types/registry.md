@@ -161,6 +161,14 @@ Rules over the database, each with its ATT&CK technique:
   over 512 KB, deleted entries that pointed at a payload.
 - **Credentials and access** — WDigest clear-text passwords, RDP enabled, a proxy set for the
   user, certificates added to the trusted root / publisher stores (with their subject and issuer).
+- **Suspicious Windows commands in any value** (a task's action, a tool's configuration, a staged
+  step, an autostart entry) — some 140 indicators in families: PowerShell, cmd, LOLBins, WSH,
+  scheduled tasks, net / sc / reg, credential dumping, lateral movement, defence evasion,
+  persistence by command, discovery, exfiltration, tunnelling / C2 and ransomware.
+  **Critical** ones (encoded PowerShell, AMSI bypass, comsvcs / ntdsutil / shadow-copy credential
+  theft, squiblydoo, Kerberoasting, shadow-copy deletion, default C2 pipes…) are a finding on their
+  own; **medium** ones count only in pairs in the same value — medium, or high in an autostart key;
+  an allowlist (SCCM, MpCmdRun, Windows Update, management suites) clears a value.
 - **What any value holds** — malicious-looking command lines (encoded commands, download cradles,
   AMSI tampering, base64 of those words), obfuscated script code, long base64 blobs and very long
   strings, WMI event-consumer text, ransomware file extensions (registered, or in a path). These
