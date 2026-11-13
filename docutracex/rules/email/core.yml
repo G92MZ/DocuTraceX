@@ -20,7 +20,7 @@ verdict:                 # score thresholds (upper bound, exclusive)
   malicious_requires: [payload_implant_configuration, payload_malicious_content, html_smuggling,
                        dangerous_attachment, double_extension, filename_spoofing, svg_active_content,
                        link_bad_reputation, sender_bad_reputation, reply_to_bad_reputation, link_direct_download,
-                       ms_classified_malware]
+                       ms_classified_malware, html_exfil_script, html_dangerous_uri, html_payment_form]
 
 # weight of the findings the built-in checks raise (default: by severity)
 weights:
@@ -54,6 +54,17 @@ weights:
     html_attachment: 12
     macro_capable_attachment: 8
     display_name_spoof: 20
+    html_payment_form: 35
+    html_exfil_script: 40
+    html_dangerous_uri: 35
+    html_form_mailto: 15
+    html_auto_submit: 10
+    html_hidden_iframe: 12
+    html_remote_iframe: 3
+    html_js_redirect: 12
+    html_script_obfuscated: 12
+    html_dynamic_script: 10
+    html_entity_obfuscation: 10
 
 lexicons:
   payment: '\b(factura|facturas|invoice|invoices|pago|pagos|payment|transferencia|wire transfer|remittance|remesa|abono|cobro|vencimiento|overdue|outstanding|proforma|albar[aá]n|purchase order|orden de compra|rechnung|zahlung|facture|paiement|fattura|pagamento)\b'
@@ -64,6 +75,9 @@ lexicons:
   callback: '(call (us|now|our)|llam[ae] (al|ahora)|contact (our|the) (support|billing)|help ?line|support line|customer (service|support) (at|on|number)|n[uú]mero de (atenci[oó]n|soporte)|toll[- ]free|cancel (your|this) (order|subscription) .{0,40}call)'
   subscription: '\b(subscription|suscripci[oó]n|renewal|renovaci[oó]n|auto-?renew\w*|been charged|se le ha cobrado|cargo de|order (confirmation|#|number)|your (order|purchase)|norton|mcafee|geek squad|antivirus|lifelock|best buy|invoice #)\b'
   credential: '(verify your|verifica (tu|su)|confirm your|confirme (su|tu)|log ?in to|inicia(r)? sesi[oó]n|password (expir|reset)|contrase[nñ]a (caduc|expir)|account (suspended|locked|disabled)|cuenta (suspendida|bloqueada|desactivada)|unusual (sign|activity)|actividad inusual|update your (details|information|account)|re-?activ\w+ your|mailbox (is )?(full|quota)|buz[oó]n (lleno|cuota))'
+  refund: '(refund|reembolso|devoluci[oó]n (de|del) (importe|pago|dinero)|tax rebate|claim your (money|refund)|reclam[ae] (su|tu) (dinero|reembolso)|erstattung|remboursement|rimborso)'
+  security_alert: '(security (alert|notice|warning|check)|alerta de seguridad|aviso de seguridad|account security|seguridad de (la|su|tu) cuenta|unauthori[sz]ed (login|sign|access)|inicio de sesi[oó]n no autorizado|actividad sospechosa|suspicious (activity|sign))'
+  cta: '(click here|click below|open (the )?link|access now|review now|confirm now|verify now|sign in now|haga clic|haz clic|pulse aqu[ií]|pincha aqu[ií]|abrir enlace|acceder ahora|revisar ahora|confirmar ahora|hier klicken|cliquez ici|clicca qui)'
   document: '(shared (a |the )?(file|document|folder)|ha compartido|compartido contigo|view (the )?document|ver (el )?documento|secure (document|message|file)|mensaje seguro|documento seguro|\bfax\b|voice ?mail|buz[oó]n de voz|e-?signature|firma electr[oó]nica|docusign|review and sign|revisar y firmar)'
 
 rules:
@@ -366,6 +380,46 @@ rules:
     attack: [T1566.002, T1036]
     when: {fact: links.punycode}
     evidence: "{links.punycode}"
+
+  - id: link_shortener
+    title: Link through a URL shortener (the destination is hidden until the click)
+    severity: low
+    score: 6
+    attack: [T1566.002]
+    when: {fact: links.shortener}
+    evidence: "{links.shortener}"
+
+  - id: link_deep_subdomain
+    title: Link whose host buries a trusted-looking name in a long subdomain chain
+    severity: medium
+    score: 15
+    attack: [T1566.002, T1036]
+    when: {fact: links.deep_subdomain}
+    evidence: "{links.deep_subdomain}"
+
+  - id: link_ftp
+    title: FTP link (rare in legitimate mail; files served outside the web filters)
+    severity: low
+    score: 6
+    attack: [T1566.002, T1105]
+    when: {fact: links.ftp}
+    evidence: "{links.ftp}"
+
+  # --- wording -------------------------------------------------------------------
+  - id: refund_lure
+    title: Refund / money-back lure with a link
+    severity: low
+    score: 6
+    attack: [T1566.002]
+    when: {all: [{text: refund}, {fact: links.count, gte: 1}]}
+
+  - id: phishing_wording_stack
+    title: Classic phishing wording — urgency, a lure (account, document, payment, security) and a call to action with a link
+    severity: low
+    score: 8
+    attack: [T1566]
+    when: {all: [{text: urgency}, {text: cta}, {fact: links.count, gte: 1},
+                 {any: [{text: credential}, {text: document}, {text: payment}, {text: refund}, {text: security_alert}]}]}
 
   # --- attachments --------------------------------------------------------------
   - id: svg_active_content
