@@ -17,4 +17,7 @@ analysed as a nested child.
 
 ![An ELF hidden in the low bits of a picture](../assets/shots/images/pixels.webp){ .shot }
 
-QR codes in images are decoded and their URLs join the IOCs.
+**QR codes and barcodes** are read in every image: the file itself, Office / OneNote media,
+images in PE resources, archive members, base64 `data:` images inside HTML / SVG and the pictures
+of an RTF (each becomes an image child). A code that opens a URL is a *QR phishing* finding and
+the URL joins the IOCs; PDF pages and email attachments keep their own QR readers.

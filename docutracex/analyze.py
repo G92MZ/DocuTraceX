@@ -1061,6 +1061,21 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         ran.append("file")
         state = "completed"
 
+        # An image: QR codes / barcodes in it (the URL of "scan to see the invoice").
+        try:
+            from . import qr, stego
+            head = original.read_bytes()[:qr.MAX_BYTES + 1]
+            if stego.is_image(head) and qr.worth_reading(head):
+                codes = run("qr: QR codes / barcodes in the image (zxing-cpp, own process)",
+                            lambda: qr.read([original]).get(str(original)) or [])
+                if codes:
+                    qres = qr.result(codes, f"the image {original.name}")
+                    write_subresult(paths, "qr", qres)
+                    ran.append("qr")
+                    findings_total += qres["counts"]["findings"]
+        except Exception as exc:  # noqa: BLE001  (never fails the case)
+            log.warning("QR reading skipped for %s: %s", paths.root.name, exc)
+
         # Nothing recognised it — but 7-Zip may: an archive with no extension and
         # a signature the app doesn't read (ARJ, LZH, WIM, an embedded/offset
         # archive...). Ask 7-Zip (listing only); if it is an archive format, extract
@@ -1496,7 +1511,7 @@ _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto"
                "powershell", "vbscript", "batch", "shortcut", "msi", "python", "java", "onenote", "ml", "c2", "golang", "code", "dotnet")
 # Modules whose findings feed the consolidated view (includes derived ones).
 _COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file", "pyinstaller", "domainsim", "rmm",
-                               "memdump", "registry")
+                               "memdump", "registry", "qr")
 
 
 def _registry(paths: CasePaths, files: list[tuple[Path, str]]) -> dict[str, Any]:

@@ -335,6 +335,24 @@ as .NET and its own resources / hidden files are queued again (up to 4 rounds) �
 `make_samples.dotnet_bitmap_loader_exe(make_samples.dotnet_stealer_exe())` ends with
 the stealer's SMTP settings decrypted.
 
+## QR codes outside PDFs and email attachments
+
+PDF pages and the image attachments of an email were already read. Now every other
+image is too: the case's own file when it is an image (its **QR** tab), and every
+image child in **Nested** — Office / OneNote media, images in PE resources,
+archive members, images written as base64 `data:` URIs in an HTML / SVG (or the
+email's HTML body) and the `\pict` pictures of an RTF, which become children of
+their own. Images under 40 px a side (icons) are skipped. A code that opens a URL
+is the finding *QR phishing* (high); its text joins the IOCs. Each sample points
+to its own inert URL, `https://portal-facturas.example/qr/<where>?f=2026-0187`.
+
+| Sample | What it shows |
+| --- | --- |
+| `images/sample_qr_factura.png` | the file is the QR: **QR** tab with the code, finding *QR code … opens a URL* (`/qr/imagen`). |
+| `word/sample_qr_factura.docx` | the QR is `word/media/image1.png`: **Nested** → the Office media child carries a *QR →* badge and the finding (`/qr/docx`). |
+| `html/sample_qr_datauri.html` | the QR is an `<img src="data:image/png;base64,…">`: child `datauri-1.png` (`/qr/html`). |
+| `word/sample_qr_pict.rtf` | the QR is an RTF picture (`{\pict\pngblip …hex…}`): child `pict-1.png` (`/qr/rtf`). |
+
 ## .NET assemblies (Components → .NET)
 
 Built by `dotnet_samples()` in `scripts/make_samples.py` with `scripts/dnkit.py`
