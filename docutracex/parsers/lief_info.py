@@ -94,7 +94,8 @@ def _pe(b: Any, lief: Any) -> dict[str, Any]:
 
     if b.has_rich_header:
         rh = b.rich_header
-        out["rich_header"] = {"key": hex(rh.key), "entries": [
+        rich_md5 = _try(lambda: bytes(rh.hash(PE.ALGORITHMS.MD5)).hex(), "")
+        out["rich_header"] = {"key": hex(rh.key), "md5": rich_md5, "entries": [
             {"id": e.id, "build_id": e.build_id, "count": e.count} for e in list(rh.entries)[:60]]}
 
     pdbs = []

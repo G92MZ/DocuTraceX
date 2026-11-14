@@ -302,6 +302,11 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
             continue
         f.append(x)
     item["lief"] = lf
+    try:
+        from .. import fingerprints
+        item["fingerprints"] = fingerprints.pe(lf)
+    except Exception:  # noqa: BLE001  (presentation only)
+        pass
     if embedded_pe:
         sig_ok = str(lf.get("signature_check") or "").upper().endswith("OK")
         if item["signed"] and sig_ok:

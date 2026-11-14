@@ -40,6 +40,13 @@ extracts each one, deobfuscates it and, for VBA, **emulates** it.
     and **attribution**: author, last editor, company, template, application and version,
     revision save ids (rsids) that tie documents of one campaign together.
 
+    **Origin fingerprints** (a table of its own, value and what it tells): the Word document GUID
+    (`w15:docId` / `w14:docId`), `rsidRoot` and rsids; the Excel build that last saved it and its
+    document GUID; the code page and CLSID of a legacy file; and for the **VBA project** its GUID,
+    the platform it was compiled on (32 / 64-bit Windows, Mac), its locale and code page, and the
+    p-code cache version — `0xFFFF` means the macros were written by a tool, not saved by Office.
+    Shown for this file only; nothing is correlated across files or cases.
+
     ![Metadata tab of sample.docm](../assets/shots/office/metadata.webp){ .shot }
 
 ??? abstract "Relationships and Parts — the package, part by part"
