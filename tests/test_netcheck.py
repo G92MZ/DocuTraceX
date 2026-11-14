@@ -295,6 +295,7 @@ def test_domain_check_visits_the_website(lab: str, tmp_path: Path, monkeypatch: 
     monkeypatch.setattr(netcheck, "site_candidates", lambda host: [f"https://127.0.0.1:{port}/owa/?e=",
                                                                    f"http://127.0.0.1:{port}/owa/?e="])
     root = _case(tmp_path)
+    shots.clear()                     # the case's own HTML page gets its preview too: count the check's only
     paths = CasePaths(root.name, cases_dir=root.parent)
     netcheck.run(root, {"kind": "domain", "target": "portal-pagos.example.net"})
     c = read_json(paths.subresult("netcheck"))["checks"][0]

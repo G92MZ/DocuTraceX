@@ -1103,9 +1103,10 @@ function paneIocs(iocs, net) {
     const uniq = [...new Set(where)].slice(0, 4).join(", ");
     const hay = `${i.value} ${where.join(" ")}`.toLowerCase();
     const rmmTag = i.rmm ? ` <span class="badge badge-warn" title="${escapeHtml(`Remote-access / RMM tool (${i.rmm.category}): ${i.rmm.why}${i.rmm.lolrmm ? ` — LOLRMM: ${i.rmm.lolrmm}` : ""}. Context only: legitimate software, judged by who deployed it.`)}">RMM: ${escapeHtml(i.rmm.product)}</span>` : "";
+    const victimTag = i.victim ? ` <span class="badge badge-ok" title="${escapeHtml(`Prefilled in a page (${i.victim.where}): the user's own mailbox, the person the page was made for — context, not an address to block.${i.victim.recipient === true ? " It is a recipient of the email: a page made for that person." : i.victim.recipient === false ? " It is not a recipient of the email: the page was reused or the email forwarded." : ""}`)}">victim${i.victim.recipient === true ? " · recipient" : i.victim.recipient === false ? " · not the recipient" : ""}</span>` : "";
     const tenantTag = i.tenant ? ` <span class="badge badge-warn" title="${escapeHtml(`Microsoft 365 tenant ${i.tenant.name} (${i.tenant.role}): ${i.tenant.why}${(i.tenant.names || []).length ? ` — names: ${i.tenant.names.join(", ")}` : ""}`)}">tenant: ${escapeHtml(i.tenant.why)}</span>` : "";
-    return `<tr data-ioc-row data-hay="${escapeHtml(hay + (i.rmm ? " rmm " + i.rmm.product.toLowerCase() : "") + (i.tenant ? ` tenant ${(i.tenant.names || []).join(" ").toLowerCase()}` : ""))}">
-      <td class="mono">${escapeHtml(i.value)}${rmmTag}${tenantTag}</td>
+    return `<tr data-ioc-row data-hay="${escapeHtml(hay + (i.rmm ? " rmm " + i.rmm.product.toLowerCase() : "") + (i.tenant ? ` tenant ${(i.tenant.names || []).join(" ").toLowerCase()}` : "") + (i.victim ? " victim" : ""))}">
+      <td class="mono">${escapeHtml(i.value)}${rmmTag}${tenantTag}${victimTag}</td>
       <td>${i.count}</td>
       <td class="mono" title="${escapeHtml(where.join(", "))}">${escapeHtml(uniq)}</td>
       <td>${addMarkCell("ioc", `${IOC_TYPE_LABEL[i.type] || i.type}: ${i.value}`, "iocs",
@@ -2372,6 +2373,42 @@ function paneFile(f) {
   return `<p class="hint-line">${escapeHtml(f.note || "")}</p>
     <div class="kv">${rows}</div>
     <p style="margin-top:10px">${addMarkCell("file", `File ${f.filename || ""}`, f.stored_path || "file", (h.sha256 || ""))}</p>`;
+}
+
+// HTML / SVG / MHT page (or the HTML body of an email): offline preview, structure,
+// victim, QR drawn in HTML, findings. Nothing in the page runs.
+function paneHtml(h) {
+  const aid = _openCaseId || "";
+  const sh = h.screenshot || {};
+  const layerNote = (h.layers || []).length
+    ? `<p class="hint-line">The page is a loader: ${(h.layers || []).length} layer(s) recovered statically from its literals (${escapeHtml(h.layers.map((l) => l.how).join(" → "))}); the preview shows the last one.</p>` : "";
+  const shot = sh.stored_path
+    ? `<p class="hint-line"><b>Preview</b> — rendered offline: JavaScript off, every request blocked (remote images, CSS and fonts show as gaps)</p>
+       <img class="net-shot" alt="page preview" src="${netAsset(aid, sh.stored_path)}">`
+    : `<p class="hint-line">${escapeHtml(sh.error ? `Preview unavailable: ${sh.error}` : "Preview not rendered (Chromium not provisioned, or the per-case limit reached).")}</p>`;
+  const ident = kv([["Kind", h.kind], ["Title", h.title], ["Headings", (h.headings || []).join(" · ")],
+                    ["Favicon", h.favicon], ["Login / lure words", (h.login_words || []).join(", ")],
+                    ["Visible text", h.visible_chars != null ? `${h.visible_chars} characters` : ""]]);
+  const victims = (h.victims || []).length ? `<h3 class="formats-title">Victim (${h.victims.length})</h3>
+    <p class="hint-line">Addresses prefilled in the page: the person it was made for. They are tagged <b>victim</b> in the IOCs — the user's own mailbox, not one to block.</p>` +
+    table(["Address", "Where", "Mark"], h.victims.map((v) => `<tr><td class="mono">${escapeHtml(v.address)}</td><td>${escapeHtml(v.where || "")}</td>
+      <td>${addMarkCell("ioc", `Victim address prefilled: ${v.address}`, "html", v.where || "")}</td></tr>`).join("")) : "";
+  const forms = (h.forms || []).length ? `<h3 class="formats-title">Forms (${h.forms.length})</h3>` + table(["Action", "Method", "Fields", "Mark"],
+    h.forms.map((f) => `<tr><td class="mono">${escapeHtml(f.action || "(same page)")}${f.password ? ' <span class="badge badge-bad">password</span>' : ""}</td>
+      <td>${escapeHtml(f.method || "")}</td>
+      <td>${(f.fields || []).map((x) => `<span class="${x.type === "hidden" || x.type === "password" ? "badge badge-warn" : "mono"}">${escapeHtml(`${x.name || "?"}:${x.type}`)}</span>`).join(" ")}</td>
+      <td>${addMarkCell("html", `Form posts to ${f.action || "(same page)"}`, "html", (f.fields || []).map((x) => `${x.name}:${x.type}`).join(", "))}</td></tr>`).join("")) : "";
+  const ext = (h.resources || []).filter((r) => r.external);
+  const res = (h.resources || []).length ? `<h3 class="formats-title">Resources (${h.resources.length}, ${ext.length} external)</h3>` +
+    itable(["Kind", "URL", "External"], h.resources.map((r) => [r.kind, r.url, r.external ? "yes" : ""])) : "";
+  const red = (h.redirects || []).length ? `<h3 class="formats-title">Redirects (${h.redirects.length})</h3>` +
+    itable(["Kind", "Target"], h.redirects.map((r) => [r.kind, r.target])) : "";
+  const qr = (h.qr || []).length ? `<h3 class="formats-title">QR read in the preview (${h.qr.length})</h3>` +
+    itable(["Format", "Content"], h.qr.map((c) => [c.format, c.text])) : "";
+  const layers = (h.layers || []).map((l, n) => `<details class="disclose"><summary>Recovered layer ${n + 1} — ${escapeHtml(l.how)} · ${l.size} characters</summary>
+    <pre class="text-sample">${escapeHtml(l.sample || "")}</pre></details>`).join("");
+  return `<p class="hint-line">${escapeHtml(h.source || "")}</p>${layerNote}${shot}${ident}${victims}${forms}${res}${red}${qr}${layers}
+    <h3 class="formats-title">Findings (${(h.findings || []).length})</h3>${netFindingsList(h.findings || [])}`;
 }
 
 // QR codes / barcodes read in an image case (its URLs are in the IOCs tab).
@@ -3672,6 +3709,11 @@ async function openComponents(analysisId, keepTab, viewId) {
     }
     if (mods.file) {
       sections.push({ id: "file", label: "File", html: paneFile(mods.file) });
+    }
+    if (mods.html) {
+      const h = mods.html;
+      sections.push({ id: "html", label: `HTML${(h.victims || []).length ? " · victim" : ""} (${(h.forms || []).length} form${(h.forms || []).length === 1 ? "" : "s"})`,
+                      html: paneHtml(h) });
     }
     if (mods.qr && (mods.qr.codes || []).length) {
       sections.push({ id: "qr", label: `QR (${mods.qr.codes.length})`, html: paneQr(mods.qr) });

@@ -428,6 +428,8 @@ def _set_html_body(html_text: str, result: dict[str, Any]) -> None:
         return
     result["html_text_sample"] = _html_to_text(html_text)[:_BODY_SAMPLE]
     result["html_source_sample"] = html_text[:_BODY_SAMPLE]
+    # the whole body (bounded) for the HTML section's preview; "_" keys are not mined for IOCs
+    result["_html_source"] = html_text[:2 * 1024 * 1024] if len(html_text) > _BODY_SAMPLE else ""
     result["html_links"] = list(dict.fromkeys(_RE_HREF.findall(html_text)))[:_MAX_LINKS]
     _html_link_mismatch(html_text, result)
 

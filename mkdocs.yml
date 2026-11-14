@@ -84,6 +84,7 @@ nav:
       - PDF: file-types/pdf.md
       - OneNote and shortcuts: file-types/onenote-shortcuts.md
       - Scripts: file-types/scripts.md
+      - HTML and SVG pages: file-types/html.md
       - Java: file-types/java.md
       - Installers (MSI): file-types/installers.md
       - Windows executables: file-types/windows-pe.md

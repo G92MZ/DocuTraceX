@@ -48,6 +48,7 @@ MAX_LISTED = _env_int("DOCUTRACEX_NESTED_MAX_LISTED", 1000)
 # crafted archive-in-archive, so deep analysis is capped for the whole tree
 # (children past it are listed, not analysed).
 MAX_NODES = _env_int("DOCUTRACEX_NESTED_MAX_NODES", 600)
+MAX_HTML_SHOTS = _env_int("DOCUTRACEX_NESTED_MAX_HTML_SHOTS", 12)   # HTML pages rendered per case
 MAX_QR_IMAGES = _env_int("DOCUTRACEX_NESTED_MAX_QR_IMAGES", 120)   # images read for QR codes per case
 
 
@@ -568,6 +569,23 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
                 kids.append((Path(fp), Path(fn).name))
     except Exception as exc:  # noqa: BLE001
         node["error"] = str(exc)
+
+    # An HTML / SVG / MHT page (a phishing attachment): preview without JavaScript or
+    # network, structure, phishing rules and the victim's prefilled address.
+    try:
+        from . import htmlpage
+        if kind not in ("email", "ooxml", "ole", "pdf", "rtf") and htmlpage.is_markup(abs_path, data[:2048]):
+            shots = ctx.setdefault("_html_shots", [MAX_HTML_SHOTS])
+            with timed("html"):
+                hres = htmlpage.analyze(abs_path, paths.extracted_dir, paths.root, this_chain, shoot=shots[0] > 0)
+            if (hres.get("screenshot") or {}).get("stored_path"):
+                shots[0] -= 1
+            mods["html"] = hres
+            add_findings(hres.get("findings"), "html")
+            if hres.get("victims"):
+                node["victims"] = hres["victims"]
+    except Exception as exc:  # noqa: BLE001
+        node.setdefault("code_error", f"html: {exc}")
 
     # Deobfuscation phase on THIS child: JavaScript / PowerShell / VBScript that
     # hides inside the child's own structure (VBA JScript, PDF /JS, email body
