@@ -208,3 +208,20 @@ def public_abusech() -> dict[str, Any]:
     k = abusech_key()
     return {"configured": bool(k), "hint": ("…" + k[-4:]) if len(k) >= 8 else ("set" if k else "")}
 
+
+
+def sigma_settings() -> dict[str, Any]:
+    """Folder of Sigma rules for the registry (a SigmaHQ clone and / or your own) and whether
+    rules whose only process field (Image…) is in an exclusion filter run with it unapplied."""
+    sg = load().get("sigma_registry") or {}
+    return {"folder": str(sg.get("folder") or ""), "process_filters": bool(sg.get("process_filters", False))}
+
+
+def set_sigma_settings(folder: str, process_filters: bool) -> dict[str, Any]:
+    folder = str(folder or "").strip().strip('"')
+    if folder and not Path(folder).expanduser().is_dir():
+        raise ValueError(f"not a folder on this machine: {folder}")
+    data = load()
+    data["sigma_registry"] = {"folder": folder, "process_filters": bool(process_filters)}
+    save(data)
+    return sigma_settings()
