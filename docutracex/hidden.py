@@ -15,7 +15,10 @@ becomes a child; an image or resource without one adds nothing to the case."""
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
+import re
 import struct
 from pathlib import Path
 from typing import Any
@@ -301,6 +304,83 @@ def _pe_images(data: bytes) -> list[tuple[str, bytes]]:
     return out
 
 
+_MARKUP_EXT = (".html", ".htm", ".shtml", ".xhtml", ".svg", ".mht", ".mhtml", ".hta", ".eml")
+_DATA_URI = re.compile(rb"data:image/(?:png|jpe?g|gif|bmp|webp|x-icon|vnd\.microsoft\.icon);base64,\s*([A-Za-z0-9+/=\s]{64,})",
+                       re.IGNORECASE)
+_PICT = re.compile(rb"\\(?:pngblip|jpegblip)[^{}]*?(?<![0-9A-Za-z])((?:[0-9a-fA-F]{2}\s*){64,})")
+MAX_MARKUP = 8 * 1024 * 1024
+MAX_MARKUP_FILES = 40
+
+
+def _data_uri_images(src: bytes) -> list[bytes]:
+    """Images written inline as base64 ``data:`` URIs (a logo, a lure, a QR)."""
+    out = []
+    for m in _DATA_URI.finditer(src):
+        try:
+            img = base64.b64decode(re.sub(rb"\s+", b"", m.group(1)), validate=False)
+        except (ValueError, binascii.Error):
+            continue
+        if _ext(img) and len(img) >= 64:
+            out.append(img)
+        if len(out) >= MAX_IMAGES:
+            break
+    return out
+
+
+def _rtf_pictures(src: bytes) -> list[bytes]:
+    """PNG / JPEG pictures of an RTF (``\\pict`` with ``\\pngblip`` / ``\\jpegblip``, hex data)."""
+    out = []
+    for m in _PICT.finditer(src):
+        try:
+            img = bytes.fromhex(re.sub(rb"\s+", b"", m.group(1)).decode("ascii"))
+        except ValueError:
+            continue
+        if _ext(img):
+            out.append(img)
+        if len(out) >= MAX_IMAGES:
+            break
+    return out
+
+
+def _markup_sources(paths: Any, original: Path) -> list[tuple[str, str, bytes]]:
+    """(label, "datauri" | "pict", bytes) of the markup and RTF files of the case: the
+    file itself, the email's HTML body, and the HTML / SVG / MHT / RTF files extracted."""
+    out: list[tuple[str, str, bytes]] = []
+
+    def take(p: Path, label: str) -> None:
+        try:
+            if p.stat().st_size > MAX_MARKUP:
+                return
+            data = p.read_bytes()
+        except OSError:
+            return
+        if data.lstrip()[:5] == b"{\\rtf":
+            out.append((label, "pict", data))
+        elif b"data:image/" in data:
+            out.append((label, "datauri", data))
+
+    take(original, original.name)
+    em = read_json(paths.subresult("email")) or {}
+    body = em.get("html_source_sample") or ""
+    if "data:image/" in body:
+        out.append((f"the HTML body of {original.name}", "datauri", body.encode("utf-8", "replace")))
+    if paths.extracted_dir.is_dir():
+        n = 0
+        for p in sorted(paths.extracted_dir.rglob("*")):
+            if n >= MAX_MARKUP_FILES:
+                break
+            try:
+                rel = p.relative_to(paths.extracted_dir)
+            except ValueError:
+                continue
+            if rel.parts[:1] == (IMG_DIR,) or not p.is_file():
+                continue
+            if p.suffix.lower() in _MARKUP_EXT + (".rtf", ".doc"):
+                n += 1
+                take(p, p.name)
+    return out
+
+
 def images(paths: Any, original: Path, tree: list[dict[str, Any]],
            pending: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """Children for the images of the case that are not objects yet: Office
@@ -341,7 +421,20 @@ def images(paths: Any, original: Path, tree: list[dict[str, Any]],
         if _ext(head) or head.startswith((b"\xd7\xcd\xc6\x9a", b"\x01\x00\x00\x00")):   # + WMF / EMF
             part = sp.split("/", 1)[1] if sp.startswith("extracted/") else sp
             add(p, Path(sp).name, f"Office media {part} of {original.name}", ["office-media", part])
-    # 2. images in the native resources of every PE of the case
+    # 2. images written into markup (data: URIs of an HTML / SVG / MHT, the email's HTML body)
+    #    and the pictures of an RTF (\pict): files of their own only here
+    for label, kind, src in _markup_sources(paths, original):
+        for i, img in enumerate(_rtf_pictures(src) if kind == "pict" else _data_uri_images(src)):
+            sha = hashlib.sha256(img).hexdigest()
+            dest = paths.extracted_dir / IMG_DIR / sha[:12] / f"{kind}-{i + 1}.{_ext(img) or 'img'}"
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(img)
+            except OSError:
+                continue
+            what = "picture" if kind == "pict" else "data: URI image"
+            add(dest, dest.name, f"{what} {i + 1} in {label}", [kind, label])
+    # 3. images in the native resources of every PE of the case
     pes: list[tuple[str, bytes]] = []
     try:
         od = original.read_bytes()

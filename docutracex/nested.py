@@ -48,6 +48,7 @@ MAX_LISTED = _env_int("DOCUTRACEX_NESTED_MAX_LISTED", 1000)
 # crafted archive-in-archive, so deep analysis is capped for the whole tree
 # (children past it are listed, not analysed).
 MAX_NODES = _env_int("DOCUTRACEX_NESTED_MAX_NODES", 600)
+MAX_QR_IMAGES = _env_int("DOCUTRACEX_NESTED_MAX_QR_IMAGES", 120)   # images read for QR codes per case
 
 
 def _listed_node(p: Path, name: str, paths: "CasePaths", depth: int, why: str) -> dict[str, Any]:
@@ -641,6 +642,21 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
     elif node["kind"] == "other" and not mods and stego_is_image(data):
         node["read_as"] = "image"                      # its hidden / appended data is checked below
         node["image"] = _image_info(data)
+        # QR / barcodes ("scan to see the invoice"): the URL joins the IOCs
+        from . import qr
+        left = ctx.setdefault("_qr_left", [MAX_QR_IMAGES])
+        if left[0] > 0 and qr.worth_reading(data):
+            left[0] -= 1
+            try:
+                codes = qr.read([abs_path]).get(str(abs_path)) or []
+            except Exception as exc:  # noqa: BLE001
+                codes = []
+                node.setdefault("code_error", f"qr: {exc}")
+            if codes:
+                node["qr"] = codes
+                add_findings(qr.findings(codes, f"the image {name}"), "qr")
+                sources_out.append({"module": "qr", "location": f"{this_chain} › QR",
+                                    "text": "\n".join(c["text"] for c in codes)})
     elif node["kind"] == "other" and not mods and (node.get("entropy") or 8) < 7.2:
         # structured binary data no analyzer claims (a compiled script, a config blob, a database…):
         # its readable strings, ANSI and UTF-16, are mined for IOCs

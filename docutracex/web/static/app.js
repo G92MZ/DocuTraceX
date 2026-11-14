@@ -2360,6 +2360,15 @@ function paneFile(f) {
     <p style="margin-top:10px">${addMarkCell("file", `File ${f.filename || ""}`, f.stored_path || "file", (h.sha256 || ""))}</p>`;
 }
 
+// QR codes / barcodes read in an image case (its URLs are in the IOCs tab).
+function paneQr(q) {
+  const codes = q.codes || [];
+  return `<p class="hint-line">Codes read in the image (zxing-cpp, own process). URLs are in the IOCs tab.</p>` + table(
+    ["Format", "Content", "Mark"], codes.map((c) => `<tr><td>${escapeHtml(c.format || "")}</td>
+      <td class="mono">${escapeHtml(c.text || "")}</td>
+      <td>${addMarkCell("qr", `QR in the image: ${c.text}`, "qr", c.format || "")}</td></tr>`).join(""));
+}
+
 function paneArchive(arc) {
   const rows = (arc.entries || []).map((e) => `<tr>
     <td class="mono">${escapeHtml(e.name || "")}</td>
@@ -3242,7 +3251,8 @@ function readAsBadge(n) {
   if (n.read_as === "registry") return '<span class="badge badge-ok" title="Loaded into the Registry tab (database, rules); its IOCs come from the registry findings only">registry · see the Registry tab</span>';
   if (n.read_as === "text") return '<span class="badge badge-ok" title="Read as text: its IOCs are in the IOCs tab">text · read for IOCs</span>';
   if (n.read_as === "strings") return `<span class="badge badge-ok" title="Structured binary data: its readable strings (ANSI and UTF-16) were mined for IOCs">binary · ${n.strings_count || 0} string(s) read for IOCs</span>`;
-  if (n.read_as === "image") return `<span class="badge badge-ok" title="Image: checked for a file appended after its end or hidden in its pixels">${escapeHtml(im.format || "image")}${escapeHtml(dims)} · checked for hidden data</span>`;
+  if (n.read_as === "image") return `<span class="badge badge-ok" title="Image: checked for a file appended after its end or hidden in its pixels, and for QR codes">${escapeHtml(im.format || "image")}${escapeHtml(dims)} · checked for hidden data and QR</span>`
+    + (n.qr || []).map((c) => ` <span class="badge badge-bad" title="${escapeHtml(c.format || "QR")}">QR → <span class="mono">${escapeHtml((c.text || "").slice(0, 120))}</span></span>`).join("");
   if (n.read_as === "ifps") return '<span class="badge badge-ok" title="Inno Setup [Code] compiled to Pascal Script: strings and called functions read">Inno Setup [Code] · read</span>';
   if (n.entropy != null) return `<span class="badge badge-${n.entropy >= 7.5 ? "warn" : "muted"}" title="Shannon entropy of the bytes (8 = random: encrypted or compressed)">opaque data · entropy ${n.entropy}${n.entropy >= 7.5 ? " (encrypted/compressed: nothing to read without its key)" : ""}</span>`;
   return '<span class="badge badge-muted">empty</span>';
@@ -3646,6 +3656,9 @@ async function openComponents(analysisId, keepTab, viewId) {
     }
     if (mods.file) {
       sections.push({ id: "file", label: "File", html: paneFile(mods.file) });
+    }
+    if (mods.qr && (mods.qr.codes || []).length) {
+      sections.push({ id: "qr", label: `QR (${mods.qr.codes.length})`, html: paneQr(mods.qr) });
     }
     if (mods.archive) {
       sections.push({ id: "archive", label: `Archive (${(mods.archive.entries || []).filter((e) => e.stored_path).length})`, html: paneArchive(mods.archive) });

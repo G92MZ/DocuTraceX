@@ -5,8 +5,10 @@ with zxing-cpp. Rendering a hostile PDF is parser work on untrusted input, so
 this runs in its own process with a time limit:
 
     python -m docutracex.parsers.pdf_qr <file> [max_pages]
+    python -m docutracex.parsers.pdf_qr --many <image> <image>...
 
-and prints JSON: {"codes": [{"page", "format", "text"}], "pages": n, "error"}.
+and prints JSON: {"codes": [{"page", "format", "text"}], "pages": n, "error"}
+(``--many``: {"files": {path: that result}}).
 Plain images (PNG/JPEG/GIF/BMP...) are decoded directly.
 """
 
@@ -62,8 +64,12 @@ def scan(path: str, max_pages: int = MAX_PAGES) -> dict:
 
 def main(argv: list[str]) -> int:
     if not argv:
-        print(json.dumps({"error": "usage: pdf_qr <file> [max_pages]"}))
+        print(json.dumps({"error": "usage: pdf_qr <file> [max_pages] | pdf_qr --many <file>..."}))
         return 2
+    if argv[0] == "--many":
+        # several images in one process (the images of a case): {"files": {path: result}}
+        print(json.dumps({"files": {f: scan(f, 1) for f in argv[1:]}}))
+        return 0
     max_pages = int(argv[1]) if len(argv) > 1 else MAX_PAGES
     print(json.dumps(scan(argv[0], max_pages)))
     return 0
