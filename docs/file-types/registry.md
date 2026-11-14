@@ -177,6 +177,18 @@ Rules over the database, each with its ATT&CK technique:
 Entries pointing to a script host, an encoded command, a URL, a UNC path or a user-writable
 folder (`%TEMP%`, `C:\Users\Public`…) raise the severity of the rule that found them.
 
+**Sigma rules** — set a folder of Sigma rules in [Settings](../configuration.md#registry-sigma-rules)
+(a SigmaHQ clone, your own rules, or both) and its registry rules (`registry_set` / `_add` /
+`_delete` / `_event`) run on every hive and .reg of the case, each match a finding with the rule's
+title, level, ATT&CK tags, author and id. Values and keys are read the way Sysmon reports them:
+`key\value` as *TargetObject* (`HKCU` as `HKU\<SID>`, `ControlSet00N` as `CurrentControlSet`),
+Sysmon's spelling of the data as *Details* (`DWORD (0x00000001)`, `Binary Data`, `(Empty)`),
+`SetValue` / `CreateKey`, and `DeleteValue` / `DeleteKey` for entries recovered from deleted cells
+(the only place `registry_delete` rules look). A rule that cannot be translated faithfully — keywords,
+aggregations, other modifiers, a process field a hive cannot show (`Image`, `User`…) — is skipped and
+listed in Settings with why. Sigma rules describe **changes**: on a hive, every match is a value that
+exists, Windows defaults included; the last-write time says how recent it is.
+
 **Payloads kept in values** — a PE or archive in a binary value, a script, a base64 blob that
 decodes to a binary, an encoded PowerShell command (fileless malware) — are carved and analysed
 as nested objects, like any other file.

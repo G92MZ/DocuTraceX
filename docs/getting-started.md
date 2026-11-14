@@ -48,7 +48,9 @@ python update.py --yes      # update without asking
 Cloned with git? `git pull` works too.
 
 Once it runs, take five minutes for the [configuration](configuration.md): the proxy for network
-checks, your own domains and brands, and the rest of Settings.
+checks, your own domains and brands, the folder of
+[Sigma registry rules](configuration.md#registry-sigma-rules) (a clone of SigmaHQ and / or your
+own; optional) and the rest of Settings.
 
 ## Your first case
 
@@ -72,9 +74,10 @@ checks, your own domains and brands, and the rest of Settings.
 |---|---|
 | `cases/` | evidence, results, marks, task history, reports |
 | `yara/` | your rules |
-| `config/` | settings (proxy, AI endpoint) |
+| `config/` | settings (proxy, AI endpoint, the Sigma rules folder's path) |
 | `tools/` | the portable toolchain and reference data |
 
-All of them are git-ignored and kept across updates. **Diagnostics** shows every dependency and
+All of them are git-ignored and kept across updates. The Sigma rules stay in their own folder,
+wherever you keep them (the app only reads them; update them with `git pull`). **Diagnostics** shows every dependency and
 tool, with a **Retry** button to reinstall what is missing; see
 [Tools and licences](TOOLS.md).

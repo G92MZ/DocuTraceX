@@ -2939,6 +2939,14 @@ function regFindingsHtml(rg, marked) {
     }
     return f.evidence ? `<pre class="text-sample">${escapeHtml(f.evidence)}</pre>` : "";
   };
+  const sigmaMeta = (h) => {
+    const sg = h && h.sigma;
+    if (!sg) return "";
+    return `<p class="hint-line">Sigma rule <span class="mono">${escapeHtml(sg.file || "")}</span> · ${escapeHtml(sg.category || "")} · level ${escapeHtml(sg.level || "")}
+      ${sg.status ? `· ${escapeHtml(sg.status)}` : ""} · ${escapeHtml(sg.author || "")} · id <span class="mono">${escapeHtml(sg.id || "")}</span>
+      ${(sg.process_filters_unapplied || []).length ? `<br><b>Process filter not applied</b> (${escapeHtml(sg.process_filters_unapplied.join(", "))}): a hive does not record which program wrote it.` : ""}
+      ${sg.description ? `<br>${escapeHtml(sg.description)}` : ""}${(sg.references || []).map((u) => `<br><span class="mono">${escapeHtml(u)}</span>`).join("")}</p>`;
+  };
   const rows = fs.map((f, i) => {
     const h = hitsBy[f.rule] || {};
     const cf = byKey[`${f.rule}\u0000${f.detail}`] || f;
@@ -2949,7 +2957,7 @@ function regFindingsHtml(rg, marked) {
         <td>${escapeHtml(title)}${count ? ` <span class="hint-line">· ${count[1]}</span>` : ""}${/suspicious command/.test(f.detail || "") ? ' <span class="badge badge-bad">suspicious command</span>' : ""}</td>
         <td class="hint-line reg-nowrap">${escapeHtml((h.attack || (String(f.detail).match(/T\d{4}(\.\d{3})?/g) || [])).join(", "))}</td>
         <td>${markControlsHtml(cf)}</td></tr>
-      <tr class="reg-fdetail" data-reg-fdetail="${i}" hidden><td colspan="5">${evRows(f)}</td></tr>`;
+      <tr class="reg-fdetail" data-reg-fdetail="${i}" hidden><td colspan="5">${sigmaMeta(h)}${evRows(f)}</td></tr>`;
   }).join("");
   const info = (rg.hits || []).filter((h) => !fs.some((f) => f.rule === h.rule));
   const infoHtml = info.length ? `<h4>Listed, not findings</h4><p class="hint-line">Entries the rules list for context (nothing suspicious in them).</p>
@@ -2959,7 +2967,10 @@ function regFindingsHtml(rg, marked) {
       ${(h.items || []).map((it) => `<tr><td>${it.src}</td><td class="mono"><a href="#" data-reg-open="${escapeHtml(it.key)}" data-reg-src="${it.src}">${escapeHtml(it.key)}</a></td>
         <td class="mono">${escapeHtml(it.name || "")}</td><td class="mono">${escapeHtml(it.data || "")}</td>
         <td>${escapeHtml(it.last_write || "")}</td></tr>`).join("")}</tbody></table></details>`).join("")}` : "";
-  return (fs.length ? `<div class="row"><button class="btn btn-ghost btn-sm" type="button" data-reg-fall="1">Expand all</button>
+  const sg = rg.sigma;
+  const sigmaLine = sg && sg.folder ? `<p class="hint-line">Sigma: ${sg.error ? `<span class="bad-text">${escapeHtml(sg.error)}</span>` :
+    `${sg.loaded} registry rule(s) from <span class="mono">${escapeHtml(sg.folder)}</span> · ${sg.matched} matched · ${sg.skipped_count} skipped (see Settings)`}</p>` : "";
+  return sigmaLine + (fs.length ? `<div class="row"><button class="btn btn-ghost btn-sm" type="button" data-reg-fall="1">Expand all</button>
       <button class="btn btn-ghost btn-sm" type="button" data-reg-fall="0">Collapse all</button></div>
     <table class="cases findings-table reg-findings"><thead><tr><th>Severity</th><th>Rule</th><th>Finding</th><th>ATT&amp;CK</th><th>Mark</th></tr></thead>
     <tbody>${rows}</tbody></table>` : `<p class="hint-line">No findings.</p>`) + infoHtml;
@@ -5691,8 +5702,39 @@ async function loadAllowedCountries() {
   });
 }
 
+function renderSigma(j) {
+  document.getElementById("sigma-folder").value = j.folder || "";
+  document.getElementById("sigma-procfilters").checked = !!j.process_filters;
+  const box = document.getElementById("sigma-summary");
+  if (!j.folder) { box.innerHTML = `<p class="hint-line">Off: no folder set.</p>`; return; }
+  if (j.error) { box.innerHTML = `<p class="hint-line bad-text">${escapeHtml(j.error)}</p>`; return; }
+  const sk = j.skipped || [];
+  box.innerHTML = `<p class="hint-line"><b>${j.loaded}</b> registry rule(s) loaded from ${j.files} file(s) · <b>${j.skipped_count}</b> skipped</p>` +
+    (sk.length ? `<details class="disclose"><summary>Skipped rules and why (${j.skipped_count})</summary>` +
+      itable(["File", "Rule", "Why"], sk.map((x) => [x.file, x.title, x.reason])) + `</details>` : "");
+}
+
+async function loadSigma() {
+  try { renderSigma(await (await fetch("/api/settings/sigma")).json()); } catch (_) { /* optional */ }
+}
+
+document.getElementById("sigma-save").addEventListener("click", async () => {
+  const msg = document.getElementById("sigma-msg");
+  msg.className = "status"; msg.textContent = "Scanning…";
+  try {
+    const r = await fetch("/api/settings/sigma", { method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ folder: document.getElementById("sigma-folder").value.trim(),
+                             process_filters: document.getElementById("sigma-procfilters").checked }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || r.statusText);
+    renderSigma(j);
+    msg.textContent = j.folder ? "Saved — applies to the next analysis (or Re-run)." : "Off.";
+  } catch (err) { msg.className = "status bad-text"; msg.textContent = String(err.message || err); }
+});
+
 async function loadMailintel() {
   loadTenantLookup();
+  loadSigma();
   loadAllowedCountries();
   try { renderMailintel(await (await fetch("/api/settings/mailintel")).json()); } catch (_) { /* optional */ }
   try {
