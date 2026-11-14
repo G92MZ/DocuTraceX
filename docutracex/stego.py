@@ -255,7 +255,8 @@ def _decodings(s: bytes, keys: list[tuple[str, bytes]]) -> Iterable[tuple[str, b
                     yield f"{label}Base64 + zlib/gzip", zlib.decompressobj(47).decompress(dec)
             except (binascii.Error, zlib.error, ValueError):
                 pass
-        holes = b"\x00" * 64 in body                    # zero runs in XOR-ed data = padding holes: wrong stream
+        # zero runs in XOR-ed data = padding holes: wrong stream (the image's own trailing padding does not count)
+        holes = b"\x00" * 64 in body.rstrip(b"\x00")
         for mg in _MAGICS:                          # single-byte XOR that makes a magic appear
             k0 = body[0] ^ mg[0]
             if k0 and not holes and all(body[i] ^ k0 == mg[i] for i in range(1, len(mg))):

@@ -41,12 +41,13 @@ SAMPLES_ZIP = ROOT / "samples" / "samples.zip"
 def _docm() -> bytes:
     """The sample .docm served as the kit's "remittance" download (read from the
     encrypted samples archive; falls back to an unpacked copy)."""
-    loose = ROOT / "samples" / "sample.docm"
-    if loose.is_file():
-        return loose.read_bytes()
+    for loose in (ROOT / "samples" / "word" / "sample.docm", ROOT / "samples" / "sample.docm"):
+        if loose.is_file():
+            return loose.read_bytes()
     import zipfile
-    with zipfile.ZipFile(SAMPLES_ZIP) as zf:
-        return zf.read("sample.docm", pwd=b"infected")
+    with zipfile.ZipFile(SAMPLES_ZIP) as zf:                 # samples sit in their type folder (word/)
+        names = set(zf.namelist())
+        return zf.read("word/sample.docm" if "word/sample.docm" in names else "sample.docm", pwd=b"infected")
 SESSIONS: set[str] = set()
 
 LOGIN = """<!DOCTYPE html>
