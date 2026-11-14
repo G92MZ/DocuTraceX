@@ -333,11 +333,13 @@ def list_rules() -> dict[str, Any]:
     """The last compilation (from cache; nothing is compiled here)."""
     report = _read_report()
     if report is None:
+        snap = _sources_snapshot()
         return {"compiled": False, "rule_count": 0, "file_count": 0, "errors": [], "rules": [],
-                "stale": bool(_sources_snapshot()["external_paths"] or _sources_snapshot()["uploaded"])}
-    stale = report.get("snapshot") != _sources_snapshot()
+                "stale": bool(snap["external_paths"] or snap["uploaded"]), "sources_config": snap}
+    snap = _sources_snapshot()
+    stale = report.get("snapshot") != snap
     report = {k: v for k, v in report.items() if k != "snapshot"}
-    return {**report, "compiled": True, "stale": stale}
+    return {**report, "compiled": True, "stale": stale, "sources_config": snap}
 
 
 def compile_rules() -> tuple[Any, dict[str, Any]]:
@@ -350,7 +352,7 @@ def compile_rules() -> tuple[Any, dict[str, Any]]:
     report = _read_report()
     if report is None or not _compiled_path().is_file():
         return None, {"available": True, "rule_count": 0, "errors": [],
-                      "error": "Rules not compiled yet: compile them in the YARA tab."}
+                      "error": "Rules not compiled yet: compile them in Settings → YARA rules."}
     try:
         compiled = yara.load(str(_compiled_path()))
     except Exception as exc:  # noqa: BLE001
