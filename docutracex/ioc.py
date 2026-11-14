@@ -876,7 +876,7 @@ def extract(sources: list[dict[str, Any]]) -> dict[str, Any]:
 # Keys containing hashes/identifiers computed by the app itself, not sample content.
 _SKIP_KEYS = {
     "sha1", "sha256", "sha384", "sha512", "md5", "imphash", "ssdeep",
-    "tlsh", "pehash", "crc32", "digest", "checksum", "fingerprint",
+    "tlsh", "pehash", "crc32", "digest", "checksum", "fingerprint", "fingerprints",
     "entropy", "code_file",
     # certificate identifiers: serial numbers and thumbprints are not indicators
     "serial", "serial_number", "thumbprint", "certificate_thumbprint",
