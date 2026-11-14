@@ -114,6 +114,10 @@ each analysed with its own family's tools, many levels deep.
 
     ![Body of sample.eml](../assets/shots/email/body.webp){ .shot }
 
+    The **HTML** tab shows a **preview** of the HTML body (rendered offline: JavaScript off, every
+    request blocked), reads the **QR codes drawn with HTML** in it, and tags an address prefilled
+    in it as the **victim** — see [HTML and SVG pages](html.md).
+
     !!! tip "Links rewritten by security gateways"
         Microsoft Defender Safe Links, Proofpoint URL Defense, Mimecast, Barracuda and others wrap
         every link, sometimes several times in a row. DocuTraceX unwraps them, and the IOCs and

@@ -365,6 +365,18 @@ table with what each one tells. All values below are invented.
 | `pdf/sample_fingerprints.pdf` | **Metadata**: trailer `/ID`, XMP DocumentID / InstanceID / OriginalDocumentID, *derived from*, history of 2 saves and their software — the XMP is in a FlateDecode stream. |
 | `shortcuts/sample_fingerprints.lnk` | **Shortcut**: MAC `00:0C:29:A1:B2:C3 — VMware virtual NIC` and the object-ID time `2026-10-28 08:15:00 UTC` from the tracker block (machine `fin-pc07`). |
 
+## HTML and SVG pages (HTML tab)
+
+Preview rendered offline (JavaScript off, every request blocked), structure, phishing rules,
+the victim's prefilled address (email IOC tagged *victim*) and QR codes drawn with HTML / SVG.
+Needs Chromium (provisioned for the network checks).
+
+| Sample | What it shows |
+| --- | --- |
+| `html/sample_phish_factura.html` | Credential page: title names `portal-facturas.example`, the form posts to `recogida-datos.example` (*names one domain but sends to another*); victim `ana.garcia@cliente-ejemplo.example` prefilled (field value, and Base64 in a variable) → **Victim** table and the IOC tag; a script sends the typed fields to a chat-bot relay (*sent by script*, *exfiltration*); anti-analysis (right-click, F12, `ipapi.co`, Turnstile); remote CSS / logo / favicon in **Resources**; a **QR drawn with table cells** read from the preview (`/qr/tabla`). |
+| `html/sample_phish_loader.html` | The same page as `document.write(atob("…"))` in an empty page: *loader page*, **recovered layer 1 (base64 literal)**, and the preview / QR / victim of the recovered page. |
+| `html/sample_qr_drawn.svg` | A QR made of `<rect>` elements (no image): read from the preview (`/qr/svg`). |
+
 ## .NET assemblies (Components → .NET)
 
 Built by `dotnet_samples()` in `scripts/make_samples.py` with `scripts/dnkit.py`

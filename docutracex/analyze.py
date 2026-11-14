@@ -1089,6 +1089,29 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             findings_total += nst.get("counts", {}).get("findings", 0)
             family = "archive"   # not "unknown" any more: no text fallback over the raw archive
 
+    # HTML / SVG / MHT page, or the HTML body of an email: offline preview (no JavaScript,
+    # no network), structure, phishing rules (the email engine already judged a body),
+    # QR codes drawn with HTML / CSS, and the victim's prefilled address.
+    try:
+        from . import htmlpage
+        hres = None
+        if family not in ("email", "ooxml", "ole", "pdf", "rtf") and htmlpage.is_markup(original):
+            hres = run("html: offline preview (no JavaScript, no network) · forms · resources · phishing rules",
+                       lambda: htmlpage.analyze(original, paths.extracted_dir, paths.root, original.name))
+        elif family == "email":
+            em = read_json(paths.subresult("email")) or {}
+            body = em.get("_html_source") or em.get("html_source_sample") or ""
+            if body.strip():
+                hres = run("html: preview of the email's HTML body (no JavaScript, no network) · QR drawn in HTML",
+                           lambda: htmlpage.analyze(original, paths.extracted_dir, paths.root, "the email's HTML body",
+                                                    run_rules=False, markup=body, kind="email body"))
+        if hres:
+            write_subresult(paths, "html", hres)
+            ran.append("html")
+            findings_total += hres.get("counts", {}).get("findings", 0)
+    except Exception as exc:  # noqa: BLE001  (never fails the case)
+        log.warning("HTML section skipped for %s: %s", paths.root.name, exc)
+
     # Scripting engine (deobfuscation + behaviour rules). It runs whenever a
     # family parser ran (scripts hide inside those) or the case file itself is a
     # scripting file — so a standalone .js/.ps1/.vbs/.bat/.hta is analysed too.
@@ -1416,6 +1439,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         rm = run("rmm: remote-access tools in the IOCs and the text (LOLRMM)",
                  lambda: _rmm(paths, modules, ioc_result, ioc_sources))
         _tenant_iocs(modules, ioc_result)
+        _victim_iocs(modules, ioc_result)
         _drop_own_hashes(paths, ioc_result)
         if rm:
             modules["rmm"] = rm
@@ -1511,7 +1535,7 @@ _RERUNNABLE = ("ooxml", "word", "excel", "powerpoint", "oletools", "msoffcrypto"
                "powershell", "vbscript", "batch", "shortcut", "msi", "python", "java", "onenote", "ml", "c2", "golang", "code", "dotnet")
 # Modules whose findings feed the consolidated view (includes derived ones).
 _COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file", "pyinstaller", "domainsim", "rmm",
-                               "memdump", "registry", "qr")
+                               "memdump", "registry", "qr", "html")
 
 
 def _registry(paths: CasePaths, files: list[tuple[Path, str]]) -> dict[str, Any]:
@@ -1571,6 +1595,43 @@ def _drop_own_hashes(paths: CasePaths, ioc_result: dict[str, Any]) -> None:
         log.warning("own-hash filter skipped: %s", exc)
 
 
+def _victim_iocs(modules: dict[str, Any], ioc_result: dict[str, Any]) -> None:
+    """Addresses an HTML page carries prefilled are the victim's: their email IOC is tagged
+    ``victim`` (the user's own mailbox — context, never one to block), added when the
+    extractor did not see it (Base64), and compared with the recipients of the case's email."""
+    try:
+        found: list[tuple[str, str]] = []
+        for v in (modules.get("html") or {}).get("victims") or []:
+            found.append((v["address"], f"html/{v.get('where', '')}"))
+
+        def walk(nodes: list[dict[str, Any]]) -> None:
+            for n in nodes or []:
+                for v in n.get("victims") or []:
+                    found.append((v["address"], f"nested/{n.get('filename', '')}: {v.get('where', '')}"))
+                walk(n.get("children") or [])
+        walk((modules.get("nested") or {}).get("tree") or [])
+        if not found:
+            return
+        addr = (modules.get("email") or {}).get("addresses") or {}
+        rcpt = {str(a).lower() for k in ("to", "cc", "bcc") for a in (addr.get(k) or [])}
+        by_value = {i["value"].lower(): i for i in ioc_result.get("iocs") or [] if i.get("type") == "email"}
+        for a, where in found:
+            a = a.lower()
+            i = by_value.get(a)
+            if i is None:
+                i = {"type": "email", "value": a, "count": 1,
+                     "occurrences": [{"module": "html", "location": where, "context": "prefilled in the page"}]}
+                ioc_result.setdefault("iocs", []).append(i)
+                by_value[a] = i
+                counts = ioc_result.setdefault("counts", {})
+                counts["email"] = counts.get("email", 0) + 1
+                counts["total"] = counts.get("total", 0) + 1
+            i["victim"] = {"where": where,
+                           "recipient": (a in rcpt) if rcpt else None}
+    except Exception as exc:  # noqa: BLE001  (never breaks the analysis)
+        log.warning("victim IOCs skipped: %s", exc)
+
+
 def _tenant_iocs(modules: dict[str, Any], ioc_result: dict[str, Any]) -> None:
     """The sender's Microsoft 365 tenant (ID, name, former domains) into the IOCs."""
     try:
@@ -1623,6 +1684,7 @@ def _recompute_derived(paths: CasePaths) -> tuple[int, int]:
     if rm:
         modules["rmm"] = rm
     _tenant_iocs(modules, ioc_result)
+    _victim_iocs(modules, ioc_result)
     _drop_own_hashes(paths, ioc_result)
     write_subresult(paths, "iocs", ioc_result)
     ds = _domainsim(paths, modules, ioc_result)

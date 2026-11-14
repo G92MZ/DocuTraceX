@@ -361,7 +361,7 @@ def _markup_sources(paths: Any, original: Path) -> list[tuple[str, str, bytes]]:
 
     take(original, original.name)
     em = read_json(paths.subresult("email")) or {}
-    body = em.get("html_source_sample") or ""
+    body = em.get("_html_source") or em.get("html_source_sample") or ""
     if "data:image/" in body:
         out.append((f"the HTML body of {original.name}", "datauri", body.encode("utf-8", "replace")))
     if paths.extracted_dir.is_dir():

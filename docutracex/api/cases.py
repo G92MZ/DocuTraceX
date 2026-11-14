@@ -831,7 +831,8 @@ async def netcheck_asset(analysis_id: str, path: str):
         case_service.get_case(analysis_id)
     except CaseError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    if not path.startswith("extracted/netcheck/") or not path.endswith((".png", ".preview.html")):
+    if (not path.startswith(("extracted/netcheck/", "extracted/html/"))
+            or not path.endswith((".png", ".preview.html"))):
         # id: gmzpt
         raise HTTPException(status_code=400, detail="Not a network-check asset")
     target = _safe_target(analysis_id, path)
