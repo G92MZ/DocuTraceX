@@ -302,6 +302,48 @@ RACCOON = familyspec.Spec(
 _HEX32 = re.compile(r"^[0-9a-f]{32}$")
 
 
+# --- StealC / Vidar (same string protection as Raccoon v2: base64 + RC4, key in the binary) ---------
+_STEALC_GATE = re.compile(r"^/[0-9a-f]{16}\.php$")
+_DEAD_DROP = re.compile(r"^https?://(?:t\.me/[A-Za-z0-9_]{3,64}|telegram\.me/[A-Za-z0-9_]{3,64}|"
+                        r"steamcommunity\.com/(?:profiles/\d{10,20}|id/[A-Za-z0-9_-]{2,64}))/?$")
+
+
+def _stealc_vidar(key: str, values: list[str], urls: list[str], strings: list[str],
+                  data: bytes) -> dict[str, Any] | None:
+    """StealC: the C2 host and its gate (/<16 hex>.php) among the decrypted strings.
+    Vidar: the C2 is fetched from a dead drop (a Telegram channel or a Steam profile whose
+    name holds it) — the profile URLs are among the decrypted strings."""
+    gates = [v for v in values if _STEALC_GATE.match(v)]
+    drops = [v for v in values if _DEAD_DROP.match(v)]
+    hosts = [u for u in urls if not _DEAD_DROP.match(u)]
+    browser = [what for needle, what in RACCOON.traces[:7] if needle in data]
+    if gates and hosts:
+        c2 = [u.rstrip("/") + gates[0] for u in hosts]
+        summary: dict[str, Any] = {"C2": c2, "Gate": gates[0], "RC4 key": key}
+        if browser:
+            summary["Traces"] = browser
+        summary["Note"] = ("StealC asks the gate for its configuration (what to steal, the DLLs to download) when it "
+                           "checks in: it is not in the file")
+        return {"family": "StealC", "kind": "stealer", "method": "base64 + RC4 with a key string from the binary",
+                "confidence": "high", "summary": summary,
+                "c2": list(dict.fromkeys(h for u in hosts for h in [_url_host(u)] if h)),
+                "fields": {f"value {i + 1}": v for i, v in enumerate(values[:60])}}
+    if drops:
+        summary = {"Dead drop": drops, "RC4 key": key}
+        if hosts:
+            summary["Other URLs"] = hosts
+        if browser:
+            summary["Traces"] = browser
+        summary["Note"] = ("Vidar reads its C2 from the dead drop (the Telegram channel's description or the Steam "
+                           "profile's name): open it with a network check to see the current C2")
+        return {"family": "Vidar", "kind": "stealer", "method": "base64 + RC4 with a key string from the binary",
+                "confidence": "medium" if browser else "low", "summary": summary,
+                "c2": list(dict.fromkeys(h for u in hosts for h in [_url_host(u)] if h)),
+                "dead_drop": drops,
+                "fields": {f"value {i + 1}": v for i, v in enumerate(values[:60])}}
+    return None
+
+
 def raccoon(data: bytes) -> dict[str, Any] | None:
     if data[:2] != b"MZ":
         return None
@@ -309,7 +351,8 @@ def raccoon(data: bytes) -> dict[str, Any] | None:
     enc = [(s, b) for s in strings for b in [_b64(s)] if b and 4 <= len(b) <= 512][:300]
     if not enc:
         return raccoon_traces(data)
-    keys = [s for s in strings if 6 <= len(s) <= 64 and not _b64(s)][:150]
+    # the key is a plain string of the binary — often alphanumeric, so it may also look like base64
+    keys = sorted((s for s in strings if 6 <= len(s) <= 64), key=lambda k: bool(_b64(k)))[:250]
     for key in keys:
         kb = key.encode("latin-1")
         ksa = _ksa(kb)
@@ -328,6 +371,9 @@ def raccoon(data: bytes) -> dict[str, Any] | None:
         if not urls:
             continue
         markers = [v for v in values if v.startswith(("machineId=", "configId=", "&configId="))]
+        other = _stealc_vidar(key, values, urls, strings, data)
+        if other and not markers:
+            return other
         fam = "Raccoon Stealer v2" if markers else "RC4-encrypted C2 (Raccoon-like)"
         summary: dict[str, Any] = {"C2": list(dict.fromkeys(urls)), "RC4 key": key}
         build = [s for s in strings if _HEX32.match(s)]

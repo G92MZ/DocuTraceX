@@ -83,8 +83,21 @@ EXTRACTORS: dict[str, dict[str, Any]] = {
         "output": "configuration, or indicators (framework without endpoints)",
         "limits": "a bare literal is never taken as the C2 on its own; endpoints built at run time are not seen",
     },
+    "modern": {
+        "name": "Lumma / Brute Ratel / Havoc / Pure family", "version": "1.0",
+        "families": ["Lumma Stealer", "Brute Ratel C4 (badger)", "Havoc (Demon)", "Pure family"],
+        "formats": ["PE", "shellcode / raw badger", ".NET assembly"],
+        "engines": ["base64 + 32-byte XOR (Lumma)", "base64 + RC4 (Brute Ratel)", "Demon configuration buffer (Havoc)",
+                    "base64 + GZip + protobuf (Pure)"],
+        "dependencies": [], "fields": ["C2", "dead drop", "URIs", "user agent", "sleep / jitter", "spawn-to",
+                                       "injection", "protobuf settings"],
+        "output": "configuration, or indicators",
+        "limits": "Lumma builds with ChaCha20 / flattened code, encrypted Havoc builds and Brute Ratel with a key "
+                  "not in the file give traces or nothing; validate against real samples",
+    },
     "stealers": {
-        "name": "AgentTesla-style stealers", "families": ["AgentTesla", "Discord-webhook grabbers"], "version": "1.1",
+        "name": "AgentTesla-style stealers, Raccoon / StealC / Vidar", "families": ["AgentTesla", "Discord-webhook grabbers",
+                                                                     "Raccoon Stealer v2", "StealC", "Vidar"], "version": "1.2",
         "formats": [".NET assembly", "PE", "memory dump"], "engines": ["strings"], "dependencies": [],
         "fields": ["SMTP / FTP / Telegram / Discord webhook exfiltration", "accounts"], "output": "exfiltration channel",
         "limits": "builds that encrypt their strings need the .NET string decryption or a memory dump",
@@ -107,6 +120,7 @@ REQUIRES: dict[str, list[tuple[str, str, bool, str]]] = {
     "metasploit": [("python", "unicorn", False, "encoder stubs (shikata_ga_nai, x64/xor) decoded by emulation")],
     "dotnet_more": [("python", "cryptography", True, "AES / DES / RC4 settings")],
     "stealers": [("python", "pefile", False, "PE resources"), ("python", "cryptography", False, "3DES-encrypted strings")],
+    "modern": [],
     "go": [],
     "rmm": [("feed", "LOLRMM catalogue", False, "current product list (Settings → C2: Refresh; built-in list without it)")],
 }

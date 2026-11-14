@@ -65,7 +65,7 @@ def test_family_cards_and_markdown(tmp_path: Path, monkeypatch) -> None:  # noqa
     from docutracex.config import settings
     monkeypatch.setattr(settings, "cases_dir", tmp_path)
     assert {"cobalt", "asyncrat", "rmm"} <= {f["id"] for f in families.FAMILIES}
-    assert families.for_family("RMM: AnyDesk")["id"] == "rmm" and families.for_family("NanoCore") is None
+    assert families.for_family("RMM: AnyDesk")["id"] == "rmm" and families.for_family("Unknown") is None
     monkeypatch.setitem(os.environ, "DOCUTRACEX_AUTO_MODULES", "c2")
     m = cases.create_case(io.BytesIO(ms.asyncrat_exe()), "factura.exe", cases_dir=tmp_path)
     analyze.analyze_case(tmp_path / m["analysis_id"])
