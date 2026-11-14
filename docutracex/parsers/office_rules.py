@@ -415,6 +415,11 @@ def analyze_ooxml(path: Path) -> dict[str, Any]:
         _rules_powerpoint(zf, res)
         _rules_addins_custom(zf, res)
         _attribution_ooxml(zf, res)
+        try:
+            from .. import fingerprints
+            res["fingerprints"] = fingerprints.ooxml(zf)
+        except Exception:  # noqa: BLE001
+            pass
         for name in zf.namelist():
             if re.search(r"/embeddings/.*\.bin$", name, re.I):
                 _rules_embedded_ole(zf.read(name), name, res)
@@ -438,6 +443,11 @@ def analyze_ole(path: Path) -> dict[str, Any]:
     try:
         ole = olefile.OleFileIO(str(path))
         try:
+            try:
+                from .. import fingerprints
+                res["fingerprints"] = fingerprints.ole_doc(ole)
+            except Exception:  # noqa: BLE001
+                pass
             md = ole.get_metadata()
             for attr in ("author", "last_saved_by", "company", "template", "title",
                          "creating_application", "create_time", "last_saved_time"):

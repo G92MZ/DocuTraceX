@@ -10,7 +10,8 @@ analysed.
 
     - **Header and sections**: type, architecture, subsystem, timestamps, sections with their
       **entropy** and permissions (writable + executable), overlay, resources, version info,
-      **signature** (Authenticode, trusted or not) and build artefacts (PDB path, Rich header).
+      **signature** (Authenticode, trusted or not) and build artefacts (PDB path, Rich header),
+      gathered with the imphash and the signer in a **Fingerprints** tab.
     - **Imports grouped by behaviour** (network, injection, crypto, persistence…) and exports
       (forwarders: proxy DLLs).
     - **Packers and installers** detected (Detect It Easy, signatures) and **unpacked**: UPX,

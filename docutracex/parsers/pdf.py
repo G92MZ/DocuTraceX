@@ -257,6 +257,11 @@ def analyze(original_path: Path, extracted_dir: Path | None = None) -> dict[str,
     _extract_javascript(data, result)
     _extract_objects(data, result)
     _extract_metadata(original_path, result)
+    try:
+        from .. import fingerprints
+        result["fingerprints"] = fingerprints.pdf(data)
+    except Exception:  # noqa: BLE001
+        pass
     _extract_embedded(original_path, extracted_dir, result)
     _extract_text(original_path, result)
 

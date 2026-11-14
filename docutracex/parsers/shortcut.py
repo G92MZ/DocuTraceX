@@ -114,6 +114,11 @@ def analyze_lnk(path: Path, rel: str) -> dict[str, Any]:
                 description=str(data.get("description") or ""),
                 machine_id=str(tracker.get("machine_identifier") or ""))
     item["_full_code"] = command
+    try:
+        from .. import fingerprints
+        item["fingerprints"] = fingerprints.lnk(tracker, link)
+    except Exception:  # noqa: BLE001
+        pass
 
     f = item["findings"]
     f.extend(_name_findings(rel, loc))

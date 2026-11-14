@@ -1208,6 +1208,7 @@ function paneMetadata(sem, ole, rules) {
     .map(([k, v]) => `<tr><td class="file">${escapeHtml(k)}</td><td class="mono">${escapeHtml(String(v))}</td>
       <td>${addMarkCell("metadata", `${k}: ${v}`, "attribution", "")}</td></tr>`).join("");
   if (attRows) html += `<h3 class="formats-title">Attribution</h3>` + table(["Field", "Value", "Mark"], attRows);
+  html += fingerprintsTable(rules && rules.fingerprints, "office fingerprint");
   if ((att.local_paths || []).length) {
     html += `<p class="hint-line">Local paths of the author's machine</p><pre class="text-sample">${escapeHtml(att.local_paths.join("\n"))}</pre>`;
   }
@@ -2222,13 +2223,26 @@ function paneRtfMeta(rtf) {
   return html;
 }
 
+// Origin fingerprints of one file (values its machine / kit left in it): shown with
+// that file only, never correlated with other files or cases.
+function fingerprintsTable(list, where) {
+  const fps = list || [];
+  if (!fps.length) return "";
+  return `<h3 class="formats-title">Origin fingerprints (${fps.length})</h3>
+    <p class="hint-line">Values the machine or the kit that built this file left in it.</p>` +
+    table(["Fingerprint", "Value", "What it tells", "Mark"], fps.map((f) => `<tr><td class="file">${escapeHtml(f.name || "")}</td>
+      <td class="mono">${escapeHtml(f.value || "")}</td><td class="hint-line">${escapeHtml(f.meaning || "")}</td>
+      <td>${addMarkCell("metadata", `${f.name}: ${f.value}`, where || "fingerprint", "")}</td></tr>`).join(""));
+}
+
 function panePdfMeta(pdf) {
   const md = pdf.metadata || {};
   const keys = Object.keys(md);
-  if (!keys.length) return `<p class="hint-line">No document metadata.</p>`;
+  const fps = fingerprintsTable(pdf.fingerprints, "pdf fingerprint");
+  if (!keys.length) return `<p class="hint-line">No document metadata.</p>` + fps;
   return table(["Property", "Value", "Mark"],
     keys.map((k) => `<tr><td class="file">${escapeHtml(k)}</td><td>${escapeHtml(String(md[k]))}</td>
-      <td>${addMarkCell("metadata", `${k}: ${md[k]}`, "pdf metadata", "")}</td></tr>`).join(""));
+      <td>${addMarkCell("metadata", `${k}: ${md[k]}`, "pdf metadata", "")}</td></tr>`).join("")) + fps;
 }
 
 function panePdfEmbedded(pdf) {
@@ -2401,7 +2415,7 @@ function paneShortcut(scm) {
     }
     const err = it.error ? `<p class="bad-text">${escapeHtml(it.error)}</p>` : "";
     return `<div class="sub-item"><div class="hint-line">${escapeHtml(it.kind === "lnk" ? "Shell Link (.lnk)" : "Internet shortcut (.url)")}</div>
-      ${rows}${err}${netFindingsList(it.findings || [])}</div>`;
+      ${rows}${err}${fingerprintsTable(it.fingerprints, "lnk fingerprint")}${netFindingsList(it.findings || [])}</div>`;
   }).join("");
   return `<p class="hint-line">Windows shortcut — target and metadata parsed; the launched command is run through the scripting engine.</p>${parts}`;
 }
@@ -2638,6 +2652,8 @@ function panePeItem(it, n, fileRec) {
     { id: "sections", label: `Sections (${secs.length})`, html: itable(["Section", "Virtual size", "Raw size", "Entropy", ""], secs)
         + (lf && lf.status === "ok" && lf.format === "PE" ? `<h4>LIEF flags</h4>${itable(["Section", "Offset", "Flags"], (lf.sections || []).map((s) => [s.name, s.offset, (s.flags || []).join(" ")]))}` : "") },
     { id: "imports", label: "Imports / Exports", html: paneImportsExports(it) },
+    (it.fingerprints || []).length ? { id: "fingerprints", label: `Fingerprints (${it.fingerprints.length})`,
+      html: fingerprintsTable(it.fingerprints, "pe fingerprint") } : null,
     lf ? toolTab("lief", "LIEF", lf, paneLief(lf) + netFindingsList(byTool("lief"))) : null,
     it.debloat ? toolTab("debloat", "Debloat", { status: it.debloat.status, detail: it.debloat.detail },
                          paneDebloat(it.debloat) + netFindingsList(byTool("debloat"))) : null,

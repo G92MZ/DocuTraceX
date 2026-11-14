@@ -23,6 +23,13 @@ to a login page. DocuTraceX reads every object without rendering or running anyt
     Incremental **revisions** (what each update added), signatures, QR codes, and the output of
     pdfid, pdf-parser and peepdf for a second opinion.
 
+??? abstract "Metadata — properties and origin fingerprints"
+
+    The document properties and the **origin fingerprints**: the trailer `/ID` pair (equal values:
+    never modified), the XMP `DocumentID`, `InstanceID`, `OriginalDocumentID`, the document it was
+    derived from, the save history and the software that saved it — read also from a compressed
+    XMP stream.
+
     ![PDF tools tab of sample.pdf](../assets/shots/pdf/pdftools.webp){ .shot }
 
 ??? abstract "Embedded — the files it carries"

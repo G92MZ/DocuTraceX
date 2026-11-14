@@ -353,6 +353,18 @@ to its own inert URL, `https://portal-facturas.example/qr/<where>?f=2026-0187`.
 | `html/sample_qr_datauri.html` | the QR is an `<img src="data:image/png;base64,…">`: child `datauri-1.png` (`/qr/html`). |
 | `word/sample_qr_pict.rtf` | the QR is an RTF picture (`{\pict\pngblip …hex…}`): child `pict-1.png` (`/qr/rtf`). |
 
+## Origin fingerprints (shown per file, never correlated)
+
+Values the machine or the kit that built a file leaves in it, in an *Origin fingerprints*
+table with what each one tells. All values below are invented.
+
+| Sample | What it shows |
+| --- | --- |
+| `word/sample_fingerprints.docm` | **Metadata**: Word document GUID `{3F2B7C1A-…}` (w15) and ID `5A1C3E7B` (w14), `rsidRoot` and 3 rsids; VBA project GUID, *compiled on 64-bit Windows*, locale `0x0409 (en-US)`, code page 1252, p-code version `0xFFFF` (*written by a tool, not saved by Office*). |
+| `excel/sample_fingerprints.xlsx` | Excel build (`rupBuild=27425`) and document GUID `8_{9C4E2A71-…}`. |
+| `pdf/sample_fingerprints.pdf` | **Metadata**: trailer `/ID`, XMP DocumentID / InstanceID / OriginalDocumentID, *derived from*, history of 2 saves and their software — the XMP is in a FlateDecode stream. |
+| `shortcuts/sample_fingerprints.lnk` | **Shortcut**: MAC `00:0C:29:A1:B2:C3 — VMware virtual NIC` and the object-ID time `2026-10-28 08:15:00 UTC` from the tracker block (machine `fin-pc07`). |
+
 ## .NET assemblies (Components → .NET)
 
 Built by `dotnet_samples()` in `scripts/make_samples.py` with `scripts/dnkit.py`
