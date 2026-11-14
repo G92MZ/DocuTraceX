@@ -4,15 +4,27 @@ DocuTraceX works out of the box, but a few settings make it yours. Do them once 
 start: they live in `config/` (`config/settings.json`, your rules in `config/rules/`, the users,
 sessions, audit trail and MCP token) and survive updates.
 
+Settings is one page in four groups, each a set of cards, with an index at the top to jump
+between them (nothing is folded away):
+
+| Group | Cards |
+|---|---|
+| **Network** | proxy, free public proxy, without a proxy, how URLs are checked, reference data (IP database, TLD list) |
+| **Your organisation** | own domains, brands and look-alike distance; generic legitimate domains |
+| **Email intelligence** | reputation lists (and the abuse.ch key), Microsoft 365 tenants, allowed countries |
+| **Detection rules** | YARA rules, registry Sigma rules |
+
 !!! tip "Ready in five minutes"
     1. **First start**: set the admin password, then create your colleagues' accounts in **Users**
        ([Users, sign-in and audit](users.md)).
-    2. **Settings → Network — proxy**: the proxy for network checks (or a free public one).
-    3. **Settings → Email rules: your organisation**: your own domains and the brands to protect.
-    4. **Settings → Generic legitimate domains**: the providers you use, so they are not reported as look-alikes.
-    5. **Settings → Email reputation lists / Microsoft 365 tenants**: optional keys and lookups.
+    2. **Settings → Network → Proxy**: the proxy for network checks (or a free public one).
+    3. **Settings → Your organisation**: your own domains and brands, and the providers you use so
+       they are not reported as look-alikes.
+    4. **Settings → Email intelligence**: optional keys and lookups.
+    5. **Settings → Detection rules**: your **YARA** rules and, optionally, a folder of **Sigma**
+       rules for the registry.
     6. **New analysis**: how many analyses run at once.
-    7. Optional: **YARA** rules, the **AI** endpoint or **MCP**, and a look at **Diagnostics**.
+    7. Optional: the **AI** endpoint or **MCP**, and a look at **Diagnostics**.
 
 ## Network checks: the proxy
 
@@ -63,6 +75,26 @@ them your own (`outlook.office.com` is Microsoft's):
 Add the SaaS and platforms your organisation uses; **Restore defaults** brings back the
 built-in lists. Only the look-alike checks use them: every other rule still judges these domains.
 
+## YARA rules
+
+**Settings → Detection rules → YARA rules**: add **folders or files on this machine** (searched
+recursively, read in place — a clone of a rule repository, your own rules) and / or **upload** rules
+(`.yar`, `.zip`, `.tar.gz`). The card lists every source with a button to remove it, then press
+**Recompile**: nothing compiles on its own. It shows the compiled rules (with a filter) and any
+compile error per file. Scans run from the [YARA](engines/yara.md) tab — on a case, or on loose files.
+
+## Registry: Sigma rules
+
+A folder on this machine with Sigma rules — a clone of [SigmaHQ](https://github.com/SigmaHQ/sigma),
+your own rules, or both, searched recursively. Nothing is downloaded: update the folder yourself
+(`git pull`). **Save & scan** shows how many registry rules were loaded and lists the skipped ones
+with why. The rules apply to the next analysis (or a re-run) of a case with hives or .reg files.
+
+**Process filters**: some rules exclude the program that wrote the value (`Image` in a
+`filter_*`). A hive does not record it, so by default those rules are skipped; tick the option to
+run them with that filter not applied — more rules, more false positives, and their findings say so.
+Rules that need a process field to match are always skipped.
+
 ## Email reputation lists and Microsoft 365
 
 - **Email reputation lists** (free webmail, disposable domains, phishing domains and IPs, malware
@@ -82,10 +114,10 @@ built-in lists. Only the look-alike checks use them: every other rule still judg
 - `DOCUTRACEX_TIMEOUT_FACTOR` (default **5**) multiplies every tool's time limit: on a slow machine
   or VM, a slow tool is better than a lost analysis.
 
-## YARA, AI and MCP
+## AI and MCP
 
-- **YARA**: upload your rules (`.yar`, `.zip`, `.tar.gz`) or register a **folder on the server**
-  (faster for big sets), then **Recompile**. They run on demand on any case ([YARA](engines/yara.md)).
+- **YARA**: the rules are managed in **Settings → Detection rules** ([above](#yara-rules)); the
+  [YARA](engines/yara.md) tab runs them.
 - **AI**: the endpoint, model and key of your OpenAI-compatible API (a company LiteLLM, a provider)
   or of a local model (Ollama, LM Studio). The key stays in your browser.
 - **MCP**: the **AI → MCP** tab has the configuration for Claude Desktop / Claude Code, and the

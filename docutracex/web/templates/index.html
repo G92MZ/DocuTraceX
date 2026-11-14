@@ -192,25 +192,12 @@
     <div class="view" data-view="yara" hidden>
       <section class="panel">
         <div class="diag-head">
-          <h2>YARA rules</h2>
-          <span id="yara-summary" class="status"></span>
+          <h2>YARA</h2>
+          <span id="yara-tab-summary" class="status"></span>
         </div>
-        <p class="hint-line">Nothing runs automatically: register a path or upload rules, press Recompile, then scan a case — or a loose file (quick analysis). Compilation and scans use the portable Python. Every hit is a finding you mark (True positive, False positive, …); only True positives reach the report.</p>
-        <div class="yara-add">
-          <form id="yara-upload-form" class="upload">
-            <input type="file" id="yara-file" class="file-native" accept=".yar,.yara,.rule,.rules,.zip,.tar,.gz,.tgz" />
-            <label for="yara-file" class="btn btn-ghost">Choose rules (.yar / .zip / .tar.gz)</label>
-            <span id="yara-file-name" class="file-name">No file selected</span>
-            <button type="submit" class="btn btn-primary">Upload</button>
-          </form>
-          <div class="upload" style="margin-top:8px">
-            <input type="text" id="yara-path" class="yara-path-input" placeholder="/path/to/rules/ on the server (faster for large sets)" />
-            <button id="yara-path-btn" class="btn btn-ghost" type="button">Register path</button>
-            <button id="yara-recompile" class="btn btn-ghost" type="button">Recompile (progress)</button>
-            <progress id="yara-prog" max="100" value="0" style="display:none;width:180px;vertical-align:middle"></progress>
-            <span id="yara-add-status" class="status"></span>
-          </div>
-        </div>
+        <p class="hint-line">Nothing runs automatically: scan a case — or loose files (quick analysis) — with the compiled rules.
+          The rules (folders, uploads, Recompile) are managed in <a href="#" data-goto-settings="set-yara">Settings → YARA rules</a>.
+          Every hit is a finding you mark (True positive, False positive, …); only True positives reach the report.</p>
         <div class="upload yara-scan">
           <span class="hint-line">Scan a case with the compiled rules:</span>
           <select id="yara-case" class="yara-case-select"></select>
@@ -230,8 +217,6 @@
         <details class="disclose obj-picker" id="yara-objs"><summary>Objects to scan: all</summary><div class="obj-list"></div></details>
         <!-- trace: gmzpt -->
         <div id="yara-results"></div>
-        <div id="yara-errors"></div>
-        <div id="yara-body"></div>
       </section>
     </div>
 
@@ -414,7 +399,12 @@
           <h2>Settings</h2>
           <span id="settings-status" class="status"></span>
         </div>
-        <h3 class="formats-title">Network — proxy</h3>
+        <nav class="settings-nav"><a href="#set-network" class="btn btn-ghost btn-sm" data-settings-jump="set-network">Network</a> <a href="#set-org" class="btn btn-ghost btn-sm" data-settings-jump="set-org">Your organisation</a> <a href="#set-email" class="btn btn-ghost btn-sm" data-settings-jump="set-email">Email intelligence</a> <a href="#set-rules" class="btn btn-ghost btn-sm" data-settings-jump="set-rules">Detection rules</a></nav>
+        <section class="settings-group" id="set-network">
+          <h3 class="settings-group-title">Network</h3>
+          <p class="hint-line">How the network checks reach the internet. Nothing goes out unless you press <b>Check</b>.</p>
+          <div class="settings-card" id="set-proxy">
+            <h4 class="settings-card-title">Proxy</h4>
         <p class="hint-line">Every network feature of DocuTraceX (checking URLs, domains and IPs from the IOCs) goes through this proxy. The installer and the updater never use it. Credentials are stored in plain text in <span class="mono">config/settings.json</span> on this machine.</p>
         <form id="proxy-form" class="settings-form" autocomplete="off">
           <label class="check-line"><input type="checkbox" id="proxy-enabled"> Use a proxy</label>
@@ -431,7 +421,9 @@
             <span id="proxy-status" class="status"></span>
           </div>
         </form>
-        <h3 class="formats-title">Network — free public proxy</h3>
+          </div>
+          <div class="settings-card" id="set-freeproxy">
+            <h4 class="settings-card-title">Free public proxy</h4>
         <p class="hint-line">Pick a working proxy from the <a href="https://proxyscrape.com/free-proxy-list" target="_blank" rel="noopener noreferrer">ProxyScrape free list</a> (downloaded at startup, refreshed daily): random candidates are tested in parallel and the first that answers a <b>strictly verified HTTPS</b> request becomes the proxy above. Free proxies are untrusted: checks through them never accept an invalid certificate (so they can't inject content into the evidence) and are labelled "free proxy". They die often — a dead one is replaced automatically before the next check. Kits sometimes block public proxy IPs: if a page looks clean, re-check after rotating.</p>
         <div class="settings-grid">
           <label>Protocol<select id="free-proto"><option value="http">HTTP</option><option value="socks4">SOCKS4</option><option value="socks5">SOCKS5</option></select></label>
@@ -443,10 +435,13 @@
           <span id="free-status" class="status"></span>
         </div>
         <div id="free-lists" class="hint-line"></div>
-
-        <h3 class="formats-title">Network — without a proxy</h3>
+          </div>
+          <div class="settings-card" id="set-noproxy">
+            <h4 class="settings-card-title">Without a proxy</h4>
         <div id="risk-line" class="hint-line"></div>
-        <h3 class="formats-title">How URLs are checked</h3>
+          </div>
+          <div class="settings-card" id="set-urlcheck">
+            <h4 class="settings-card-title">How URLs are checked</h4>
         <ul class="hint-list">
           <li>Only when you press <b>Check</b>; nothing goes out on its own.</li>
           <li>Requests look like a real browser (Edge on Windows and Safari on iPhone, with their headers); both views are compared to detect cloaking.</li>
@@ -454,42 +449,22 @@
           <li>No JavaScript runs and no images/CSS are loaded; inline scripts go through the isolated V8 sandbox. Forms are only sent when you press <b>Send fake credentials</b>.</li>
           <li>Files served by the URL are analysed as nested children of the case.</li>
         </ul>
-        <h3 class="formats-title">IP database</h3>
+          </div>
+          <div class="settings-card" id="set-refdata">
+            <h4 class="settings-card-title">Reference data</h4>
+            <p class="hint-line"><b>IP database</b></p>
         <div id="ipdb-line" class="hint-line"></div>
-        <h3 class="formats-title">TLD list (IANA)</h3>
+            <p class="hint-line"><b>TLD list (IANA)</b></p>
         <div class="hint-line"><span id="tlds-line"></span>
           <button id="tlds-refresh" class="btn btn-ghost btn-sm" type="button">Refresh now</button>
           <span id="tlds-msg" class="status"></span></div>
-        <h3 class="formats-title">Email reputation lists</h3>
-        <div class="hint-line">Free webmail, disposable domains, phishing domains / IPs and malware hosts the email rules compare
-          senders, Reply-To and links with (only locally: nothing is sent). Refreshed on start when older than a day.
-          <button id="mailintel-refresh" class="btn btn-ghost btn-sm" type="button">Refresh now</button>
-          <span id="mailintel-msg" class="status"></span></div>
-        <div id="mailintel-table"></div>
-        <div class="hint-line">abuse.ch Auth-Key for URLhaus (optional — without it, or if abuse.ch is blocked, the
-          malware-filter mirror of the URLhaus online hosts is used; free: sign in at
-          <a href="https://auth.abuse.ch/" target="_blank" rel="noopener noreferrer">auth.abuse.ch</a> and copy the key;
-          stored only in this installation):
-          <input id="abusech-key" type="password" autocomplete="off" spellcheck="false" placeholder="not set" style="width:22em">
-          <button id="abusech-save" class="btn btn-ghost btn-sm" type="button">Save &amp; download</button>
-          <span id="abusech-msg" class="status"></span></div>
-        <div class="hint-line"><label><input id="tenant-lookup" type="checkbox"> Resolve Microsoft 365 tenants
-          (<span class="mono">X-MS-Exchange-CrossTenant-Id</span>) with <a href="https://azmap.dev/" target="_blank"
-          rel="noopener noreferrer">AZMap</a> (only the tenant ID is sent), and the sender's domains to their tenant with Microsoft's
-          public sign-in endpoints (only the From / Reply-To / Return-Path domains are sent, never yours);
-          both answers are cached 7 days; never blocks the analysis</label>
-          <span id="tenant-lookup-msg" class="status"></span></div>
-        <div class="hint-line"><label><input id="tenant-fyi-lookup" type="checkbox"> Also look the tenant ID up in
-          <a href="https://tenant.fyi/" target="_blank" rel="noopener noreferrer">tenant.fyi</a> (only the tenant ID is sent):
-          its names and every domain it has held, <b>including former ones</b> with first / last seen; the answer is stored
-          in the case and kept in the cache for good, so it survives if the site or the tenant's data goes away</label>
-          <span id="tenant-fyi-lookup-msg" class="status"></span></div>
-        <div class="hint-line">Allowed countries for sending servers (ISO codes, e.g. <span class="mono">ES PT FR</span>; empty = no check —
-          compared with the country Microsoft 365 stamps for the connecting IP):
-          <input id="allowed-countries" type="text" spellcheck="false" style="width:16em">
-          <button id="allowed-countries-save" class="btn btn-ghost btn-sm" type="button">Save</button>
-          <span id="allowed-countries-msg" class="status"></span></div>
-        <h3 class="formats-title">Email rules: your organisation</h3>
+          </div>
+        </section>
+        <section class="settings-group" id="set-org">
+          <h3 class="settings-group-title">Your organisation</h3>
+          <p class="hint-line">What is yours (weighs the most in spoofing and look-alikes) and what is a well-known provider.</p>
+          <div class="settings-card" id="set-own">
+            <h4 class="settings-card-title">Own domains, brands and look-alike distance</h4>
         <div class="hint-line">Your own domains (spoofing and look-alikes of them weigh the most) and extra brands to protect
           besides the built-in ones — one per line. Your own rules go in <span class="mono">config/rules/email/*.yml</span>.</div>
         <div class="email-org">
@@ -506,7 +481,9 @@
           <span id="sim-defaults" class="mono"></span></div>
         <div class="hint-line"><button id="email-save" class="btn btn-ghost btn-sm" type="button">Save</button>
           <span id="email-msg" class="status"></span></div>
-        <h3 class="formats-title">Generic legitimate domains</h3>
+          </div>
+          <div class="settings-card" id="set-generic">
+            <h4 class="settings-card-title">Generic legitimate domains</h4>
         <div class="hint-line">Well-known providers that are never reported as look-alikes of your domains or brands
           (<span class="mono">outlook.office.com</span> is Microsoft's), without listing them as own domains or brands — one per line.
           <b>Services</b>: the whole domain is the provider's, never compared. <b>Platforms</b>: anyone picks the subdomain,
@@ -519,6 +496,94 @@
         <div class="hint-line"><button id="trusted-save" class="btn btn-ghost btn-sm" type="button">Save</button>
           <button id="trusted-restore" class="btn btn-ghost btn-sm" type="button">Restore defaults</button>
           <span id="trusted-msg" class="status"></span></div>
+          </div>
+        </section>
+        <section class="settings-group" id="set-email">
+          <h3 class="settings-group-title">Email intelligence</h3>
+          <p class="hint-line">Lists and lookups the email rules use.</p>
+          <div class="settings-card" id="set-reputation">
+            <h4 class="settings-card-title">Reputation lists</h4>
+        <div class="hint-line">Free webmail, disposable domains, phishing domains / IPs and malware hosts the email rules compare
+          senders, Reply-To and links with (only locally: nothing is sent). Refreshed on start when older than a day.
+          <button id="mailintel-refresh" class="btn btn-ghost btn-sm" type="button">Refresh now</button>
+          <span id="mailintel-msg" class="status"></span></div>
+        <div id="mailintel-table"></div>
+        <div class="hint-line">abuse.ch Auth-Key for URLhaus (optional — without it, or if abuse.ch is blocked, the
+          malware-filter mirror of the URLhaus online hosts is used; free: sign in at
+          <a href="https://auth.abuse.ch/" target="_blank" rel="noopener noreferrer">auth.abuse.ch</a> and copy the key;
+          stored only in this installation):
+          <input id="abusech-key" type="password" autocomplete="off" spellcheck="false" placeholder="not set" style="width:22em">
+          <button id="abusech-save" class="btn btn-ghost btn-sm" type="button">Save &amp; download</button>
+          <span id="abusech-msg" class="status"></span></div>
+          </div>
+          <div class="settings-card" id="set-m365">
+            <h4 class="settings-card-title">Microsoft 365 tenants</h4>
+        <div class="hint-line"><label><input id="tenant-lookup" type="checkbox"> Resolve Microsoft 365 tenants
+          (<span class="mono">X-MS-Exchange-CrossTenant-Id</span>) with <a href="https://azmap.dev/" target="_blank"
+          rel="noopener noreferrer">AZMap</a> (only the tenant ID is sent), and the sender's domains to their tenant with Microsoft's
+          public sign-in endpoints (only the From / Reply-To / Return-Path domains are sent, never yours);
+          both answers are cached 7 days; never blocks the analysis</label>
+          <span id="tenant-lookup-msg" class="status"></span></div>
+        <div class="hint-line"><label><input id="tenant-fyi-lookup" type="checkbox"> Also look the tenant ID up in
+          <a href="https://tenant.fyi/" target="_blank" rel="noopener noreferrer">tenant.fyi</a> (only the tenant ID is sent):
+          its names and every domain it has held, <b>including former ones</b> with first / last seen; the answer is stored
+          in the case and kept in the cache for good, so it survives if the site or the tenant's data goes away</label>
+          <span id="tenant-fyi-lookup-msg" class="status"></span></div>
+          </div>
+          <div class="settings-card" id="set-countries">
+            <h4 class="settings-card-title">Allowed countries for sending servers</h4>
+        <div class="hint-line">Allowed countries for sending servers (ISO codes, e.g. <span class="mono">ES PT FR</span>; empty = no check —
+          compared with the country Microsoft 365 stamps for the connecting IP):
+          <input id="allowed-countries" type="text" spellcheck="false" style="width:16em">
+          <button id="allowed-countries-save" class="btn btn-ghost btn-sm" type="button">Save</button>
+          <span id="allowed-countries-msg" class="status"></span></div>
+          </div>
+        </section>
+        <section class="settings-group" id="set-rules">
+          <h3 class="settings-group-title">Detection rules</h3>
+          <p class="hint-line">Rule sets you bring: YARA for every file, Sigma for the registry.</p>
+          <div class="settings-card" id="set-yara">
+            <h4 class="settings-card-title">YARA rules</h4>
+            <p class="hint-line">Folders and files on this machine (searched recursively — a clone of a rule repository, your own
+              rules…) and rules uploaded here. Nothing compiles on its own: press <b>Recompile</b> after a change. Scans run from the
+              <b>YARA</b> tab (a case or loose files).</p>
+            <div class="settings-row">
+              <input type="text" id="yara-path" class="yara-path-input" spellcheck="false" placeholder="Folder or file on this machine, e.g. C:\Tools\yara-rules">
+              <button id="yara-path-btn" class="btn btn-ghost btn-sm" type="button">Add folder / file</button>
+            </div>
+            <div id="yara-sources"></div>
+            <form id="yara-upload-form" class="settings-row">
+              <input type="file" id="yara-file" class="file-native" accept=".yar,.yara,.rule,.rules,.zip,.tar,.gz,.tgz" />
+              <label for="yara-file" class="btn btn-ghost btn-sm">Choose rules (.yar / .zip / .tar.gz)</label>
+              <span id="yara-file-name" class="file-name">No file selected</span>
+              <button type="submit" class="btn btn-ghost btn-sm">Upload</button>
+            </form>
+            <div class="settings-row">
+              <button id="yara-recompile" class="btn btn-primary btn-sm" type="button">Recompile</button>
+              <progress id="yara-prog" max="100" value="0" style="display:none;width:180px;vertical-align:middle"></progress>
+              <span id="yara-add-status" class="status"></span>
+              <span id="yara-summary" class="status"></span>
+            </div>
+            <div id="yara-errors"></div>
+            <div id="yara-body"></div>
+          </div>
+          <div class="settings-card" id="set-sigma">
+            <h4 class="settings-card-title">Registry: Sigma rules</h4>
+        <div class="hint-line">A folder on this machine with Sigma rules (a clone of
+          <a href="https://github.com/SigmaHQ/sigma" target="_blank" rel="noopener noreferrer">SigmaHQ</a>, your own rules, or both;
+          searched recursively). Its registry rules (<span class="mono">registry_set</span> / <span class="mono">_add</span> /
+          <span class="mono">_delete</span> / <span class="mono">_event</span>) run on every hive and .reg of a case; nothing is
+          downloaded. A rule that cannot be translated faithfully is skipped and listed below with why. Sigma rules describe
+          <b>changes</b>: on a hive every match is a value that exists, Windows defaults included — the last-write time tells how recent.</div>
+        <div class="hint-line"><input id="sigma-folder" type="text" spellcheck="false" placeholder="e.g. C:\Tools\sigma\rules  (empty = off)" style="width:32em">
+          <button id="sigma-save" class="btn btn-ghost btn-sm" type="button">Save &amp; scan</button>
+          <span id="sigma-msg" class="status"></span></div>
+        <div class="hint-line"><label><input id="sigma-procfilters" type="checkbox"> Also run rules whose process fields
+          (<span class="mono">Image</span>…) appear only in an exclusion filter, with that filter <b>not applied</b> (a hive does not record
+          which program wrote a value): more rules, more false positives; their findings say so</label></div>
+        <div id="sigma-summary"></div>
+          </div>
+        </section>
       </section>
     </div>
 
