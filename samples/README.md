@@ -493,6 +493,19 @@ action, a tool's configuration, a staged step), one per family of the command ru
 | `Nota` = `whoami` | nothing: one medium indicator alone |
 | `SCCM`, `Defender` (CCM / MpCmdRun) | cleared by the allowlist (listed as info, no finding) |
 
+`registry/sample_sigma.reg` with the rule folder `registry/sigma/` — set that folder in
+**Settings → Registry: Sigma rules** (5 loaded, 3 skipped):
+
+| Rule (`registry/sigma/…`) | Result on `sample_sigma.reg` |
+|---|---|
+| `run_encoded_powershell.yml` (`contains`, `contains\|all`) | *Sigma: Encoded PowerShell In A Run Key* (high, T1547.001) — `FacturaUpd` |
+| `wdigest_logon_credential.yml` (`Details: 'DWORD (0x00000001)'`, `CurrentControlSet`) | *Sigma: WDigest UseLogonCredential Enabled* (high) — read from `ControlSet001` |
+| `hku_key_created.yml` (`registry_add`, `EventType: CreateKey`, `startswith: 'HKU\'`) | *Sigma: Sync Tool Key Created Under A User* — the HKCU key |
+| `hidden_window_value.yml` (`windash`, a `*` wildcard, `1 of` / `all of`, `Details: null` filter) | *Sigma: Hidden PowerShell Window In A Value* — `/w hidden` matches `-w hidden` |
+| `defender_exclusion_filtered.yml` (`Image` only in `filter_main_*`) | skipped — with *process filters* on: a finding that says the filter was not applied |
+| `keywords_unsupported.yml`, `image_in_selection.yml` | skipped: keyword search; `Image` needed in the selection |
+| `no_match.yml` | loaded, matches nothing |
+
 **A machine-sized sample (generated on demand, not in `samples.zip`).** For a feel of a real
 case — and of the times — the generator writes the hives of an ordinary Windows 11 machine used
 for a year: SOFTWARE ~81 MB, SYSTEM ~19 MB, NTUSER.DAT ~6 MB, UsrClass.dat ~4 MB (about 380 000

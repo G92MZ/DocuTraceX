@@ -506,6 +506,20 @@
           <span id="sim-defaults" class="mono"></span></div>
         <div class="hint-line"><button id="email-save" class="btn btn-ghost btn-sm" type="button">Save</button>
           <span id="email-msg" class="status"></span></div>
+        <h3 class="formats-title">Registry: Sigma rules</h3>
+        <div class="hint-line">A folder on this machine with Sigma rules (a clone of
+          <a href="https://github.com/SigmaHQ/sigma" target="_blank" rel="noopener noreferrer">SigmaHQ</a>, your own rules, or both;
+          searched recursively). Its registry rules (<span class="mono">registry_set</span> / <span class="mono">_add</span> /
+          <span class="mono">_delete</span> / <span class="mono">_event</span>) run on every hive and .reg of a case; nothing is
+          downloaded. A rule that cannot be translated faithfully is skipped and listed below with why. Sigma rules describe
+          <b>changes</b>: on a hive every match is a value that exists, Windows defaults included — the last-write time tells how recent.</div>
+        <div class="hint-line"><input id="sigma-folder" type="text" spellcheck="false" placeholder="e.g. C:\Tools\sigma\rules  (empty = off)" style="width:32em">
+          <button id="sigma-save" class="btn btn-ghost btn-sm" type="button">Save &amp; scan</button>
+          <span id="sigma-msg" class="status"></span></div>
+        <div class="hint-line"><label><input id="sigma-procfilters" type="checkbox"> Also run rules whose process fields
+          (<span class="mono">Image</span>…) appear only in an exclusion filter, with that filter <b>not applied</b> (a hive does not record
+          which program wrote a value): more rules, more false positives; their findings say so</label></div>
+        <div id="sigma-summary"></div>
         <h3 class="formats-title">Generic legitimate domains</h3>
         <div class="hint-line">Well-known providers that are never reported as look-alikes of your domains or brands
           (<span class="mono">outlook.office.com</span> is Microsoft's), without listing them as own domains or brands — one per line.

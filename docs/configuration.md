@@ -63,6 +63,18 @@ them your own (`outlook.office.com` is Microsoft's):
 Add the SaaS and platforms your organisation uses; **Restore defaults** brings back the
 built-in lists. Only the look-alike checks use them: every other rule still judges these domains.
 
+## Registry: Sigma rules
+
+A folder on this machine with Sigma rules — a clone of [SigmaHQ](https://github.com/SigmaHQ/sigma),
+your own rules, or both, searched recursively. Nothing is downloaded: update the folder yourself
+(`git pull`). **Save & scan** shows how many registry rules were loaded and lists the skipped ones
+with why. The rules apply to the next analysis (or a re-run) of a case with hives or .reg files.
+
+**Process filters**: some rules exclude the program that wrote the value (`Image` in a
+`filter_*`). A hive does not record it, so by default those rules are skipped; tick the option to
+run them with that filter not applied — more rules, more false positives, and their findings say so.
+Rules that need a process field to match are always skipped.
+
 ## Email reputation lists and Microsoft 365
 
 - **Email reputation lists** (free webmail, disposable domains, phishing domains and IPs, malware

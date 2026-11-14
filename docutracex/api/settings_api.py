@@ -294,3 +294,24 @@ async def ml_family_download() -> dict:
     """Start downloading the EMBER2024 family model (459 MB, SHA-256 pinned)."""
     from ..ml import family_download
     return family_download.start(appsettings.proxy_url())
+
+
+@router.get("/sigma")
+async def sigma_get() -> dict:
+    """The Sigma registry rules folder and what it loads (rules, skipped ones and why)."""
+    from ..registry import sigma
+    cfg = appsettings.sigma_settings()
+    loaded = await asyncio.to_thread(sigma.load, cfg["folder"], cfg["process_filters"])
+    return {**cfg, **sigma.summary(loaded)}
+
+
+@router.put("/sigma")
+async def sigma_put(body: dict = Body(...)) -> dict:
+    """Set the folder ("" turns the Sigma rules off) and scan it."""
+    from ..registry import sigma
+    try:
+        cfg = appsettings.set_sigma_settings(str(body.get("folder") or ""), bool(body.get("process_filters")))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    loaded = await asyncio.to_thread(sigma.load, cfg["folder"], cfg["process_filters"])
+    return {**cfg, **sigma.summary(loaded)}
