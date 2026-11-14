@@ -5687,8 +5687,8 @@ async function loadC2Families() {
         <div class="hint-line"><b>What DocuTraceX reads:</b><ul>${(f.reads || []).map((r) => `<li>${e(r)}</li>`).join("")}</ul></div>
         <p class="hint-line"><b>Next:</b> ${e(f.next)}</p>
         <p class="hint-line"><b>Limits:</b> ${e(f.limits)}</p></div>`).join("")
-      + '<p class="hint-line">The other families are read too (see the extractor table) — they get a card once covered in depth.</p>';
-    document.querySelector("#c2-families summary").textContent = `Families covered in depth (${(j.families || []).length})`;
+      + '<p class="hint-line">Every family an extractor knows has a card; <b>Limits</b> says what is not read yet.</p>';
+    document.querySelector("#c2-families summary").textContent = `Families (${(j.families || []).length}): what each is and what is read`;
     box.dataset.loaded = "1";
   } catch (_) { /* optional */ }
 }
@@ -7558,8 +7558,9 @@ function c2Value(v) {
 
 function c2Help(c2) {
   const fams = (c2 && c2.families) || ["Cobalt Strike", "Metasploit / Meterpreter", "Remcos", "AsyncRAT", "DcRAT", "QuasarRAT",
-    "njRAT", "XWorm", "AgentTesla", "NanoCore", "RedLine / META", "Snake Keylogger", "Raccoon Stealer v2",
-    "Warzone / AveMaria", "DarkGate"];
+    "njRAT", "XWorm", "AgentTesla", "NanoCore", "RedLine / META", "Snake Keylogger", "Raccoon Stealer v2", "StealC", "Vidar",
+    "Lumma Stealer", "Warzone / AveMaria", "DarkGate", "Brute Ratel C4", "Havoc (Demon)", "Pure family", "Sliver", "Merlin",
+    "Mythic (Go agent)", "Go implant", "Discord-webhook grabbers", "RMM / remote access"];
   return `<div class="ml-pane">
     <p class="hint-line">Every object of the case — the original, everything extracted, nested children and decoded or decrypted
       stages — is searched for implant configurations, <b>statically</b>: nothing is executed. Families: ${escapeHtml(fams.join(", "))}.</p>
@@ -7578,7 +7579,16 @@ function c2Help(c2) {
       <tr><td>Raccoon Stealer v2</td><td>Strings base64 + RC4 with a key string from the binary: C2 URL, <span class="mono">machineId=</span> / <span class="mono">configId=</span>.</td></tr>
       <tr><td>Warzone · AveMaria</td><td><span class="mono">.bss</span> section: RC4 key + encrypted config with the C2 host and port.</td></tr>
       <tr><td>DarkGate</td><td>Settings in base64 with a custom alphabet stored next to them: C2 URLs (medium confidence: the format changes between versions).</td></tr>
+      <tr><td>StealC</td><td>Strings base64 + RC4 with a key string from the binary (the same protection as Raccoon v2): the C2 host and its gate <span class="mono">/&lt;16 hex&gt;.php</span>.</td></tr>
+      <tr><td>Vidar</td><td>Strings base64 + RC4 with a key string from the binary: the <b>dead drops</b> (Telegram channel, Steam profile) its C2 is read from — open them with a network check.</td></tr>
+      <tr><td>Lumma Stealer</td><td>Each C2 domain base64 with its own 32-byte XOR key in front; the Steam / Telegram fallback; request fields and user agent as traces. Builds with ChaCha20 or flattened code: traces only.</td></tr>
+      <tr><td>Brute Ratel C4</td><td>Badger configuration base64 + RC4 (the builder's default key first, then the binary's strings): C2 hosts and port, URIs, user agent.</td></tr>
+      <tr><td>Havoc (Demon)</td><td>The Demon's configuration buffer (unencrypted build): sleep / jitter, injection, spawn-to, kill date, working hours, method, hosts and ports, TLS, user agent, headers, URIs, proxy.</td></tr>
+      <tr><td>Pure family</td><td>PureCrypter / PureLogs / PureHVNC / PureRAT (.NET): settings as protobuf, GZip-compressed and base64 in the strings, read with a generic protobuf reader: C2 host:port and the numbered fields.</td></tr>
+      <tr><td>Go implants</td><td>Sliver, Merlin, Mythic Go agents… identified by packages, functions and strings; C2 endpoints only with provenance.</td></tr>
+      <tr><td>Discord-webhook grabbers</td><td>The webhook URL (exfiltration) and the stealer traits next to it.</td></tr>
     </tbody></table>
+    <p class="hint-line">Open <b>Families</b> above for what each family is, how it arrives, what is read and its limits.</p>
     <p class="hint-line"><b>Limits:</b> a loader that only decrypts its payload in memory leaves no configuration in the file. If DocuTraceX
       unpacks / decodes that layer, the stage is searched too; otherwise upload a <b>memory dump</b> of the process (EDR, procdump): it is
       analysed statically as well.</p>

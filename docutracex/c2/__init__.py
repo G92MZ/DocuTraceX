@@ -32,8 +32,9 @@ MAX_FILES = 500
 MAX_SIZE = 64 * 1024 * 1024
 FAMILIES = ("Cobalt Strike", "Metasploit / Meterpreter", "Remcos", "AsyncRAT", "DcRAT", "QuasarRAT",
             "njRAT", "XWorm", "AgentTesla", "NanoCore", "RedLine / META", "Snake Keylogger",
-            "Raccoon Stealer v2", "Warzone / AveMaria", "DarkGate", "Sliver", "Merlin", "Mythic (Go agent)",
-            "Go implant")
+            "Raccoon Stealer v2", "StealC", "Vidar", "Lumma Stealer", "Warzone / AveMaria", "DarkGate",
+            "Brute Ratel C4", "Havoc (Demon)", "Pure family", "Sliver", "Merlin", "Mythic (Go agent)",
+            "Go implant", "Discord-webhook grabbers", "RMM / remote access")
 
 
 # Files other analyses derived from the sample (managed resources, pixels,
@@ -194,6 +195,9 @@ def _scan_detailed(path: Path, data: bytes) -> tuple[list[dict[str, Any]], list[
         out += run("dotnet_more", lambda: dotnet_more.extract_all(data))
     if not any(r.get("kind") in ("RAT", "stealer") and r.get("c2") for r in out):
         out += run("stealers", lambda: stealers.extract_all(data))
+    if not any(r.get("c2") and r.get("kind") not in ("indicators", "rmm") for r in out):
+        from . import modern
+        out += run("modern", lambda: modern.extract_all(data))
     from . import rmm
     out += run("rmm", lambda: rmm.extract(data, path.name))
     if not any(r.get("c2") and r.get("kind") not in ("indicators", "rmm") for r in out):

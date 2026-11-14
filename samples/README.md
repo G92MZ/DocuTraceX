@@ -43,7 +43,7 @@ The test suite unpacks it on its own.
 | `archives/`, `disk-images/`, `installers/` | ZIP / TAR / CAB, ISO, MSI |
 | `windows-pe/`, `dotnet/`, `go/`, `linux-elf/`, `java/`, `android/` | binaries by platform |
 | `images/` | images (stego) |
-| `c2/<family>/` | `cobaltstrike`, `metasploit`, `agenttesla`, `asyncrat`, `darkgate`, `nanocore`, `njrat`, `quasar`, `raccoon`, `redline`, `remcos`, `snakekeylogger`, `warzone`, `xworm` |
+| `c2/<family>/` | `cobaltstrike`, `metasploit`, `agenttesla`, `asyncrat`, `darkgate`, `nanocore`, `njrat`, `quasar`, `raccoon`, `redline`, `remcos`, `snakekeylogger`, `warzone`, `xworm`, `stealc`, `vidar`, `lumma`, `bruteratel`, `havoc`, `pure` |
 
 The generator keeps its own keys; `archive_path()` in the generator decides the folder of each sample.
 
@@ -649,6 +649,12 @@ campaign's (`cdn-update.example.net`, `203.0.113.47`).
 | `c2/raccoon/sample_raccoon_traces.exe` | Raccoon Stealer v2 (indicators) | native stub with the request fields and browser DLL / wallet names in clear | indicators only, no C2 |
 | `c2/warzone/sample_warzone.exe` | Warzone / AveMaria | `.bss` = key length + RC4 key + RC4(config), version string, UAC-bypass moniker and `_rptls` key | C2 `cdn-update.example.net:5200`, version 1.60, raw options `010001` |
 | `c2/warzone/sample_warzone_traces.exe` | Warzone / AveMaria (indicators) | native stub with the Warzone strings and no `.bss` | indicators only, no C2 |
+| `c2/stealc/sample_stealc.exe` | StealC | strings base64 + RC4 with a key that also looks like base64 | C2 `http://203.0.113.47/3b8f2e6a9c1d4f70.php` (host + gate), key, browser-DLL traces |
+| `c2/vidar/sample_vidar.exe` | Vidar | strings base64 + RC4; the C2 comes from dead drops | dead drops `https://t.me/facturas_canal26` and a Steam profile (no C2 in the file: open them with a network check) |
+| `c2/lumma/sample_lumma.exe` | Lumma Stealer | each domain base64 with its own 32-byte XOR key; `lid=`, `act=recive_message`, `TeslaBrowser/5.5`; a Steam profile in clear | C2 `factura-cdn.example`, `pago-seguro.example`, `visor-docs.example`, Steam fallback |
+| `c2/bruteratel/sample_brc4_badger.bin` | Brute Ratel C4 (badger) | raw badger: configuration base64 + RC4 with the builder's default key | C2 `cdn-update.example.net:443`, URIs `/api/v2/factura`, `/content.php`, user agent |
+| `c2/havoc/sample_havoc_demon.exe` | Havoc (Demon) | the Demon's configuration buffer in `.data` | C2 `https://cdn-update.example.net:443` and `https://203.0.113.47:8443`, POST, URIs, user agent, sleep 5 s / jitter 15 %, spawn-to notepad, NtCreateThreadEx |
+| `c2/pure/sample_pure.exe` | Pure family (PureHVNC) | .NET; settings protobuf → GZip → base64 in the user strings | C2 `cdn-update.example.net:56001`, numbered protobuf fields |
 | `c2/sliver/sample_go_sliver_like` | Sliver (Go) | pclntab names the Sliver implant packages (`sliverpb`, `transports/mtls`) — names only, nothing of Sliver runs | none held: *indicators* (framework, Go version, module); C2 works with or without the Go module |
 | `c2/darkgate/sample_darkgate.bin` | DarkGate | base64 with a custom alphabet (MZ + text stub) | `http://cdn-update.example.net:2351`, `http://203.0.113.47:2351` (medium) |
 
