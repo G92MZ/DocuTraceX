@@ -316,10 +316,8 @@ def analyze(files: list[tuple], case_root: Path, work_dir: Path) -> dict[str, An
         cfg = appsettings.sigma_settings()
         if cfg["folder"]:
             loaded = sigma.load(cfg["folder"], cfg["process_filters"])
-            s_hits, s_findings, s_iocs = sigma.run(dbp, loaded)
+            s_hits = sigma.run(dbp, loaded)       # hunting: listed in the tab, no findings, no IOCs
             hits += s_hits
-            findings += s_findings
-            ioc_sources += s_iocs
             res["sigma"] = {**sigma.summary(loaded), "matched": len(s_hits),
                             "errors": [{"file": r["file"], "title": r["title"], "error": r["error"]}
                                        for r in loaded["rules"] if r.get("error")][:50]}

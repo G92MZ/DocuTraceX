@@ -2923,6 +2923,7 @@ function regSourcesSelect(sources, id) {
 // the entries behind it (source, key → Browse, value, data, last write).
 let _regDetail = () => "";
 let _regInfo = () => "";
+let _regHunt = () => "";
 function regFindingsHtml(rg, marked) {
   const fs = rg.findings || [];
   const hitsBy = {};
@@ -2963,10 +2964,17 @@ function regFindingsHtml(rg, marked) {
   }).join("");
   // the entries of a rule are built when it is opened: every entry is kept, however many
   _regDetail = (i) => { const f = fs[i]; return f ? sigmaMeta(hitsBy[f.rule]) + evRows(f) : ""; };
-  const info = (rg.hits || []).filter((h) => !fs.some((f) => f.rule === h.rule));
+  const info = (rg.hits || []).filter((h) => !h.hunting && !fs.some((f) => f.rule === h.rule));
+  const hunt = (rg.hits || []).filter((h) => h.hunting);
   const infoHtml = info.length ? `<h4>Listed, not findings</h4><p class="hint-line">Entries the rules list for context (nothing suspicious in them).</p>
     ${info.map((h, k) => `<details class="disclose" data-reg-info="${k}"><summary><span class="mono">${escapeHtml(h.rule)}</span> ${escapeHtml(h.title)} — ${h.count}
       <span class="hint-line">${escapeHtml((h.attack || []).join(", "))}</span></summary><div></div></details>`).join("")}` : "";
+  const huntHtml = hunt.length ? `<h4>Sigma hunting</h4><p class="hint-line">Matches of your Sigma rules: leads to look at, not
+    findings (no alert, no IOCs). Most registry rules describe a change, so on a hive they also match the normal state.</p>
+    ${hunt.map((h, k) => `<details class="disclose" data-reg-hunt="${k}"><summary><span class="badge badge-${SEV_CLASS[h.severity] || "warn"}">${escapeHtml((h.sigma && h.sigma.level) || h.severity)}</span>
+      ${escapeHtml(h.title.replace(/^Sigma: /, ""))} — ${h.count}
+      <span class="hint-line">${escapeHtml((h.attack || []).join(", "))}</span></summary><div></div></details>`).join("")}` : "";
+  _regHunt = (k) => { const h = hunt[k]; return h ? sigmaMeta(h) + evRows({ rule: h.rule }) : ""; };
   _regInfo = (k) => { const h = info[k]; return h ? `<table class="cases"><thead><tr><th>Src</th><th>Key</th><th>Value</th><th>Data</th><th>Last write</th></tr></thead><tbody>
       ${(h.items || []).map((it) => `<tr><td>${it.src}</td><td class="mono"><a href="#" data-reg-open="${escapeHtml(it.key)}" data-reg-src="${it.src}">${escapeHtml(it.key)}</a></td>
         <td class="mono">${escapeHtml(it.name || "")}</td><td class="mono">${escapeHtml(it.data || "")}</td>
@@ -2977,7 +2985,7 @@ function regFindingsHtml(rg, marked) {
   return sigmaLine + (fs.length ? `<div class="row"><button class="btn btn-ghost btn-sm" type="button" data-reg-fall="1">Expand all</button>
       <button class="btn btn-ghost btn-sm" type="button" data-reg-fall="0">Collapse all</button></div>
     <table class="cases findings-table reg-findings"><thead><tr><th>Severity</th><th>Rule</th><th>Finding</th><th>ATT&amp;CK</th><th>Mark</th></tr></thead>
-    <tbody>${rows}</tbody></table>` : `<p class="hint-line">No findings.</p>`) + infoHtml;
+    <tbody>${rows}</tbody></table>` : `<p class="hint-line">No findings.</p>`) + huntHtml + infoHtml;
 }
 
 function regContextHtml(ctx) {
@@ -3186,6 +3194,10 @@ function wireRegistry(root, caseId) {
     const d = ev.target;
     if (d.open && d.hasAttribute && d.hasAttribute("data-reg-info") && !d.dataset.built) {
       d.lastElementChild.innerHTML = _regInfo(Number(d.getAttribute("data-reg-info")));
+      d.dataset.built = "1";
+    }
+    if (d.open && d.hasAttribute && d.hasAttribute("data-reg-hunt") && !d.dataset.built) {
+      d.lastElementChild.innerHTML = _regHunt(Number(d.getAttribute("data-reg-hunt")));
       d.dataset.built = "1";
     }
   }, true);

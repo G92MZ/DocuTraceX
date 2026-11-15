@@ -494,7 +494,8 @@ action, a tool's configuration, a staged step), one per family of the command ru
 | `SCCM`, `Defender` (CCM / MpCmdRun) | cleared by the allowlist (listed as info, no finding) |
 
 `registry/sample_sigma.reg` with the rule folder `registry/sigma/` — set that folder in
-**Settings → Registry: Sigma rules** (5 loaded, 3 skipped):
+**Settings → Registry: Sigma rules** (5 loaded, 3 skipped). The matches show under *Sigma hunting*
+in the Registry tab — no case findings, no IOCs:
 
 | Rule (`registry/sigma/…`) | Result on `sample_sigma.reg` |
 |---|---|
@@ -502,7 +503,7 @@ action, a tool's configuration, a staged step), one per family of the command ru
 | `wdigest_logon_credential.yml` (`Details: 'DWORD (0x00000001)'`, `CurrentControlSet`) | *Sigma: WDigest UseLogonCredential Enabled* (high) — read from `ControlSet001` |
 | `hku_key_created.yml` (`registry_add`, `EventType: CreateKey`, `startswith: 'HKU\'`) | *Sigma: Sync Tool Key Created Under A User* — the HKCU key |
 | `hidden_window_value.yml` (`windash`, a `*` wildcard, `1 of` / `all of`, `Details: null` filter) | *Sigma: Hidden PowerShell Window In A Value* — `/w hidden` matches `-w hidden` |
-| `defender_exclusion_filtered.yml` (`Image` only in `filter_main_*`) | skipped — with *fields a hive does not have* on: a finding that says `Image` was ignored |
+| `defender_exclusion_filtered.yml` (`Image` only in `filter_main_*`) | skipped — with *fields a hive does not have* on: a match that says `Image` was ignored |
 | `image_in_selection.yml` (`Image` and `TargetObject` in the selection) | skipped — with the option on: matched on `TargetObject` only, `Image` ignored |
 | `keywords_unsupported.yml` | skipped: keyword search |
 | `no_match.yml` | loaded, matches nothing |
