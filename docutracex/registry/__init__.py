@@ -310,20 +310,6 @@ def analyze(files: list[tuple], case_root: Path, work_dir: Path) -> dict[str, An
     res.update(ingest(files, case_root, work_dir))
     dbp = store.db_path(case_root)
     hits, findings, ioc_sources = run_rules(dbp)
-    try:                                         # Sigma registry rules from the folder set in Settings
-        from .. import appsettings
-        from . import sigma
-        cfg = appsettings.sigma_settings()
-        if cfg["folder"]:
-            loaded = sigma.load(cfg["folder"], cfg["process_filters"])
-            s_hits = sigma.run(dbp, loaded)       # hunting: listed in the tab, no findings, no IOCs
-            hits += s_hits
-            res["sigma"] = {**sigma.summary(loaded), "matched": len(s_hits),
-                            "errors": [{"file": r["file"], "title": r["title"], "error": r["error"]}
-                                       for r in loaded["rules"] if r.get("error")][:50]}
-            res["sigma"]["skipped"] = res["sigma"]["skipped"][:100]
-    except Exception as exc:  # noqa: BLE001  (never breaks the registry analysis)
-        res["sigma"] = {"error": str(exc)[:300]}
     certs = _root_cert_subjects(dbp)
     for c in certs:
         if c.get("subject"):

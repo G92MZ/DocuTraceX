@@ -49,9 +49,7 @@ Cloned with git? `git pull` works too.
 
 Once it runs, take five minutes for the [configuration](configuration.md): the proxy for network
 checks, your own domains and brands, and, under **Detection rules**, your
-[YARA rules](configuration.md#yara-rules) (folders on this machine or uploads, then **Recompile**)
-and the folder of [Sigma registry rules](configuration.md#registry-sigma-rules) (a clone of SigmaHQ
-and / or your own; optional).
+[YARA rules](configuration.md#yara-rules) (folders on this machine or uploads, then **Recompile**).
 
 ## Your first case
 
@@ -75,10 +73,9 @@ and / or your own; optional).
 |---|---|
 | `cases/` | evidence, results, marks, task history, reports |
 | `yara/` | the YARA rules you upload and the compiled set (folders you add are read in place) |
-| `config/` | settings (proxy, AI endpoint, the Sigma rules folder's path) |
+| `config/` | settings (proxy, AI endpoint, rule folders' paths) |
 | `tools/` | the portable toolchain and reference data |
 
-All of them are git-ignored and kept across updates. The Sigma rules stay in their own folder,
-wherever you keep them (the app only reads them; update them with `git pull`). **Diagnostics** shows every dependency and
+All of them are git-ignored and kept across updates. **Diagnostics** shows every dependency and
 tool, with a **Retry** button to reinstall what is missing; see
 [Tools and licences](TOOLS.md).

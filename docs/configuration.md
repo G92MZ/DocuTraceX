@@ -12,7 +12,7 @@ between them (nothing is folded away):
 | **Network** | proxy, free public proxy, without a proxy, how URLs are checked, reference data (IP database, TLD list) |
 | **Your organisation** | own domains, brands and look-alike distance; generic legitimate domains |
 | **Email intelligence** | reputation lists (and the abuse.ch key), Microsoft 365 tenants, allowed countries |
-| **Detection rules** | YARA rules, registry Sigma rules |
+| **Detection rules** | YARA rules |
 
 !!! tip "Ready in five minutes"
     1. **First start**: set the admin password, then create your colleagues' accounts in **Users**
@@ -21,8 +21,7 @@ between them (nothing is folded away):
     3. **Settings → Your organisation**: your own domains and brands, and the providers you use so
        they are not reported as look-alikes.
     4. **Settings → Email intelligence**: optional keys and lookups.
-    5. **Settings → Detection rules**: your **YARA** rules and, optionally, a folder of **Sigma**
-       rules for the registry.
+    5. **Settings → Detection rules**: your **YARA** rules.
     6. **New analysis**: how many analyses run at once.
     7. Optional: the **AI** endpoint or **MCP**, and a look at **Diagnostics**.
 
@@ -82,24 +81,6 @@ recursively, read in place — a clone of a rule repository, your own rules) and
 (`.yar`, `.zip`, `.tar.gz`). The card lists every source with a button to remove it, then press
 **Recompile**: nothing compiles on its own. It shows the compiled rules (with a filter) and any
 compile error per file. Scans run from the [YARA](engines/yara.md) tab — on a case, or on loose files.
-
-## Registry: Sigma rules
-
-A folder on this machine with Sigma rules — a clone of [SigmaHQ](https://github.com/SigmaHQ/sigma),
-your own rules, or both, searched recursively. Nothing is downloaded: update the folder yourself
-(`git pull`). **Save & scan** shows how many registry rules were loaded and lists the skipped ones
-with why. The rules apply to the next analysis (or a re-run) of a case with hives or .reg files.
-Their matches are **hunting**: listed under *Sigma hunting* in the case's Registry tab, never case
-findings and never IOCs.
-
-**Fields a hive does not have**: event metadata (`EventID`, `Channel`, `Provider_Name`…) is
-always dropped. Rules that need the process or the user (`Image`, `User`…) are skipped by default;
-tick the option to run them on what a hive can confirm: a selection that needs such a field is
-**left out** (in SigmaHQ's *service binary in a suspicious folder*, the selection on the writing
-process goes; the one on `ImagePath` stays) and an exclusion on one (`filter_*`) is not applied —
-more rules, more false positives, and each match says what was left out. A rule with nothing left
-to match on the registry is still skipped. Titles or descriptions with an unquoted `: ` (a common slip in
-hand-written rules) are read anyway.
 
 ## Email reputation lists and Microsoft 365
 

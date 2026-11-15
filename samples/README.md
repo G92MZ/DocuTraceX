@@ -508,22 +508,6 @@ clean Windows ships and the rules must **not** flag, next to one real trace each
 | Free cells: `FacturaSync` = a hidden PowerShell command | *Deleted key / value… pointing at a script host* (medium) |
 | Amcache free cells: a `.bat` shortcut target, a publisher URL | nothing (Amcache rewrites itself) |
 
-`registry/sample_sigma.reg` with the rule folder `registry/sigma/` — set that folder in
-**Settings → Registry: Sigma rules** (5 loaded, 4 skipped; 7 and 2 with the option on). The matches show under *Sigma hunting*
-in the Registry tab — no case findings, no IOCs:
-
-| Rule (`registry/sigma/…`) | Result on `sample_sigma.reg` |
-|---|---|
-| `run_encoded_powershell.yml` (`contains`, `contains\|all`) | *Sigma: Encoded PowerShell In A Run Key* (high, T1547.001) — `FacturaUpd` |
-| `wdigest_logon_credential.yml` (`Details: 'DWORD (0x00000001)'`, `CurrentControlSet`) | *Sigma: WDigest UseLogonCredential Enabled* (high) — read from `ControlSet001` |
-| `hku_key_created.yml` (`registry_add`, `EventType: CreateKey`, `startswith: 'HKU\'`) | *Sigma: Sync Tool Key Created Under A User* — the HKCU key |
-| `hidden_window_value.yml` (`windash`, a `*` wildcard, `1 of` / `all of`, `Details: null` filter) | *Sigma: Hidden PowerShell Window In A Value* — `/w hidden` matches `-w hidden` |
-| `defender_exclusion_filtered.yml` (`Image` only in `filter_main_*`) | skipped — with *fields a hive does not have* on: a match that says `Image` was ignored |
-| `image_in_selection.yml` (`Image` and `TargetObject` in its only selection) | skipped, with the option on too: that selection cannot be confirmed on a hive, nothing is left |
-| `service_susp_folder.yml` (`EventID`; `selection_proc` needs `Image`, `selection_path` reads `ImagePath`) | skipped — with the option on: *Sigma: Service Binary In A Suspicious Folder* — only `FacturaSvc\ImagePath` (`C:\Users\Public\…`), not the `Start` of every service; `EventID` dropped, `selection_proc` left out |
-| `keywords_unsupported.yml` | skipped: keyword search |
-| `no_match.yml` | loaded, matches nothing |
-
 **A machine-sized sample (generated on demand, not in `samples.zip`).** For a feel of a real
 case — and of the times — the generator writes the hives of an ordinary Windows 11 machine used
 for a year: SOFTWARE ~81 MB, SYSTEM ~19 MB, NTUSER.DAT ~6 MB, UsrClass.dat ~4 MB (about 380 000
