@@ -502,8 +502,9 @@ action, a tool's configuration, a staged step), one per family of the command ru
 | `wdigest_logon_credential.yml` (`Details: 'DWORD (0x00000001)'`, `CurrentControlSet`) | *Sigma: WDigest UseLogonCredential Enabled* (high) — read from `ControlSet001` |
 | `hku_key_created.yml` (`registry_add`, `EventType: CreateKey`, `startswith: 'HKU\'`) | *Sigma: Sync Tool Key Created Under A User* — the HKCU key |
 | `hidden_window_value.yml` (`windash`, a `*` wildcard, `1 of` / `all of`, `Details: null` filter) | *Sigma: Hidden PowerShell Window In A Value* — `/w hidden` matches `-w hidden` |
-| `defender_exclusion_filtered.yml` (`Image` only in `filter_main_*`) | skipped — with *process filters* on: a finding that says the filter was not applied |
-| `keywords_unsupported.yml`, `image_in_selection.yml` | skipped: keyword search; `Image` needed in the selection |
+| `defender_exclusion_filtered.yml` (`Image` only in `filter_main_*`) | skipped — with *fields a hive does not have* on: a finding that says `Image` was ignored |
+| `image_in_selection.yml` (`Image` and `TargetObject` in the selection) | skipped — with the option on: matched on `TargetObject` only, `Image` ignored |
+| `keywords_unsupported.yml` | skipped: keyword search |
 | `no_match.yml` | loaded, matches nothing |
 
 **A machine-sized sample (generated on demand, not in `samples.zip`).** For a feel of a real

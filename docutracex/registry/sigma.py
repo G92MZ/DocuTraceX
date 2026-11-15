@@ -33,12 +33,13 @@ from pathlib import Path
 from typing import Any
 
 CATEGORIES = ("registry_set", "registry_add", "registry_delete", "registry_event")
-MAX_ROWS = 500
 MAX_FILE = 512 * 1024
 _SID = "S-1-5-21-0-0-0-1001"
-_FIELDS = {"targetobject": "target", "details": "details", "eventtype": "event_type"}
-_PROCESS = {"image", "user", "processid", "processguid", "eventid", "newname", "computer", "ruleName".lower(),
-            "utctime", "parentimage", "commandline", "originalfilename"}
+# Fields a key or value has: Sysmon's (TargetObject, Details, EventType, NewName — the name a
+# renamed key has now) and the Security log's 4657 (ObjectName in kernel form, ObjectValueName,
+# NewValue). Anything else (Image, User, EventID, ProcessId…) is not in a hive.
+_FIELDS = {"targetobject": "target", "details": "details", "eventtype": "event_type", "newname": "target",
+           "objectname": "objname", "objectvaluename": "vname", "newvalue": "details"}
 _SEVERITY = {"informational": "info", "low": "low", "medium": "medium", "high": "high", "critical": "high"}
 _WINDASH = ("-", "/", "\u2013", "\u2014", "\u2015")
 _CACHE: dict[str, tuple[str, dict[str, Any]]] = {}
@@ -110,7 +111,7 @@ def _field_sql(field: str, values: Any, et_expr: str) -> str:
     if bad:
         raise Skip(f"modifier {'|'.join(bad)}")
     lname = name.lower()
-    if lname in _PROCESS or lname not in _FIELDS:
+    if lname not in _FIELDS:
         raise ProcessField(name)
     col = et_expr if lname == "eventtype" else _FIELDS[lname]
     vals = values if isinstance(values, list) else [values]
@@ -125,17 +126,31 @@ def _field_sql(field: str, values: Any, et_expr: str) -> str:
 
 class ProcessField(Skip):
     def __init__(self, field: str) -> None:
-        super().__init__(f"field {field} (a process field a hive cannot show)")
+        super().__init__(f"field {field} (not in a hive: process, event ID…)")
         self.field = field
 
 
-def _selection_sql(sel: Any, et_expr: str) -> str:
+def _selection(sel: Any, et_expr: str) -> dict[str, Any]:
+    """A selection as {pos, neg, ignored, registry}: ``pos`` with the fields a hive does not
+    have dropped (it matches on the registry part), ``neg`` = FALSE when such a field is in
+    it (as an exclusion it cannot be applied, so it excludes nothing)."""
     if isinstance(sel, dict):
         if not sel:
             raise Skip("empty selection")
-        return "(" + " AND ".join(_field_sql(k, v, et_expr) for k, v in sel.items()) + ")"
+        parts, ignored = [], []
+        for k, v in sel.items():
+            try:
+                parts.append(_field_sql(k, v, et_expr))
+            except ProcessField as exc:
+                ignored.append(exc.field)
+        pos = "(" + " AND ".join(parts) + ")" if parts else "TRUE"
+        return {"pos": pos, "neg": "FALSE" if ignored else pos, "ignored": ignored, "registry": bool(parts)}
     if isinstance(sel, list) and sel and all(isinstance(x, dict) for x in sel):
-        return "(" + " OR ".join(_selection_sql(x, et_expr) for x in sel) + ")"
+        subs = [_selection(x, et_expr) for x in sel]
+        return {"pos": "(" + " OR ".join(x["pos"] for x in subs) + ")",
+                "neg": "(" + " OR ".join(x["neg"] for x in subs) + ")",
+                "ignored": [f for x in subs for f in x["ignored"]],
+                "registry": all(x["registry"] for x in subs)}
     raise Skip("keyword search (no field)")
 
 
@@ -157,7 +172,7 @@ def _tokens(cond: str) -> list[str]:
     return out
 
 
-def _condition(cond: str, sels: dict[str, str | None]) -> tuple[str, dict[str, set[bool]]]:
+def _condition(cond: str, sels: dict[str, dict[str, Any]]) -> tuple[str, dict[str, set[bool]]]:
     """(SQL, polarity of each selection used: True = asked to match, False = under a not)."""
     toks = _tokens(cond)
     pol: dict[str, set[bool]] = {}
@@ -168,7 +183,7 @@ def _condition(cond: str, sels: dict[str, str | None]) -> tuple[str, dict[str, s
             raise Skip("condition names no selection")
         for n in names:
             pol.setdefault(n, set()).add(positive)
-        parts = [sels[n] if sels[n] is not None else "__PROC__" for n in names]
+        parts = [sels[n]["pos" if positive else "neg"] for n in names]
         return "(" + f" {join} ".join(parts) + ")"
 
     def expand(pat: str) -> list[str]:
@@ -254,32 +269,44 @@ def compile_rule(doc: dict[str, Any], allow_process_filters: bool = False) -> di
     et = {"registry_set": "'setvalue'", "registry_add": "'createkey'",
           "registry_delete": "CASE WHEN kind = 'key' THEN 'deletekey' ELSE 'deletevalue' END",
           "registry_event": "CASE WHEN kind = 'key' THEN 'createkey' ELSE 'setvalue' END"}[cat]
-    sels: dict[str, str | None] = {}
-    proc: dict[str, str] = {}
+    sels: dict[str, dict[str, Any]] = {}
     for name, sel in det.items():
         if name == "condition" or name == "timeframe":
             continue
-        try:
-            sels[name] = _selection_sql(sel, f"({et})")
-        except ProcessField as exc:
-            sels[name], proc[name] = None, exc.field
+        sels[name] = _selection(sel, f"({et})")
     where, pol = _condition(str(cond), sels)
-    for name, field in proc.items():
-        if name not in pol:
-            continue
-        if True in pol[name]:
-            raise Skip(f"field {field} in a selection the rule needs (a process field a hive cannot show)")
-        if not allow_process_filters:
-            raise Skip(f"field {field} in the filter {name} (process filters are off in Settings)")
-    unapplied = sorted({proc[n] for n in proc if n in pol})
-    where = where.replace("__PROC__", "FALSE")        # an unapplied filter excludes nothing
+    used = {n: sels[n] for n in pol}
+    ignored = sorted({f for x in used.values() for f in x["ignored"]})
+    if ignored and not allow_process_filters:
+        n, x = next((n, x) for n, x in used.items() if x["ignored"])
+        raise Skip(f"field {x['ignored'][0]} in {n} (not in a hive; fields like this are ignored only when the "
+                   "option is on in Settings)")
+    if not any(x["registry"] for n, x in used.items() if True in pol[n]):
+        raise Skip("nothing left to match on the registry (only fields a hive does not have)")
+    unapplied = ignored
     rows = {"registry_set": "kind = 'value'", "registry_add": "kind = 'key'",
             "registry_delete": "op = 'recovered'", "registry_event": "TRUE"}[cat]
     return {"id": str(doc.get("id") or ""), "title": str(doc.get("title") or "(untitled)"),
             "level": str(doc.get("level") or "medium").lower(), "status": str(doc.get("status") or ""),
             "author": str(doc.get("author") or ""), "description": str(doc.get("description") or "")[:600],
             "references": [str(x) for x in (doc.get("references") or [])][:5], "attack": _attack(doc.get("tags")),
-            "category": cat, "where": f"({rows}) AND ({where})", "process_filters_unapplied": unapplied}
+            "category": cat, "where": f"({rows}) AND ({where})", "process_filters_unapplied": unapplied,
+            "ignored_fields": unapplied}
+
+
+_LOOSE = re.compile(rb"^(\s*(?:title|description|name|author|falsepositives|-)\s*:?\s*)([^'\"\n|>][^\n]*:\s[^\n]*)$",
+                    re.M | re.I)
+
+
+def _quote_scalars(raw: bytes) -> bytes:
+    """A common slip in hand-written rules: a title / description with ": " in it, unquoted.
+    Quote those values and read the rule again (only text fields, never the detection)."""
+    def fix(m: re.Match) -> bytes:
+        head, val = m.group(1), m.group(2).rstrip()
+        if not re.match(rb"\s*(?:title|description|name|author)\s*:", head, re.I):
+            return m.group(0)
+        return head + b"'" + val.replace(b"'", b"''") + b"'"
+    return _LOOSE.sub(fix, raw)
 
 
 def _signature(folder: Path) -> str:
@@ -318,7 +345,10 @@ def load(folder: str | Path | None, allow_process_filters: bool = False) -> dict
             continue
         out["files"] += 1
         try:
-            docs = [d for d in yaml.safe_load_all(raw) if isinstance(d, dict)]
+            try:
+                docs = [d for d in yaml.safe_load_all(raw) if isinstance(d, dict)]
+            except yaml.YAMLError:
+                docs = [d for d in yaml.safe_load_all(_quote_scalars(raw)) if isinstance(d, dict)]
         except yaml.YAMLError as exc:
             out["skipped"].append({"file": str(p.relative_to(root)), "title": "", "reason": f"YAML: {str(exc)[:120]}"})
             continue
@@ -364,7 +394,13 @@ SELECT src, key, name, data, last_write, op, label, type, kind, details,
   regexp_replace(regexp_replace(regexp_replace(raw,
     '^HKCU\\Software\\Classes(\\|$)', 'HKU\\__SID___Classes\1', 'i'),
     '^HKCU(\\|$)', 'HKU\\__SID__\1', 'i'),
-    '\\ControlSet\d{3}(\\|$)', '\\CurrentControlSet\1', 'i') AS target
+    '\\ControlSet\d{3}(\\|$)', '\\CurrentControlSet\1', 'i') AS target,
+  regexp_replace(regexp_replace(regexp_replace(regexp_replace(key,
+    '^HKLM(\\|$)', '\\REGISTRY\\MACHINE\1', 'i'),
+    '^HKU(\\|$)', '\\REGISTRY\\USER\1', 'i'),
+    '^HKCU\\Software\\Classes(\\|$)', '\\REGISTRY\\USER\\__SID___Classes\1', 'i'),
+    '^HKCU(\\|$)', '\\REGISTRY\\USER\\__SID__\1', 'i') AS objname,
+  coalesce(name, '') AS vname
 FROM t"""
 
 
@@ -382,7 +418,7 @@ def run(dbp: Path, loaded: dict[str, Any]) -> tuple[list[dict[str, Any]], list[d
         for r in loaded["rules"]:
             try:
                 rows = con.execute(f"""SELECT src, key, name, data, last_write, op, label, type FROM ev
-                                       WHERE {r['where']} ORDER BY src, key, name LIMIT {MAX_ROWS}""").fetchall()
+                                       WHERE {r['where']} ORDER BY src, key, name""").fetchall()
             except Exception as exc:  # noqa: BLE001  (a pattern RE2 does not take: that rule only)
                 r.setdefault("error", str(exc)[:200])
                 continue
@@ -393,12 +429,12 @@ def run(dbp: Path, loaded: dict[str, Any]) -> tuple[list[dict[str, Any]], list[d
                       "last_write": str(x[4]) if x[4] else None, "source": x[6], "type": x[7],
                       **({"op": x[5]} if x[5] else {})} for x in rows]
             sev = _SEVERITY.get(r["level"], "medium")
-            note = (f" (its process filter on {', '.join(r['process_filters_unapplied'])} was not applied: "
-                    "a hive does not record which program wrote it)") if r["process_filters_unapplied"] else ""
+            note = (f" (matched on the registry only: {', '.join(r['ignored_fields'])} ignored — a hive does not "
+                    "record the process, user or event)") if r["ignored_fields"] else ""
             hits.append({"rule": rid, "title": f"Sigma: {r['title']}", "severity": sev, "attack": r["attack"],
-                         "count": len(items), "suspicious": 0, "items": items[:50],
+                         "count": len(items), "suspicious": 0, "items": items,
                          "sigma": {k: r[k] for k in ("id", "file", "author", "status", "level", "description",
-                                                     "references", "category", "process_filters_unapplied")}})
+                                                     "references", "category", "process_filters_unapplied", "ignored_fields")}})
             if sev == "info":
                 continue
             n_rec = sum(it.get("op") == "recovered" for it in items)

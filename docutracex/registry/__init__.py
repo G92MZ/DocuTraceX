@@ -20,7 +20,7 @@ from . import artifacts, catalog, commands, context, parse, recover, rules, stor
 
 log = logging.getLogger(__name__)
 
-MAX_FINDINGS_ROWS = 40          # rows quoted per rule in a finding / the summary
+ALL_ROWS = 50_000_000            # no cap: every entry behind a rule is kept (the tab builds them on demand)
 MAX_CARVED = 50
 _B64 = re.compile(r"[A-Za-z0-9+/]{200,}={0,2}")
 # a command line, not a word: "PowerShell" in a device description or a setting name is not one
@@ -121,7 +121,7 @@ def _command_scan(dbp: Path) -> dict[str, list[tuple]]:
         JOIN sources s ON s.id = v.src LEFT JOIN keys k ON k.src = v.src AND k.path = v."key"
         WHERE v.type IN ('REG_SZ', 'REG_EXPAND_SZ', 'REG_MULTI_SZ') AND length(v.data) >= 6
           AND regexp_matches(v.data, ?) AND v.op IN ('', 'recovered')
-        ORDER BY v.src, v."key", v.name""", [commands.PREFILTER], 500_000)["rows"]
+        ORDER BY v.src, v."key", v.name""", [commands.PREFILTER], ALL_ROWS)["rows"]
     out: dict[str, list[tuple]] = {"critical": [], "combination": [], "allowed": []}
     for x in rows:
         c = commands.classify(x[3] or "")
@@ -148,17 +148,17 @@ def run_rules(dbp: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]], li
             indicators = {(x[0], x[1], x[2]): x[8] for x in cmd_rows[r["level"]]}
         elif r.get("custom"):
             try:
-                rows = store.query(dbp, r["custom"], (), 500)["rows"]
+                rows = store.query(dbp, r["custom"], (), ALL_ROWS)["rows"]
             except Exception:  # noqa: BLE001  (a table the case has not: context of another machine)
                 rows = []
         else:
             sql, args = rules.sql_for(r)
-            rows = store.query(dbp, sql, args, 500)["rows"]
+            rows = store.query(dbp, sql, args, ALL_ROWS)["rows"]
         if r.get("dedupe"):
             rows = [x for x in rows if (x[0], x[1], x[2]) not in reported]
         if not rows and not r.get("name") and not r.get("data") and not r.get("custom") and not r.get("engine"):
             ksql, kargs = rules.keys_sql_for(r)
-            rows = store.query(dbp, ksql, kargs, 500)["rows"]
+            rows = store.query(dbp, ksql, kargs, ALL_ROWS)["rows"]
         if not rows:
             continue
         items = [{"src": x[0], "key": x[1], "name": x[2], "data": (x[3] or "")[:400], "last_write": x[4],
@@ -184,7 +184,7 @@ def run_rules(dbp: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]], li
                     if _AUTOSTART.search(it["key"]):
                         it["suspicious"] = True
         hits.append({"rule": r["id"], "title": r["title"], "severity": severity, "attack": attack,
-                     "count": len(items), "suspicious": len(sus), "items": items[:MAX_FINDINGS_ROWS]})
+                     "count": len(items), "suspicious": len(sus), "items": items})
         if severity == "info":
             if r.get("level") == "allowed":       # cleared by the allowlist: no generic finding either
                 reported.update((it["src"], it["key"], it["name"]) for it in items)

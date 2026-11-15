@@ -2921,6 +2921,8 @@ function regSourcesSelect(sources, id) {
 
 // Registry findings: one compact row per rule (severity, rule, title, ATT&CK, mark); ▸ opens
 // the entries behind it (source, key → Browse, value, data, last write).
+let _regDetail = () => "";
+let _regInfo = () => "";
 function regFindingsHtml(rg, marked) {
   const fs = rg.findings || [];
   const hitsBy = {};
@@ -2935,7 +2937,7 @@ function regFindingsHtml(rg, marked) {
           <td class="mono"><a href="#" data-reg-open="${escapeHtml(it.key)}" data-reg-src="${it.src}">${escapeHtml(it.key)}</a></td>
           <td class="mono reg-nowrap">${escapeHtml(it.name || "")}</td><td class="mono">${escapeHtml(it.data || "")}${it.suspicious ? ' <span class="badge badge-bad">suspicious</span>' : ""}${it.op === "recovered" ? ' <span class="badge badge-bad">recovered</span>' : ""}</td>
           <td class="reg-nowrap">${escapeHtml(regTime(it.last_write))}</td></tr>`).join("")}</tbody></table>
-        ${h.count > h.items.length ? `<p class="hint-line">${h.items.length} of ${h.count} shown — the rest in Search / SQL.</p>` : ""}`;
+        <p class="hint-line">${h.items.length} entr${h.items.length === 1 ? "y" : "ies"}.</p>`;
     }
     return f.evidence ? `<pre class="text-sample">${escapeHtml(f.evidence)}</pre>` : "";
   };
@@ -2944,7 +2946,7 @@ function regFindingsHtml(rg, marked) {
     if (!sg) return "";
     return `<p class="hint-line">Sigma rule <span class="mono">${escapeHtml(sg.file || "")}</span> · ${escapeHtml(sg.category || "")} · level ${escapeHtml(sg.level || "")}
       ${sg.status ? `· ${escapeHtml(sg.status)}` : ""} · ${escapeHtml(sg.author || "")} · id <span class="mono">${escapeHtml(sg.id || "")}</span>
-      ${(sg.process_filters_unapplied || []).length ? `<br><b>Process filter not applied</b> (${escapeHtml(sg.process_filters_unapplied.join(", "))}): a hive does not record which program wrote it.` : ""}
+      ${(sg.ignored_fields || sg.process_filters_unapplied || []).length ? `<br><b>Matched on the registry only</b> — ignored: ${escapeHtml((sg.ignored_fields || sg.process_filters_unapplied).join(", "))} (a hive does not record the process, user or event).` : ""}
       ${sg.description ? `<br>${escapeHtml(sg.description)}` : ""}${(sg.references || []).map((u) => `<br><span class="mono">${escapeHtml(u)}</span>`).join("")}</p>`;
   };
   const rows = fs.map((f, i) => {
@@ -2957,16 +2959,18 @@ function regFindingsHtml(rg, marked) {
         <td>${escapeHtml(title)}${count ? ` <span class="hint-line">· ${count[1]}</span>` : ""}${/suspicious command/.test(f.detail || "") ? ' <span class="badge badge-bad">suspicious command</span>' : ""}</td>
         <td class="hint-line reg-nowrap">${escapeHtml((h.attack || (String(f.detail).match(/T\d{4}(\.\d{3})?/g) || [])).join(", "))}</td>
         <td>${markControlsHtml(cf)}</td></tr>
-      <tr class="reg-fdetail" data-reg-fdetail="${i}" hidden><td colspan="5">${sigmaMeta(h)}${evRows(f)}</td></tr>`;
+      <tr class="reg-fdetail" data-reg-fdetail="${i}" hidden><td colspan="5"></td></tr>`;
   }).join("");
+  // the entries of a rule are built when it is opened: every entry is kept, however many
+  _regDetail = (i) => { const f = fs[i]; return f ? sigmaMeta(hitsBy[f.rule]) + evRows(f) : ""; };
   const info = (rg.hits || []).filter((h) => !fs.some((f) => f.rule === h.rule));
   const infoHtml = info.length ? `<h4>Listed, not findings</h4><p class="hint-line">Entries the rules list for context (nothing suspicious in them).</p>
-    ${info.map((h) => `<details class="disclose"><summary><span class="mono">${escapeHtml(h.rule)}</span> ${escapeHtml(h.title)} — ${h.count}
-      <span class="hint-line">${escapeHtml((h.attack || []).join(", "))}</span></summary>
-      <table class="cases"><thead><tr><th>Src</th><th>Key</th><th>Value</th><th>Data</th><th>Last write</th></tr></thead><tbody>
+    ${info.map((h, k) => `<details class="disclose" data-reg-info="${k}"><summary><span class="mono">${escapeHtml(h.rule)}</span> ${escapeHtml(h.title)} — ${h.count}
+      <span class="hint-line">${escapeHtml((h.attack || []).join(", "))}</span></summary><div></div></details>`).join("")}` : "";
+  _regInfo = (k) => { const h = info[k]; return h ? `<table class="cases"><thead><tr><th>Src</th><th>Key</th><th>Value</th><th>Data</th><th>Last write</th></tr></thead><tbody>
       ${(h.items || []).map((it) => `<tr><td>${it.src}</td><td class="mono"><a href="#" data-reg-open="${escapeHtml(it.key)}" data-reg-src="${it.src}">${escapeHtml(it.key)}</a></td>
         <td class="mono">${escapeHtml(it.name || "")}</td><td class="mono">${escapeHtml(it.data || "")}</td>
-        <td>${escapeHtml(it.last_write || "")}</td></tr>`).join("")}</tbody></table></details>`).join("")}` : "";
+        <td>${escapeHtml(it.last_write || "")}</td></tr>`).join("")}</tbody></table>` : ""; };
   const sg = rg.sigma;
   const sigmaLine = sg && sg.folder ? `<p class="hint-line">Sigma: ${sg.error ? `<span class="bad-text">${escapeHtml(sg.error)}</span>` :
     `${sg.loaded} registry rule(s) from <span class="mono">${escapeHtml(sg.folder)}</span> · ${sg.matched} matched · ${sg.skipped_count} skipped (see Settings)`}</p>` : "";
@@ -3178,19 +3182,30 @@ function wireRegistry(root, caseId) {
     }
   }
 
+  pane.addEventListener("toggle", (ev) => {           // "listed" rules: their entries are built when opened
+    const d = ev.target;
+    if (d.open && d.hasAttribute && d.hasAttribute("data-reg-info") && !d.dataset.built) {
+      d.lastElementChild.innerHTML = _regInfo(Number(d.getAttribute("data-reg-info")));
+      d.dataset.built = "1";
+    }
+  }, true);
   pane.addEventListener("click", async (ev) => {
     const a = ev.target.closest("a, button");
     if (!a || !pane.contains(a)) return;
     if (a.hasAttribute("data-reg-ftoggle")) {
       ev.preventDefault();
       const row = pane.querySelector(`[data-reg-fdetail="${a.getAttribute("data-reg-ftoggle")}"]`);
+      if (!row.dataset.built) { row.firstElementChild.innerHTML = _regDetail(Number(a.getAttribute("data-reg-ftoggle"))); row.dataset.built = "1"; }
       row.hidden = !row.hidden;
       a.textContent = (row.hidden ? "▸ " : "▾ ") + a.textContent.slice(2);
       return;
     }
     if (a.hasAttribute("data-reg-fall")) {
       const open = a.getAttribute("data-reg-fall") === "1";
-      pane.querySelectorAll("[data-reg-fdetail]").forEach((r) => { r.hidden = !open; });
+      pane.querySelectorAll("[data-reg-fdetail]").forEach((r) => {
+        if (open && !r.dataset.built) { r.firstElementChild.innerHTML = _regDetail(Number(r.getAttribute("data-reg-fdetail"))); r.dataset.built = "1"; }
+        r.hidden = !open;
+      });
       pane.querySelectorAll("[data-reg-ftoggle]").forEach((x) => { x.textContent = (open ? "▾ " : "▸ ") + x.textContent.slice(2); });
       return;
     }

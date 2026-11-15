@@ -213,9 +213,13 @@ title, level, ATT&CK tags, author and id. Values and keys are read the way Sysmo
 `key\value` as *TargetObject* (`HKCU` as `HKU\<SID>`, `ControlSet00N` as `CurrentControlSet`),
 Sysmon's spelling of the data as *Details* (`DWORD (0x00000001)`, `Binary Data`, `(Empty)`),
 `SetValue` / `CreateKey`, and `DeleteValue` / `DeleteKey` for entries recovered from deleted cells
-(the only place `registry_delete` rules look). A rule that cannot be translated faithfully — keywords,
-aggregations, other modifiers, a process field a hive cannot show (`Image`, `User`…) — is skipped and
-listed in Settings with why. Sigma rules describe **changes**: on a hive, every match is a value that
+(the only place `registry_delete` rules look). The Security log's 4657 fields are read too
+(*ObjectName* as `\REGISTRY\MACHINE\…` / `\REGISTRY\USER\…`, *ObjectValueName*, *NewValue*), and
+Sysmon's *NewName* is the key as it is named now. Fields a hive does not have (`Image`, `EventID`,
+`User`…) are ignored when you allow it in Settings: the rule matches on its registry part and the
+finding says what was ignored. A rule that cannot be translated faithfully — keywords, aggregations,
+other modifiers, nothing left to match on the registry — is skipped and listed in Settings with why.
+Every entry behind a finding is kept (no cap); the tab builds them when the finding is opened. Sigma rules describe **changes**: on a hive, every match is a value that
 exists, Windows defaults included; the last-write time says how recent it is.
 
 **Payloads kept in values** — a PE or archive in a binary value, a script, a base64 blob that

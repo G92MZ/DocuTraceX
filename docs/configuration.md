@@ -90,10 +90,12 @@ your own rules, or both, searched recursively. Nothing is downloaded: update the
 (`git pull`). **Save & scan** shows how many registry rules were loaded and lists the skipped ones
 with why. The rules apply to the next analysis (or a re-run) of a case with hives or .reg files.
 
-**Process filters**: some rules exclude the program that wrote the value (`Image` in a
-`filter_*`). A hive does not record it, so by default those rules are skipped; tick the option to
-run them with that filter not applied — more rules, more false positives, and their findings say so.
-Rules that need a process field to match are always skipped.
+**Fields a hive does not have** (`Image`, `EventID`, `User`…): by default the rules that use
+them are skipped. Tick the option to run them **on their registry part**: those fields are ignored
+in a selection, and an exclusion on them (`filter_*`) is not applied — more rules, more false
+positives, and each finding says which fields were ignored. A rule with nothing left to match on
+the registry is still skipped. Titles or descriptions with an unquoted `: ` (a common slip in
+hand-written rules) are read anyway.
 
 ## Email reputation lists and Microsoft 365
 
