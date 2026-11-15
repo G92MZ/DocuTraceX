@@ -579,10 +579,11 @@
         <div class="hint-line"><input id="sigma-folder" type="text" spellcheck="false" placeholder="e.g. C:\Tools\sigma\rules  (empty = off)" style="width:32em">
           <button id="sigma-save" class="btn btn-ghost btn-sm" type="button">Save &amp; scan</button>
           <span id="sigma-msg" class="status"></span></div>
-        <div class="hint-line"><label><input id="sigma-procfilters" type="checkbox"> Also run rules that use fields a hive does not have
-          (<span class="mono">Image</span>, <span class="mono">EventID</span>, <span class="mono">User</span>…): those fields are <b>ignored</b> —
-          a selection matches on its registry part, an exclusion on them is not applied. More rules, more false positives; their matches
-          say which fields were ignored. A rule with nothing left on the registry is still skipped.</label></div>
+        <div class="hint-line"><label><input id="sigma-procfilters" type="checkbox"> Also run rules that need fields a hive does not have
+          (<span class="mono">Image</span>, <span class="mono">User</span>…): a selection that needs one is <b>left out</b> (it cannot be
+          confirmed on a hive) and an exclusion on one is not applied. More rules, more false positives; their matches say what was left out.
+          A rule with nothing left on the registry is still skipped. Event metadata (<span class="mono">EventID</span>, <span class="mono">Channel</span>…)
+          is always dropped.</label></div>
         <div id="sigma-summary"></div>
           </div>
         </section>

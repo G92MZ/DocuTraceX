@@ -92,11 +92,13 @@ with why. The rules apply to the next analysis (or a re-run) of a case with hive
 Their matches are **hunting**: listed under *Sigma hunting* in the case's Registry tab, never case
 findings and never IOCs.
 
-**Fields a hive does not have** (`Image`, `EventID`, `User`…): by default the rules that use
-them are skipped. Tick the option to run them **on their registry part**: those fields are ignored
-in a selection, and an exclusion on them (`filter_*`) is not applied — more rules, more false
-positives, and each match says which fields were ignored. A rule with nothing left to match on
-the registry is still skipped. Titles or descriptions with an unquoted `: ` (a common slip in
+**Fields a hive does not have**: event metadata (`EventID`, `Channel`, `Provider_Name`…) is
+always dropped. Rules that need the process or the user (`Image`, `User`…) are skipped by default;
+tick the option to run them on what a hive can confirm: a selection that needs such a field is
+**left out** (in SigmaHQ's *service binary in a suspicious folder*, the selection on the writing
+process goes; the one on `ImagePath` stays) and an exclusion on one (`filter_*`) is not applied —
+more rules, more false positives, and each match says what was left out. A rule with nothing left
+to match on the registry is still skipped. Titles or descriptions with an unquoted `: ` (a common slip in
 hand-written rules) are read anyway.
 
 ## Email reputation lists and Microsoft 365
