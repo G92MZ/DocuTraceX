@@ -32,7 +32,10 @@ multi-strings one per line, binary as hex); `raw` keeps the bytes of binary valu
 They are locked while Windows runs: collect them from an image or with a forensic collector
 (KAPE, FTK Imager, Velociraptor…), or as an administrator with `reg save HKLM\SYSTEM system.hiv`.
 Bring each hive with its **transaction logs** (`.LOG1` / `.LOG2`, same folder, same name) in one
-archive: they hold the latest changes not yet written into the hive, and they are applied.
+archive: they hold the latest changes not yet written into the hive, and they are applied. The
+archive can keep the collector's folders (`config\`, `Users\<user>\`…): each hive is listed with
+its path in the archive (`Users/ana/NTUSER.DAT`) and gets the logs of its own folder, so several
+users' `NTUSER.DAT` never mix; the logs themselves are recognised as logs, not read as hives.
 
 | Hive | Path | Mounted at | What it holds |
 |---|---|---|---|

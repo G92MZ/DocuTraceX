@@ -40,20 +40,23 @@ def _source_label(path: Path, case_root: Path) -> str:
         return path.name
 
 
-def ingest(files: list[tuple[Path, str]], case_root: Path, work_dir: Path) -> dict[str, Any]:
-    """Load every hive / .reg of ``files`` (path, label) into the case database."""
+def ingest(files: list[tuple], case_root: Path, work_dir: Path) -> dict[str, Any]:
+    """Load every hive / .reg of ``files`` — (path, label) or (path, label, [its transaction
+    logs]) when an archive's layout paired them — into the case database."""
     dbp = store.db_path(case_root)
     con = store.create(dbp)
     sources: list[dict[str, Any]] = []
     try:
-        for i, (path, label) in enumerate(files, start=1):
+        for i, item in enumerate(files, start=1):
+            path, label = item[0], item[1]
+            paired = list(item[2]) if len(item) > 2 and item[2] is not None else None
             rec: dict[str, Any] = {"id": i, "label": label, "file": _source_label(path, case_root), "logs": [],
                                    "error": ""}
             loader = store.Loader(con, i)
             try:
                 if parse.is_hive(path):
                     info = parse.hive_info(path)
-                    use, logs = parse.apply_logs(path, work_dir / f"{i}_{path.name}.recovered")
+                    use, logs = parse.apply_logs(path, work_dir / f"{i}_{path.name}.recovered", paired)
                     rec.update(kind="hive", hive_type=info["hive_type"], mount=info["mount"], logs=logs,
                                embedded_name=info["embedded_name"])
                     for what, row in parse.iter_hive(use, info["mount"]):
@@ -298,7 +301,7 @@ def carve_payloads(dbp: Path, out_dir: Path) -> list[dict[str, Any]]:
     return out
 
 
-def analyze(files: list[tuple[Path, str]], case_root: Path, work_dir: Path) -> dict[str, Any]:
+def analyze(files: list[tuple], case_root: Path, work_dir: Path) -> dict[str, Any]:
     """Ingest + rules + certificates + payloads: the ``registry`` module result."""
     if not store.available():
         return {"module": "registry", "status": "error", "error": "DuckDB is not installed (pip install duckdb)",

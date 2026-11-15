@@ -13,6 +13,7 @@ from __future__ import annotations
 import codecs
 import datetime as dt
 import re
+import struct
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -30,11 +31,14 @@ MOUNTS = {"ntuser": "HKCU", "usrclass": "HKCU\\Software\\Classes", "software": "
 
 
 def is_hive(path: Path) -> bool:
+    """A primary hive: "regf" with file type 0. Transaction logs (.LOG1 / .LOG2) start with
+    the same base block but say type 1 / 2 — they are applied to their hive, not read as one."""
     try:
         with path.open("rb") as fh:
-            return fh.read(4) == b"regf"
+            head = fh.read(32)
     except OSError:
         return False
+    return len(head) >= 32 and head[:4] == b"regf" and struct.unpack_from("<I", head, 28)[0] == 0
 
 
 def _reg_head(path: Path) -> str:
@@ -242,10 +246,12 @@ def hive_info(path: Path) -> dict[str, Any]:
     return {"hive_type": htype, "mount": MOUNTS.get(htype, path.name), "embedded_name": embedded}
 
 
-def apply_logs(path: Path, out: Path) -> tuple[Path, list[str]]:
-    """The hive with its transaction logs (NAME.LOG1 / .LOG2 beside it) applied, when present."""
-    logs = [p for p in (path.with_name(path.name + ".LOG1"), path.with_name(path.name + ".LOG2"),
-                        path.with_name(path.name + ".LOG")) if p.is_file() and p.stat().st_size > 512]
+def apply_logs(path: Path, out: Path, logs: list[Path] | None = None) -> tuple[Path, list[str]]:
+    """The hive with its transaction logs applied, when present: ``logs`` when the caller
+    paired them (by their path in an archive), else NAME.LOG1 / .LOG2 beside the hive."""
+    cands = logs if logs is not None else [path.with_name(path.name + ".LOG1"), path.with_name(path.name + ".LOG2"),
+                                           path.with_name(path.name + ".LOG")]
+    logs = [p for p in cands if p.is_file() and p.stat().st_size > 512]
     if not logs:
         return path, []
     try:

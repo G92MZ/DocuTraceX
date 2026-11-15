@@ -1374,8 +1374,9 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         try:
             from . import hexview, registry
             tree = (read_json(paths.subresult("nested")) or {}).get("tree") or []
-            regs = [(paths.root / f["path"], f["label"]) for f in hexview.list_files(paths.root, tree, "")
-                    if registry.is_registry_file(paths.root / f["path"])]
+            regs = _registry_sources(paths, [(paths.root / f["path"], f["label"], f["path"])
+                                             for f in hexview.list_files(paths.root, tree, "")
+                                             if registry.is_registry_file(paths.root / f["path"])])
             if regs:
                 rres = run("registry: hives / .reg found in the sample → case database · rules",
                            lambda: _registry(paths, regs)) or {}
@@ -1538,7 +1539,27 @@ _COLLECTABLE = _RERUNNABLE + ("nested", "netcheck", "unlock", "archive", "file",
                                "memdump", "registry", "qr", "html")
 
 
-def _registry(paths: CasePaths, files: list[tuple[Path, str]]) -> dict[str, Any]:
+def _registry_sources(paths: CasePaths, found: list[tuple[Path, str, str]]) -> list[tuple]:
+    """Hives taken out of an archive keep their path in it: the label says where each came
+    from (Users\\ana\\NTUSER.DAT) and its .LOG1 / .LOG2 are the ones of the same folder —
+    extraction flattens folders, so same-named hives of several users are renamed."""
+    entries = [e for e in (read_json(paths.subresult("archive")) or {}).get("entries") or []
+               if e.get("stored_path") and e.get("name")]
+    by_stored = {e["stored_path"]: e["name"].replace("\\", "/") for e in entries}
+    by_name = {e["name"].replace("\\", "/").lower(): e["stored_path"] for e in entries}
+    out: list[tuple] = []
+    for path, label, rel in found:
+        member = by_stored.get(rel)
+        if not member:
+            out.append((path, label))
+            continue
+        logs = [paths.root / by_name[k] for k in (f"{member.lower()}.log1", f"{member.lower()}.log2",
+                                                  f"{member.lower()}.log") if k in by_name]
+        out.append((path, f"archive › {member}", logs))
+    return out
+
+
+def _registry(paths: CasePaths, files: list[tuple]) -> dict[str, Any]:
     from . import registry
     return registry.analyze(files, paths.root, paths.extracted_dir / "registry")
 
