@@ -541,7 +541,7 @@
         </section>
         <section class="settings-group" id="set-rules">
           <h3 class="settings-group-title">Detection rules</h3>
-          <p class="hint-line">Rule sets you bring: YARA for every file, Sigma for the registry.</p>
+          <p class="hint-line">Rule sets you bring: YARA for every file. The registry has its own built-in rules.</p>
           <div class="settings-card" id="set-yara">
             <h4 class="settings-card-title">YARA rules</h4>
             <p class="hint-line">Folders and files on this machine (searched recursively — a clone of a rule repository, your own
@@ -566,25 +566,6 @@
             </div>
             <div id="yara-errors"></div>
             <div id="yara-body"></div>
-          </div>
-          <div class="settings-card" id="set-sigma">
-            <h4 class="settings-card-title">Registry: Sigma rules</h4>
-        <div class="hint-line">A folder on this machine with Sigma rules (a clone of
-          <a href="https://github.com/SigmaHQ/sigma" target="_blank" rel="noopener noreferrer">SigmaHQ</a>, your own rules, or both;
-          searched recursively). Its registry rules (<span class="mono">registry_set</span> / <span class="mono">_add</span> /
-          <span class="mono">_delete</span> / <span class="mono">_event</span>) run on every hive and .reg of a case; nothing is
-          downloaded. A rule that cannot be translated faithfully is skipped and listed below with why. Sigma rules describe
-          <b>changes</b>: on a hive every match is a value that exists, Windows defaults included — the last-write time tells how recent. So the matches are <b>hunting</b>: listed under
-          <i>Sigma hunting</i> in the case's Registry tab, never findings or IOCs.</div>
-        <div class="hint-line"><input id="sigma-folder" type="text" spellcheck="false" placeholder="e.g. C:\Tools\sigma\rules  (empty = off)" style="width:32em">
-          <button id="sigma-save" class="btn btn-ghost btn-sm" type="button">Save &amp; scan</button>
-          <span id="sigma-msg" class="status"></span></div>
-        <div class="hint-line"><label><input id="sigma-procfilters" type="checkbox"> Also run rules that need fields a hive does not have
-          (<span class="mono">Image</span>, <span class="mono">User</span>…): a selection that needs one is <b>left out</b> (it cannot be
-          confirmed on a hive) and an exclusion on one is not applied. More rules, more false positives; their matches say what was left out.
-          A rule with nothing left on the registry is still skipped. Event metadata (<span class="mono">EventID</span>, <span class="mono">Channel</span>…)
-          is always dropped.</label></div>
-        <div id="sigma-summary"></div>
           </div>
         </section>
       </section>

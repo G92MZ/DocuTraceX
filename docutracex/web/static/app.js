@@ -2923,10 +2923,6 @@ function regSourcesSelect(sources, id) {
 // the entries behind it (source, key → Browse, value, data, last write).
 let _regDetail = () => "";
 let _regInfo = () => "";
-let _regHunt = () => "";
-let _huntList = () => "";
-const _huntState = { days: 0 };
-try { _huntState.days = Number(localStorage.getItem("dtx.huntDays") || 0) || 0; } catch (_) { /* optional */ }
 function regFindingsHtml(rg, marked) {
   const fs = rg.findings || [];
   const hitsBy = {};
@@ -2945,15 +2941,6 @@ function regFindingsHtml(rg, marked) {
     }
     return f.evidence ? `<pre class="text-sample">${escapeHtml(f.evidence)}</pre>` : "";
   };
-  const sigmaMeta = (h) => {
-    const sg = h && h.sigma;
-    if (!sg) return "";
-    return `<p class="hint-line">Sigma rule <span class="mono">${escapeHtml(sg.file || "")}</span> · ${escapeHtml(sg.category || "")} · level ${escapeHtml(sg.level || "")}
-      ${sg.status ? `· ${escapeHtml(sg.status)}` : ""} · ${escapeHtml(sg.author || "")} · id <span class="mono">${escapeHtml(sg.id || "")}</span>
-      ${(sg.ignored_fields || sg.process_filters_unapplied || []).length ? `<br><b>Matched on the registry only</b> — not checked: ${escapeHtml((sg.ignored_fields || sg.process_filters_unapplied).join(", "))} (a hive does not record the process, user or event).` : ""}
-      ${(sg.selections_left_out || []).length ? `<br>Left out (they need a field a hive does not have): <span class="mono">${escapeHtml(sg.selections_left_out.join(", "))}</span>.` : ""}
-      ${sg.description ? `<br>${escapeHtml(sg.description)}` : ""}${(sg.references || []).map((u) => `<br><span class="mono">${escapeHtml(u)}</span>`).join("")}</p>`;
-  };
   const rows = fs.map((f, i) => {
     const h = hitsBy[f.rule] || {};
     const cf = byKey[`${f.rule}\u0000${f.detail}`] || f;
@@ -2967,74 +2954,19 @@ function regFindingsHtml(rg, marked) {
       <tr class="reg-fdetail" data-reg-fdetail="${i}" hidden><td colspan="5"></td></tr>`;
   }).join("");
   // the entries of a rule are built when it is opened: every entry is kept, however many
-  _regDetail = (i) => { const f = fs[i]; return f ? sigmaMeta(hitsBy[f.rule]) + evRows(f) : ""; };
-  const info = (rg.hits || []).filter((h) => !h.hunting && !fs.some((f) => f.rule === h.rule));
-  const hunt = (rg.hits || []).filter((h) => h.hunting);
+  _regDetail = (i) => { const f = fs[i]; return f ? evRows(f) : ""; };
+  const info = (rg.hits || []).filter((h) => !fs.some((f) => f.rule === h.rule));
   const infoHtml = info.length ? `<h4>Listed, not findings</h4><p class="hint-line">Entries the rules list for context (nothing suspicious in them).</p>
     ${info.map((h, k) => `<details class="disclose" data-reg-info="${k}"><summary><span class="mono">${escapeHtml(h.rule)}</span> ${escapeHtml(h.title)} — ${h.count}
       <span class="hint-line">${escapeHtml((h.attack || []).join(", "))}</span></summary><div></div></details>`).join("")}` : "";
-  // Sigma hunting: rules sorted by level then by how few entries they match (a rule matching
-  // thousands of values is reading the Windows baseline), a recency lens relative to the newest
-  // write in the case, and the entries more than one rule points at.
-  const LEVEL = { critical: 0, high: 1, medium: 2, low: 3, informational: 4 };
-  const lvl = (h) => (h.sigma && h.sigma.level) || h.severity || "medium";
-  const tsOf = (t) => { const d = t ? Date.parse(String(t).replace(" ", "T").replace(/(\+00:00|Z)?$/, "Z")) : NaN; return isNaN(d) ? null : d; };
-  let newest = null;
-  hunt.forEach((h) => (h.items || []).forEach((it) => { const t = tsOf(it.last_write); if (t && (!newest || t > newest)) newest = t; }));
-  hunt.sort((x, y) => (LEVEL[lvl(x)] ?? 2) - (LEVEL[lvl(y)] ?? 2) || x.count - y.count);
-  const BROAD = 300;
-  const recent = (h) => {
-    const d = _huntState.days;
-    if (!d || !newest) return h.items || [];
-    return (h.items || []).filter((it) => { const t = tsOf(it.last_write); return t && newest - t <= d * 86400000; });
-  };
-  const multi = {};
-  hunt.forEach((h) => { if (h.count <= BROAD) (h.items || []).forEach((it) => {
-    const k = `${it.src}\u0000${it.key}\u0000${it.name || ""}`; (multi[k] = multi[k] || { it, rules: new Set() }).rules.add(h.title.replace(/^Sigma: /, ""));
-  }); });
-  const several = Object.values(multi).filter((m) => m.rules.size > 1).sort((x, y) => y.rules.size - x.rules.size);
-  const entryRows = (items) => `<table class="cases"><thead><tr><th>Src</th><th>Key</th><th>Value</th><th>Data</th><th>Last write</th></tr></thead><tbody>
-      ${items.map((it) => `<tr><td class="reg-nowrap">${it.src}</td><td class="mono"><a href="#" data-reg-open="${escapeHtml(it.key)}" data-reg-src="${it.src}">${escapeHtml(it.key)}</a></td>
-        <td class="mono reg-nowrap">${escapeHtml(it.name || "")}</td><td class="mono">${escapeHtml(it.data || "")}${it.op === "recovered" ? ' <span class="badge badge-bad">recovered</span>' : ""}</td>
-        <td class="reg-nowrap">${escapeHtml(regTime(it.last_write))}</td></tr>`).join("")}</tbody></table>`;
-  _huntList = () => {
-    const shown = hunt.map((h, k) => ({ h, k, items: recent(h) })).filter((x) => x.items.length);
-    const one = ({ h, k, items }) => {
-      const ign = (h.sigma && ((h.sigma.ignored_fields || []).length || (h.sigma.selections_left_out || []).length)) ? ' <span class="badge badge-muted" title="Matched on the registry only">registry only</span>' : "";
-      return `<details class="disclose" data-reg-hunt="${k}"><summary><span class="badge badge-${SEV_CLASS[h.severity] || "warn"}">${escapeHtml(lvl(h))}</span>
-        ${escapeHtml(h.title.replace(/^Sigma: /, ""))} — ${items.length === h.count ? h.count : `${items.length} of ${h.count}`}${ign}
-        <span class="hint-line">${escapeHtml((h.attack || []).join(", "))}</span></summary><div></div></details>`;
-    };
-    const narrow = shown.filter((x) => x.h.count <= BROAD);
-    const broad = shown.filter((x) => x.h.count > BROAD);
-    return (narrow.length ? narrow.map(one).join("") : `<p class="hint-line">No rule matches here.</p>`)
-      + (broad.length ? `<details class="disclose"><summary><b>Broad rules</b> — ${broad.length} rule(s) matching over ${BROAD} entries each:
-          they are reading the Windows baseline (a change rule on a hive's state)</summary><div>${broad.map(one).join("")}</div></details>` : "");
-  };
-  const huntHtml = hunt.length ? `<h4>Sigma hunting</h4><p class="hint-line">Matches of your Sigma rules: leads to look at, not
-    findings (no alert, no IOCs). Sorted by level, then by how few entries a rule matches.</p>
-    <div class="row hint-line">Written <select data-hunt-days>
-      ${[[0, "any time"], [1, "in the last day"], [7, "in the last 7 days"], [30, "in the last 30 days"]].map(([v, t]) =>
-        `<option value="${v}"${_huntState.days === v ? " selected" : ""}>${t}</option>`).join("")}
-      </select>${newest ? ` before the newest write in these matches (${escapeHtml(regTime(new Date(newest).toISOString().slice(0, 19).replace("T", " ")))})` : ""}</div>
-    ${several.length ? `<details class="disclose"><summary><b>Entries matched by several rules</b> — ${several.length}</summary>
-      <table class="cases"><thead><tr><th>Key</th><th>Value</th><th>Data</th><th>Rules</th></tr></thead><tbody>
-      ${several.slice(0, 500).map((m) => `<tr><td class="mono"><a href="#" data-reg-open="${escapeHtml(m.it.key)}" data-reg-src="${m.it.src}">${escapeHtml(m.it.key)}</a></td>
-        <td class="mono">${escapeHtml(m.it.name || "")}</td><td class="mono">${escapeHtml(m.it.data || "")}</td>
-        <td>${[...m.rules].map(escapeHtml).join("<br>")}</td></tr>`).join("")}</tbody></table></details>` : ""}
-    <div data-hunt-list>${_huntList()}</div>` : "";
-  _regHunt = (k) => { const h = hunt[k]; return h ? sigmaMeta(h) + entryRows(recent(h)) : ""; };
   _regInfo = (k) => { const h = info[k]; return h ? `<table class="cases"><thead><tr><th>Src</th><th>Key</th><th>Value</th><th>Data</th><th>Last write</th></tr></thead><tbody>
       ${(h.items || []).map((it) => `<tr><td>${it.src}</td><td class="mono"><a href="#" data-reg-open="${escapeHtml(it.key)}" data-reg-src="${it.src}">${escapeHtml(it.key)}</a></td>
         <td class="mono">${escapeHtml(it.name || "")}</td><td class="mono">${escapeHtml(it.data || "")}</td>
         <td>${escapeHtml(it.last_write || "")}</td></tr>`).join("")}</tbody></table>` : ""; };
-  const sg = rg.sigma;
-  const sigmaLine = sg && sg.folder ? `<p class="hint-line">Sigma: ${sg.error ? `<span class="bad-text">${escapeHtml(sg.error)}</span>` :
-    `${sg.loaded} registry rule(s) from <span class="mono">${escapeHtml(sg.folder)}</span> · ${sg.matched} matched · ${sg.skipped_count} skipped (see Settings)`}</p>` : "";
-  return sigmaLine + (fs.length ? `<div class="row"><button class="btn btn-ghost btn-sm" type="button" data-reg-fall="1">Expand all</button>
+  return (fs.length ? `<div class="row"><button class="btn btn-ghost btn-sm" type="button" data-reg-fall="1">Expand all</button>
       <button class="btn btn-ghost btn-sm" type="button" data-reg-fall="0">Collapse all</button></div>
     <table class="cases findings-table reg-findings"><thead><tr><th>Severity</th><th>Rule</th><th>Finding</th><th>ATT&amp;CK</th><th>Mark</th></tr></thead>
-    <tbody>${rows}</tbody></table>` : `<p class="hint-line">No findings.</p>`) + huntHtml + infoHtml;
+    <tbody>${rows}</tbody></table>` : `<p class="hint-line">No findings.</p>`) + infoHtml;
 }
 
 function regContextHtml(ctx) {
@@ -3239,22 +3171,10 @@ function wireRegistry(root, caseId) {
     }
   }
 
-  pane.addEventListener("change", (ev) => {           // Sigma hunting: the recency lens
-    const sel = ev.target.closest && ev.target.closest("[data-hunt-days]");
-    if (!sel) return;
-    _huntState.days = Number(sel.value) || 0;
-    try { localStorage.setItem("dtx.huntDays", String(_huntState.days)); } catch (_) { /* optional */ }
-    const box = pane.querySelector("[data-hunt-list]");
-    if (box) box.innerHTML = _huntList();
-  });
   pane.addEventListener("toggle", (ev) => {           // "listed" rules: their entries are built when opened
     const d = ev.target;
     if (d.open && d.hasAttribute && d.hasAttribute("data-reg-info") && !d.dataset.built) {
       d.lastElementChild.innerHTML = _regInfo(Number(d.getAttribute("data-reg-info")));
-      d.dataset.built = "1";
-    }
-    if (d.open && d.hasAttribute && d.hasAttribute("data-reg-hunt") && !d.dataset.built) {
-      d.lastElementChild.innerHTML = _regHunt(Number(d.getAttribute("data-reg-hunt")));
       d.dataset.built = "1";
     }
   }, true);
@@ -5818,39 +5738,8 @@ async function loadAllowedCountries() {
   });
 }
 
-function renderSigma(j) {
-  document.getElementById("sigma-folder").value = j.folder || "";
-  document.getElementById("sigma-procfilters").checked = !!j.process_filters;
-  const box = document.getElementById("sigma-summary");
-  if (!j.folder) { box.innerHTML = `<p class="hint-line">Off: no folder set.</p>`; return; }
-  if (j.error) { box.innerHTML = `<p class="hint-line bad-text">${escapeHtml(j.error)}</p>`; return; }
-  const sk = j.skipped || [];
-  box.innerHTML = `<p class="hint-line"><b>${j.loaded}</b> registry rule(s) loaded from ${j.files} file(s) · <b>${j.skipped_count}</b> skipped</p>` +
-    (sk.length ? `<details class="disclose"><summary>Skipped rules and why (${j.skipped_count})</summary>` +
-      itable(["File", "Rule", "Why"], sk.map((x) => [x.file, x.title, x.reason])) + `</details>` : "");
-}
-
-async function loadSigma() {
-  try { renderSigma(await (await fetch("/api/settings/sigma")).json()); } catch (_) { /* optional */ }
-}
-
-document.getElementById("sigma-save").addEventListener("click", async () => {
-  const msg = document.getElementById("sigma-msg");
-  msg.className = "status"; msg.textContent = "Scanning…";
-  try {
-    const r = await fetch("/api/settings/sigma", { method: "PUT", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ folder: document.getElementById("sigma-folder").value.trim(),
-                             process_filters: document.getElementById("sigma-procfilters").checked }) });
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.detail || r.statusText);
-    renderSigma(j);
-    msg.textContent = j.folder ? "Saved — applies to the next analysis (or Re-run)." : "Off.";
-  } catch (err) { msg.className = "status bad-text"; msg.textContent = String(err.message || err); }
-});
-
 async function loadMailintel() {
   loadTenantLookup();
-  loadSigma();
   loadYaraRules();
   loadAllowedCountries();
   try { renderMailintel(await (await fetch("/api/settings/mailintel")).json()); } catch (_) { /* optional */ }
