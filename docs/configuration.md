@@ -89,11 +89,13 @@ A folder on this machine with Sigma rules — a clone of [SigmaHQ](https://githu
 your own rules, or both, searched recursively. Nothing is downloaded: update the folder yourself
 (`git pull`). **Save & scan** shows how many registry rules were loaded and lists the skipped ones
 with why. The rules apply to the next analysis (or a re-run) of a case with hives or .reg files.
+Their matches are **hunting**: listed under *Sigma hunting* in the case's Registry tab, never case
+findings and never IOCs.
 
 **Fields a hive does not have** (`Image`, `EventID`, `User`…): by default the rules that use
 them are skipped. Tick the option to run them **on their registry part**: those fields are ignored
 in a selection, and an exclusion on them (`filter_*`) is not applied — more rules, more false
-positives, and each finding says which fields were ignored. A rule with nothing left to match on
+positives, and each match says which fields were ignored. A rule with nothing left to match on
 the registry is still skipped. Titles or descriptions with an unquoted `: ` (a common slip in
 hand-written rules) are read anyway.
 

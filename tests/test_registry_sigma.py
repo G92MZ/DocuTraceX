@@ -89,22 +89,26 @@ def test_analysis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(appsettings, "sigma_settings", lambda: {"folder": str(folder), "process_filters": False})
     res = registry.analyze([(tmp_path / "registry" / "sample_sigma.reg", "sample_sigma.reg")], tmp_path / "case",
                            tmp_path / "work")
-    sig = {f["rule"]: f for f in res["findings"] if f["rule"].startswith("sigma:")}
-    titles = {f["detail"].split(" — ")[0] for f in sig.values()}
-    assert titles == {"Sigma: Encoded PowerShell In A Run Key", "Sigma: WDigest UseLogonCredential Enabled",
-                      "Sigma: Sync Tool Key Created Under A User", "Sigma: Hidden PowerShell Window In A Value"}
+    assert not any(f["rule"].startswith("sigma:") for f in res["findings"])      # hunting: no findings, no IOCs
+    monkeypatch.setattr(appsettings, "sigma_settings", lambda: {"folder": "", "process_filters": False})
+    base = registry.analyze([(tmp_path / "registry" / "sample_sigma.reg", "sample_sigma.reg")], tmp_path / "case0",
+                            tmp_path / "work0")
+    assert res["ioc_sources"] == base["ioc_sources"] and len(res["findings"]) == len(base["findings"])
+    sig = {h["rule"]: h for h in res["hits"] if h.get("hunting")}
+    assert {h["title"] for h in sig.values()} == {"Sigma: Encoded PowerShell In A Run Key", "Sigma: WDigest UseLogonCredential Enabled",
+                                                  "Sigma: Sync Tool Key Created Under A User", "Sigma: Hidden PowerShell Window In A Value"}
     wd = sig["sigma:3f1c9a2e-7b4d-4e61-9a0b-5c2d8e7f1a02"]
-    assert wd["severity"] == "high" and "T1003.001" in wd["detail"] and "ControlSet001" in wd["evidence"]
+    assert wd["severity"] == "high" and "T1003.001" in wd["attack"] and "ControlSet001" in wd["items"][0]["key"]
     assert res["sigma"]["loaded"] == 5 and res["sigma"]["matched"] == 4 and res["sigma"]["skipped_count"] == 3
-    hit = next(h for h in res["hits"] if h["rule"] == "sigma:3f1c9a2e-7b4d-4e61-9a0b-5c2d8e7f1a01")
+    hit = sig["sigma:3f1c9a2e-7b4d-4e61-9a0b-5c2d8e7f1a01"]
     assert hit["sigma"]["file"] == "run_encoded_powershell.yml" and hit["items"][0]["name"] == "FacturaUpd"
-    assert any("powershell.exe -nop -enc" in s["text"] for s in res["ioc_sources"])
 
     monkeypatch.setattr(appsettings, "sigma_settings", lambda: {"folder": str(folder), "process_filters": True})
     res = registry.analyze([(tmp_path / "registry" / "sample_sigma.reg", "sample_sigma.reg")], tmp_path / "case2",
                            tmp_path / "work2")
-    d = next(f for f in res["findings"] if "Defender Path Exclusion" in f["detail"])
-    assert "matched on the registry only: Image ignored" in d["detail"]
+    d = next(h for h in res["hits"] if "Defender Path Exclusion" in h["title"])
+    assert d["sigma"]["ignored_fields"] == ["Image"]
+    assert not any(f["rule"].startswith("sigma:") for f in res["findings"])
 
 
 def test_settings_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -142,6 +146,6 @@ def test_objectname_and_rules_with_colons(tmp_path: Path) -> None:
     assert any(r["title"] == "Run key via Security logs: 4657" for r in loaded["rules"])
     registry.ingest([(tmp_path / "registry" / "sample_sigma.reg", "sample_sigma.reg")], tmp_path / "c", tmp_path / "w")
     from docutracex.registry import store
-    hits, _f, _i = sigma.run(store.db_path(tmp_path / "c"), loaded)
+    hits = sigma.run(store.db_path(tmp_path / "c"), loaded)
     h = next(x for x in hits if x["title"] == "Sigma: Run key via Security logs: 4657")
     assert h["items"][0]["name"] == "FacturaUpd" and h["sigma"]["ignored_fields"] == ["EventID"]

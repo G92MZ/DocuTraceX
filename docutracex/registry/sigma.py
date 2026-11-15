@@ -404,13 +404,15 @@ SELECT src, key, name, data, last_write, op, label, type, kind, details,
 FROM t"""
 
 
-def run(dbp: Path, loaded: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-    """(hits, findings, IOC sources) of the loaded rules over a case database."""
+def run(dbp: Path, loaded: dict[str, Any]) -> list[dict[str, Any]]:
+    """Hits of the loaded rules over a case database.
+
+    Hunting, not alerts: the registry tab lists them, but they raise no case finding and give no IOCs
+    (most SigmaHQ registry rules describe changes, so on a hive's state they match a lot of the baseline).
+    """
     hits: list[dict[str, Any]] = []
-    findings: list[dict[str, Any]] = []
-    iocs: list[dict[str, Any]] = []
     if not loaded.get("rules"):
-        return hits, findings, iocs
+        return hits
     from . import store
     con = store.connect_ro(dbp)
     try:
@@ -428,26 +430,10 @@ def run(dbp: Path, loaded: dict[str, Any]) -> tuple[list[dict[str, Any]], list[d
             items = [{"src": x[0], "key": x[1], "name": x[2], "data": (x[3] or "")[:400],
                       "last_write": str(x[4]) if x[4] else None, "source": x[6], "type": x[7],
                       **({"op": x[5]} if x[5] else {})} for x in rows]
-            sev = _SEVERITY.get(r["level"], "medium")
-            note = (f" (matched on the registry only: {', '.join(r['ignored_fields'])} ignored — a hive does not "
-                    "record the process, user or event)") if r["ignored_fields"] else ""
-            hits.append({"rule": rid, "title": f"Sigma: {r['title']}", "severity": sev, "attack": r["attack"],
-                         "count": len(items), "suspicious": 0, "items": items,
+            hits.append({"rule": rid, "title": f"Sigma: {r['title']}", "severity": _SEVERITY.get(r["level"], "medium"),
+                         "attack": r["attack"], "count": len(items), "suspicious": 0, "items": items, "hunting": True,
                          "sigma": {k: r[k] for k in ("id", "file", "author", "status", "level", "description",
                                                      "references", "category", "process_filters_unapplied", "ignored_fields")}})
-            if sev == "info":
-                continue
-            n_rec = sum(it.get("op") == "recovered" for it in items)
-            iocs.extend({"location": f"registry:{it['key']}" + (f" :: {it['name']}" if it["name"] else ""),
-                         "text": it["data"] if it["name"] else it["key"]} for it in items)
-            findings.append({"tool": "registry", "rule": rid, "severity": sev,
-                             "detail": f"Sigma: {r['title']} — {len(items)} entr{'y' if len(items) == 1 else 'ies'}"
-                                       + (f" ({n_rec} recovered from deleted cells)" if n_rec else "")
-                                       + note + (" · " + ", ".join(r["attack"]) if r["attack"] else ""),
-                             "location": f"registry:{items[0]['source']}",
-                             "evidence": "\n".join(f"{it['key']}" + (f" :: {it['name']} = {it['data'][:160]}" if it["name"] else "")
-                                                   for it in items[:8])
-                                         + f"\nrule: {r['file']} · id {r['id']} · {r['author']}"})
     finally:
         con.close()
-    return hits, findings, iocs
+    return hits

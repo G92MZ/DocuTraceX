@@ -574,13 +574,14 @@
           searched recursively). Its registry rules (<span class="mono">registry_set</span> / <span class="mono">_add</span> /
           <span class="mono">_delete</span> / <span class="mono">_event</span>) run on every hive and .reg of a case; nothing is
           downloaded. A rule that cannot be translated faithfully is skipped and listed below with why. Sigma rules describe
-          <b>changes</b>: on a hive every match is a value that exists, Windows defaults included — the last-write time tells how recent.</div>
+          <b>changes</b>: on a hive every match is a value that exists, Windows defaults included — the last-write time tells how recent. So the matches are <b>hunting</b>: listed under
+          <i>Sigma hunting</i> in the case's Registry tab, never findings or IOCs.</div>
         <div class="hint-line"><input id="sigma-folder" type="text" spellcheck="false" placeholder="e.g. C:\Tools\sigma\rules  (empty = off)" style="width:32em">
           <button id="sigma-save" class="btn btn-ghost btn-sm" type="button">Save &amp; scan</button>
           <span id="sigma-msg" class="status"></span></div>
         <div class="hint-line"><label><input id="sigma-procfilters" type="checkbox"> Also run rules that use fields a hive does not have
           (<span class="mono">Image</span>, <span class="mono">EventID</span>, <span class="mono">User</span>…): those fields are <b>ignored</b> —
-          a selection matches on its registry part, an exclusion on them is not applied. More rules, more false positives; their findings
+          a selection matches on its registry part, an exclusion on them is not applied. More rules, more false positives; their matches
           say which fields were ignored. A rule with nothing left on the registry is still skipped.</label></div>
         <div id="sigma-summary"></div>
           </div>
