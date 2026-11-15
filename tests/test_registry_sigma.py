@@ -30,7 +30,7 @@ def test_values_and_modifiers() -> None:
     assert "regexp_matches(target, 'Run\\\\[A-Z]+$')" in w
     w = sigma.compile_rule(_rule({"s": {"Details|cased": "ABC"}, "condition": "s"}))["where"]
     assert "details = 'ABC'" in w
-    w = sigma.compile_rule(_rule({"s": {"Details": None}, "condition": "not s"}))["where"]
+    w = sigma.compile_rule(_rule({"sel": {"Details": "x"}, "s": {"Details": None}, "condition": "sel and not s"}))["where"]
     assert "NOTFALSE" in w.replace("(", "").replace(")", "").replace(" ", "")
 
 
@@ -50,8 +50,8 @@ def test_conditions() -> None:
     ({"k": ["a"], "condition": "k"}, "keyword"),
     ({"s": {"Details|base64": "a"}, "condition": "s"}, "modifier base64"),
     ({"s": {"Details": "a"}, "condition": "s | count() > 5"}, "aggregation"),
-    ({"s": {"Image|endswith": "\\x.exe", "Details": "a"}, "condition": "s"}, "selection the rule needs"),
-    ({"s": {"Details": "a"}, "f": {"Image": "y"}, "condition": "s and not f"}, "process filters are off"),
+    ({"s": {"Image|endswith": "\\x.exe", "Details": "a"}, "condition": "s"}, "not in a hive"),
+    ({"s": {"Details": "a"}, "f": {"Image": "y"}, "condition": "s and not f"}, "not in a hive"),
     ({"s": {"Details": "a"}, "condition": "s and t"}, "unknown selection"),
 ])
 def test_skipped(det: dict, why: str) -> None:
@@ -79,7 +79,7 @@ def test_load_folder(tmp_path: Path) -> None:
     assert len(got["rules"]) == 5 and got["files"] == 8
     assert {s["title"] for s in got["skipped"]} == {"Defender Path Exclusion Added", "Keyword Rule (skipped)",
                                                     "Value Written By A Script Host (skipped)"}
-    assert len(sigma.load(folder, True)["rules"]) == 6
+    assert len(sigma.load(folder, True)["rules"]) == 7          # + the two with Image, matched on the registry part
     assert sigma.load(tmp_path / "missing")["error"].startswith("not a folder")
 
 
@@ -104,7 +104,7 @@ def test_analysis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     res = registry.analyze([(tmp_path / "registry" / "sample_sigma.reg", "sample_sigma.reg")], tmp_path / "case2",
                            tmp_path / "work2")
     d = next(f for f in res["findings"] if "Defender Path Exclusion" in f["detail"])
-    assert "process filter on Image was not applied" in d["detail"]
+    assert "matched on the registry only: Image ignored" in d["detail"]
 
 
 def test_settings_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -113,3 +113,35 @@ def test_settings_roundtrip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     with pytest.raises(ValueError):
         appsettings.set_sigma_settings(str(tmp_path / "nope"), False)
     assert appsettings.set_sigma_settings("", False)["folder"] == ""
+
+
+def test_fields_a_hive_does_not_have(tmp_path: Path) -> None:
+    det = {"sel_id": {"EventID": 13}, "sel": {"TargetObject|contains": "\\Run\\"},
+           "f": {"Image|endswith": "\\svchost.exe"}, "condition": "all of sel* and not f"}
+    r = sigma.compile_rule(_rule(det), True)
+    assert r["ignored_fields"] == ["EventID", "Image"] and "contains(lower(target), '\\run\\')" in r["where"]
+    with pytest.raises(sigma.Skip, match="nothing left to match"):
+        sigma.compile_rule(_rule({"s": {"Image|endswith": "\\reg.exe"}, "condition": "s"}), True)
+    # Security 4657 fields and Sysmon's NewName read from the key / value
+    w = sigma.compile_rule(_rule({"s": {"ObjectName|contains": "\\REGISTRY\\MACHINE\\SOFTWARE",
+                                        "ObjectValueName": "Debugger", "NewName|endswith": "\\x"},
+                                  "condition": "s"}))["where"]
+    assert "lower(objname)" in w and "lower(vname) = 'debugger'" in w and "ends_with(lower(target)" in w
+
+
+def test_objectname_and_rules_with_colons(tmp_path: Path) -> None:
+    from docutracex import registry
+    folder = _write(tmp_path)
+    (folder / "custom_security.yml").write_bytes(
+        b"title: Run key via Security logs: 4657\nid: c0ffee00-0000-4000-8000-000000000001\n"
+        b"description: Hand-written rule: an unquoted colon\nlogsource:\n    product: windows\n    category: registry_set\n"
+        b"detection:\n    selection:\n        EventID: 4657\n"
+        b"        ObjectName|endswith: '\\REGISTRY\\USER\\S-1-5-21-0-0-0-1001\\Software\\Microsoft\\Windows\\CurrentVersion\\Run'\n"
+        b"        ObjectValueName: FacturaUpd\n    condition: selection\nlevel: high\n")
+    loaded = sigma.load(folder, True)
+    assert any(r["title"] == "Run key via Security logs: 4657" for r in loaded["rules"])
+    registry.ingest([(tmp_path / "registry" / "sample_sigma.reg", "sample_sigma.reg")], tmp_path / "c", tmp_path / "w")
+    from docutracex.registry import store
+    hits, _f, _i = sigma.run(store.db_path(tmp_path / "c"), loaded)
+    h = next(x for x in hits if x["title"] == "Sigma: Run key via Security logs: 4657")
+    assert h["items"][0]["name"] == "FacturaUpd" and h["sigma"]["ignored_fields"] == ["EventID"]

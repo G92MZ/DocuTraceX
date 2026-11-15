@@ -193,8 +193,7 @@ RULES: list[dict[str, Any]] = [
         WHERE regexp_matches(v.name, '[\x01-\x1f\x7f␀‎‏‪-‮⁦-⁩]')
         UNION ALL SELECT k.src, k.path, NULL, NULL, k.last_write, k.op, s.label, NULL FROM keys k
         JOIN sources s ON s.id = k.src
-        WHERE regexp_matches(k.name, '[\x01-\x1f\x7f␀‎‏‪-‮⁦-⁩]')
-        LIMIT 500"""},
+        WHERE regexp_matches(k.name, '[\x01-\x1f\x7f␀‎‏‪-‮⁦-⁩]')"""},
     {"id": "reg_script_in_autostart", "severity": "high", "attack": ["T1218.011", "T1547.001", "T1027.011"],
      "title": "Autostart running script code through a LOLBin (rundll32 javascript: / mshtml RunHTMLApplication, Poweliks-style)",
      "key": r".", "types": _STR,
@@ -206,27 +205,24 @@ RULES: list[dict[str, Any]] = [
      "title": "Key last-write time in the future or before Windows NT existed (timestomped or forged)",
      "custom": """SELECT k.src, k.path, NULL, CAST(k.last_write AS VARCHAR), k.last_write, k.op, s.label, NULL FROM keys k
         JOIN sources s ON s.id = k.src WHERE k.last_write > now() + INTERVAL 2 DAY
-        OR (k.last_write < TIMESTAMP '1993-01-01' AND k.last_write > TIMESTAMP '1601-01-02') LIMIT 500"""},
+        OR (k.last_write < TIMESTAMP '1993-01-01' AND k.last_write > TIMESTAMP '1601-01-02')"""},
     {"id": "reg_before_install", "severity": "low", "attack": ["T1070.006"],
      "title": "Key written before the operating system was installed (InstallDate of the same machine)",
      "custom": """SELECT k.src, k.path, NULL, 'installed ' || CAST(c.value AS VARCHAR), k.last_write, k.op, s.label, NULL
         FROM keys k JOIN sources s ON s.id = k.src JOIN context c ON c.item = 'install_date'
         WHERE k.last_write < TRY_CAST(c.value AS TIMESTAMP) - INTERVAL 1 DAY
           AND k.last_write > TIMESTAMP '1993-01-01'
-          AND NOT regexp_matches(k.path, '(?i)\\\\(Classes|Microsoft|Policies|Wow6432Node|Setup|ControlSet\\d+|Select|Clients)(\\\\|$)')
-        LIMIT 500""", "needs": "context"},
+          AND NOT regexp_matches(k.path, '(?i)\\\\(Classes|Microsoft|Policies|Wow6432Node|Setup|ControlSet\\d+|Select|Clients)(\\\\|$)')""", "needs": "context"},
     {"id": "reg_recovered_suspicious", "severity": "medium", "attack": ["T1070", "T1112"],
      "title": "Deleted key / value (recovered from a free cell) pointing at a script host, a URL or a user-writable folder: clean-up after the fact",
      "custom": """SELECT v.src, v."key", v.name, v.data, k.last_write, v.op, s.label, v.type FROM vals v
         JOIN sources s ON s.id = v.src LEFT JOIN keys k ON k.src = v.src AND k.path = v."key"
-        WHERE v.op = 'recovered' AND regexp_matches(v.data, '""" + SUSPICIOUS_CMD.replace("'", "''") + """')
-        LIMIT 500"""},
+        WHERE v.op = 'recovered' AND regexp_matches(v.data, '""" + SUSPICIOUS_CMD.replace("'", "''") + """')"""},
     {"id": "reg_huge_value", "severity": "low", "attack": ["T1027.011"],
      "title": "Very large value (over 512 KB): data or a payload kept in the registry",
      "custom": """SELECT v.src, v."key", v.name, 'size ' || v.size, k.last_write, v.op, s.label, v.type FROM vals v
         JOIN sources s ON s.id = v.src LEFT JOIN keys k ON k.src = v.src AND k.path = v."key"
-        WHERE v.size > 524288 AND NOT regexp_matches(v."key", '(?i)\\\\(Component Based Servicing|SideBySide|Installer\\\\Products|DriverDatabase|WINEVT)(\\\\|$)')
-        LIMIT 500""", "dedupe": True},
+        WHERE v.size > 524288 AND NOT regexp_matches(v."key", '(?i)\\\\(Component Based Servicing|SideBySide|Installer\\\\Products|DriverDatabase|WINEVT)(\\\\|$)')""", "dedupe": True},
     # --- suspicious Windows command lines in any value (registry/commands.py) ------------------
     {"id": "reg_cmd_critical", "severity": "high", "attack": ["T1059"], "engine": "commands", "level": "critical",
      "title": "Value holding a high-signal attack command (encoded PowerShell, LSASS / NTDS dump, AMSI bypass, "
@@ -294,7 +290,7 @@ def sql_for(rule: dict[str, Any]) -> tuple[str, list[Any]]:
     where.append("v.op IN ('', 'recovered')")
     sql = (f"""SELECT v.src, v."key", v.name, v.data, k.last_write, v.op, s.label, v.type FROM vals v
         JOIN sources s ON s.id = v.src LEFT JOIN keys k ON k.src = v.src AND k.path = v."key"
-        WHERE {' AND '.join(where)} ORDER BY v.src, v."key", v.name LIMIT 500""")
+        WHERE {' AND '.join(where)} ORDER BY v.src, v."key", v.name""")
     return sql, args
 
 
@@ -302,5 +298,4 @@ def keys_sql_for(rule: dict[str, Any]) -> tuple[str, list[Any]]:
     """Rules with only a key pattern also match keys that hold no values (an empty TreatAs, a SafeBoot entry)."""
     return ("""SELECT k.src, k.path, NULL, NULL, k.last_write, k.op, s.label, NULL FROM keys k
         JOIN sources s ON s.id = k.src WHERE regexp_matches(k.path, ?, 'i') AND k.op IN ('', 'recovered')
-        ORDER BY k.src, k.path
-        LIMIT 500""", [rule["key"]])
+        ORDER BY k.src, k.path""", [rule["key"]])
