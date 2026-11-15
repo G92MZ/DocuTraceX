@@ -214,7 +214,9 @@ def test_no_configuration_in_the_rest_of_the_samples(tmp_path: Path) -> None:
                 hits[rel] = [x["family"] for x in r]
     # the .NET stealer sample exists to show its settings decrypted statically in the C2 tab;
     # the remote-support scam names AnyDesk's installer: RMM indicators only (no instance)
-    # the memory dump holds the inert Metasploit exec shellcode on purpose (private RWX region)
+    # the memory dump holds the inert Metasploit exec shellcode on purpose (private RWX region);
+    # the registry sample of the RMM rules registers an AnyDesk service
     assert hits == {"dotnet/sample_dotnet_stealer.exe": ["AgentTesla-like stealer"],
                     "email/sample_rmm_support_scam.eml": ["RMM: AnyDesk"],
+                    "registry/sample_more_rules.reg": ["RMM: AnyDesk"],
                     "memdump/sample_memdump_factura.dmp": ["Metasploit payload (exec)"]}

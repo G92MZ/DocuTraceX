@@ -242,6 +242,194 @@ RULES: list[dict[str, Any]] = [
      "custom": """SELECT v.src, v."key", v.name, 'size ' || v.size, k.last_write, v.op, s.label, v.type FROM vals v
         JOIN sources s ON s.id = v.src LEFT JOIN keys k ON k.src = v.src AND k.path = v."key"
         WHERE v.size > 524288 AND NOT regexp_matches(v."key", '(?i)\\\\(Component Based Servicing|SideBySide|Installer\\\\Products|DriverDatabase|WINEVT)(\\\\|$)')""", "dedupe": True},
+    # --- Office ---------------------------------------------------------------------------------
+    {"id": "reg_office_macro_security", "severity": "high", "attack": ["T1562.001", "T1204.002"],
+     "title": "Office macro / Protected View security weakened (all macros enabled, VBA object model trusted, Protected View off)",
+     "key": r"\\(?:Policies\\)?Microsoft\\Office\\[\d.]+\\[^\\]+\\Security(?:\\ProtectedView)?$",
+     "name": r"^(VBAWarnings|AccessVBOM|DisableInternetFilesInPV|DisableAttachmentsInPV|DisableUnsafeLocationsInPV)$", "data": r"^1$"},
+    {"id": "reg_office_trusted_location", "severity": "medium", "attack": ["T1112", "T1204.002"],
+     "title": "Office Trusted Location added (macros in it run without a prompt)",
+     "key": r"\\(?:Policies\\)?Microsoft\\Office\\[\d.]+\\[^\\]+\\Security\\Trusted Locations\\[^\\]+$",
+     "name": r"^Path$",
+     "not_data": (r"(?i)^\s*(%appdata%|%programfiles%|c:\\program files( \(x86\))?|[a-z]:\\users\\[^\\]+\\appdata\\roaming)"
+                  r"\\microsoft( office)?\\(root\\)?(templates|office\d*\\(startup|xlstart|library|templates)|"
+                  r"(word|excel|powerpoint)\\(startup|xlstart)|addins|access\\wizards|templates)\\?\s*$|"
+                  r"^\s*c:\\program files( \(x86\))?\\microsoft office\\"),
+     "suspicious": SUSPICIOUS_CMD[:-1] + r"|\\downloads\\|\\desktop\\|^\s*\\\\|^\s*[d-z]:\\$)",
+     "suspicious_severity": "high"},
+    {"id": "reg_office_network_trusted", "severity": "medium", "attack": ["T1112"],
+     "title": "Office trusts network locations (a share can hold macros that run without a prompt)",
+     "key": r"\\(?:Policies\\)?Microsoft\\Office\\[\d.]+\\[^\\]+\\Security\\Trusted Locations$",
+     "name": r"^AllowNetworkLocations$", "data": r"^1$"},
+    # --- hiding, protections turned off -----------------------------------------------------------
+    {"id": "reg_hidden_user", "severity": "high", "attack": ["T1564.002"],
+     "title": "Account hidden from the sign-in screen (Winlogon SpecialAccounts\\UserList)",
+     "key": _NT + r"\\Winlogon\\SpecialAccounts\\UserList$", "data": r"^0$",
+     "not_name": r"(?i)^(HomeGroupUser\$|DefaultAccount|WDAGUtilityAccount|defaultuser\d*|ASPNET|IUSR_.*|IWAM_.*)$"},
+    {"id": "reg_explorer_hiding", "severity": "medium", "attack": ["T1564.001"],
+     "title": "Explorer prevented from showing hidden files / Folder Options removed",
+     "key": r"(?:" + _CV + r"\\Explorer\\Advanced\\Folder\\Hidden\\SHOWALL|" + _CV + r"\\Policies\\Explorer)$",
+     "name": r"^(CheckedValue|NoFolderOptions)$",
+     "custom": """SELECT v.src, v."key", v.name, v.data, k.last_write, v.op, s.label, v.type FROM vals v
+        JOIN sources s ON s.id = v.src LEFT JOIN keys k ON k.src = v.src AND k.path = v."key"
+        WHERE v.op IN ('', 'recovered') AND (
+          (regexp_matches(v."key", '(?i)\\\\Explorer\\\\Advanced\\\\Folder\\\\Hidden\\\\SHOWALL$')
+             AND lower(v.name) = 'checkedvalue' AND v.data = '0')
+          OR (regexp_matches(v."key", '(?i)\\\\Policies\\\\Explorer$') AND lower(v.name) = 'nofolderoptions' AND v.data = '1'))"""},
+    {"id": "reg_security_service_disabled", "severity": "high", "attack": ["T1562.001", "T1562.002"],
+     "title": "Security or logging service disabled (Defender, EDR sensor, Security Center, firewall, Event Log, Sysmon)",
+     "key": _CS + r"\\Services\\(?:WinDefend|WdNisSvc|WdNisDrv|WdFilter|WdBoot|Sense|MDCoreSvc|SecurityHealthService|"
+            r"wscsvc|mpssvc|BFE|EventLog|Sysmon64|Sysmon|SysmonDrv)$",
+     "name": r"^Start$", "data": r"^4$"},
+    {"id": "reg_recovery_disabled", "severity": "high", "attack": ["T1490"],
+     "title": "Backup / restore / recovery disabled (VSS, Windows Backup, System Restore, boot recovery)",
+     "custom": """SELECT v.src, v."key", v.name, v.data, k.last_write, v.op, s.label, v.type FROM vals v
+        JOIN sources s ON s.id = v.src LEFT JOIN keys k ON k.src = v.src AND k.path = v."key"
+        WHERE v.op IN ('', 'recovered') AND (
+          (regexp_matches(v."key", '(?i)\\\\(SYSTEM\\\\)?(CurrentControlSet|ControlSet\\d{3})\\\\Services\\\\(VSS|wbengine|SDRSVC|swprv)$')
+             AND lower(v.name) = 'start' AND v.data = '4')
+          OR (regexp_matches(v."key", '(?i)\\\\(Policies\\\\)?Microsoft\\\\Windows NT\\\\(CurrentVersion\\\\)?SystemRestore$')
+             AND lower(v.name) IN ('disablesr', 'disableconfig') AND v.data = '1')
+          OR (regexp_matches(v."key", '(?i)\\\\BCD00000000\\\\Objects\\\\\\{[0-9a-f-]+\\}\\\\Elements\\\\16000009$')
+             AND lower(v.name) = 'element' AND v.data = '00')
+          OR (regexp_matches(v."key", '(?i)\\\\BCD00000000\\\\Objects\\\\\\{[0-9a-f-]+\\}\\\\Elements\\\\250000e0$')
+             AND lower(v.name) = 'element' AND starts_with(v.data, '01')))"""},
+    {"id": "reg_update_disabled", "severity": "medium", "attack": ["T1562.001"],
+     "title": "Windows Update turned off (service disabled or blocked by policy)",
+     "custom": """SELECT v.src, v."key", v.name, v.data, k.last_write, v.op, s.label, v.type FROM vals v
+        JOIN sources s ON s.id = v.src LEFT JOIN keys k ON k.src = v.src AND k.path = v."key"
+        WHERE v.op IN ('', 'recovered') AND (
+          (regexp_matches(v."key", '(?i)\\\\(SYSTEM\\\\)?(CurrentControlSet|ControlSet\\d{3})\\\\Services\\\\(wuauserv|UsoSvc|WaaSMedicSvc)$')
+             AND lower(v.name) = 'start' AND v.data = '4')
+          OR (regexp_matches(v."key", '(?i)\\\\Policies\\\\Microsoft\\\\Windows\\\\WindowsUpdate(\\\\AU)?$')
+             AND lower(v.name) IN ('noautoupdate', 'disablewindowsupdateaccess') AND v.data = '1'))"""},
+    {"id": "reg_smartscreen_disabled", "severity": "medium", "attack": ["T1562.001", "T1553.005"],
+     "title": "SmartScreen turned off (downloads and programs run without the reputation check)",
+     "custom": """SELECT v.src, v."key", v.name, v.data, k.last_write, v.op, s.label, v.type FROM vals v
+        JOIN sources s ON s.id = v.src LEFT JOIN keys k ON k.src = v.src AND k.path = v."key"
+        WHERE v.op IN ('', 'recovered') AND (
+          (regexp_matches(v."key", '(?i)\\\\Policies\\\\Microsoft\\\\(Windows\\\\System|Edge|MicrosoftEdge\\\\PhishingFilter)$')
+             AND lower(v.name) IN ('enablesmartscreen', 'smartscreenenabled', 'enabledv9') AND v.data = '0')
+          OR (regexp_matches(v."key", '(?i)\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\Explorer$')
+             AND lower(v.name) = 'smartscreenenabled' AND lower(v.data) = 'off')
+          OR (regexp_matches(v."key", '(?i)\\\\Microsoft\\\\Windows\\\\CurrentVersion\\\\AppHost$')
+             AND lower(v.name) = 'enablewebcontentevaluation' AND v.data = '0'))"""},
+    {"id": "reg_amsi_provider_removed", "severity": "high", "attack": ["T1562.001"],
+     "title": "Defender's AMSI provider deleted (scripts no longer scanned in memory)",
+     "custom": """SELECT k.src, k.path, NULL, NULL, k.last_write, k.op, s.label, NULL FROM keys k
+        JOIN sources s ON s.id = k.src
+        WHERE k.op = 'recovered'
+          AND regexp_matches(k.path, '(?i)\\\\Microsoft\\\\AMSI\\\\Providers\\\\\\{2781761E-28E0-4109-99FE-B9D127C57AFE\\}$')"""},
+    {"id": "reg_ps_execution_policy", "severity": "medium", "attack": ["T1059.001", "T1562.001"],
+     "title": "PowerShell execution policy set to Bypass / Unrestricted",
+     "key": r"\\(?:Policies\\)?Microsoft\\(?:Windows\\)?PowerShell(?:\\1\\ShellIds\\Microsoft\.PowerShell)?$",
+     "name": r"^ExecutionPolicy$", "data": r"(?i)^(Bypass|Unrestricted)$"},
+    # --- remote access / lateral movement --------------------------------------------------------
+    {"id": "reg_rmm_service", "severity": "medium", "attack": ["T1219"],
+     "title": "Remote-access (RMM) tool installed as a service",
+     "key": _CS + r"\\Services\\(?:AnyDesk[^\\]*|ScreenConnect Client[^\\]*|ConnectWise[^\\]*|TeamViewer[^\\]*|"
+            r"SplashtopRemoteService|AteraAgent|NinjaRMMAgent|LMIGuardianSvc|LogMeIn[^\\]*|RustDesk|tvnserver|uvnc_service|"
+            r"vncserver|winvnc[^\\]*|chromoting|Mesh Agent|MeshAgent|RManService|A1Agent|dwagent|Zoho[^\\]*Assist[^\\]*|"
+            r"SimpleHelp[^\\]*|Syncro[^\\]*|Kaseya[^\\]*|GoToAssist[^\\]*|GoTo Resolve[^\\]*|Level[^\\]*Agent|NetSupport[^\\]*|"
+            r"Client32|BASupportExpressSrvcUpdater[^\\]*|ITSPlatform[^\\]*|PDQ[^\\]*)$",
+     "name": r"^ImagePath$"},
+    {"id": "reg_rmm_installed", "severity": "medium", "attack": ["T1219"],
+     "title": "Remote-access (RMM) tool installed (Uninstall entry)",
+     "key": _CV + r"\\Uninstall\\[^\\]+$", "name": r"^DisplayName$",
+     "data": (r"(?i)\b(AnyDesk|ScreenConnect|ConnectWise Control|TeamViewer|Splashtop|Atera|NinjaRMM|NinjaOne|LogMeIn|"
+              r"RustDesk|TightVNC|UltraVNC|RealVNC|VNC Server|Chrome Remote Desktop|MeshCentral|Mesh Agent|"
+              r"Remote Utilities|Action1|DWAgent|Zoho Assist|SimpleHelp|Syncro|Kaseya|GoTo Resolve|GoToAssist|"
+              r"NetSupport|Supremo|Radmin|AeroAdmin|Ammyy|RemotePC|Level Agent|Tactical RMM|N-able|SolarWinds Take Control)\b")},
+    {"id": "reg_rdp_shadow", "severity": "high", "attack": ["T1021.001"],
+     "title": "RDP shadowing without the user's consent (watch / control a session silently)",
+     "key": r"\\(?:Policies\\Microsoft\\Windows NT\\Terminal Services|" + _CS[2:] + r"\\Control\\Terminal Server)$",
+     "name": r"^Shadow$", "data": r"^[24]$"},
+    {"id": "reg_rdp_port", "severity": "medium", "attack": ["T1021.001", "T1571"],
+     "title": "RDP listening on a non-standard port",
+     "key": _CS + r"\\Control\\Terminal Server\\WinStations\\RDP-Tcp$", "name": r"^PortNumber$", "not_data": r"^3389$"},
+    {"id": "reg_remote_uac_off", "severity": "medium", "attack": ["T1021.002", "T1548.002"],
+     "title": "Remote UAC filtering off (local admin accounts get full rights over the network: pass-the-hash)",
+     "key": _CV + r"\\Policies\\System$", "name": r"^LocalAccountTokenFilterPolicy$", "data": r"^1$"},
+    {"id": "reg_winrm_weakened", "severity": "medium", "attack": ["T1021.006"],
+     "title": "WinRM accepts unencrypted traffic / Basic authentication",
+     "key": r"\\(?:Policies\\Microsoft\\Windows\\WinRM|Microsoft\\Windows\\CurrentVersion\\WSMAN)\\(?:Service|Client)$",
+     "name": r"^(AllowUnencryptedTraffic|AllowBasic|auth_basic|allow_unencrypted)$", "data": r"^1$"},
+    {"id": "reg_port_proxy", "severity": "high", "attack": ["T1090.001"],
+     "title": "Port forwarding set with netsh portproxy (traffic relayed through this machine)",
+     "key": _CS + r"\\Services\\PortProxy\\v[46]tov[46]\\(?:tcp|udp)$"},
+    {"id": "reg_point_and_print", "severity": "high", "attack": ["T1068", "T1547.012"],
+     "title": "Point and Print without warning or elevation prompt (PrintNightmare-style driver install)",
+     "key": r"\\Policies\\Microsoft\\Windows NT\\Printers\\PointAndPrint$",
+     "name": r"^(NoWarningNoElevationOnInstall|UpdatePromptSettings|RestrictDriverInstallationToAdministrators)$",
+     "custom": """SELECT v.src, v."key", v.name, v.data, k.last_write, v.op, s.label, v.type FROM vals v
+        JOIN sources s ON s.id = v.src LEFT JOIN keys k ON k.src = v.src AND k.path = v."key"
+        WHERE v.op IN ('', 'recovered')
+          AND regexp_matches(v."key", '(?i)\\\\Policies\\\\Microsoft\\\\Windows NT\\\\Printers\\\\PointAndPrint$')
+          AND ((lower(v.name) = 'nowarningnoelevationoninstall' AND v.data = '1')
+               OR (lower(v.name) = 'updatepromptsettings' AND v.data IN ('1', '2'))
+               OR (lower(v.name) = 'restrictdriverinstallationtoadministrators' AND v.data = '0'))"""},
+    {"id": "reg_rdp_outbound", "severity": "info", "attack": ["T1021.001"],
+     "title": "Remote Desktop connections made from this account (Terminal Server Client\\Servers)",
+     "key": r"^HKCU\\Software\\Microsoft\\Terminal Server Client\\Servers\\[^\\]+$"},
+    # --- persistence, other places -------------------------------------------------------------
+    {"id": "reg_time_provider", "severity": "high", "attack": ["T1547.003"],
+     "title": "Time provider DLL outside System32 (loaded by the Windows Time service)",
+     "key": _CS + r"\\Services\\W32Time\\TimeProviders\\[^\\]+$", "name": r"^DllName$",
+     "not_data": r"(?i)^\s*(%systemroot%\\system32\\|c:\\windows\\system32\\)?(w32time|vmictimeprovider)\.dll\s*$"},
+    {"id": "reg_custom_shim", "severity": "medium", "attack": ["T1546.011"],
+     "title": "Application shim database installed (code injected when a program starts)",
+     "key": _NT + r"\\AppCompatFlags\\(?:InstalledSDB\\\{[0-9A-Fa-f-]+\}|Custom\\[^\\]+)$"},
+    {"id": "reg_hidden_task", "severity": "high", "attack": ["T1053.005", "T1564"],
+     "title": "Scheduled task without a security descriptor (hidden from schtasks and Task Scheduler: Tarrask)",
+     "custom": """SELECT k.src, k.path, 'SD', NULL, k.last_write, k.op, s.label, NULL FROM keys k
+        JOIN sources s ON s.id = k.src
+        WHERE k.op IN ('', 'recovered')
+          AND regexp_matches(k.path, '(?i)\\\\Windows NT\\\\CurrentVersion\\\\Schedule\\\\TaskCache\\\\Tree\\\\.+')
+          AND EXISTS (SELECT 1 FROM vals i WHERE i.src = k.src AND i."key" = k.path AND lower(i.name) = 'id' AND i.op = '')
+          AND NOT EXISTS (SELECT 1 FROM vals d WHERE d.src = k.src AND d."key" = k.path AND lower(d.name) = 'sd' AND d.op = '')"""},
+    # --- credentials ----------------------------------------------------------------------------
+    {"id": "reg_stored_credentials", "severity": "high", "attack": ["T1552.002"],
+     "title": "Password stored in the registry (Winlogon auto-logon, WinSCP / PuTTY sessions, VNC servers)",
+     "custom": """SELECT v.src, v."key", v.name, v.data, k.last_write, v.op, s.label, v.type FROM vals v
+        JOIN sources s ON s.id = v.src LEFT JOIN keys k ON k.src = v.src AND k.path = v."key"
+        WHERE v.op IN ('', 'recovered') AND coalesce(v.data, '') <> '' AND (
+          (regexp_matches(v."key", '(?i)\\\\Windows NT\\\\CurrentVersion\\\\Winlogon$') AND lower(v.name) = 'defaultpassword')
+          OR (regexp_matches(v."key", '(?i)\\\\Martin Prikryl\\\\WinSCP 2\\\\Sessions\\\\[^\\\\]+$') AND lower(v.name) IN ('password', 'proxypassword'))
+          OR (regexp_matches(v."key", '(?i)\\\\SimonTatham\\\\PuTTY\\\\Sessions\\\\[^\\\\]+$') AND lower(v.name) = 'proxypassword')
+          OR (regexp_matches(v."key", '(?i)\\\\(ORL\\\\WinVNC3|RealVNC\\\\(WinVNC4|vncserver)|TightVNC\\\\Server|TigerVNC\\\\WinVNC4|uvnc bvba\\\\UltraVNC)(\\\\Default)?$')
+              AND lower(v.name) IN ('password', 'passwordviewonly', 'controlpassword')))"""},
+    {"id": "reg_mpnotify", "severity": "high", "attack": ["T1556"],
+     "title": "Winlogon mpnotify program (receives the user's password at every logon)",
+     "key": _NT + r"\\Winlogon$", "name": r"^mpnotify$", "data": r"\S"},
+    {"id": "reg_network_provider", "severity": "medium", "attack": ["T1556.008"],
+     "title": "Network provider not from Windows in the logon chain (it receives the password in clear: NPPSpy)",
+     "key": _CS + r"\\Control\\NetworkProvider\\(?:Order|HwOrder)$", "name": r"^ProviderOrder$",
+     "not_data": (r"(?i)^((RDPNP|LanmanWorkstation|webclient|P9NP|vmhgfs|hgfs|VBoxSF|Csc|PRNetworkProvider|SnacNp|"
+                  r"PICAClientNetwork|NfsNp|NCredProv|vncsessionmgr)\s*(,\s*|$))+$")},
+    {"id": "reg_hidden_sam_account", "severity": "high", "attack": ["T1136.001", "T1564.002"],
+     "title": "Local account whose name ends in $ (left out of net user)",
+     "key": r"\\SAM\\Domains\\Account\\Users\\Names\\[^\\]+\$$"},
+    {"id": "reg_remote_registry", "severity": "medium", "attack": ["T1112", "T1021"],
+     "title": "Remote Registry service set to start automatically",
+     "key": _CS + r"\\Services\\RemoteRegistry$", "name": r"^Start$", "data": r"^2$"},
+    {"id": "reg_defender_cloud_off", "severity": "medium", "attack": ["T1562.001"],
+     "title": "Defender cloud protection / sample submission or tamper protection off",
+     "custom": """SELECT v.src, v."key", v.name, v.data, k.last_write, v.op, s.label, v.type FROM vals v
+        JOIN sources s ON s.id = v.src LEFT JOIN keys k ON k.src = v.src AND k.path = v."key"
+        WHERE v.op IN ('', 'recovered') AND (
+          (regexp_matches(v."key", '(?i)\\\\(Policies\\\\)?Microsoft\\\\Windows Defender\\\\Spynet$')
+             AND ((lower(v.name) = 'spynetreporting' AND v.data = '0') OR (lower(v.name) = 'submitsamplesconsent' AND v.data = '2')))
+          OR (regexp_matches(v."key", '(?i)\\\\Microsoft\\\\Windows Defender\\\\Features$')
+             AND lower(v.name) = 'tamperprotection' AND v.data = '4'))"""},
+    # --- user activity: commands typed by hand ----------------------------------------------------
+    {"id": "reg_typed_command", "severity": "info", "attack": ["T1204.004"],
+     "title": "Typed in the Run dialog / Explorer address bar (RunMRU, TypedPaths)",
+     "key": _CV + r"\\Explorer\\(?:RunMRU|TypedPaths)$", "not_name": r"(?i)^MRUList$",
+     "suspicious": (r"(?i)(https?://|\\\\[\w.-]+@(ssl|\d+)\b|davwwwroot|\b(iwr|irm|iex|curl|wget|mshta|bitsadmin|certutil|"
+                    r"invoke-(webrequest|restmethod|expression)|downloadstring|frombase64string|start-bitstransfer)\b|"
+                    r"-e(nc|ncodedcommand)?\s+[A-Za-z0-9+/=]{16,}|-(w|windowstyle)\s+(h|hidden|1)\b|"
+                    r"#.{0,80}\b(robot|captcha|verif\w*|human|cloudflare|ray id)\b|\\[a-z]+\.(hta|js|vbs|ps1)\b)"),
+     "suspicious_severity": "high"},
     # --- suspicious Windows command lines in any value (registry/commands.py) ------------------
     {"id": "reg_cmd_critical", "severity": "high", "attack": ["T1059"], "engine": "commands", "level": "critical",
      "title": "Value holding a high-signal attack command (encoded PowerShell, LSASS / NTDS dump, AMSI bypass, "
@@ -294,6 +482,9 @@ def sql_for(rule: dict[str, Any]) -> tuple[str, list[Any]]:
     if rule.get("name"):
         where.append("regexp_matches(v.name, ?, 'i')")
         args.append(rule["name"])
+    if rule.get("not_name"):
+        where.append("NOT regexp_matches(coalesce(v.name, ''), ?)")
+        args.append(rule["not_name"])
     if rule.get("data"):
         where.append("regexp_matches(v.data, ?)")
         args.append(rule["data"])

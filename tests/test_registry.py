@@ -704,3 +704,40 @@ def test_windows_baseline_is_not_flagged(tmp_path: Path) -> None:
     assert "reg_hidden_name" not in by
     texts = " ".join(i["text"] for i in res["ioc_sources"])
     assert "wwahost" not in texts and "MsMpEng" not in texts and "contoso.example" not in texts
+
+
+def test_more_rules(tmp_path: Path) -> None:
+    """sample_more_*: one trace per rule; Windows' and Office's defaults next to them stay quiet."""
+    files = [(_write(tmp_path, k.split("/")[-1], v), k.split("/")[-1]) for k, v in ms.registry_more_rules_samples().items()]
+    res = registry.analyze(files, tmp_path / "c", tmp_path / "w")
+    by = {f["rule"]: f for f in res["findings"]}
+    expect = {"reg_office_macro_security": "high", "reg_office_trusted_location": "high", "reg_office_network_trusted": "medium",
+              "reg_hidden_user": "high", "reg_explorer_hiding": "medium", "reg_security_service_disabled": "high",
+              "reg_recovery_disabled": "high", "reg_update_disabled": "medium", "reg_smartscreen_disabled": "medium",
+              "reg_amsi_provider_removed": "high", "reg_ps_execution_policy": "medium", "reg_rmm_service": "medium",
+              "reg_rmm_installed": "medium", "reg_rdp_shadow": "high", "reg_rdp_port": "medium", "reg_remote_uac_off": "medium",
+              "reg_winrm_weakened": "medium", "reg_port_proxy": "high", "reg_point_and_print": "high",
+              "reg_time_provider": "high", "reg_custom_shim": "medium", "reg_hidden_task": "high", "reg_typed_command": "high",
+              "reg_stored_credentials": "high", "reg_mpnotify": "high", "reg_network_provider": "medium",
+              "reg_hidden_sam_account": "high", "reg_remote_registry": "medium", "reg_defender_cloud_off": "medium"}
+    for rule, sev in expect.items():
+        assert rule in by and by[rule]["severity"] == sev, rule
+    ev = lambda r: by[r]["evidence"]  # noqa: E731
+    assert "Public\\Facturas" in ev("reg_office_trusted_location") and "Templates" not in ev("reg_office_trusted_location")
+    assert "Proyectos" not in ev("reg_office_trusted_location")                     # listed, not shown: not user-writable
+    assert "soporte_facturas" in ev("reg_hidden_user") and "WDAGUtilityAccount" not in ev("reg_hidden_user")
+    assert "Sysmon64" in ev("reg_security_service_disabled") and "WdFilter" not in ev("reg_security_service_disabled")
+    rec = ev("reg_recovery_disabled")
+    assert "16000009" in rec and "250000e0" in rec and "SDRSVC" not in rec and "ab05" not in rec
+    assert "Excel\\Security :: VBAWarnings" not in ev("reg_office_macro_security")
+    assert "RemoteSigned" not in ev("reg_ps_execution_policy") and "Contoso" not in ev("reg_rmm_installed")
+    assert "FacturaTime" in ev("reg_time_provider") and "NtpClient" not in ev("reg_time_provider")
+    assert "ActualizarFacturas" in ev("reg_hidden_task") and "ScheduledDefrag" not in ev("reg_hidden_task")
+    assert "AB03" not in ev("reg_amsi_provider_removed")
+    typed = ev("reg_typed_command")
+    assert "reCAPTCHA" in typed and "factura_0613.pdf" in typed and "notepad" not in typed and "compartido" not in typed
+    assert any(h["rule"] == "reg_rdp_outbound" for h in res["hits"]) and "reg_rdp_outbound" not in by
+    cred = ev("reg_stored_credentials")
+    assert "DefaultPassword" in cred and "WinSCP" in cred and "vncserver" in cred and "PuTTY" not in cred   # empty one left out
+    assert "FacturaNP" in ev("reg_network_provider") and "HwOrder" not in ev("reg_network_provider")
+    assert "soporte$" in ev("reg_hidden_sam_account") and "Administrador" not in ev("reg_hidden_sam_account")
