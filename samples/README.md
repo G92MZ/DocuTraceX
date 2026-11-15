@@ -508,6 +508,37 @@ clean Windows ships and the rules must **not** flag, next to one real trace each
 | Free cells: `FacturaSync` = a hidden PowerShell command | *Deleted key / value… pointing at a script host* (medium) |
 | Amcache free cells: a `.bat` shortcut target, a publisher URL | nothing (Amcache rewrites itself) |
 
+`registry/sample_more_rules.reg` with `registry/sample_more_SOFTWARE`, `registry/sample_more_BCD` and
+`registry/sample_more_SAM` (load the four): one trace per rule for Office, hiding, protections turned off, remote access, other
+persistence and commands typed by hand, next to what Windows / Office ships.
+
+| In the sample | Result |
+|---|---|
+| Word `VBAWarnings = 1`, `AccessVBOM = 1`; Excel Protected View off (Excel's `VBAWarnings = 2` is the default) | *Office macro / Protected View security weakened* (high) |
+| Trusted Locations: `%APPDATA%\Microsoft\Templates`, Office's Program Files, XLSTART (defaults) · `D:\Proyectos\Plantillas` · `C:\Users\Public\Facturas` | *Office Trusted Location added* — high, only `Public\Facturas` shown |
+| `AllowNetworkLocations = 1` | *Office trusts network locations* (medium) |
+| `UserList`: `soporte_facturas = 0` (and Windows' `WDAGUtilityAccount`) | *Account hidden from the sign-in screen* (high) — only `soporte_facturas` |
+| `SHOWALL\CheckedValue = 0`, `NoFolderOptions = 1` | *Explorer prevented from showing hidden files…* (medium) |
+| `Sysmon64` `Start = 4` (`WdFilter` `Start = 0` is the default) | *Security or logging service disabled* (high) |
+| `VSS` `Start = 4`, `DisableSR = 1`, BCD `recoveryenabled = No` and `bootstatuspolicy = IgnoreAllFailures` (another BCD entry with recovery on) | *Backup / restore / recovery disabled* (high) |
+| `wuauserv` `Start = 4`, `NoAutoUpdate = 1` | *Windows Update turned off* (medium) |
+| `EnableSmartScreen = 0`, `SmartScreenEnabled = Off` | *SmartScreen turned off* (medium) |
+| Defender's AMSI provider key in free cells (a third-party provider stays) | *Defender's AMSI provider deleted* (high) |
+| HKLM execution policy `Bypass` (HKCU `RemoteSigned`) | *PowerShell execution policy…* (medium) |
+| `AnyDesk` service and Uninstall entry (`Contoso Invoicing` is not RMM) | *RMM tool installed as a service* / *(Uninstall entry)* (medium) |
+| `Shadow = 2` · RDP on 3390 · `LocalAccountTokenFilterPolicy = 1` · WinRM `AllowBasic` / `AllowUnencryptedTraffic` | *RDP shadowing…* (high) · *RDP on a non-standard port* · *Remote UAC filtering off* · *WinRM…* (medium) |
+| `portproxy` `0.0.0.0/4489 → 192.0.2.10/3389` | *Port forwarding set with netsh portproxy* (high) |
+| Point and Print `NoWarningNoElevationOnInstall = 1`, `UpdatePromptSettings = 2` | *Point and Print without warning…* (high) |
+| Terminal Server Client `srv-facturas.grupoejemplo.example` | listed (RDP connections made from this account) |
+| Time provider `FacturaTime` in `C:\ProgramData\GrupoEjemplo` (`NtpClient` is Windows') | *Time provider DLL outside System32* (high) |
+| `AppCompatFlags\Custom\facturas.exe` | *Application shim database installed* (medium) |
+| TaskCache `ActualizarFacturas` without `SD` (two tasks with it) | *Scheduled task without a security descriptor* (high) |
+| Winlogon `DefaultPassword`, a WinSCP session password, a RealVNC password (an empty PuTTY proxy password is left out) | *Password stored in the registry* (high) |
+| Winlogon `mpnotify` · `ProviderOrder` with `FacturaNP` (`HwOrder` is Windows') | *Winlogon mpnotify program* (high) · *Network provider not from Windows…* (medium) |
+| SAM: `soporte$` (and `Administrador`, `Invitado`) | *Local account whose name ends in $* (high) |
+| `RemoteRegistry` `Start = 2` · `SubmitSamplesConsent = 2`, `TamperProtection = 4` | *Remote Registry…* · *Defender cloud protection… off* (medium) |
+| RunMRU: a ClickFix paste (`powershell -w h … iwr … \| iex # I am not a robot…`), `notepad`, a share · TypedPaths: a FileFix paste, `C:\Users\Public\Documents` | *Typed in the Run dialog / Explorer address bar* — high, the two pastes only |
+
 **A machine-sized sample (generated on demand, not in `samples.zip`).** For a feel of a real
 case — and of the times — the generator writes the hives of an ordinary Windows 11 machine used
 for a year: SOFTWARE ~81 MB, SYSTEM ~19 MB, NTUSER.DAT ~6 MB, UsrClass.dat ~4 MB (about 380 000

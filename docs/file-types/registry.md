@@ -179,12 +179,20 @@ Rules over the database, each with its ATT&CK technique:
   processors, netsh helpers, the cmd.exe `AutoRun`, COM servers registered per user or in a
   user-writable folder, TypeLib / COM scriptlets (`script:` monikers, `.sct`), file associations
   and protocol handlers running a script host, logon scripts, screen savers, Office add-ins /
-  test keys, startup folders redirected.
+  test keys, startup folders redirected, time-provider DLLs outside System32, application shim
+  databases, scheduled tasks without a security descriptor (hidden from `schtasks`: Tarrask).
 - **Evasion** — Defender disabled or with exclusions, UAC disabled or bypassed through a per-user
   handler of an auto-elevating program (fodhelper, eventvwr, sdclt), PowerShell script block /
   module logging or transcription off, AMSI off for Windows Script Host, event logs, firewall or
   administrative tools disabled (the autologgers that matter: `EventLog-Security` / `-System` /
-  `-Application`, Sysmon, Defender — most others ship turned off), LSA protection off.
+  `-Application`, Sysmon, Defender — most others ship turned off), LSA protection off; security
+  and logging services disabled (Defender, the EDR sensor, Security Center, firewall, Event Log,
+  Sysmon), Defender's AMSI provider deleted, backup and recovery off (VSS, Windows Backup, System
+  Restore, boot recovery and *ignore all failures* in the BCD), Windows Update and SmartScreen off,
+  PowerShell execution policy *Bypass* / *Unrestricted*.
+- **Office** — all macros enabled, the VBA object model trusted, Protected View off, Trusted
+  Locations added outside Office's own folders (high in a user-writable folder or a share), network
+  locations trusted.
 - **Hiding and anti-forensics** — key or value names with a NUL, control or right-to-left
   character (hidden from regedit, Poweliks / Kovter), autostarts running script code through
   `rundll32 javascript:` / `mshtml,RunHTMLApplication`, RunOnce entries forced in Safe Mode,
@@ -192,9 +200,23 @@ Rules over the database, each with its ATT&CK technique:
   over 512 KB, deleted entries that pointed at a payload. Windows' own oddities are left out: the
   firewall's app-container list (NUL-joined SIDs as names), garbled names in free cells with no
   key left, Defender running from `ProgramData`, MUI strings and Amcache's own churn among the
-  deleted entries.
-- **Credentials and access** — WDigest clear-text passwords, RDP enabled, a proxy set for the
+  deleted entries. Accounts hidden from the sign-in screen (`SpecialAccounts\UserList`, Windows'
+  own ones left out), Explorer prevented from showing hidden files or Folder Options removed.
+- **Credentials and access** — WDigest clear-text passwords, RDP enabled, on a non-standard port
+  or with shadowing without consent, remote UAC filtering off (`LocalAccountTokenFilterPolicy`),
+  WinRM with Basic / unencrypted traffic, `netsh portproxy` forwarding, Point and Print without
+  prompts (PrintNightmare), remote-access tools installed (AnyDesk, ScreenConnect, TeamViewer,
+  Splashtop, Atera, NinjaOne, VNC, MeshCentral… as a service or in Uninstall), a proxy set for the
   user, certificates added to the trusted root / publisher stores (with their subject and issuer).
+  Listed for context: the RDP servers this account connected to.
+- **Passwords and the logon chain** — passwords kept in the registry (Winlogon auto-logon
+  `DefaultPassword`, WinSCP sessions, VNC servers), a Winlogon `mpnotify` program, a network
+  provider not from Windows in the logon chain (NPPSpy), local accounts ending in `$` (SAM), the
+  Remote Registry service on automatic, Defender's cloud protection, sample submission or tamper
+  protection off.
+- **Typed by hand** — the Run dialog (`RunMRU`) and the Explorer address bar (`TypedPaths`) are
+  listed; a download cradle, an encoded or hidden PowerShell, a WebDAV path or a fake *"I am not a
+  robot"* comment there is a finding (ClickFix / FileFix, T1204.004).
 - **Suspicious Windows commands in any value** (a task's action, a tool's configuration, a staged
   step, an autostart entry) — some 140 indicators in families: PowerShell, cmd, LOLBins, WSH,
   scheduled tasks, net / sc / reg, credential dumping, lateral movement, defence evasion,
