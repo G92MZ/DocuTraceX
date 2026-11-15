@@ -130,27 +130,39 @@ class ProcessField(Skip):
         self.field = field
 
 
+# Fields that only say which log / event the record came from: dropping them changes nothing on
+# the registry. The others a hive lacks (Image, User, a misspelt field…) are what a selection is
+# about, so a selection that needs one cannot be confirmed on a hive.
+_META = {"eventid", "channel", "provider_name", "providername", "provider", "product", "service",
+         "computer", "computername", "hostname", "eventrecordid", "sourcename", "logname"}
+
+
 def _selection(sel: Any, et_expr: str) -> dict[str, Any]:
-    """A selection as {pos, neg, ignored, registry}: ``pos`` with the fields a hive does not
-    have dropped (it matches on the registry part), ``neg`` = FALSE when such a field is in
-    it (as an exclusion it cannot be applied, so it excludes nothing)."""
+    """A selection as {pos, neg, ignored, needs, registry}.
+
+    ``pos``: event-metadata fields (EventID, Channel…) are dropped; a selection with any other field
+    a hive lacks is FALSE (it cannot be confirmed: matching on the rest would match far more than
+    the rule means). ``neg`` (under a ``not``) is FALSE when such a field is in it: the exclusion
+    cannot be applied, so it excludes nothing."""
     if isinstance(sel, dict):
         if not sel:
             raise Skip("empty selection")
-        parts, ignored = [], []
+        parts, ignored, needs = [], [], []
         for k, v in sel.items():
             try:
                 parts.append(_field_sql(k, v, et_expr))
             except ProcessField as exc:
-                ignored.append(exc.field)
-        pos = "(" + " AND ".join(parts) + ")" if parts else "TRUE"
-        return {"pos": pos, "neg": "FALSE" if ignored else pos, "ignored": ignored, "registry": bool(parts)}
+                (ignored if exc.field.lower() in _META else needs).append(exc.field)
+        pos = "FALSE" if needs else ("(" + " AND ".join(parts) + ")" if parts else "TRUE")
+        return {"pos": pos, "neg": "FALSE" if ignored or needs else pos, "ignored": ignored, "needs": needs,
+                "registry": bool(parts) and not needs}
     if isinstance(sel, list) and sel and all(isinstance(x, dict) for x in sel):
         subs = [_selection(x, et_expr) for x in sel]
         return {"pos": "(" + " OR ".join(x["pos"] for x in subs) + ")",
                 "neg": "(" + " OR ".join(x["neg"] for x in subs) + ")",
                 "ignored": [f for x in subs for f in x["ignored"]],
-                "registry": all(x["registry"] for x in subs)}
+                "needs": [f for x in subs for f in x["needs"]],
+                "registry": any(x["registry"] for x in subs)}
     raise Skip("keyword search (no field)")
 
 
@@ -276,14 +288,19 @@ def compile_rule(doc: dict[str, Any], allow_process_filters: bool = False) -> di
         sels[name] = _selection(sel, f"({et})")
     where, pol = _condition(str(cond), sels)
     used = {n: sels[n] for n in pol}
-    ignored = sorted({f for x in used.values() for f in x["ignored"]})
-    if ignored and not allow_process_filters:
-        n, x = next((n, x) for n, x in used.items() if x["ignored"])
-        raise Skip(f"field {x['ignored'][0]} in {n} (not in a hive; fields like this are ignored only when the "
+    meta = sorted({f for x in used.values() for f in x["ignored"]})
+    needs = sorted({f for x in used.values() for f in x["needs"]})
+    if needs and not allow_process_filters:
+        n, x = next((n, x) for n, x in used.items() if x["needs"])
+        raise Skip(f"field {x['needs'][0]} in {n} (not in a hive; rules with fields like this run only when the "
                    "option is on in Settings)")
     if not any(x["registry"] for n, x in used.items() if True in pol[n]):
-        raise Skip("nothing left to match on the registry (only fields a hive does not have)")
-    unapplied = ignored
+        raise Skip("nothing left to match on the registry: every selection needs "
+                   + (", ".join(needs) if needs else "a field a hive does not have"))
+    # what was not checked: metadata dropped anywhere, other fields only in exclusions (not applied);
+    # selections that need a missing field are left out (FALSE)
+    unapplied = sorted(set(meta) | {f for n, x in used.items() if False in pol[n] for f in x["needs"]})
+    skipped_sels = sorted(n for n, x in used.items() if True in pol[n] and x["needs"])
     rows = {"registry_set": "kind = 'value'", "registry_add": "kind = 'key'",
             "registry_delete": "op = 'recovered'", "registry_event": "TRUE"}[cat]
     return {"id": str(doc.get("id") or ""), "title": str(doc.get("title") or "(untitled)"),
@@ -291,7 +308,7 @@ def compile_rule(doc: dict[str, Any], allow_process_filters: bool = False) -> di
             "author": str(doc.get("author") or ""), "description": str(doc.get("description") or "")[:600],
             "references": [str(x) for x in (doc.get("references") or [])][:5], "attack": _attack(doc.get("tags")),
             "category": cat, "where": f"({rows}) AND ({where})", "process_filters_unapplied": unapplied,
-            "ignored_fields": unapplied}
+            "ignored_fields": unapplied, "selections_left_out": skipped_sels}
 
 
 _LOOSE = re.compile(rb"^(\s*(?:title|description|name|author|falsepositives|-)\s*:?\s*)([^'\"\n|>][^\n]*:\s[^\n]*)$",
@@ -433,7 +450,8 @@ def run(dbp: Path, loaded: dict[str, Any]) -> list[dict[str, Any]]:
             hits.append({"rule": rid, "title": f"Sigma: {r['title']}", "severity": _SEVERITY.get(r["level"], "medium"),
                          "attack": r["attack"], "count": len(items), "suspicious": 0, "items": items, "hunting": True,
                          "sigma": {k: r[k] for k in ("id", "file", "author", "status", "level", "description",
-                                                     "references", "category", "process_filters_unapplied", "ignored_fields")}})
+                                                     "references", "category", "process_filters_unapplied", "ignored_fields",
+                                                     "selections_left_out")}})
     finally:
         con.close()
     return hits

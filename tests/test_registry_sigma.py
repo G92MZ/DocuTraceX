@@ -76,10 +76,15 @@ def _write(tmp: Path) -> Path:
 def test_load_folder(tmp_path: Path) -> None:
     folder = _write(tmp_path)
     got = sigma.load(folder)
-    assert len(got["rules"]) == 5 and got["files"] == 8
+    assert len(got["rules"]) == 5 and got["files"] == 9
     assert {s["title"] for s in got["skipped"]} == {"Defender Path Exclusion Added", "Keyword Rule (skipped)",
-                                                    "Value Written By A Script Host (skipped)"}
-    assert len(sigma.load(folder, True)["rules"]) == 7          # + the two with Image, matched on the registry part
+                                                    "Value Written By A Script Host (skipped)",
+                                                    "Service Binary In A Suspicious Folder"}
+    on = sigma.load(folder, True)
+    # + the Defender one (its Image filter not applied) and the service one (its Image selection left out);
+    # a rule whose only selection needs Image cannot be confirmed on a hive: still skipped
+    assert len(on["rules"]) == 7
+    assert any("nothing left" in s["reason"] for s in on["skipped"] if "Script Host" in s["title"])
     assert sigma.load(tmp_path / "missing")["error"].startswith("not a folder")
 
 
@@ -99,7 +104,7 @@ def test_analysis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                                                   "Sigma: Sync Tool Key Created Under A User", "Sigma: Hidden PowerShell Window In A Value"}
     wd = sig["sigma:3f1c9a2e-7b4d-4e61-9a0b-5c2d8e7f1a02"]
     assert wd["severity"] == "high" and "T1003.001" in wd["attack"] and "ControlSet001" in wd["items"][0]["key"]
-    assert res["sigma"]["loaded"] == 5 and res["sigma"]["matched"] == 4 and res["sigma"]["skipped_count"] == 3
+    assert res["sigma"]["loaded"] == 5 and res["sigma"]["matched"] == 4 and res["sigma"]["skipped_count"] == 4
     hit = sig["sigma:3f1c9a2e-7b4d-4e61-9a0b-5c2d8e7f1a01"]
     assert hit["sigma"]["file"] == "run_encoded_powershell.yml" and hit["items"][0]["name"] == "FacturaUpd"
 
@@ -108,6 +113,9 @@ def test_analysis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                            tmp_path / "work2")
     d = next(h for h in res["hits"] if "Defender Path Exclusion" in h["title"])
     assert d["sigma"]["ignored_fields"] == ["Image"]
+    sv = next(h for h in res["hits"] if "Suspicious Folder" in h["title"])
+    assert [(it["key"].rsplit("\\", 1)[-1], it["name"]) for it in sv["items"]] == [("FacturaSvc", "ImagePath")]
+    assert sv["sigma"]["selections_left_out"] == ["selection_proc"] and sv["sigma"]["ignored_fields"] == ["EventID"]
     assert not any(f["rule"].startswith("sigma:") for f in res["findings"])
 
 
@@ -124,6 +132,12 @@ def test_fields_a_hive_does_not_have(tmp_path: Path) -> None:
            "f": {"Image|endswith": "\\svchost.exe"}, "condition": "all of sel* and not f"}
     r = sigma.compile_rule(_rule(det), True)
     assert r["ignored_fields"] == ["EventID", "Image"] and "contains(lower(target), '\\run\\')" in r["where"]
+    # event metadata is dropped even with the option off; a selection that needs Image is left out
+    r = sigma.compile_rule(_rule({"s": {"EventID": 13, "TargetObject|contains": "\\Run\\"}, "condition": "s"}))
+    assert r["ignored_fields"] == ["EventID"] and r["selections_left_out"] == []
+    r = sigma.compile_rule(_rule({"a": {"Image|endswith": "\\x.exe", "TargetObject|endswith": "\\Start"},
+                                  "b": {"Details|contains": "\\Public\\"}, "condition": "a or b"}), True)
+    assert r["selections_left_out"] == ["a"] and "FALSE" in r["where"] and "start" not in r["where"]
     with pytest.raises(sigma.Skip, match="nothing left to match"):
         sigma.compile_rule(_rule({"s": {"Image|endswith": "\\reg.exe"}, "condition": "s"}), True)
     # Security 4657 fields and Sysmon's NewName read from the key / value

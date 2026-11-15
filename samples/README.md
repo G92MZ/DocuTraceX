@@ -509,7 +509,7 @@ clean Windows ships and the rules must **not** flag, next to one real trace each
 | Amcache free cells: a `.bat` shortcut target, a publisher URL | nothing (Amcache rewrites itself) |
 
 `registry/sample_sigma.reg` with the rule folder `registry/sigma/` — set that folder in
-**Settings → Registry: Sigma rules** (5 loaded, 3 skipped). The matches show under *Sigma hunting*
+**Settings → Registry: Sigma rules** (5 loaded, 4 skipped; 7 and 2 with the option on). The matches show under *Sigma hunting*
 in the Registry tab — no case findings, no IOCs:
 
 | Rule (`registry/sigma/…`) | Result on `sample_sigma.reg` |
@@ -519,7 +519,8 @@ in the Registry tab — no case findings, no IOCs:
 | `hku_key_created.yml` (`registry_add`, `EventType: CreateKey`, `startswith: 'HKU\'`) | *Sigma: Sync Tool Key Created Under A User* — the HKCU key |
 | `hidden_window_value.yml` (`windash`, a `*` wildcard, `1 of` / `all of`, `Details: null` filter) | *Sigma: Hidden PowerShell Window In A Value* — `/w hidden` matches `-w hidden` |
 | `defender_exclusion_filtered.yml` (`Image` only in `filter_main_*`) | skipped — with *fields a hive does not have* on: a match that says `Image` was ignored |
-| `image_in_selection.yml` (`Image` and `TargetObject` in the selection) | skipped — with the option on: matched on `TargetObject` only, `Image` ignored |
+| `image_in_selection.yml` (`Image` and `TargetObject` in its only selection) | skipped, with the option on too: that selection cannot be confirmed on a hive, nothing is left |
+| `service_susp_folder.yml` (`EventID`; `selection_proc` needs `Image`, `selection_path` reads `ImagePath`) | skipped — with the option on: *Sigma: Service Binary In A Suspicious Folder* — only `FacturaSvc\ImagePath` (`C:\Users\Public\…`), not the `Start` of every service; `EventID` dropped, `selection_proc` left out |
 | `keywords_unsupported.yml` | skipped: keyword search |
 | `no_match.yml` | loaded, matches nothing |
 

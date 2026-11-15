@@ -221,11 +221,17 @@ Sysmon's spelling of the data as *Details* (`DWORD (0x00000001)`, `Binary Data`,
 `SetValue` / `CreateKey`, and `DeleteValue` / `DeleteKey` for entries recovered from deleted cells
 (the only place `registry_delete` rules look). The Security log's 4657 fields are read too
 (*ObjectName* as `\REGISTRY\MACHINE\…` / `\REGISTRY\USER\…`, *ObjectValueName*, *NewValue*), and
-Sysmon's *NewName* is the key as it is named now. Fields a hive does not have (`Image`, `EventID`,
-`User`…) are ignored when you allow it in Settings: the rule matches on its registry part and the
-match says what was ignored. A rule that cannot be translated faithfully — keywords, aggregations,
+Sysmon's *NewName* is the key as it is named now. Event metadata a hive does not have (`EventID`,
+`Channel`, `Provider_Name`…) is simply dropped. Other fields it does not have (`Image`, `User`…)
+are what a selection is about, so when you allow those rules in Settings a selection that needs
+one is **left out** (it cannot be confirmed on a hive; matching on the rest would match far more
+than the rule means) and an exclusion on one is not applied; the match says which. A rule that cannot be translated faithfully — keywords, aggregations,
 other modifiers, nothing left to match on the registry — is skipped and listed in Settings with why.
 Every entry behind a finding or a match is kept (no cap); the tab builds them when it is opened.
+The *Sigma hunting* list is sorted by level, then by how few entries a rule matches; rules matching
+over 300 entries (reading the Windows baseline) are folded into *Broad rules*. A **Written** filter
+keeps the entries written in the last day / 7 / 30 days before the newest write among the matches,
+and *Entries matched by several rules* lists the values more than one rule points at.
 Sigma rules describe **changes**: on a hive, every match is a value that exists, Windows defaults
 included (that is why they stay as hunting); the last-write time says how recent it is. IOCs come
 only from the entries behind the built-in findings.
