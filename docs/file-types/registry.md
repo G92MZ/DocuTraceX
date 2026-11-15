@@ -27,6 +27,32 @@ read the same in a hive and in a .reg. `data` is readable text (strings, numbers
 multi-strings one per line, binary as hex); `raw` keeps the bytes of binary values. In a .reg,
 `op = delete` marks the keys and values it removes (`[-key]`, `"name"=-`).
 
+### Where the hives are on a Windows machine
+
+They are locked while Windows runs: collect them from an image or with a forensic collector
+(KAPE, FTK Imager, Velociraptor…), or as an administrator with `reg save HKLM\SYSTEM system.hiv`.
+Bring each hive with its **transaction logs** (`.LOG1` / `.LOG2`, same folder, same name) in one
+archive: they hold the latest changes not yet written into the hive, and they are applied.
+
+| Hive | Path | Mounted at | What it holds |
+|---|---|---|---|
+| `SYSTEM` | `C:\Windows\System32\config\SYSTEM` | `HKLM\SYSTEM` | the control sets: services and drivers, devices and USB history, mounted volumes, network interfaces, time zone, computer name, ShimCache |
+| `SOFTWARE` | `C:\Windows\System32\config\SOFTWARE` | `HKLM\SOFTWARE` | installed programs, machine-wide autoruns (Run, Winlogon, IFEO…), Windows version and install date, network profiles, Defender and policy settings |
+| `SAM` | `C:\Windows\System32\config\SAM` | `HKLM\SAM` | local accounts and groups, logon counts and times, password hashes (encrypted with the boot key in SYSTEM) |
+| `SECURITY` | `C:\Windows\System32\config\SECURITY` | `HKLM\SECURITY` | LSA secrets, cached domain logons, audit policy |
+| `DEFAULT` | `C:\Windows\System32\config\DEFAULT` | `HKU\.DEFAULT` | the profile of the system account (what runs before anyone logs on) |
+| `COMPONENTS`, `DRIVERS`, `ELAM` | `C:\Windows\System32\config\` | `HKLM\COMPONENTS`, `HKLM\DRIVERS`, `HKLM\ELAM` | Windows component store, driver database, early-launch anti-malware |
+| `BCD` | `\EFI\Microsoft\Boot\BCD` (EFI partition) or `C:\Boot\BCD` | `HKLM\BCD00000000` | boot configuration: boot entries, test signing, recovery and debug settings |
+| `NTUSER.DAT` | `C:\Users\<user>\NTUSER.DAT` | `HKCU` | one per user: the user's autoruns, RecentDocs and MRU lists, UserAssist, typed paths and searches, Office trust records, mapped drives |
+| `UsrClass.dat` | `C:\Users\<user>\AppData\Local\Microsoft\Windows\UsrClass.dat` | `HKCU\Software\Classes` | one per user: the user's file associations and COM registrations (COM hijacking), **ShellBags** (folders opened) |
+| `Amcache.hve` | `C:\Windows\AppCompat\Programs\Amcache.hve` | `Amcache` | programs and drivers seen on the machine, with path, SHA-1 and first-seen times |
+| Service profiles | `C:\Windows\ServiceProfiles\LocalService\NTUSER.DAT`, `…\NetworkService\NTUSER.DAT` | `HKCU` (read as an NTUSER) | the settings of the Local Service and Network Service accounts |
+
+`C:\Windows\System32\config\RegBack\` keeps older copies of the system hives on machines
+where that backup is enabled (empty by default since Windows 10 1803). Each user's hives are only
+in their profile: collect `NTUSER.DAT` and `UsrClass.dat` of every account of interest — the
+`context` table says which user each NTUSER belongs to.
+
 **Size.** Keys and values are read straight from the hive's bytes (a regipy fallback takes over
 if a structure is not understood), so a full machine — SOFTWARE, SYSTEM, NTUSER and UsrClass,
 some 380 000 keys and 690 000 values — loads, with rules, recovery, artifacts and catalogue, in
