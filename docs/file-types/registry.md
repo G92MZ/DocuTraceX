@@ -173,7 +173,8 @@ Rules over the database, each with its ATT&CK technique:
 - **Persistence** — Run / RunOnce / RunOnceEx / policies Run, Windows `Load` / `Run`, Winlogon
   (`Shell`, `Userinit`, notify packages), Active Setup `StubPath`, `BootExecute` / `SetupExecute`,
   services (image paths in user-writable folders, `ServiceDll` outside System32, names posing as
-  Windows components) and Safe Boot services, IFEO debuggers (Visual Studio / WinDbg ones excepted)
+  Windows components) and Safe Boot services (only those whose image is outside Windows /
+  Program Files: Windows lists hundreds of its own), IFEO debuggers (Visual Studio / WinDbg ones excepted)
   and SilentProcessExit monitors, AppInit_DLLs, AppCertDLLs, LSA packages, print monitors / print
   processors, netsh helpers, the cmd.exe `AutoRun`, COM servers registered per user or in a
   user-writable folder, TypeLib / COM scriptlets (`script:` monikers, `.sct`), file associations
@@ -182,12 +183,16 @@ Rules over the database, each with its ATT&CK technique:
 - **Evasion** — Defender disabled or with exclusions, UAC disabled or bypassed through a per-user
   handler of an auto-elevating program (fodhelper, eventvwr, sdclt), PowerShell script block /
   module logging or transcription off, AMSI off for Windows Script Host, event logs, firewall or
-  administrative tools disabled, LSA protection off.
+  administrative tools disabled (the autologgers that matter: `EventLog-Security` / `-System` /
+  `-Application`, Sysmon, Defender — most others ship turned off), LSA protection off.
 - **Hiding and anti-forensics** — key or value names with a NUL, control or right-to-left
   character (hidden from regedit, Poweliks / Kovter), autostarts running script code through
   `rundll32 javascript:` / `mshtml,RunHTMLApplication`, RunOnce entries forced in Safe Mode,
   key times in the future or before Windows NT, keys written before the install date, values
-  over 512 KB, deleted entries that pointed at a payload.
+  over 512 KB, deleted entries that pointed at a payload. Windows' own oddities are left out: the
+  firewall's app-container list (NUL-joined SIDs as names), garbled names in free cells with no
+  key left, Defender running from `ProgramData`, MUI strings and Amcache's own churn among the
+  deleted entries.
 - **Credentials and access** — WDigest clear-text passwords, RDP enabled, a proxy set for the
   user, certificates added to the trusted root / publisher stores (with their subject and issuer).
 - **Suspicious Windows commands in any value** (a task's action, a tool's configuration, a staged

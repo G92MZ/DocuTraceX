@@ -687,3 +687,20 @@ def test_command_pairs_outside_autostart_stay_medium(tmp_path: Path) -> None:
     res = registry.analyze([(p, p.name)], tmp_path / "c", tmp_path / "w")
     f = next(f for f in res["findings"] if f["rule"] == "reg_cmd_combination")
     assert f["severity"] == "medium"
+
+
+def test_windows_baseline_is_not_flagged(tmp_path: Path) -> None:
+    """sample_baseline_*: what a clean Windows ships raises nothing; the one real trace of each rule does."""
+    files = [(_write(tmp_path, k.split("/")[-1], v), k.split("/")[-1]) for k, v in ms.registry_baseline_hives().items()]
+    res = registry.analyze(files, tmp_path / "c", tmp_path / "w")
+    by = {f["rule"]: f for f in res["findings"]}
+    ev = "\n".join(f["evidence"] for f in res["findings"])
+    assert "FacturaSvc" in by["reg_safeboot_service"]["evidence"] and "fsvc.exe" in by["reg_safeboot_service"]["evidence"]
+    assert "EventLog-Security" in by["reg_event_log_disabled"]["evidence"]
+    assert "FacturaSync" in by["reg_recovered_suspicious"]["evidence"]
+    for benign in ("AppMgmt", "acpiex", "Ahcache", "VendorAgent", "SQMLogger", "RdrLog", "Windows Defender",
+                   "wwahost", "icsvc", "PowerShell Direct", "batch.bat", "contoso.example"):
+        assert benign not in ev, benign
+    assert "reg_hidden_name" not in by
+    texts = " ".join(i["text"] for i in res["ioc_sources"])
+    assert "wwahost" not in texts and "MsMpEng" not in texts and "contoso.example" not in texts

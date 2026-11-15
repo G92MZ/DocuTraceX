@@ -15,7 +15,7 @@ from typing import Any
 # Commands / paths that legitimate autoruns rarely use.
 SUSPICIOUS_CMD = (r"(?i)(powershell|pwsh|mshta|wscript|cscript|rundll32|regsvr32|cmd(\.exe)?\s*/[ck]|certutil|"
                   r"bitsadmin|msiexec\s.*https?://|curl\s|wget\s|-e(nc|ncodedcommand)?\s+[A-Za-z0-9+/=]{20,}|"
-                  r"frombase64string|iex\b|invoke-expression|https?://|\\\\[\w.-]+\\|"
+                  r"frombase64string|\biex\b|invoke-expression|https?://|\\\\[\w.-]+\\|"
                   r"%(temp|tmp|public)%|\\appdata\\local\\temp\\|\\windows\\temp\\|\\users\\public\\|"
                   r"\\programdata\\[^\\]+\.(exe|dll|vbs|js|ps1|bat|cmd|hta)|\.(vbs|vbe|js|jse|hta|ps1|bat|cmd|scr|pif)\b)")
 
@@ -43,6 +43,13 @@ _STR = ["REG_SZ", "REG_EXPAND_SZ", "REG_MULTI_SZ"]
 _CV = r"\\(?:SOFTWARE\\)?(?:WOW6432Node\\)?Microsoft\\Windows\\CurrentVersion"
 _NT = r"\\(?:SOFTWARE\\)?(?:WOW6432Node\\)?Microsoft\\Windows NT\\CurrentVersion"
 _CS = r"\\(?:SYSTEM\\)?(?:CurrentControlSet|ControlSet\d{3})"
+# The loggers an attacker turns off to blind the defenders (most other autologgers ship disabled).
+_LOGGERS = (r"(?:EventLog-(?:Application|System|Security)|EventLog-Microsoft-Windows-Sysmon[^\\]*|"
+            r"DefenderApiLogger|DefenderAuditLogger|SecurityEventLog)")
+# Where Windows and installed programs keep service images (relative, %SystemRoot%, \SystemRoot, \??\).
+_STD_IMAGE = (r"(?i)^\s*\"?(\\\?\?\\)?((\\SystemRoot\\|%systemroot%\\|%windir%\\|[a-z]:\\windows\\)?"
+              r"(system32|syswow64|winsxs|servicing|microsoft\.net)\\|[a-z]:\\program files( \(x86\))?\\|"
+              r"[a-z]:\\programdata\\microsoft\\windows defender\\)")
 
 RULES: list[dict[str, Any]] = [
     # --- persistence ---------------------------------------------------------------------
@@ -71,7 +78,8 @@ RULES: list[dict[str, Any]] = [
      "key": r"^HKCU\\Software\\Classes\\(?:WOW6432Node\\)?CLSID\\\{[0-9A-Fa-f-]{36}\}\\(?:InprocServer32|LocalServer32|TreatAs)$"},
     {"id": "reg_service", "severity": "info", "attack": ["T1543.003"],
      "title": "Service image path", "key": _CS + r"\\Services\\[^\\]+$", "name": r"^ImagePath$",
-     "suspicious": SUSPICIOUS_CMD[:-1] + r"|\\appdata\\|\\desktop\\|\\downloads\\|\\programdata\\|"
+     "suspicious": SUSPICIOUS_CMD[:-1] + r"|\\appdata\\|\\desktop\\|\\downloads\\|"
+                   r"\\programdata\\(?!microsoft\\windows defender( advanced threat protection)?\\)|"
                    r"^\"?[a-z]:\\[^\\]+\.(exe|dll|bat|cmd|ps1)|^\"?[a-z]:\\(tools|scripts|backup|bin|test|dump|cache)\\|"
                    r"\.(txt|log|tmp|dat|bak|png|jpe?g|gif|pdf)\b)", "suspicious_severity": "high"},
     {"id": "reg_service_dll", "severity": "high", "attack": ["T1543.003"],
@@ -165,11 +173,19 @@ RULES: list[dict[str, Any]] = [
      "name": r"^EnableFirewall$", "data": r"^0$"},
     {"id": "reg_event_log_disabled", "severity": "high", "attack": ["T1562.002"],
      "title": "Event log / ETW autologger turned off",
-     "key": _CS + r"\\(?:Services\\EventLog\\[^\\]+|Control\\WMI\\Autologger\\[^\\]+)$", "name": r"^(Start|Enabled)$",
+     "key": _CS + r"\\(?:Services\\EventLog\\[^\\]+|Control\\WMI\\Autologger\\" + _LOGGERS + r"(?:\\\{[0-9A-Fa-f-]+\})?)$",
+     "name": r"^(Start|Enabled)$",
      "data": r"^0$"},
     {"id": "reg_safeboot_service", "severity": "high", "attack": ["T1562.009"],
-     "title": "Service added to Safe Mode boot (ransomware reboot into Safe Mode)",
-     "key": _CS + r"\\Control\\SafeBoot\\(?:Minimal|Network)\\[^\\]+$"},
+     "title": "Service added to Safe Mode boot whose image is outside Windows / Program Files (ransomware reboot into Safe Mode)",
+     "custom": """SELECT k.src, k.path, 'ImagePath', v.data, k.last_write, k.op, s.label, v.type FROM keys k
+        JOIN sources s ON s.id = k.src
+        JOIN vals v ON v.src = k.src AND v.op <> 'delete' AND lower(v.name) = 'imagepath'
+         AND lower(v."key") = lower(regexp_replace(k.path, '(?i)\\\\Control\\\\SafeBoot\\\\(Minimal|Network)\\\\', '\\\\Services\\\\'))
+        WHERE k.op <> 'delete'
+          AND regexp_matches(k.path, '(?i)\\\\(SYSTEM\\\\)?(CurrentControlSet|ControlSet\\d{3})\\\\Control\\\\SafeBoot\\\\(Minimal|Network)\\\\[^\\\\]+$')
+          AND (NOT regexp_matches(v.data, '""" + _STD_IMAGE + """')
+               OR regexp_matches(v.data, '(?i)\\\\(temp|tmp|users\\\\public|appdata)\\\\'))"""},
     # --- credentials / remote access ----------------------------------------------------------
     {"id": "reg_wdigest", "severity": "high", "attack": ["T1003.001", "T1112"],
      "title": "WDigest keeps clear-text passwords in memory", "key": _CS + r"\\Control\\SecurityProviders\\WDigest$",
@@ -191,6 +207,8 @@ RULES: list[dict[str, Any]] = [
      "custom": """SELECT v.src, v."key", v.name, v.data, k.last_write, v.op, s.label, v.type FROM vals v
         JOIN sources s ON s.id = v.src LEFT JOIN keys k ON k.src = v.src AND k.path = v."key"
         WHERE regexp_matches(v.name, '[\x01-\x1f\x7f␀‎‏‪-‮⁦-⁩]')
+          AND NOT regexp_matches(v."key", '(?i)\\\\Services\\\\mpssvc\\\\Parameters\\\\AppCs(\\\\|$)')
+          AND NOT (v.op = 'recovered' AND ends_with(v."key", '(recovered values without a key)'))
         UNION ALL SELECT k.src, k.path, NULL, NULL, k.last_write, k.op, s.label, NULL FROM keys k
         JOIN sources s ON s.id = k.src
         WHERE regexp_matches(k.name, '[\x01-\x1f\x7f␀‎‏‪-‮⁦-⁩]')"""},
@@ -217,7 +235,8 @@ RULES: list[dict[str, Any]] = [
      "title": "Deleted key / value (recovered from a free cell) pointing at a script host, a URL or a user-writable folder: clean-up after the fact",
      "custom": """SELECT v.src, v."key", v.name, v.data, k.last_write, v.op, s.label, v.type FROM vals v
         JOIN sources s ON s.id = v.src LEFT JOIN keys k ON k.src = v.src AND k.path = v."key"
-        WHERE v.op = 'recovered' AND regexp_matches(v.data, '""" + SUSPICIOUS_CMD.replace("'", "''") + """')"""},
+        WHERE v.op = 'recovered' AND regexp_matches(v.data, '""" + SUSPICIOUS_CMD.replace("'", "''") + """')
+          AND coalesce(s.hive_type, '') <> 'amcache' AND NOT starts_with(coalesce(v.name, ''), '@')"""},
     {"id": "reg_huge_value", "severity": "low", "attack": ["T1027.011"],
      "title": "Very large value (over 512 KB): data or a payload kept in the registry",
      "custom": """SELECT v.src, v."key", v.name, 'size ' || v.size, k.last_write, v.op, s.label, v.type FROM vals v
