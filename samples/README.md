@@ -493,6 +493,21 @@ action, a tool's configuration, a staged step), one per family of the command ru
 | `Nota` = `whoami` | nothing: one medium indicator alone |
 | `SCCM`, `Defender` (CCM / MpCmdRun) | cleared by the allowlist (listed as info, no finding) |
 
+`registry/sample_baseline_SYSTEM` and `registry/sample_baseline_Amcache.hve` (load both): what a
+clean Windows ships and the rules must **not** flag, next to one real trace each.
+
+| In the hive | Result |
+|---|---|
+| `SafeBoot\Minimal` with Windows' services and drivers (`AppMgmt`, `acpiex`, `Ahcache`, `WinDefend`, `Base`) and a vendor agent in Program Files | nothing |
+| `SafeBoot\Minimal\FacturaSvc`, its service in `C:\Users\Public\Facturas` | *Service added to Safe Mode boot…* (high) and *Service image path* (high) |
+| Autologgers `SQMLogger`, `RdrLog`, `PEAuthLog` with `Start = 0` | nothing (they ship that way) |
+| Autologger `EventLog-Security` with `Start = 0` | *Event log / ETW autologger turned off* (high) |
+| `WinDefend` / `MDCoreSvc` in `ProgramData\Microsoft\Windows Defender\Platform`, `acpiex.sys` | nothing |
+| `mpssvc\Parameters\AppCs` values named with NUL-joined SIDs | nothing |
+| Free cells: a garbled name, an MUI string (`@…icsvc.dll,-901` = "PowerShell Direct…") | nothing |
+| Free cells: `FacturaSync` = a hidden PowerShell command | *Deleted key / value… pointing at a script host* (medium) |
+| Amcache free cells: a `.bat` shortcut target, a publisher URL | nothing (Amcache rewrites itself) |
+
 `registry/sample_sigma.reg` with the rule folder `registry/sigma/` — set that folder in
 **Settings → Registry: Sigma rules** (5 loaded, 3 skipped). The matches show under *Sigma hunting*
 in the Registry tab — no case findings, no IOCs:
