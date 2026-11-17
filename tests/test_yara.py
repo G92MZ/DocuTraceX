@@ -129,7 +129,7 @@ def test_yara_runs_automatically_and_hits_are_findings_only_once_marked(client: 
     raw = bytes.fromhex(ctx["data"])
     rel = m["strings"][0]["offset"] - ctx["start"]
     assert raw[rel:rel + 10] == b"vbaProject" and ctx["start"] % 16 == 0
-    assert rel >= min(48, m["strings"][0]["offset"])         # some lines before
+    assert rel >= min(96, m["strings"][0]["offset"])         # six lines (96 bytes) before
     src = ymod["rules_info"][f"{m['namespace']}:Has_VBA"]
     assert src["source"].startswith("rule Has_VBA") and src["file"].endswith("t.yar")
 

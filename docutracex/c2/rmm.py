@@ -161,7 +161,16 @@ def identify_lolrmm(whole: set[str], pieces: set[str], catalogue: dict[str, dict
     return out
 
 
+def is_registry(data: bytes) -> bool:
+    """A registry hive or a .reg export: a database of the machine, not a tool. Its RMM traces are
+    read by the Registry rules, with the key and value they are in."""
+    return data[:4] == b"regf" or data.lstrip(b"\xef\xbb\xbf\xff\xfe")[:80].replace(b"\x00", b"").startswith(
+        (b"Windows Registry Editor", b"REGEDIT4"))
+
+
 def extract(data: bytes, filename: str = "") -> list[dict[str, Any]]:
+    if is_registry(data):
+        return []
     low, text = _texts(data)
     low_name = filename.lower()
     hits = identify(low + "\n" + low_name)
