@@ -508,6 +508,7 @@ clean Windows ships and the rules must **not** flag, next to one real trace each
 | Free cells: a garbled name, an MUI string (`@…icsvc.dll,-901` = "PowerShell Direct…") | nothing |
 | Free cells: `FacturaSync` = a hidden PowerShell command | *Deleted key / value… pointing at a script host* (medium) |
 | Amcache free cells: a `.bat` shortcut target, a publisher URL | nothing (Amcache rewrites itself) |
+| `Services\UCPD\DR` (Windows' base64 rules) · Amcache `Windows PowerShell (x86).lnk` shortcut | not carved as payloads |
 
 `registry/sample_more_rules.reg` with `registry/sample_more_SOFTWARE`, `registry/sample_more_BCD` and
 `registry/sample_more_SAM` (load the four): one trace per rule for Office, hiding, protections turned off, remote access, other

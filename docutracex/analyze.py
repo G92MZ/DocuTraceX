@@ -860,7 +860,10 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             write_subresult(paths, "registry", rres)
             ran.append("registry")
             findings_total += rres.get("counts", {}).get("findings", 0)
-        items = [{"path": f, "filename": n} for f, n in rfiles]
+        where = {c["file"]: c for c in rres.get("carved") or []}
+        items = [{"path": f, "filename": n, "source": "registry", "recipe": [where.get(n, {}).get("how", "")],
+                  "origin": f"registry value {where.get(n, {}).get('key', '')} :: {where.get(n, {}).get('name', '')}"}
+                 for f, n in rfiles]
         if items:
             nested_res = run("nested: payloads stored in registry values",
                              lambda: nested.scan_children(items, paths, unlock_ctx={"user": user_pw}))
@@ -1380,12 +1383,28 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             if regs:
                 rres = run("registry: hives / .reg found in the sample → case database · rules",
                            lambda: _registry(paths, regs)) or {}
-                rres.pop("_carved_paths", None)
+                rfiles = rres.pop("_carved_paths", None) or []
                 if rres:
                     write_subresult(paths, "registry", rres)
                     if "registry" not in ran:
                         ran.append("registry")
                     findings_total += rres.get("counts", {}).get("findings", 0)
+                # the payloads kept in their values: scanned like any nested object, next to the
+                # hives (a re-run replaces them, it does not list them twice)
+                where = {c["file"]: c for c in rres.get("carved") or []}
+                items = [{"path": f, "filename": n, "source": "registry", "recipe": [where.get(n, {}).get("how", "")],
+                          "origin": f"registry value {where.get(n, {}).get('key', '')} :: {where.get(n, {}).get('name', '')}"}
+                         for f, n in rfiles]
+                if items:
+                    from . import nested as nested_mod
+                    rnest = run("nested: payloads stored in registry values",
+                                lambda: nested_mod.scan_children(items, paths, unlock_ctx={"user": user_pw})) or {}
+                    if rnest.get("tree"):
+                        prev = read_json(paths.subresult("nested")) or {}
+                        write_subresult(paths, "nested", nested_mod.merge(prev, rnest))
+                        if "nested" not in ran:
+                            ran.append("nested")
+                        findings_total += rnest.get("counts", {}).get("findings", 0)
         except Exception as exc:  # noqa: BLE001
             log.warning("registry step skipped for %s: %s", paths.root.name, exc)
     if "c2" in auto:

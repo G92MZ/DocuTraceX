@@ -3000,10 +3000,12 @@ function paneRegistry(rg, marked) {
       <th>Thumbprint</th><th>Subject</th><th>Issuer</th><th>Valid</th></tr></thead><tbody>${rg.certificates.map((x) => `<tr>
       <td class="mono">${escapeHtml(x.thumbprint || "")}</td><td>${escapeHtml(x.subject || "")}${x.self_signed ? ' <span class="badge badge-warn">self-signed</span>' : ""}</td>
       <td>${escapeHtml(x.issuer || "")}</td><td>${escapeHtml((x.not_before || "").slice(0, 10))} → ${escapeHtml((x.not_after || "").slice(0, 10))}</td></tr>`).join("")}</tbody></table>` : "";
-  const carved = (rg.carved || []).length ? `<h4>Payloads stored in values (analysed in Nested)</h4><table class="cases"><thead><tr>
+  const carved = (rg.carved || []).length ? `<h4>Payloads stored in values</h4><p class="hint-line">Each one is
+      written as a file and analysed as a nested object of the case (Nested, above): click its name to go to it.</p>
+      <table class="cases"><thead><tr>
       <th>Key</th><th>Value</th><th>How</th><th>Bytes</th><th>File</th></tr></thead><tbody>${rg.carved.map((x) => `<tr>
       <td class="mono">${escapeHtml(x.key)}</td><td class="mono">${escapeHtml(x.name)}</td><td>${escapeHtml(x.how)}</td>
-      <td>${x.size}</td><td class="mono">${escapeHtml(x.file)}</td></tr>`).join("")}</tbody></table>` : "";
+      <td>${x.size}</td><td class="mono"><a href="#" data-goto-nested="${escapeHtml(x.file)}" title="Go to its analysis in Nested">${escapeHtml(x.file)}</a></td></tr>`).join("")}</tbody></table>` : "";
   const browse = `<div class="reg-browse">
       <div class="row">${regSourcesSelect(sources, "reg-b-src")}
         <input id="reg-b-path" type="text" class="mono" placeholder="Key path — HKCU\\Software\\…" spellcheck="false" style="flex:1">
@@ -3354,7 +3356,7 @@ function nestedNode(n) {
     : (n.kind === "other" || n.read_as
       ? readAsBadge(n)
       : (n.listed_only ? "" : '<span class="badge badge-ok">clean</span>'));
-  let html = `<div class="nested-card nested-${worst}">
+  let html = `<div class="nested-card nested-${worst}" data-nested-file="${escapeHtml(n.filename || "")}">
     <div class="nested-row">
       <b class="mono nested-name">${escapeHtml(n.filename)}</b>
       <span class="badge badge-muted">${escapeHtml(n.kind)}</span>
@@ -3590,6 +3592,20 @@ function setFindCount() {
     el.textContent = _findTotal ? `0 here · ${_findTotal} in other tabs` : "no matches";
   }
 }
+
+// "go to it in Nested": the payloads carved from registry values (and anything else naming a nested file)
+document.addEventListener("click", (ev) => {
+  const a = ev.target.closest && ev.target.closest("[data-goto-nested]");
+  if (!a) return;
+  ev.preventDefault();
+  const name = a.getAttribute("data-goto-nested");
+  const card = [...document.querySelectorAll(".nested-card[data-nested-file]")].find((c) => c.getAttribute("data-nested-file") === name);
+  if (!card) { a.title = "Not in Nested yet: re-run the analysis"; a.classList.add("muted"); return; }
+  for (let p = card.parentElement; p; p = p.parentElement) if (p.tagName === "DETAILS") p.open = true;
+  card.scrollIntoView({ block: "center", behavior: "smooth" });
+  card.classList.add("flash");
+  setTimeout(() => card.classList.remove("flash"), 1600);
+});
 
 function focusFindMark() {
   _findMarks.forEach((m, i) => m.classList.toggle("current", i === _findIndex));

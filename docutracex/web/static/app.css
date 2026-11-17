@@ -1093,3 +1093,6 @@ tr.reg-sus td { background: color-mix(in srgb, var(--bad, #e5534b) 8%, transpare
 .settings-card a, .view[data-view="yara"] .hint-line a { color: var(--accent); }
 .settings-card input[type="text"], .settings-card input[type="password"], .settings-card input[type="number"] {
   background: #0f141c; border: 1px solid var(--panel-border); border-radius: 7px; color: var(--text); padding: 6px 9px; }
+
+/* a nested card reached from another tab ("go to it in Nested") */
+.nested-card.flash { outline: 2px solid var(--accent); outline-offset: 2px; transition: outline-color 1.2s; }
