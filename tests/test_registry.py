@@ -644,6 +644,14 @@ def test_hives_in_an_archive_do_not_flood_the_iocs(tmp_path: Path, monkeypatch: 
     assert len(items) < 60, len(items)
     nested = read_json(paths.subresult("nested")) or {}
     assert '"read_as": "registry"' in __import__("json").dumps(nested)
+    # the payloads kept in the hives' values are nested objects of the case, next to the hives
+    reg_nodes = [n for n in nested.get("tree") or [] if n.get("source") == "registry"]
+    names = " ".join(n["filename"] for n in reg_nodes)
+    assert "Visor_Cache" in names and "FacturaSync" in names, names
+    assert all(n.get("decrypted_from", "").startswith("registry value ") for n in reg_nodes)
+    analyze.analyze_case(tmp_path / cid)                      # a re-run replaces them, it does not list them twice
+    again = read_json(paths.subresult("nested")) or {}
+    assert len([n for n in again.get("tree") or [] if n.get("source") == "registry"]) == len(reg_nodes)
 
 
 # --- suspicious Windows commands in values -------------------------------------------------------
@@ -702,6 +710,7 @@ def test_windows_baseline_is_not_flagged(tmp_path: Path) -> None:
                    "wwahost", "icsvc", "PowerShell Direct", "batch.bat", "contoso.example"):
         assert benign not in ev, benign
     assert "reg_hidden_name" not in by
+    assert not any("UCPD" in c["key"] or c["key"].startswith("Amcache") for c in res["carved"])   # Windows' own
     texts = " ".join(i["text"] for i in res["ioc_sources"])
     assert "wwahost" not in texts and "MsMpEng" not in texts and "contoso.example" not in texts
 

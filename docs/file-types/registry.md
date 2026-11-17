@@ -240,5 +240,8 @@ leave it out.
 
 **Payloads kept in values** — a PE or archive in a binary value, a script, a base64 blob that
 decodes to a binary, an encoded PowerShell command (fileless malware) — are carved and analysed
-as nested objects, like any other file.
+as nested objects, like any other file, also when the hives came inside a zip (a triage
+collection). Each shows in Nested with the key and value it came from; the file name in the
+Registry tab's table jumps to it. Amcache (paths of what ran) and Windows' own base64 rules of the
+User Choice Protection driver (`Services\UCPD\DR`) are not carved.
 

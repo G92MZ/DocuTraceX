@@ -24,7 +24,7 @@ ALL_ROWS = 50_000_000            # no cap: every entry behind a rule is kept (th
 MAX_CARVED = 50
 _B64 = re.compile(r"[A-Za-z0-9+/]{200,}={0,2}")
 # a command line, not a word: "PowerShell" in a device description or a setting name is not one
-_SCRIPTY = re.compile(r"(?i)(\b(powershell|pwsh)(\.exe)?[\"']?\s+(-|/|[\"']?[a-z]:\\|\$|iex|\(|&)|frombase64string|"
+_SCRIPTY = re.compile(r"(?i)(\b(powershell|pwsh)(\.exe)?[\"']?\s+(-|/|[\"']?[a-z]:\\|\$|iex|\((?!x86\))|&)|frombase64string|"
                       r"invoke-expression|\biex\s*\(|-e(nc|ncodedcommand)?\s+[A-Za-z0-9+/=]{40,}|"
                       r"\bmshta(\.exe)?[\"']?\s+\S|wscript\.shell|createobject\(|\$env:|new-object\s+net\.webclient)")
 
@@ -254,10 +254,15 @@ def carve_payloads(dbp: Path, out_dir: Path) -> list[dict[str, Any]]:
     seen: set[str] = set()
     con = st.connect_ro(dbp)
     try:
-        bins = con.execute("""SELECT src, "key", name, raw FROM vals WHERE raw IS NOT NULL AND size >= 64
+        # not Amcache (paths and metadata of what ran, never a payload) nor Windows' own
+        # blobs (the User Choice Protection driver's rules in Services\UCPD)
+        skip = """AND src NOT IN (SELECT id FROM sources WHERE coalesce(hive_type, '') = 'amcache')
+            AND NOT regexp_matches("key", '(?i)\\\\Services\\\\UCPD(\\\\|$)')"""
+        bins = con.execute(f"""SELECT src, "key", name, raw FROM vals WHERE raw IS NOT NULL AND size >= 64 {skip}
             ORDER BY size DESC LIMIT 2000""").fetchall()
-        texts = con.execute("""SELECT src, "key", name, data FROM vals WHERE type IN ('REG_SZ', 'REG_EXPAND_SZ', 'REG_MULTI_SZ')
-            AND length(data) >= 40 AND (regexp_matches(data, '[A-Za-z0-9+/]{200,}') OR
+        texts = con.execute(f"""SELECT src, "key", name, data FROM vals WHERE type IN ('REG_SZ', 'REG_EXPAND_SZ', 'REG_MULTI_SZ')
+            {skip}
+            AND length(data) >= 40 AND (regexp_matches(data, '[A-Za-z0-9+/]{{200,}}') OR
             regexp_matches(data, '(?i)(powershell|pwsh|frombase64string|invoke-expression|mshta |wscript\\.shell|createobject\\(|-enc(odedcommand)? )'))
             LIMIT 2000""").fetchall()
     finally:
