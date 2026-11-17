@@ -325,21 +325,7 @@ RULES: list[dict[str, Any]] = [
      "key": r"\\(?:Policies\\)?Microsoft\\(?:Windows\\)?PowerShell(?:\\1\\ShellIds\\Microsoft\.PowerShell)?$",
      "name": r"^ExecutionPolicy$", "data": r"(?i)^(Bypass|Unrestricted)$"},
     # --- remote access / lateral movement --------------------------------------------------------
-    {"id": "reg_rmm_service", "severity": "medium", "attack": ["T1219"],
-     "title": "Remote-access (RMM) tool installed as a service",
-     "key": _CS + r"\\Services\\(?:AnyDesk[^\\]*|ScreenConnect Client[^\\]*|ConnectWise[^\\]*|TeamViewer[^\\]*|"
-            r"SplashtopRemoteService|AteraAgent|NinjaRMMAgent|LMIGuardianSvc|LogMeIn[^\\]*|RustDesk|tvnserver|uvnc_service|"
-            r"vncserver|winvnc[^\\]*|chromoting|Mesh Agent|MeshAgent|RManService|A1Agent|dwagent|Zoho[^\\]*Assist[^\\]*|"
-            r"SimpleHelp[^\\]*|Syncro[^\\]*|Kaseya[^\\]*|GoToAssist[^\\]*|GoTo Resolve[^\\]*|Level[^\\]*Agent|NetSupport[^\\]*|"
-            r"Client32|BASupportExpressSrvcUpdater[^\\]*|ITSPlatform[^\\]*|PDQ[^\\]*)$",
-     "name": r"^ImagePath$"},
-    {"id": "reg_rmm_installed", "severity": "medium", "attack": ["T1219"],
-     "title": "Remote-access (RMM) tool installed (Uninstall entry)",
-     "key": _CV + r"\\Uninstall\\[^\\]+$", "name": r"^DisplayName$",
-     "data": (r"(?i)\b(AnyDesk|ScreenConnect|ConnectWise Control|TeamViewer|Splashtop|Atera|NinjaRMM|NinjaOne|LogMeIn|"
-              r"RustDesk|TightVNC|UltraVNC|RealVNC|VNC Server|Chrome Remote Desktop|MeshCentral|Mesh Agent|"
-              r"Remote Utilities|Action1|DWAgent|Zoho Assist|SimpleHelp|Syncro|Kaseya|GoTo Resolve|GoToAssist|"
-              r"NetSupport|Supremo|Radmin|AeroAdmin|Ammyy|RemotePC|Level Agent|Tactical RMM|N-able|SolarWinds Take Control)\b")},
+    # remote-access tools (service, Uninstall, product key, runs, tasks, firewall…): registry/rmm.py
     {"id": "reg_rdp_shadow", "severity": "high", "attack": ["T1021.001"],
      "title": "RDP shadowing without the user's consent (watch / control a session silently)",
      "key": r"\\(?:Policies\\Microsoft\\Windows NT\\Terminal Services|" + _CS[2:] + r"\\Control\\Terminal Server)$",

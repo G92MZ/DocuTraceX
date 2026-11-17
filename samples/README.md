@@ -510,6 +510,16 @@ clean Windows ships and the rules must **not** flag, next to one real trace each
 | Amcache free cells: a `.bat` shortcut target, a publisher URL | nothing (Amcache rewrites itself) |
 | `Services\UCPD\DR` (Windows' base64 rules) · Amcache `Windows PowerShell (x86).lnk` shortcut | not carved as payloads |
 
+`registry/sample_rmm_SYSTEM`, `sample_rmm_SOFTWARE`, `sample_rmm_NTUSER.DAT` and `sample_rmm_Amcache.hve`
+(load the four): remote-access tools in the registry.
+
+| In the sample | Result |
+|---|---|
+| AnyDesk run from `C:\Users\Ana\Downloads` (BAM with its last run, MUICache, Amcache) and a firewall rule letting it in | *RMM: AnyDesk — executed, allowed · portable* (high), the traces as a timeline |
+| `C:\Users\Public\soporte.exe`: Amcache says original `rutserv.exe`, product Remote Utilities; the task `\ActualizarFacturas` runs it | *RMM: Remote Utilities — … renamed; launched by a scheduled task* (high) |
+| TeamViewer in Program Files: service, Uninstall entry, `SOFTWARE\TeamViewer` | *RMM: TeamViewer — persistence, installed* (medium) |
+| Acrobat (publisher Adobe), a `setup.exe` in Downloads, Windows' defrag task | nothing |
+
 `registry/sample_more_rules.reg` with `registry/sample_more_SOFTWARE`, `registry/sample_more_BCD` and
 `registry/sample_more_SAM` (load the four): one trace per rule for Office, hiding, protections turned off, remote access, other
 persistence and commands typed by hand, next to what Windows / Office ships.
@@ -527,7 +537,7 @@ persistence and commands typed by hand, next to what Windows / Office ships.
 | `EnableSmartScreen = 0`, `SmartScreenEnabled = Off` | *SmartScreen turned off* (medium) |
 | Defender's AMSI provider key in free cells (a third-party provider stays) | *Defender's AMSI provider deleted* (high) |
 | HKLM execution policy `Bypass` (HKCU `RemoteSigned`) | *PowerShell execution policy…* (medium) |
-| `AnyDesk` service and Uninstall entry (`Contoso Invoicing` is not RMM) | *RMM tool installed as a service* / *(Uninstall entry)* (medium) |
+| `AnyDesk` service and Uninstall entry (`Contoso Invoicing` is not RMM) | *RMM: AnyDesk — persistence, installed* (medium) |
 | `Shadow = 2` · RDP on 3390 · `LocalAccountTokenFilterPolicy = 1` · WinRM `AllowBasic` / `AllowUnencryptedTraffic` | *RDP shadowing…* (high) · *RDP on a non-standard port* · *Remote UAC filtering off* · *WinRM…* (medium) |
 | `portproxy` `0.0.0.0/4489 → 192.0.2.10/3389` | *Port forwarding set with netsh portproxy* (high) |
 | Point and Print `NoWarningNoElevationOnInstall = 1`, `UpdatePromptSettings = 2` | *Point and Print without warning…* (high) |

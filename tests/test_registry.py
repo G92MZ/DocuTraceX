@@ -723,8 +723,8 @@ def test_more_rules(tmp_path: Path) -> None:
     expect = {"reg_office_macro_security": "high", "reg_office_trusted_location": "high", "reg_office_network_trusted": "medium",
               "reg_hidden_user": "high", "reg_explorer_hiding": "medium", "reg_security_service_disabled": "high",
               "reg_recovery_disabled": "high", "reg_update_disabled": "medium", "reg_smartscreen_disabled": "medium",
-              "reg_amsi_provider_removed": "high", "reg_ps_execution_policy": "medium", "reg_rmm_service": "medium",
-              "reg_rmm_installed": "medium", "reg_rdp_shadow": "high", "reg_rdp_port": "medium", "reg_remote_uac_off": "medium",
+              "reg_amsi_provider_removed": "high", "reg_ps_execution_policy": "medium", "reg_rmm:anydesk": "medium",
+              "reg_rdp_shadow": "high", "reg_rdp_port": "medium", "reg_remote_uac_off": "medium",
               "reg_winrm_weakened": "medium", "reg_port_proxy": "high", "reg_point_and_print": "high",
               "reg_time_provider": "high", "reg_custom_shim": "medium", "reg_hidden_task": "high", "reg_typed_command": "high",
               "reg_stored_credentials": "high", "reg_mpnotify": "high", "reg_network_provider": "medium",
@@ -739,7 +739,8 @@ def test_more_rules(tmp_path: Path) -> None:
     rec = ev("reg_recovery_disabled")
     assert "16000009" in rec and "250000e0" in rec and "SDRSVC" not in rec and "ab05" not in rec
     assert "Excel\\Security :: VBAWarnings" not in ev("reg_office_macro_security")
-    assert "RemoteSigned" not in ev("reg_ps_execution_policy") and "Contoso" not in ev("reg_rmm_installed")
+    assert "RemoteSigned" not in ev("reg_ps_execution_policy") and "Contoso" not in ev("reg_rmm:anydesk")
+    assert "installed" in by["reg_rmm:anydesk"]["detail"]
     assert "FacturaTime" in ev("reg_time_provider") and "NtpClient" not in ev("reg_time_provider")
     assert "ActualizarFacturas" in ev("reg_hidden_task") and "ScheduledDefrag" not in ev("reg_hidden_task")
     assert "AB03" not in ev("reg_amsi_provider_removed")
@@ -750,3 +751,24 @@ def test_more_rules(tmp_path: Path) -> None:
     assert "DefaultPassword" in cred and "WinSCP" in cred and "vncserver" in cred and "PuTTY" not in cred   # empty one left out
     assert "FacturaNP" in ev("reg_network_provider") and "HwOrder" not in ev("reg_network_provider")
     assert "soporte$" in ev("reg_hidden_sam_account") and "Administrador" not in ev("reg_hidden_sam_account")
+
+
+def test_rmm_installed_portable_renamed_scheduled(tmp_path: Path) -> None:
+    """sample_rmm_*: a portable AnyDesk run from Downloads (BAM, MUICache, Amcache, a firewall rule),
+    Remote Utilities renamed to soporte.exe and launched by a scheduled task, TeamViewer installed
+    normally; Acrobat and a generic setup.exe are not RMM."""
+    files = [(_write(tmp_path, k.split("/")[-1], v), k.split("/")[-1]) for k, v in ms.registry_rmm_samples().items()]
+    res = registry.analyze(files, tmp_path / "c", tmp_path / "w")
+    rmm = {f["detail"].split(" — ")[0]: f for f in res["findings"] if f["rule"].startswith("reg_rmm:")}
+    assert set(rmm) == {"RMM: AnyDesk", "RMM: Remote Utilities", "RMM: TeamViewer"}
+    ad, ru, tv = rmm["RMM: AnyDesk"], rmm["RMM: Remote Utilities"], rmm["RMM: TeamViewer"]
+    assert ad["severity"] == "high" and "portable" in ad["detail"] and "executed" in ad["detail"]
+    assert "[executed · BAM / DAM]" in ad["evidence"] and "last run 2024-06-13 09:41" in ad["evidence"]
+    assert "[executed · MUICache]" in ad["evidence"] and "[allowed · firewall rule]" in ad["evidence"]
+    assert ru["severity"] == "high" and "renamed" in ru["detail"] and "\\ActualizarFacturas" in ru["detail"]
+    assert "soporte.exe -silent" in ru["evidence"]
+    assert tv["severity"] == "medium" and "portable" not in tv["detail"] and "[installed · product key]" in tv["evidence"]
+    flat = " ".join(f["evidence"] for f in res["findings"])
+    assert "setup.exe" not in flat and "Acrobat" not in flat and "defrag" not in flat.lower()
+    hit = next(h for h in res["hits"] if h["rule"] == "reg_rmm:anydesk")
+    assert hit["items"][0]["last_write"].startswith("2024-06-13")              # the timeline: oldest first
