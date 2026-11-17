@@ -1046,6 +1046,28 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 
 .reg-findings td { vertical-align: top; }
 .reg-findings .reg-fdetail > td { background: var(--bg); padding: 8px 12px 12px; }
+/* a rule's entries: fixed columns, so a long base64 / hex value cannot squeeze the key */
+table.cases.reg-entries { table-layout: fixed; width: 100%; display: table; }
+table.reg-entries col.c-src { width: 3.6em; }
+table.reg-entries col.c-key { width: 36%; }
+table.reg-entries col.c-val { width: 14%; }
+table.reg-entries col.c-time { width: 10.5em; }
+table.cases.reg-entries td { vertical-align: top; min-width: 0; max-width: none; }
+table.cases.reg-entries td.reg-key { word-break: normal; overflow-wrap: anywhere; }
+table.reg-entries .reg-data { word-break: break-all; white-space: pre-wrap; }
+table.reg-entries .reg-data-long { max-height: 7.5em; overflow: auto; padding-right: 4px; }
+table.reg-entries th { white-space: nowrap; }
+/* phone: one card per entry (the findings table around it is already a list) */
+@media (max-width: 900px) {
+  table.findings-table table.reg-entries, table.cases.reg-entries { display: block; width: 100%; }
+  table.findings-table table.reg-entries tbody { display: block; width: 100%; }
+  table.findings-table table.reg-entries tr { display: block; width: 100%; padding: 8px 0;
+    border-bottom: 1px solid var(--border, #2a2f3a); }
+  table.findings-table table.reg-entries td, table.cases.reg-entries td { display: block; width: 100%;
+    max-width: 100%; min-width: 0; overflow-wrap: anywhere; }
+  table.reg-entries td:first-child::before { content: "src "; color: var(--text-dim); }
+  table.findings-table tr.reg-fdetail > td { flex: 1 1 100%; width: 100%; max-width: none; }
+}
 .reg-findings .mark-cell { min-width: 220px; }
 tr.reg-sus td { background: color-mix(in srgb, var(--bad, #e5534b) 8%, transparent); }
 

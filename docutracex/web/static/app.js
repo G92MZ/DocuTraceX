@@ -2929,15 +2929,20 @@ function regFindingsHtml(rg, marked) {
   (rg.hits || []).forEach((h) => { hitsBy[h.rule] = h; });
   const byKey = {};
   (marked || []).forEach((f) => { byKey[`${f.rule}\u0000${f.detail}`] = f; });
+  // one table for a rule's entries: fixed columns (a long base64 / hex value no longer squeezes the
+  // key to one letter a line), the key wraps at its backslashes, a long value scrolls in its cell
+  const entryTable = (items) => `<table class="cases reg-entries"><colgroup><col class="c-src"><col class="c-key">
+      <col class="c-val"><col class="c-data"><col class="c-time"></colgroup>
+      <thead><tr><th>Src</th><th>Key</th><th>Value</th><th>Data</th><th>Last write</th></tr></thead><tbody>
+      ${items.map((it) => `<tr${it.suspicious ? ' class="reg-sus"' : ""}><td>${it.src}</td>
+        <td class="mono reg-key"><a href="#" data-reg-open="${escapeHtml(it.key)}" data-reg-src="${it.src}">${escapeHtml(it.key).replace(/\\/g, "\\<wbr>")}</a></td>
+        <td class="mono reg-key">${escapeHtml(it.name || "")}</td>
+        <td class="mono"><div class="reg-data${(it.data || "").length > 300 ? " reg-data-long" : ""}">${escapeHtml(it.data || "")}</div>${(it.data || "").length > 300 ? `<span class="hint-line">${(it.data || "").length} chars</span>` : ""}${it.suspicious ? ' <span class="badge badge-bad">suspicious</span>' : ""}${it.op === "recovered" ? ' <span class="badge badge-bad">recovered</span>' : ""}</td>
+        <td>${escapeHtml(regTime(it.last_write))}</td></tr>`).join("")}</tbody></table>`;
   const evRows = (f) => {
     const h = hitsBy[f.rule];
     if (h && (h.items || []).length) {
-      return `<table class="cases"><thead><tr><th>Src</th><th>Key</th><th>Value</th><th>Data</th><th>Last write</th></tr></thead><tbody>
-        ${h.items.map((it) => `<tr${it.suspicious ? ' class="reg-sus"' : ""}><td class="reg-nowrap">${it.src}</td>
-          <td class="mono"><a href="#" data-reg-open="${escapeHtml(it.key)}" data-reg-src="${it.src}">${escapeHtml(it.key)}</a></td>
-          <td class="mono reg-nowrap">${escapeHtml(it.name || "")}</td><td class="mono">${escapeHtml(it.data || "")}${it.suspicious ? ' <span class="badge badge-bad">suspicious</span>' : ""}${it.op === "recovered" ? ' <span class="badge badge-bad">recovered</span>' : ""}</td>
-          <td class="reg-nowrap">${escapeHtml(regTime(it.last_write))}</td></tr>`).join("")}</tbody></table>
-        <p class="hint-line">${h.items.length} entr${h.items.length === 1 ? "y" : "ies"}.</p>`;
+      return entryTable(h.items) + `<p class="hint-line">${h.items.length} entr${h.items.length === 1 ? "y" : "ies"}.</p>`;
     }
     return f.evidence ? `<pre class="text-sample">${escapeHtml(f.evidence)}</pre>` : "";
   };
@@ -2959,10 +2964,7 @@ function regFindingsHtml(rg, marked) {
   const infoHtml = info.length ? `<h4>Listed, not findings</h4><p class="hint-line">Entries the rules list for context (nothing suspicious in them).</p>
     ${info.map((h, k) => `<details class="disclose" data-reg-info="${k}"><summary><span class="mono">${escapeHtml(h.rule)}</span> ${escapeHtml(h.title)} — ${h.count}
       <span class="hint-line">${escapeHtml((h.attack || []).join(", "))}</span></summary><div></div></details>`).join("")}` : "";
-  _regInfo = (k) => { const h = info[k]; return h ? `<table class="cases"><thead><tr><th>Src</th><th>Key</th><th>Value</th><th>Data</th><th>Last write</th></tr></thead><tbody>
-      ${(h.items || []).map((it) => `<tr><td>${it.src}</td><td class="mono"><a href="#" data-reg-open="${escapeHtml(it.key)}" data-reg-src="${it.src}">${escapeHtml(it.key)}</a></td>
-        <td class="mono">${escapeHtml(it.name || "")}</td><td class="mono">${escapeHtml(it.data || "")}</td>
-        <td>${escapeHtml(it.last_write || "")}</td></tr>`).join("")}</tbody></table>` : ""; };
+  _regInfo = (k) => { const h = info[k]; return h ? entryTable(h.items || []) : ""; };
   return (fs.length ? `<div class="row"><button class="btn btn-ghost btn-sm" type="button" data-reg-fall="1">Expand all</button>
       <button class="btn btn-ghost btn-sm" type="button" data-reg-fall="0">Collapse all</button></div>
     <table class="cases findings-table reg-findings"><thead><tr><th>Severity</th><th>Rule</th><th>Finding</th><th>ATT&amp;CK</th><th>Mark</th></tr></thead>
