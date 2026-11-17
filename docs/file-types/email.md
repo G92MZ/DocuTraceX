@@ -148,6 +148,14 @@ each analysed with its own family's tools, many levels deep.
     file), filtered for noise. **Check** visits one through your proxy like a real victim would;
     **VT** and **urlscan** open a search in your browser.
 
+    IOCs come from the **content** — the body, its links and the attachments — and from the
+    message's participants (From, Reply-To, To…). **Headers are not mined**: the relays, connecting
+    IPs, PTR / HELO names and stamps of every hop are read in the headers section, not listed as
+    indicators. The same goes for a block of headers pasted in a text: a phishing-report
+    platform's `---------- Begin Email Headers ----------` … `End Email Headers` (in the body or
+    a `headers.txt` attachment) or raw `Received` / `Authentication-Results` / `X-MS-…` lines in a
+    forwarded body. An Outlook *From / Sent / To / Subject* quote is not a header block and stays.
+
 ## Tabs from the attachments
 
 When an attachment is analysed, its own tabs join the email's: **Office · report.docm**,

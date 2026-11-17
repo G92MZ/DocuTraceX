@@ -87,8 +87,8 @@ def test_rules_and_iocs(tmp_path: Path) -> None:
             "ms_own_domain_from_internet"} <= ids
     assert r["tenant"]["status"] == "skipped"                     # no network under tests
     vals = {(i["type"], i["value"]) for i in ioc.extract(ioc.sources_from_modules({"email": e}))["iocs"]}
-    assert ("ipv4", "198.51.100.23") in vals and ("ipv4", "198.51.100.77") in vals
-    assert ("domain", "smtp.attacker-tenant.example") in vals
+    # the connecting IP, PTR / HELO and X-Originating-IP are header stamps: analysed above, not IOCs
+    assert not {("ipv4", "198.51.100.23"), ("ipv4", "198.51.100.77"), ("domain", "smtp.attacker-tenant.example")} & vals
 
 
 def test_lookup_ok_cached_and_crossed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -217,7 +217,7 @@ def test_tool_bookkeeping_is_not_mined_for_iocs(monkeypatch: pytest.MonkeyPatch)
     assert "unrelated-subsidiary.example" not in flat                     # a tenant's other domains
     assert not any(v.startswith("msg-") for v in flat)                    # Message-IDs are not mailboxes
     assert ("email", "facturacion@proveedor-pagos.example") in vals2      # real participants stay
-    assert ("ipv4", "198.51.100.23") in vals
+    assert ("ipv4", "198.51.100.23") not in vals                          # the connecting IP: a header stamp
 
 
 def test_sender_domain_outside_its_tenant_is_phishing_on_its_own() -> None:
@@ -316,3 +316,23 @@ def test_verdict_tab_is_not_mined_for_iocs() -> None:
            "findings": [{"rule": "y", "detail": "", "evidence": "https://payload.example/a"}]}
     vals = {i["value"] for i in ioc.extract(ioc.sources_from_modules({"mailrules": res}))["iocs"]}
     assert "lookalike-corp.example" not in vals and "payload.example" in vals
+
+
+def test_pasted_header_blocks_are_not_mined(tmp_path: Path) -> None:
+    """sample_reported_phish.eml: a report platform's message with the original's headers pasted
+    between Begin / End Email Headers lines and attached as headers.txt. The hops, relays and
+    stamps are not IOCs; the lure's link is; a forwarded Outlook quote (From / Sent / To) stays."""
+    e, r = _analyse(ms.reported_phish_eml())
+    body = e.get("body_sample", "")
+    assert "Begin Email Headers" in body
+    vals = {i["value"] for i in ioc.extract(ioc.sources_from_modules({"email": e, "mailrules": r}))["iocs"]}
+    assert "https://facturas-portal.example/descarga/0613" in vals
+    for hop in ("203.0.113.77", "10.20.30.40", "198.51.100.9", "host77.hosting-barato.example",
+                "outbound.facturas-portal.example", "mbx02.grupoejemplo.example", "a1b2c3d4@outbound.facturas-portal.example"):
+        assert hop not in vals, hop
+    headers_txt = "---------- Begin Email Headers ----------\nReceived: from x (203.0.113.77)\n---------- End Email Headers ----------\n"
+    assert not ioc.strip_header_blocks(headers_txt).strip(" \n-")
+    raw = "Hola\nReceived: from a (192.0.2.1)\nReceived: from b (192.0.2.2)\nDKIM-Signature: v=1\nMessage-ID: <x@y.example>\nAdios"
+    assert "192.0.2.1" not in ioc.strip_header_blocks(raw) and "Adios" in ioc.strip_header_blocks(raw)
+    quote = "Mira esto\nFrom: Ana <ana@grupoejemplo.example>\nSent: lunes\nTo: soc@grupoejemplo.example\nSubject: Factura\nhttps://a.example/x"
+    assert ioc.strip_header_blocks(quote) == quote

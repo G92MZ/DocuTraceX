@@ -43,9 +43,9 @@ rule is named, used by the email rules (`docutracex/rules/email/core.yml`).
 | `X-Forefront-Antispam-Report` **CAT** | Policy applied: PHSH, HPHSH, SPOOF, BIMP/DIMP/GIMP/UIMP (impersonation), MALW, AMP, FTBP, SAP, SPM, HSPM, BULK, INTOS, OSPM [MS-AS] | Microsoft's own classification | Only the topmost copy is the receiver's | SFV, SFTY, compauth | `ms_classified_phishing`, `ms_classified_malware` (counts for *malicious*) | — | High | **Implemented** |
 | … **SFV** | NSPM, SPM, SKA, SKB, SKI, SKN, SKQ, SKS, SFE, BLK [MS-AS] | Spam verdict, and **why filtering was skipped** (allow lists, transport rules) | As above | IPV | `ms_spam_verdict`, `ms_filter_bypassed` | — | High | **Implemented** |
 | … **SFTY** | 9.19 domain impersonation, 9.20 user impersonation, 9.25 first contact [MS-AS] | Impersonation of protected users / domains | As above | CAT | `ms_impersonation_tip`, `ms_first_contact` (info) | — | High | **Implemented** |
-| … **CIP** | Connecting IP | The sending server | As above | Received, PTR, CTRY | — | **IPv4/IPv6** | High | **Implemented** (IOC) |
+| … **CIP** | Connecting IP | The sending server | As above | Received, PTR, CTRY | — | **IPv4/IPv6** | High | **Implemented** (shown; not an IOC) |
 | … **CTRY**, **LANG** | Country of the connecting IP; language of the message | Context (a Spanish supplier sending from elsewhere…) | As above | CIP | `ms_country_not_allowed` (allowed-country list in Settings) | — | Medium | **Implemented** |
-| … **PTR**, **H** | Reverse DNS of CIP; HELO/EHLO string | Sending infrastructure | As above | CIP, Received | — | **Domain** | Medium | **Implemented** (IOC) |
+| … **PTR**, **H** | Reverse DNS of CIP; HELO/EHLO string | Sending infrastructure | As above | CIP, Received | — | **Domain** | Medium | **Implemented** (shown; not an IOC) |
 | … **IPV**, **DIR**, **SRV**, **SFS** | IP reputation (CAL = allow list, NLI), direction (INB/OUT/INT), BULK, internal rule IDs (diagnostic) [MS-AS] | Allow-listed source; direction | As above | SFV | `ms_filter_bypassed` (IPV:CAL) | — | Medium | Decoded |
 | `X-Microsoft-Antispam` **BCL** / PCL | Bulk complaint level (higher = more complaints); PCL undocumented [MS-AS] | Bulk vs targeted | As above | CAT:BULK | `ms_bulk_high` (BCL ≥ 7) | — | Low | **Implemented** |
 | `Authentication-Results` **compauth** + reason | Composite authentication pass / fail / softpass / none with a 3-digit reason (000, 001, 010, 1xx, 601, 905…) [MS-AS] | *Why* Microsoft judged the From domain authentic or not (intra-org spoofing = 010 / 601) | Topmost copy only | SPF / DKIM / DMARC | `ms_compauth_fail` | — | High | **Implemented** |
@@ -58,7 +58,7 @@ rule is named, used by the email rules (`docutracex/rules/email/core.yml`).
 
 | Header | Information | DFIR use | Manipulation | Correlations | Findings | IOCs | Priority | Status |
 |---|---|---|---|---|---|---|---|---|
-| `X-Originating-IP` | The sender's **client** IP (OWA / Outlook submissions) | The attacker's IP when a mailbox is compromised | Added by the sender's side; forgeable | CIP, Received | (future: geo / reputation) | **IP** | High | **Implemented** (IOC) |
+| `X-Originating-IP` | The sender's **client** IP (OWA / Outlook submissions) | The attacker's IP when a mailbox is compromised | Added by the sender's side; forgeable | CIP, Received | (future: geo / reputation) | **IP** | High | **Implemented** (shown; not an IOC) |
 | `X-MS-Has-Attach`, `X-MS-TNEF-Correlator` | Outlook client markers | Message really written in Outlook (vs a mailer faking it) | Trivial to add | X-Mailer | — | — | Low | Listed |
 | `X-MS-PublicTrafficType`, `X-MS-TrafficTypeDiagnostic` | Internal traffic classification / diagnostics | Undocumented | — | — | — | — | Low | Listed |
 | `X-MS-Office365-Filtering-Correlation-Id` | Correlation ID for Microsoft support | Pivot for the tenant's admins | — | Network-Message-Id | — | ID | Low | Listed |
