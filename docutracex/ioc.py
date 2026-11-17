@@ -953,15 +953,8 @@ def _email_sources(
     for link in email.get("html_links", []) or []:
         add("body_html_link", link)
 
-    # Microsoft 365 stamps: the connecting server (CIP / PTR / HELO) and the
-    # sender's client IP (X-Originating-IP) — the sending side, not ours
-    ms = email.get("microsoft") or {}
-    rep = ms.get("antispam") or {}
-    for key, label in (("CIP", "connecting IP"), ("PTR", "PTR"), ("H", "HELO")):
-        if rep.get(key):
-            add(f"headers/X-Forefront-Antispam-Report {key} ({label})", rep[key])
-    if ms.get("originating_ip"):
-        add("headers/X-Originating-IP", ms["originating_ip"])
+    # Headers are not mined: the relays, connecting IPs, PTR / HELO names and
+    # stamps of the hops are analysed in the Headers section, not indicators.
 
     # Chain: every participant of every message (From / Sender / Reply-To /
     # Return-Path / To / CC / BCC / Delivered-To), as email + its domain, with
@@ -1023,7 +1016,10 @@ _MODULE_SKIP_PATHS = {
     # evidence text, which only echoes facts already mined at their source.
     "mailrules": re.compile(r"tools/emldump part \d+ \((?!text/)[^)]*\)/output$"
                             r"|^tenant(?:[/\[].*)?$"
-                            r"|^engine/facts/(?:thread|tenant)(?:[/\[].*)?$"
+                            # header facts (connecting IP, X-OriginatorOrg…): headers are analysed in
+                            # their own section, not mined
+                            r"|^engine/facts/(?:thread|tenant|ms|auth|esp)(?:[/\[].*)?$"
+
                             r"|^engine/matched\[\d+\]/evidence$"
                             # the Verdict tab: a summary of signals whose values were mined at their source
                             r"|^(?:engine/)?verdict(?:[/\[].*)?$"
@@ -1037,10 +1033,85 @@ _MODULE_SKIP_PATHS = {
 }
 
 
+# A block of mail headers pasted in a text: a phishing-report platform's
+# "---------- Begin Email Headers ---------- … End Email Headers ----------"
+# (in the body or a headers.txt attachment), or a run of raw header lines
+# (Received, Authentication-Results, X-MS-…) in a forwarded body. Its hops,
+# relays and stamps are not indicators: the block is cut before mining.
+_HDR_MARKED = re.compile(r"(?im)^[ \t>]*-{3,}\s*begin\s+(?:e-?mail\s+|message\s+)?headers?\s*-{3,}[ \t]*$"
+                         r".*?(?:^[ \t>]*-{3,}\s*end\s+(?:e-?mail\s+|message\s+)?headers?\s*-{3,}[ \t]*$|\Z)", re.DOTALL)
+_HDR_LINE = re.compile(r"^[ \t>]*(?:[A-Za-z][A-Za-z0-9-]{1,76}:(?:[ \t].*)?|[ \t]+\S.*)$")
+_HDR_NAME = re.compile(r"^[ \t>]*([A-Za-z][A-Za-z0-9-]{1,76}):")
+# names that only appear in a real header block (an Outlook "From / Sent / To /
+# Subject" quote of a forwarded message has none of them, and stays)
+_HDR_STRONG = re.compile(r"(?i)^(?:received|received-spf|return-path|authentication-results|arc-[a-z-]+|dkim-signature"
+                         r"|x-ms-[a-z0-9-]+|x-microsoft-[a-z0-9-]+|x-forefront-[a-z0-9-]+|x-originating-ip"
+                         r"|x-mailer|x-google-[a-z0-9-]+|x-gm-[a-z0-9-]+|x-received|delivered-to|message-id"
+                         r"|x-proofpoint-[a-z0-9-]+|x-mimecast-[a-z0-9-]+|x-sender-ip|x-spam-[a-z-]+)$")
+
+
+def strip_header_blocks(text: str) -> str:
+    """The text without pasted mail-header blocks (see _HDR_MARKED / _HDR_STRONG)."""
+    if not text or ":" not in text:
+        return text
+    text = _HDR_MARKED.sub("\n", text)
+    lines = text.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        if not _HDR_LINE.match(lines[i]) or not _HDR_NAME.match(lines[i]):
+            out.append(lines[i])
+            i += 1
+            continue
+        j = i
+        while j < len(lines) and _HDR_LINE.match(lines[j]):
+            j += 1
+        names = [m.group(1) for ln in lines[i:j] if (m := _HDR_NAME.match(ln))]
+        strong = sum(1 for n in names if _HDR_STRONG.match(n))
+        if len(names) >= 4 and strong >= 2:
+            out.append("")
+        else:
+            out.extend(lines[i:j])
+        i = j
+    return "\n".join(out)
+
+
 def sources_from_modules(
     modules: dict[str, dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Build scan sources from parser results, preserving email/nested carve-outs."""
+    sources = _sources_from_modules(modules)
+    # emldump's text/plain and text/html parts repeat the body already mined from
+    # the email module: only when the body was cut there is something they add
+    email = modules.get("email") if isinstance(modules.get("email"), dict) else {}
+    if email and (email.get("body_length") or 0) <= _BODY_SAMPLE_CAP:
+        sources = [s for s in sources if not (s.get("module") == "mailrules"
+                                              and _EMLDUMP_TEXT.search(s.get("location") or ""))]
+    out: list[dict[str, Any]] = []
+    for s in sources:
+        text = strip_header_blocks(s["text"])
+        if text.strip():
+            out.append({**s, "text": text} if text is not s["text"] else s)
+    return out
+
+
+_HEADER_RULE = re.compile(r"^(?:ms_|dkim_|spf|dmarc|arc_|auth|compauth|received_|date_header|messageid_|missing_message_id"
+                          r"|mass_mailer|tenant|originator|esp_|header)")
+
+
+def _header_rule(f: dict[str, Any]) -> bool:
+    """A mail finding about the headers (its rule id or location says so)."""
+    return bool(_HEADER_RULE.match(str(f.get("rule") or "").lower())
+                or str(f.get("location") or "").lower().startswith("header"))
+
+
+_EMLDUMP_TEXT = re.compile(r"tools/emldump part \d+ \(text/(?:plain|html)\)/output$")
+_BODY_SAMPLE_CAP = 20000      # parsers/mail.py _BODY_SAMPLE
+
+
+def _sources_from_modules(
+    modules: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
     sources: list[dict[str, Any]] = []
 
     for name, data in modules.items():
@@ -1059,6 +1130,14 @@ def sources_from_modules(
             for item in data.get("ioc_sources") or []:
                 if isinstance(item, dict) and isinstance(item.get("text"), str) and item["text"].strip():
                     sources.append({"module": "registry", "location": item.get("location", ""), "text": item["text"]})
+            continue
+
+        if name == "mailrules" and isinstance(data, dict) and data.get("findings"):
+            # the evidence of a header rule quotes hops, relays and stamps: not mined
+            data = {**data, "findings": [
+                {k: v for k, v in f.items() if k != "evidence"} if isinstance(f, dict) and _header_rule(f) else f
+                for f in data["findings"]]}
+            _walk(data, name, "", sources)
             continue
 
         if name == "email":
