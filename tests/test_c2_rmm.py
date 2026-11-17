@@ -102,3 +102,24 @@ def test_same_relay_host_once() -> None:
     r = rmm.extract(d, "x.exe")[0]
     assert r["summary"]["C2"] == ["instance-abc123-relay.screenconnect.com:443"]
     assert r["c2"] == ["instance-abc123-relay.screenconnect.com"]
+
+
+def test_finding_names_what_matched_and_hives_are_skipped_everywhere(tmp_path: Path) -> None:
+    """The finding's title carries the first match and its evidence starts with every match; a hive
+    is skipped by the extractor itself, so the RMM step over the case's objects skips it too."""
+    r = rmm.extract(ms.rmm_support_scam_eml(), "sample_rmm_support_scam.eml")[0]
+    f = c2._finding({**r, "object": "sample_rmm_support_scam.eml"})
+    assert f["detail"].startswith("AnyDesk (remote-access tool) — matched: anydesk.exe")
+    assert f["evidence"].startswith("Matched: anydesk.exe — …")
+    import regkit
+    hive = regkit.build({"Software": {"AnyDesk": {"@values": [("Path", "REG_SZ", "C:\\AnyDesk\\AnyDesk.exe"),
+                                                                ("Vendor", "REG_SZ", "philandro Software GmbH")]}}},
+                       file_name="\\??\\C:\\Users\\Ana\\NTUSER.DAT")
+    assert rmm.is_registry(hive) and rmm.extract(hive, "NTUSER.DAT") == []
+    reg = b"\xff\xfe" + "Windows Registry Editor Version 5.00\r\n\r\n[HKEY_CURRENT_USER\\Software\\AnyDesk]\r\n".encode("utf-16-le")
+    assert rmm.extract(reg + "\"Path\"=\"AnyDesk.exe philandro software gmbh\"\r\n".encode("utf-16-le"), "x.reg") == []
+    from docutracex import rmmintel
+    orig = tmp_path / "NTUSER.DAT"
+    orig.write_bytes(hive)
+    (tmp_path / "ex").mkdir()
+    assert rmmintel.scan_objects(orig, tmp_path / "ex") == []

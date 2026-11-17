@@ -457,7 +457,7 @@ def _match_to_dict(m: Any, enabled: set[str]) -> dict[str, Any]:
     }
 
 
-_CTX_LINES = 3             # hexdump lines (16 bytes) of context before/after a match
+_CTX_LINES = 6             # hexdump lines (16 bytes) of context before/after a match (96 bytes)
 _CTX_MAX_LINES = 16        # cap for long matches
 
 

@@ -199,11 +199,8 @@ def _scan_detailed(path: Path, data: bytes) -> tuple[list[dict[str, Any]], list[
         from . import modern
         out += run("modern", lambda: modern.extract_all(data))
     from . import rmm
-    # a registry hive / .reg is a database of the machine, not a tool: its RMM traces are read
-    # by the Registry rules (service, Uninstall entry) with the key and value they are in
-    if not (data[:4] == b"regf" or data.lstrip(b"\xef\xbb\xbf\xff\xfe")[:80].replace(b"\x00", b"").startswith(
-            (b"Windows Registry Editor", b"REGEDIT4"))):
-        out += run("rmm", lambda: rmm.extract(data, path.name))
+    # (a registry hive / .reg is skipped inside the extractor: the Registry rules read it)
+    out += run("rmm", lambda: rmm.extract(data, path.name))
     if not any(r.get("c2") and r.get("kind") not in ("indicators", "rmm") for r in out):
         from . import golang_c2
         out += run("go", lambda: golang_c2.extract(path, data))
@@ -238,8 +235,16 @@ def _finding(cfg: dict[str, Any]) -> dict[str, Any]:
     sev = "high" if c2 and cfg.get("confidence") != "low" else "medium"
     if cfg["family"].startswith("RMM: "):         # legitimate software: who deployed it decides
         sev = "medium" if c2 else "low"
-        detail = (f"{cfg['family'][5:]} (remote-access tool)"
-                  + (f" bound to {', '.join(c2[:4])}" if c2 else ": product only, no instance in the file"))
+        matched = [str(m) for m in s.get("Matched") or []]
+        first = matched[0].split(" — ", 1)[0] if matched else str(s.get("Seen") or "").split(", ")[0]
+        detail = (f"{cfg['family'][5:]} (remote-access tool)" + (f" — matched: {first}" if first else "")
+                  + (f" · bound to {', '.join(c2[:4])}" if c2 else " · product only, no instance in the file"))
+        # what matched first: the rest of the summary can be long and the evidence is cut
+        evidence = ("Matched: " + " | ".join(matched) + "; " if matched else "") + "; ".join(
+            f"{k}: {', '.join(map(str, v)) if isinstance(v, list) else v}" for k, v in s.items() if k != "Matched")
+        if cfg.get("provenance"):
+            evidence = f"from: {cfg['provenance']}; " + evidence
+        evidence = evidence[:2500]
         return {"tool": "c2", "rule": "c2:rmm", "severity": sev, "detail": detail,
                 "location": cfg.get("object", ""), "evidence": evidence}
     return {"tool": "c2", "rule": "c2:" + cfg["family"].split(" /")[0].split(" ")[0].lower(),
