@@ -153,6 +153,144 @@ def _scan_strings(strings: list[str], loc: str) -> list[dict[str, Any]]:
     return out
 
 
+# Interpreters and script hosts: an installer that runs one of them on a file it ships is running a
+# script in disguise (a "Setup notice" HTML that is a Python program, an .a3x, a .jar…).
+INTERPRETERS = {
+    "python.exe": "Python", "pythonw.exe": "Python", "py.exe": "Python", "pyw.exe": "Python",
+    "node.exe": "Node.js", "bun.exe": "Bun", "deno.exe": "Deno",
+    "java.exe": "Java", "javaw.exe": "Java", "dotnet.exe": ".NET",
+    "autoit3.exe": "AutoIt", "autoit3_x64.exe": "AutoIt", "autohotkey.exe": "AutoHotkey",
+    "autohotkey64.exe": "AutoHotkey", "autohotkeyu64.exe": "AutoHotkey", "autohotkeyu32.exe": "AutoHotkey",
+    "lua.exe": "Lua", "luajit.exe": "Lua", "wlua.exe": "Lua", "ruby.exe": "Ruby", "rubyw.exe": "Ruby",
+    "perl.exe": "Perl", "wperl.exe": "Perl", "php.exe": "PHP", "php-win.exe": "PHP", "tclsh.exe": "Tcl",
+    "wish.exe": "Tcl", "rscript.exe": "R", "julia.exe": "Julia",
+    "powershell.exe": "PowerShell", "pwsh.exe": "PowerShell", "wscript.exe": "Windows Script Host",
+    "cscript.exe": "Windows Script Host", "mshta.exe": "HTML Application host", "cmd.exe": "cmd",
+    "rundll32.exe": "rundll32", "regsvr32.exe": "regsvr32", "msbuild.exe": "MSBuild",
+    "installutil.exe": "InstallUtil", "regasm.exe": "RegAsm", "msxsl.exe": "msxsl",
+}
+_CA_BASE = {1: "DLL in the Binary table", 2: "EXE in the Binary table", 5: "JScript in the Binary table",
+            6: "VBScript in the Binary table", 7: "nested installation", 17: "DLL installed with the product",
+            18: "EXE installed with the product", 19: "error message", 21: "JScript file installed with the product",
+            22: "VBScript file installed with the product", 23: "nested installation", 34: "command line",
+            35: "sets a directory", 37: "inline JScript", 38: "inline VBScript", 39: "nested installation",
+            50: "EXE named by a property", 51: "sets a property", 53: "JScript in a property", 54: "VBScript in a property"}
+# Binary-table DLLs the usual installer builders ship (Visual Studio setup projects, WiX, InstallShield, Advanced
+# Installer): their entry points check prerequisites and set folders
+_STD_CA_DLL = re.compile(r"(?i)^(?:MSVBDPCADLL|VSDNETCFG|WixCA|WixUIWixca|Wix4.*|InstallShield|ISSetupAllLanguages|"
+                         r"aicustact|AICustAct|viewer\.exe|ExternalUICleaner|SoftwareDetector|PowerShellScriptLauncher|"
+                         r"ISChainerLauncher|ISBEW64|NetFxCA|UtilCA|IISCA|SqlCA|FirewallCA|DependencyCA|BalExtension)$")
+_PROP = re.compile(r"\[([A-Za-z_][\w.]*)\]")
+
+
+def _resolve(text: str, props: dict[str, str], files: dict[str, str], depth: int = 0) -> str:
+    """[PROPERTY] / [#FileKey] / [!FileKey] references expanded where the tables say."""
+    if not text or depth > 4:
+        return text or ""
+
+    def sub(m: re.Match[str]) -> str:
+        name = m.group(1)
+        return _resolve(props[name], props, files, depth + 1) if name in props else m.group(0)
+    text = re.sub(r"\[[#!]([\w.]+)\]", lambda m: f"[{files.get(m.group(1), m.group(1))}]", text)
+    return _PROP.sub(sub, text)
+
+
+def _custom_actions(path: Path, item: dict[str, Any], loc: str) -> list[dict[str, Any]] | None:
+    """Findings from the CustomAction table read as rows (None when the tables cannot be read)."""
+    from . import msidb
+    t = msidb.read_tables(path, ("CustomAction", "Property", "File", "Binary", "Shortcut", "Registry",
+                                 "InstallExecuteSequence"))
+    if not t or not (t.get("CustomAction") or t.get("File") or t.get("Property")):
+        return None
+    props = {str(r.get("Property") or ""): str(r.get("Value") or "") for r in t.get("Property") or []}
+    for r in t.get("CustomAction") or []:            # type 51 / 35: a property / directory set by an action
+        if (int(r.get("Type") or 0) & 0x3F) in (51, 35) and r.get("Source") and r.get("Source") not in props:
+            props[str(r["Source"])] = str(r.get("Target") or "")
+    files = {str(r.get("File") or ""): str(r.get("FileName") or "").split("|")[-1] for r in t.get("File") or []}
+    item["installed_files"] = [{"key": k, "name": v} for k, v in files.items()][:500]
+    out: list[dict[str, Any]] = []
+    actions = []
+    for r in t.get("CustomAction") or []:
+        typ = int(r.get("Type") or 0)
+        base = typ & 0x3F
+        src, tgt = str(r.get("Source") or ""), str(r.get("Target") or "")
+        what = _CA_BASE.get(base, f"type {typ}")
+        if base in (19, 35, 51):
+            actions.append({"action": r.get("Action"), "type": typ, "what": what, "runs": "", "severity": "info"})
+            continue
+        if base == 50:
+            runs = f"{_resolve('[' + src + ']', props, files)} {_resolve(tgt, props, files)}".strip()
+        elif base == 34:
+            runs = _resolve(tgt, props, files)
+        elif base == 18:
+            runs = f"{files.get(src, src)} {_resolve(tgt, props, files)}".strip()
+        elif base in (1, 2, 5, 6, 17, 21, 22):
+            runs = f"{files.get(src, src)} :: {tgt}"
+        elif base in (37, 38, 53, 54):
+            runs = _resolve(tgt if base in (37, 38) else props.get(src, tgt), props, files)
+        else:
+            runs = f"{src} {tgt}".strip()
+        sev = "low"
+        if base in (1, 2) and _STD_CA_DLL.match(src):
+            sev = "info"
+        elif base in (37, 38, 53, 54) or _SUSP.search(runs) or (_LOLBIN.search(runs) and not re.search(
+                r"(?i)\bmsiexec(?:\.exe)?\W+/[ix]\s+\"?\[?[\w\\.:\[\] -]+\.msi", runs)):
+            sev = "high"
+        elif base in (2, 18, 34, 50):
+            sev = "medium"
+        actions.append({"action": r.get("Action"), "type": typ, "what": what, "runs": runs[:400], "severity": sev})
+    item["custom_actions"] = actions[:200]
+    # an interpreter the package installs, run on a file it also installs: a script in disguise
+    shipped = {v.lower(): k for k, v in files.items()}
+    for a in actions:
+        m = re.search(r"(?i)([\w.-]+\.exe)\"?\s+\"?(?:\[[\w.]+\]|[a-z]:\\[^\"]*\\|)?([\w .-]+\.\w{1,8})\"?", a["runs"] or "")
+        if not m:
+            continue
+        exe, arg = m.group(1).lower(), m.group(2).strip().lower()
+        if exe in INTERPRETERS and exe in shipped:
+            lang = INTERPRETERS[exe]
+            stream = shipped.get(arg, "")
+            a["severity"] = "high"
+            out.append(_finding("msi_embedded_interpreter", "high",
+                                f"embedded {lang} interpreter ({m.group(1)}) shipped and run by the installer on "
+                                f"'{m.group(2).strip()}'" + (f" (stream {stream})" if stream else "")
+                                + " — a script in disguise, whatever its extension", loc,
+                                f"custom action {a['action']} (type {a['type']}): {a['runs']}", "T1059"))
+            item.setdefault("embedded_interpreters", []).append(
+                {"interpreter": lang, "exe": m.group(1), "file": m.group(2).strip(), "stream": stream, "action": a["action"]})
+    nested_msi = [a for a in actions if re.search(r"(?i)msiexec(?:\.exe)?\W+/i", a["runs"] or "")]
+    if nested_msi and item.get("embedded_interpreters"):
+        out.append(_finding("msi_decoy_installer", "high",
+                            "installs another MSI as a decoy while it runs its own payload: "
+                            + "; ".join(a["runs"][:120] for a in nested_msi[:3]), loc, "", "T1036"))
+    rank = {"info": 0, "low": 1, "medium": 2, "high": 3}
+    worst = max((a["severity"] for a in actions), key=lambda x: rank[x], default="info")
+    if actions:
+        shown = sorted(actions, key=lambda a: -rank[a["severity"]])[:12]
+        out.append(_finding("msi_custom_action", worst,
+                            f"{len(actions)} custom action(s); " + (
+                                "the riskiest: " + ", ".join(f"{a['action']} ({a['what']})" for a in shown[:3])
+                                if worst != "info" else "only the installer builder's own (folders, prerequisites, properties)"),
+                            loc, "\n".join(f"{a['action']} [{a['what']}, type {a['type']}]: {a['runs']}" for a in shown),
+                            "T1218.007" if worst != "info" else ""))
+        # the commands go through the scripting engine (LOLBins, downloads, encoded PowerShell…)
+        cmds = [a["runs"] for a in actions if a["severity"] in ("medium", "high") and a["runs"]
+                and not re.search(r"(?i)msiexec(?:\.exe)?\W+/[ix]\s", a["runs"])]
+        if cmds:
+            out.extend(_scan_strings(cmds, loc))
+    for r in t.get("Registry") or []:              # Run keys written by the package
+        key, val = str(r.get("Key") or ""), _resolve(str(r.get("Value") or ""), props, files)
+        if re.search(r"(?i)\\CurrentVersion\\Run(?:Once)?$", key):
+            out.append(_finding("msi_run_key", "high" if _LOLBIN.search(val) or _SUSP.search(val) else "medium",
+                                f"writes a Run key: {key} :: {r.get('Name') or '(default)'}", loc, val[:300], "T1547.001"))
+    for r in t.get("Shortcut") or []:
+        args = _resolve(str(r.get("Arguments") or ""), props, files)
+        if args and (_LOLBIN.search(args) or _SUSP.search(args)):
+            out.append(_finding("msi_shortcut_command", "high", f"shortcut {str(r.get('Name') or '').split('|')[-1]} "
+                                "runs a command", loc, args[:300], "T1547.009"))
+    return out
+
+
 def analyze_msi(path: Path, rel: str) -> dict[str, Any]:
     item: dict[str, Any] = {"kind": "msi", "file": rel, "tables": [], "binary_streams": [],
                             "metadata": {}, "findings": []}
@@ -227,6 +365,17 @@ def analyze_msi(path: Path, rel: str) -> dict[str, Any]:
 
     f = item["findings"]
     low = {t.lower() for t in item["tables"]}
+    # The tables themselves: what each custom action runs, with which file and arguments. When they
+    # can be read, they replace the coarse "the table exists" / "a string in the pool" signals that
+    # fire on every installer.
+    structured = _custom_actions(path, item, loc)
+    if structured is not None:
+        f.extend(structured)
+        if cabs:
+            f.append(_finding("msi_embedded_cab", "info",
+                              f"embedded CAB archive(s): {', '.join(cabs[:5])}", loc, "", "T1027"))
+        item["_strings_sample"] = [s for s in pool_strings if _LOLBIN.search(s) or _URL.search(s)][:50]
+        return item
     if "customaction" in low:
         f.append(_finding("msi_custom_action", "high",
                           "CustomAction table present — runs code during install", loc,

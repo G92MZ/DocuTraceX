@@ -140,6 +140,11 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
     item["size"] = size
     if blob[:2] != b"MZ":
         item["is_pe"] = False
+        if blob[:4] in (b"\x00\x00\x01\x00", b"\x00\x00\x02\x00") and Path(rel).name.lower().startswith("icon."):
+            # an MSI's Icon table: Windows Installer names its icon streams after the shortcut's
+            # target (Icon._8F3….exe) — an icon, not a disguised program
+            item["note"] = "MSI Icon-table stream (an icon named after the shortcut target)"
+            return item
         item["findings"].append(_finding("pe_not_pe", "medium",
             f"'{Path(rel).suffix}' is not a PE image (no MZ header) — possible masquerade",
             loc, "", "T1036"))

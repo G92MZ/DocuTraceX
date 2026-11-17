@@ -85,7 +85,9 @@ _RULES: list[tuple[str, set[str], str, str, str, str]] = [
     ("ps_service", {PS}, "high", "T1543.003", "creates a service",
      r"New-Service\b|\bsc(?:\.exe)?\s+create\b|Win32_Service.*Create"),
     ("vbs_run_key", {VBS}, "high", "T1547.001", "Run-key persistence (registry)",
-     r"RegWrite|CurrentVersion\\+Run(?:Once)?"),
+     r"CurrentVersion\\+(?:Policies\\+Explorer\\+)?Run(?:Once|Services)?\b"),
+    # a write anywhere else: an installer's own setting, or the first half of a persistence
+    ("vbs_regwrite", {VBS}, "medium", "T1112", "writes the registry (RegWrite)", r"\.RegWrite\b"),
     ("bat_persist", {BAT}, "high", "T1547.001", "persistence (Run key / task / startup)",
      r"reg\s+add\s+.*\\Run|schtasks\s+/create|copy\s+.*\\Start ?Menu\\.*Startup|\\Startup\\"),
     ("js_scheduled_task", {JS, VBS}, "high", "T1053.005", "creates a scheduled task",

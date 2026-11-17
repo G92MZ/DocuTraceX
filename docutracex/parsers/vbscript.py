@@ -40,6 +40,12 @@ _HTML_EXT = {".hta", ".htm", ".html", ".wsf", ".wsc", ".sct", ".mht", ".mhtml"}
 # Behaviour patterns live in the shared catalogue (script_rules).
 
 
+
+# A VBScript custom action of an MSI reads and sets the installer's properties through Session.
+_MSI_CA = re.compile(r"(?i)\bSession\.(?:Property|Installer|TargetPath|SourcePath|Database|Message|Mode)\b")
+_CA_STAYS_HIGH = re.compile(r"download|url|http|base64|b64|encod|xor|iex|webclient|xmlhttp|adodb|shellcode|inject|"
+                            r"payload|dropper|amsi|defender|disable|ransom|exfil")
+
 def _finding(rule: str, severity: str, detail: str, location: str, evidence: str = "") -> dict:
     return {"tool": "vbscript", "rule": rule, "severity": severity, "detail": detail,
             "location": location, "evidence": evidence[:2000]}
@@ -537,6 +543,13 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
             script["_full_deob"] = deob_full
         res["scripts"].append(script)
 
+        if _MSI_CA.search(code):
+            # a Windows Installer custom action (it talks to the MSI Session): COM objects, WMI and
+            # registry writes are what installers do; only a download / decode / external payload stays high
+            for h in hits:
+                if h["severity"] == "high" and not _CA_STAYS_HIGH.search(h["rule"]):
+                    h["severity"] = "medium"
+                    h["label"] = h["label"] + " (installer custom action: Session object)"
         by_rule: dict[str, list[dict[str, Any]]] = {}
         for h in hits:
             by_rule.setdefault(h["rule"], []).append(h)
