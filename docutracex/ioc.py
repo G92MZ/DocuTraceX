@@ -1002,7 +1002,7 @@ _MODULE_SKIP_PATHS = {
     "c2": re.compile(r"^(?:timings(?:[/\[].*)?|registry(?:[/\[].*)?|extractor_status(?:/.*)?|runs(?:\[\d+\])?"
                      r"|run_id|interpretations(?:[/\[].*)?"
                      r"|configs\[\d+\]/(?:tools/[^/]+/tool|indicators(?:\[\d+\])?"
-                     r"|summary/(?:Indicators(?:\[\d+\])?|Vendor|LOLRMM|Note|Seen)|public_key|sections/[^/]+/Note|note|status"
+                     r"|summary/(?:Indicators(?:\[\d+\])?|Vendor|LOLRMM|Note|Seen|Matched(?:\[\d+\])?)|public_key|sections/[^/]+/Note|note|status"
                      r"|run_id|raw_ref|extractor|extractor_version|related(?:[/\[].*)?"
                      r"|normalized\[\d+\]/(?:name|type|status|extractor|extractor_version|run_id|raw_ref"
                      r"|evidence|confidence)))$"),

@@ -215,8 +215,26 @@ def test_no_configuration_in_the_rest_of_the_samples(tmp_path: Path) -> None:
     # the .NET stealer sample exists to show its settings decrypted statically in the C2 tab;
     # the remote-support scam names AnyDesk's installer: RMM indicators only (no instance)
     # the memory dump holds the inert Metasploit exec shellcode on purpose (private RWX region);
-    # the registry sample of the RMM rules registers an AnyDesk service
+    # hives / .reg files are left to the Registry rules (sample_more_rules.reg's AnyDesk service)
     assert hits == {"dotnet/sample_dotnet_stealer.exe": ["AgentTesla-like stealer"],
                     "email/sample_rmm_support_scam.eml": ["RMM: AnyDesk"],
-                    "registry/sample_more_rules.reg": ["RMM: AnyDesk"],
                     "memdump/sample_memdump_factura.dmp": ["Metasploit payload (exec)"]}
+
+
+def test_rmm_says_what_matched_and_skips_generic_signers() -> None:
+    """An RMM detection lists each indicator with the text around it; a catalogue signer that signs
+    far more than remote-access tools (Adobe for Pcvisit) is never enough; hives are not scanned."""
+    from docutracex.c2 import rmm
+    data = ms.rmm_support_scam_eml()
+    r = rmm.extract(data, "sample_rmm_support_scam.eml")[0]
+    assert r["family"] == "RMM: AnyDesk"
+    assert any(m.startswith("anydesk.exe — …") and "[AnyDesk.exe]" in m and "offset" in m for m in r["summary"]["Matched"])
+    cat = {"Pcvisit": {"files": [], "descriptions": [], "signers": ["Adobe Systems Incorporated"], "domains": [],
+                       "category": "RMM"},
+           "Facturemote": {"files": [], "descriptions": [], "signers": ["Contoso Remote SL"], "domains": [], "category": "RMM"}}
+    whole, pieces = rmm._tokens("Acrobat Reader\nAdobe Systems Incorporated\nContoso Remote SL\n")
+    assert [n for n, _w, _c in rmm.identify_lolrmm(whole, pieces, cat)] == ["Facturemote"]
+    import regkit
+    hive = regkit.build({"Software": {"AnyDesk": {"@values": [("Path", "REG_SZ", r"C:\\Program Files\\AnyDesk\\AnyDesk.exe")]}}},
+                       file_name=r"\\??\\C:\\Users\\Ana\\NTUSER.DAT")
+    assert not any(x["family"].startswith("RMM") for x in c2.scan_object(Path("NTUSER.DAT"), hive))
