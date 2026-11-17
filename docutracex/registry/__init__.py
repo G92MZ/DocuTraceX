@@ -315,6 +315,14 @@ def analyze(files: list[tuple], case_root: Path, work_dir: Path) -> dict[str, An
     res.update(ingest(files, case_root, work_dir))
     dbp = store.db_path(case_root)
     hits, findings, ioc_sources = run_rules(dbp)
+    try:                                         # remote-access tools: installed, portable, run, scheduled
+        from . import rmm as rmm_traces
+        r_hits, r_findings, r_iocs = rmm_traces.run(dbp)
+        hits += r_hits
+        findings += r_findings
+        ioc_sources += r_iocs
+    except Exception as exc:  # noqa: BLE001  (never breaks the registry analysis)
+        log.warning("registry RMM traces skipped: %s", exc)
     certs = _root_cert_subjects(dbp)
     for c in certs:
         if c.get("subject"):

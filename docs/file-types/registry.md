@@ -205,10 +205,21 @@ Rules over the database, each with its ATT&CK technique:
 - **Credentials and access** — WDigest clear-text passwords, RDP enabled, on a non-standard port
   or with shadowing without consent, remote UAC filtering off (`LocalAccountTokenFilterPolicy`),
   WinRM with Basic / unencrypted traffic, `netsh portproxy` forwarding, Point and Print without
-  prompts (PrintNightmare), remote-access tools installed (AnyDesk, ScreenConnect, TeamViewer,
-  Splashtop, Atera, NinjaOne, VNC, MeshCentral… as a service or in Uninstall), a proxy set for the
+  prompts (PrintNightmare), a proxy set for the
   user, certificates added to the trusted root / publisher stores (with their subject and issuer).
   Listed for context: the RDP servers this account connected to.
+- **Remote-access tools** (AnyDesk, ScreenConnect, TeamViewer, Atera, NinjaOne, VNC, MeshCentral… the
+  built-in list and the [LOLRMM](https://lolrmm.io) catalogue): their executables, signers and names
+  looked for everywhere a run, a start or an install leaves a trace — **executed** (Amcache, BAM /
+  DAM with the last run, UserAssist, Compatibility Assistant, MUICache, FeatureUsage), **seen**
+  (ShimCache), **persistence** (Run / RunOnce, Winlogon, services, scheduled tasks: their *Actions*
+  decoded with the task's name), **installed** (Uninstall, the product's own key), **typed**
+  (RunMRU, TypedPaths, open / save dialogs) and **allowed** (firewall rules, Defender exclusions).
+  One finding per product with every trace as a timeline: **high** when it is portable (run from
+  Downloads, Desktop, Temp, AppData, Public…), **renamed** (Amcache keeps the original name, product
+  and publisher of a file now called otherwise) or launched by a scheduled task; medium when it is
+  installed normally. Executables too generic to name a product (`setup.exe`, `agent.exe`…) and
+  publishers that sign far more than RMM tools are left out.
 - **Passwords and the logon chain** — passwords kept in the registry (Winlogon auto-logon
   `DefaultPassword`, WinSCP sessions, VNC servers), a Winlogon `mpnotify` program, a network
   provider not from Windows in the logon chain (NPPSpy), local accounts ending in `$` (SAM), the
