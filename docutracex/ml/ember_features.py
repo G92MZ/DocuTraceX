@@ -34,9 +34,10 @@ from collections import Counter, OrderedDict
 import numpy as np
 import pefile
 from .hashing import FeatureHasher   # exact, dependency-light replacement of sklearn's
-import signify
-from signify.authenticode import SignedPEFile
 from datetime import datetime
+# signify (Authenticode) is imported where it is used: a broken crypto backend (oscrypto vs a newer
+# OpenSSL) then only stops the signature features, not every user of this module (the strings
+# regexes the ML explanation reuses).
 
 
 class FeatureType(object):
@@ -940,6 +941,8 @@ class AuthenticodeSignature(FeatureType):
             "latest_signing_time": 0,
             "signing_time_diff": 0,
         }
+        import signify
+        from signify.authenticode import SignedPEFile
         try:
             signed_pe = SignedPEFile(io.BytesIO(bytez))
             for signed_data in signed_pe.iter_signed_datas():

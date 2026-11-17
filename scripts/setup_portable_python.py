@@ -2366,7 +2366,7 @@ def _ensure_optional() -> None:
                     _mark_failed(name)
                     print(f"[!] '{name}' not provisioned; it will be skipped on future starts. "
                           f"Run scripts/setup_portable_python.py to retry.")
-        except Exception as exc:  # noqa: BLE001
+        except (Exception, SystemExit) as exc:  # noqa: BLE001  (a helper's sys.exit must not stop the app's start)
             print(f"[!] Optional runtime '{name}' provisioning errored: {exc}")
             _mark_failed(name)
 
