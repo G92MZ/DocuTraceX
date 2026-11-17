@@ -91,6 +91,17 @@ def _texts(data: bytes) -> tuple[str, str]:
     return t.lower(), t
 
 
+def _context(text: str, needle: str, width: int = 50) -> str:
+    """What matched, with the text around its first occurrence: «…around [needle] around…»."""
+    i = text.lower().find(needle.lower())
+    if i < 0:
+        return needle
+    a, b = max(0, i - width), min(len(text), i + len(needle) + width)
+    clean = lambda t: re.sub(r"[^\x20-\x7e]+", " ", t).strip()  # noqa: E731
+    return (f"{needle} — …{clean(text[a:i])} [{clean(text[i:i + len(needle)])}] {clean(text[i + len(needle):b])}…"
+            f" (offset {i})")
+
+
 def identify(low: str) -> list[tuple[str, list[str]]]:
     out = []
     for name, (strong, weak, _v) in PRODUCTS.items():
@@ -123,6 +134,15 @@ def _builtin_for(name: str) -> str | None:
     return None
 
 
+# Code-signing publishers the LOLRMM catalogue lists for a product but that sign far more than
+# remote-access tools (an entry naming "Adobe Systems Incorporated" for Pcvisit matched every
+# machine with Acrobat): never enough on their own.
+_GENERIC_SIGNERS = re.compile(
+    r"(?i)^(adobe|microsoft|google|apple|mozilla|oracle|intel|amd|advanced micro|nvidia|symantec|norton|"
+    r"broadcom|comodo|sectigo|digicert|globalsign|vmware|citrix|dell|hp |hewlett|lenovo|unity technologies|"
+    r"win\.rar|simon tatham|igor pavlov|python software|the qt company|java|sun microsystems)")
+
+
 def identify_lolrmm(whole: set[str], pieces: set[str], catalogue: dict[str, dict[str, Any]]) -> list[tuple[str, list[str], dict[str, Any]]]:
     """Products of the LOLRMM catalogue: a code-signing signer of the product, a file
     name that carries the product's name, or two of its file names / descriptions /
@@ -132,7 +152,7 @@ def identify_lolrmm(whole: set[str], pieces: set[str], catalogue: dict[str, dict
         tok = {t for t in re.split(r"[^a-z0-9]+", name.lower()) if len(t) >= 4}
         files = [f for f in c["files"] if f in pieces]
         descs = [d for d in c["descriptions"] if d in whole]
-        signers = [x for x in c["signers"] if x.lower() in whole]
+        signers = [x for x in c["signers"] if x.lower() in whole and not _GENERIC_SIGNERS.match(x)]
         doms = [d for d in c["domains"] if d in pieces or any(p.endswith("." + d) for p in pieces if d in p)]
         # a vendor's domain alone is weak: it shows up in any mail or page that links to the vendor
         strong = signers or [f for f in files if any(t in f for t in tok)]
@@ -191,6 +211,7 @@ def extract(data: bytes, filename: str = "") -> list[dict[str, Any]]:
                                             "instance it connects, decides whether it is an intrusion")}
         if hosts:
             summary["C2"] = hosts
+        summary["Matched"] = [_context(text, w) for w in why[:6]]
         res.append({"family": f"RMM: {name}", "kind": "rmm" if fields else "indicators",
                     "method": "product strings" + (" + installer / launch parameters" if fields else ""),
                     "confidence": "high" if fields else "medium", "summary": summary,

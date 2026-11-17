@@ -199,7 +199,11 @@ def _scan_detailed(path: Path, data: bytes) -> tuple[list[dict[str, Any]], list[
         from . import modern
         out += run("modern", lambda: modern.extract_all(data))
     from . import rmm
-    out += run("rmm", lambda: rmm.extract(data, path.name))
+    # a registry hive / .reg is a database of the machine, not a tool: its RMM traces are read
+    # by the Registry rules (service, Uninstall entry) with the key and value they are in
+    if not (data[:4] == b"regf" or data.lstrip(b"\xef\xbb\xbf\xff\xfe")[:80].replace(b"\x00", b"").startswith(
+            (b"Windows Registry Editor", b"REGEDIT4"))):
+        out += run("rmm", lambda: rmm.extract(data, path.name))
     if not any(r.get("c2") and r.get("kind") not in ("indicators", "rmm") for r in out):
         from . import golang_c2
         out += run("go", lambda: golang_c2.extract(path, data))
