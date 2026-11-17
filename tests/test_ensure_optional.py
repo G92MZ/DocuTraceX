@@ -19,8 +19,16 @@ def test_marker_roundtrip(tmp_path, monkeypatch) -> None:
     assert sp._marked("webcrack") is False
 
 
+def _others_present(monkeypatch) -> None:
+    """Every other optional runtime reported present: no real download or build under tests."""
+    for name in dir(sp):
+        if name.endswith("_ok") and name.startswith("_") and name not in ("_webcrack_ok", "_boxps_ok"):
+            monkeypatch.setattr(sp, name, lambda *_a, **_k: True)
+
+
 def test_attempts_once_then_skips_on_failure(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(sp, "TOOLS", tmp_path)
+    _others_present(monkeypatch)
     calls = {"webcrack": 0, "boxps": 0}
     monkeypatch.setattr(sp, "_webcrack_ok", lambda: False)
     monkeypatch.setattr(sp, "_boxps_ok", lambda: False)
@@ -37,8 +45,20 @@ def test_attempts_once_then_skips_on_failure(tmp_path, monkeypatch) -> None:
 
 def test_mark_cleared_when_runtime_present(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(sp, "TOOLS", tmp_path)
+    _others_present(monkeypatch)
     sp._mark_failed("webcrack")
     monkeypatch.setattr(sp, "_webcrack_ok", lambda: True)
     monkeypatch.setattr(sp, "_boxps_ok", lambda: True)
     sp._ensure_optional()
     assert not sp._marked("webcrack")          # present now -> stale marker cleared
+
+
+def test_a_helper_that_exits_does_not_stop_the_start(tmp_path, monkeypatch) -> None:
+    """A provisioning helper calling sys.exit (no portable interpreter yet) is marked, not fatal."""
+    monkeypatch.setattr(sp, "TOOLS", tmp_path)
+    _others_present(monkeypatch)
+    monkeypatch.setattr(sp, "_webcrack_ok", lambda: False)
+    monkeypatch.setattr(sp, "_boxps_ok", lambda: True)
+    monkeypatch.setattr(sp, "install_webcrack", lambda: (_ for _ in ()).throw(SystemExit("no interpreter")))
+    sp._ensure_optional()
+    assert sp._marked("webcrack")
