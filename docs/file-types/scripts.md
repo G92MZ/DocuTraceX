@@ -21,6 +21,28 @@ of a shortcut, a PDF, an archive entry — and on the stages those scripts decod
    engine that fits it — a JScript that drops a VBScript that runs PowerShell is followed to
    the end.
 
+## Polyglots: a page that is also a program
+
+An HTML page can be a program at the same time: the page sits where the language ignores it — a
+Python triple-quoted string, a PowerShell `<# #>` comment, a `<!-- :` batch / HTA hybrid, a
+`/* */` comment (JScript, AutoHotkey), Lua `--[[ ]]`, Ruby `=begin`, Perl `__END__` / POD,
+AutoIt `#cs`, Tcl `if 0 { }`, a shell here-document, PHP blocks — and a portable interpreter
+(`pythonw.exe notes.html`) runs the code around it. Whatever the file's extension, DocuTraceX
+reports **an HTML page that is also a *language* program** (high when the code decodes, runs or
+downloads), and the code — with the page replaced by a placeholder — becomes a nested child
+analysed by that language's engine: layers peeled, the loader recognised, the payload carved.
+
+AutoIt, AutoHotkey, Lua, Ruby, Perl, Tcl, shell, PHP and similar scripts have no engine of their
+own: a **generic** one flags shellcode loaders (`DllCall` / ffi / Fiddle / Win32::API with
+`VirtualAlloc`, `CallWindowProc`…), downloads, command execution, dynamic evaluation and
+persistence, and hands their byte arrays and encoded literals to the stage carver.
+
+**Shellcode with PEs inside.** When a loader's bytes are a short stub (`jmp` over a few bytes)
+followed by PEs — a reflective loader DLL and the program it maps — each PE becomes its own
+child, **cut to the size its headers give**. What lies after it (zeros, a repeated pattern,
+word lists or CSS used to inflate the file past size limits) is left out and named in the
+recipe, so only the real program is analysed.
+
 ## Tabs
 
 ??? abstract "JavaScript"

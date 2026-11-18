@@ -23,6 +23,7 @@ every mode so even raw-string recovery yields signal.
 
 from __future__ import annotations
 
+
 import base64
 import binascii
 import dis
@@ -36,7 +37,7 @@ from ..config import tmo
 
 _MAX_ITEMS = 60
 _MAX_FILES = 400
-_MAX_FILE_BYTES = 4 * 1024 * 1024
+_MAX_FILE_BYTES = 96 * 1024 * 1024   # a lure layer can carry a whole PE (10 MB+ seen)
 _MAX_CODE = 400_000
 _KEEP_CODE = 80_000
 _PY_EXT = {".py", ".pyw", ".pyc", ".pyo"}
@@ -294,6 +295,27 @@ def collect(original: Path, extracted_dir: Path, fallback: bool = False,
 _MAX_BIN_STAGE = 32 * 1024 * 1024
 
 
+_STAGE_TEXT = 400_000
+_LONG_LINE = 20_000
+
+
+def _stage_text(code: str) -> str:
+    """A peeled layer as the text of its child stage. A layer of a few MB is a short
+    program around a huge literal (the shellcode as ``b'\\x..'``): that literal is
+    carved whole as its own child (``_binary_stages``), so here the long lines are
+    shortened instead of the whole text being cut in the middle of one — a half
+    literal would come out again as broken pieces."""
+    if len(code) <= _STAGE_TEXT:
+        return code
+    lines = []
+    for ln in code.splitlines():
+        if len(ln) > _LONG_LINE:
+            ln = ln[:100] + f"...  # [{len(ln)} characters cut here: the literal is carved whole from the previous stage]"
+        lines.append(ln)
+    text = "\n".join(lines)
+    return text if len(text) <= _STAGE_TEXT else text[:text.rfind("\n", 0, _STAGE_TEXT) + 1]
+
+
 def _binary_stages(lay: dict[str, Any]) -> list[dict[str, Any]]:
     """Payloads written as bytes in the last peeled layer (``b"\\xe9\\x23…"`` shellcode, a PE):
     the layer's text is cut for display, so they are carved from the whole of it."""
@@ -301,9 +323,18 @@ def _binary_stages(lay: dict[str, Any]) -> list[dict[str, Any]]:
 
     from ..decrypted import byte_arrays
     code = lay.get("code") or ""
-    if not lay.get("layers") or lay.get("kind") != "source" or len(code) < 4096:
+    if not lay.get("layers") or lay.get("kind") != "source" or len(code) < 64:
         return []
     out = []
+    # bytes literals read exactly as Python would (b'MZ\x90\x00…This program…' mixes
+    # escapes and plain text, which a \x-run scan would cut into pieces)
+    from ..decrypted import python_bytes_literals
+    for raw in python_bytes_literals(code)[:4]:
+        if len(raw) <= _MAX_BIN_STAGE:
+            out.append({"recipe": _squash(lay["steps"]) + ["bytes literal"],
+                        "data_b64": base64.b64encode(raw).decode()})
+    if out:
+        return out
     for kind, raw in byte_arrays(code, binary_only=False)[:4]:
         if 512 <= len(raw) <= _MAX_BIN_STAGE:
             out.append({"recipe": _squash(lay["steps"]) + [kind], "data_b64": base64.b64encode(raw).decode()})
@@ -362,7 +393,7 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any] | None 
             "original_truncated": bool(deob_methods) and len(orig_code) > _KEEP_CODE,
             "deob_methods": deob_methods, "deob_schemes": [],
             "decoded_stages": ([{"recipe": _squash(lay["steps"]) + (["code object"] if lay["kind"] == "marshal" else []),
-                                 "text": (lay.get("code") or "")[:400_000]}]
+                                 "text": _stage_text(lay.get("code") or "")}]
                                if not is_pyc and lay.get("layers") and (lay.get("code") or "").strip() else [])
                               + _binary_stages(lay),
             "source": source_kind, "python_version": pyver,
