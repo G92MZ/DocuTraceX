@@ -336,3 +336,21 @@ def test_pasted_header_blocks_are_not_mined(tmp_path: Path) -> None:
     assert "192.0.2.1" not in ioc.strip_header_blocks(raw) and "Adios" in ioc.strip_header_blocks(raw)
     quote = "Mira esto\nFrom: Ana <ana@grupoejemplo.example>\nSent: lunes\nTo: soc@grupoejemplo.example\nSubject: Factura\nhttps://a.example/x"
     assert ioc.strip_header_blocks(quote) == quote
+
+
+def test_pasted_header_block_in_the_html_body_is_not_page_text(tmp_path: Path) -> None:
+    """The same report's HTML part shows the block line by line (<br>): the page's visible
+    text (what the HTML section shows and the IOC pass mines) leaves the hops out."""
+    from docutracex import htmlpage
+    e, _r = _analyse(ms.reported_phish_eml())
+    body = e.get("_html_source") or e.get("html_source_sample") or ""
+    assert "Begin Email Headers" in body
+    hres = htmlpage.analyze(tmp_path / "m.eml", tmp_path, tmp_path, "the email's HTML body",
+                            run_rules=False, markup=body, kind="email body")
+    vals = {i["value"] for i in ioc.extract(ioc.sources_from_modules({"html": hres}))["iocs"]}
+    assert "https://facturas-portal.example/descarga/0613" in vals
+    for hop in ("203.0.113.77", "mbx02.grupoejemplo.example", "host77.hosting-barato.example",
+                "outbound.facturas-portal.example"):
+        assert hop not in vals, hop
+    flat = "x ---------- Begin Email Headers ---------- Received: from a.example (192.0.2.1) ---------- End Email Headers ---------- y"
+    assert "192.0.2.1" not in ioc.strip_header_blocks(flat) and ioc.strip_header_blocks(flat).endswith("y")

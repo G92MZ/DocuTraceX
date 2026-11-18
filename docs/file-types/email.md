@@ -154,7 +154,8 @@ each analysed with its own family's tools, many levels deep.
     indicators. The same goes for a block of headers pasted in a text: a phishing-report
     platform's `---------- Begin Email Headers ----------` … `End Email Headers` (in the body or
     a `headers.txt` attachment) or raw `Received` / `Authentication-Results` / `X-MS-…` lines in a
-    forwarded body. An Outlook *From / Sent / To / Subject* quote is not a header block and stays.
+    forwarded body. An Outlook *From / Sent / To / Subject* quote is not a header block and stays. The same goes for the **HTML part** and HTML pages: a block shown line by line (`<br>`,
+    `<pre>`) or flattened into the page's visible text is left out of that text too.
 
 ## Tabs from the attachments
 

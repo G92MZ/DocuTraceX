@@ -235,7 +235,10 @@ def structure(markup: str) -> dict[str, Any]:
         f["posts_to"] = host(f["action"])
     seen: set[tuple[str, str]] = set()
     res = [r for r in p.resources if (r["kind"], r["url"]) not in seen and not seen.add((r["kind"], r["url"]))]
-    text = " ".join(p.text)
+    # a mail-header block pasted in the page (the "Begin Email Headers" of a phishing
+    # report, a <pre> of Received: lines) is not the page's text: its hops are no IOCs
+    from .ioc import strip_header_blocks
+    text = " ".join(strip_header_blocks("\n".join(p.text)).split())
     return {"title": _html.unescape(p.title), "headings": p.headings, "favicon": p.favicon, "forms": p.forms,
             "inputs": p.inputs, "resources": res[:300], "redirects": p.redirects[:50],
             "visible_text": text[:3000], "visible_chars": len(text),
