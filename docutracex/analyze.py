@@ -31,6 +31,8 @@ _SCRIPTING_EXT = {
     ".js", ".mjs", ".jse", ".vbs", ".vbe", ".wsf", ".wsc", ".sct", ".hta",
     ".html", ".htm", ".svg", ".mht", ".mhtml", ".ps1", ".psm1", ".psd1",
     ".bat", ".cmd", ".py", ".pyw", ".pyc", ".pyo",
+    # generic engine (parsers/genscript.py)
+    ".au3", ".ahk", ".lua", ".rb", ".rbw", ".pl", ".pm", ".tcl", ".tk", ".sh", ".bash", ".php", ".cjs", ".r", ".jl",
 }
 
 
@@ -1135,6 +1137,23 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001  (never fails the case)
         log.warning("polyglot check skipped for %s: %s", paths.root.name, exc)
 
+    # A compiled AutoIt script on its own (.a3x, or renamed): recovered with
+    # AutoIt-Ripper, the script goes to the nested analysis with the stages.
+    try:
+        from .parsers import autoit
+        with original.open("rb") as fh:
+            a3x_head = fh.read(24)
+        if autoit.is_a3x(a3x_head):
+            ares = run("autoit: compiled script (.a3x) · AutoIt-Ripper",
+                       lambda: autoit.analyze(original, paths.extracted_dir / "autoit", original.name))
+            poly_children += [{"path": fp, "filename": fn, "origin": f"AutoIt script recovered from {original.name}"}
+                              for fp, fn in ares.pop("_files", None) or []]
+            write_subresult(paths, "autoit", ares)
+            ran.append("autoit")
+            findings_total += len(ares.get("findings") or [])
+    except Exception as exc:  # noqa: BLE001  (never fails the case)
+        log.warning("AutoIt check skipped for %s: %s", paths.root.name, exc)
+
     # HTML / SVG / MHT page, or the HTML body of an email: offline preview (no JavaScript,
     # no network), structure, phishing rules (the email engine already judged a body),
     # QR codes drawn with HTML / CSS, and the victim's prefilled address.
@@ -1225,13 +1244,23 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             write_subresult(paths, "python", py_res)
             ran.append("python")
             findings_total += py_res.get("counts", {}).get("findings", 0)
+        # AutoIt, AutoHotkey, Lua, Ruby, Perl, Tcl, shell, PHP… uploaded on their own
+        from .parsers import genscript
+        if original.suffix.lower() in genscript.LANGS:
+            gs_res = run("script: AutoIt / Lua / Ruby / Perl / Tcl / shell / PHP · behaviour rules · literals",
+                         lambda: genscript.analyze(original))
+            if gs_res.get("scripts"):
+                gs_res["counts"] = {"findings": len(gs_res.get("findings") or []), "scripts": len(gs_res["scripts"])}
+                write_subresult(paths, "script", gs_res)
+                ran.append("script")
+                findings_total += gs_res["counts"]["findings"]
 
     # Decrypted stages: what the analyzers above resolved (JS XOR results,
     # dropped payloads, base64 blobs that are files) becomes nested children,
     # re-analysed by whatever fits them — and recursively by the nested scanner.
     if run_scripting:
         from . import decrypted, nested
-        dmods = {m: read_json(paths.subresult(m)) for m in ("javascript", "powershell", "vbscript", "batch", "python")}
+        dmods = {m: read_json(paths.subresult(m)) for m in ("javascript", "powershell", "vbscript", "batch", "python", "script")}
         # files already in the nested tree (e.g. an attachment whose script is
         # also collected here) are not added again
         known = {((manifest.get("original") or {}).get("hashes") or {}).get("sha256", "")}

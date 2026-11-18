@@ -231,8 +231,12 @@ def _kind(path: Path, name: str) -> str:
     ext = _ext(name)
     try:
         with path.open("rb") as fh:
-            if fh.read(8).lstrip(b"\xef\xbb\xbf")[:4] == b"{\\rt":
-                return "rtf"  # Word opens RTF whatever the extension (.doc that is RTF)
+            head24 = fh.read(24)
+        if head24.lstrip(b"\xef\xbb\xbf")[:4] == b"{\\rt":
+            return "rtf"  # Word opens RTF whatever the extension (.doc that is RTF)
+        from .parsers import autoit
+        if autoit.is_a3x(head24):
+            return "autoit"  # a compiled AutoIt script (.a3x) under any name
     except OSError:
         pass
     if ext in _OOXML_EXT:
@@ -563,6 +567,15 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
             mods["ifps"] = res
             node["read_as"] = "ifps"
             add_findings(res.get("findings"), "ifps")
+        elif kind == "autoit":
+            from .parsers import autoit
+            with timed("autoit-ripper"):
+                ares = autoit.analyze(abs_path, work / "autoit" / node["sha256"][:12], f"nested:{this_chain}")
+            add_findings(ares.get("findings"), "autoit")
+            node["autoit"] = {k: ares.get(k) for k in ("format", "decompile", "recovered")}
+            for fp, fn in ares.get("_files") or []:
+                kids.append((Path(fp), fn))
+                origins[fp] = f"AutoIt script recovered from {name} (AutoIt-Ripper)"
         elif kind == "onenote":
             from .parsers import onenote
             with timed("onenote"):

@@ -134,3 +134,48 @@ def test_autoit_loader_is_flagged_and_its_pes_carved(tmp_path: Path) -> None:
     assert rules.get("script_shellcode_loader") == "high"
     pays = decrypted.payloads_from({"script": res}, tmp_path)
     assert sorted(x["ext"] for x in pays if x.get("ext") in (".dll", ".exe")) == [".dll", ".exe"]
+
+
+def test_a3x_is_recognised_by_content_and_its_script_recovered(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    from docutracex.parsers import autoit, unpack
+    blob = ms.autoit_a3x()
+    assert autoit.version(blob).startswith("EA06") and not autoit.is_a3x(b"MZ" + blob)
+    p = tmp_path / "datos.dat"
+    p.write_bytes(blob)
+
+    def fake_ripper(path: Path, out: Path) -> dict:
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "script.au3").write_bytes(ms.autoit_loader_au3())
+        return {"tool": "autoit-ripper", "status": "ok"}
+    monkeypatch.setattr(unpack, "_unpack_autoit", fake_ripper)
+    res = autoit.analyze(p, tmp_path / "out")
+    f = res["findings"][0]
+    assert f["rule"] == "autoit_a3x" and f["severity"] == "high" and "datos.dat" in f["detail"]
+    assert [n for _p, n in res["_files"]] == ["script.au3"]
+    from docutracex import nested
+    assert nested._kind(p, "datos.dat") == "autoit"
+
+
+def test_a3x_sample_is_readable_by_autoit_ripper() -> None:
+    ripper = pytest.importorskip("autoit_ripper.autoit_unpack")
+    got = ripper.extract(data=ms.autoit_a3x(), version=ripper.AutoItVersion.EA05)
+    assert got and got[0][0] == "script.au3" and b"VirtualAlloc" in got[0][1]
+
+
+def test_renamed_autoit_interpreter_and_a3x_in_a_bundle(tmp_path: Path) -> None:
+    got = interpreters.findings(_bundle(ms.portable_autoit_bundle_zip, tmp_path), "bundle.zip")
+    assert [f["rule"] for f in got] == ["embedded_interpreter_autoit"]
+    d = got[0]["detail"]
+    assert got[0]["severity"] == "high" and "really autoit3.exe" in d and "datos.dat" in d
+
+
+def test_standalone_au3_runs_the_generic_engine(tmp_path: Path) -> None:
+    from docutracex import analyze, cases
+    m = cases.create_case(io.BytesIO(ms.autoit_loader_au3()), "loader.au3", cases_dir=tmp_path)
+    root = tmp_path / m["analysis_id"]
+    analyze.analyze_case(root)
+    sres = json.loads((root / "results" / "script.json").read_text())
+    assert any(f["rule"] == "script_shellcode_loader" for f in sres["findings"])
+    tree = json.loads((root / "results" / "nested.json").read_text())["tree"]
+    names = [n["filename"] for n in tree]
+    assert any(n.endswith(".dll") for n in names) and any(n.endswith(".exe") for n in names)
