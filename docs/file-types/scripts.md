@@ -37,6 +37,13 @@ own: a **generic** one flags shellcode loaders (`DllCall` / ffi / Fiddle / Win32
 `VirtualAlloc`, `CallWindowProc`…), downloads, command execution, dynamic evaluation and
 persistence, and hands their byte arrays and encoded literals to the stage carver.
 
+These scripts are analysed the same way when they are **uploaded on their own** (`.au3`, `.ahk`,
+`.lua`, `.rb`, `.pl`, `.tcl`, `.sh`, `.php`…). A **compiled AutoIt script** written without the
+interpreter (`.a3x`: `AU3!EA05` / `EA06` blob) is recognised by its content whatever its name;
+AutoIt-Ripper recovers the script (as it does for compiled AutoIt EXEs) and the generic engine
+reads it. Next to it, a renamed `AutoIt3.exe` is still found by the *OriginalFilename* of its
+version information (the same goes for the other portable interpreters).
+
 **Shellcode with PEs inside.** When a loader's bytes are a short stub (`jmp` over a few bytes)
 followed by PEs — a reflective loader DLL and the program it maps — each PE becomes its own
 child, **cut to the size its headers give**. What lies after it (zeros, a repeated pattern,

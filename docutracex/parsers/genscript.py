@@ -16,7 +16,7 @@ from typing import Any
 
 LANGS = {".au3": "AutoIt", ".ahk": "AutoHotkey", ".lua": "Lua", ".rb": "Ruby", ".rbw": "Ruby",
          ".pl": "Perl", ".pm": "Perl", ".tcl": "Tcl", ".tk": "Tcl", ".sh": "shell", ".bash": "shell",
-         ".php": "PHP", ".mjs": "JavaScript (Node.js)", ".cjs": "JavaScript (Node.js)", ".r": "R", ".jl": "Julia"}
+         ".php": "PHP", ".cjs": "JavaScript (Node.js)", ".r": "R", ".jl": "Julia"}
 MAX_BYTES = 96 * 1024 * 1024
 _KEEP = 80_000
 
