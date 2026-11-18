@@ -40,7 +40,32 @@ body {
   color: var(--text-dim);
   font-size: 13px;
 }
-.version { color: var(--text-dim); font-size: 12px; }
+.version { color: var(--text-dim); font-size: 12px; background: none; border: 1px solid transparent; border-radius: 999px;
+  padding: 2px 8px; font-family: inherit; cursor: default; }
+.version-box { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+/* a newer version on GitHub: the chip lights up (click: what changes) */
+.version.version-new { color: #ffd479; border-color: #c99a2e; background: rgba(201, 154, 46, 0.14); cursor: pointer;
+  font-weight: 600; animation: version-pulse 2.4s ease-in-out 3; }
+.version.version-new:hover { background: rgba(201, 154, 46, 0.26); }
+@keyframes version-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(255, 212, 121, 0); }
+  50% { box-shadow: 0 0 0 4px rgba(255, 212, 121, 0.22); } }
+.update-btn { background: #c99a2e; border: 1px solid #c99a2e; color: #10151d; font-weight: 600; }
+.update-btn:hover { background: #ffd479; }
+.update-btn[hidden] { display: none; }
+/* changelog in a modal: scrolls, wraps long names */
+.modal-box.modal-wide { max-width: 760px; }
+.changelog { max-height: 58vh; overflow: auto; overflow-wrap: anywhere; padding-right: 4px; }
+.changelog h4 { margin: 14px 0 4px; font-size: 14px; color: var(--text); }
+.changelog h4:first-child { margin-top: 0; }
+.changelog h4 .cl-ver { color: var(--accent); font-family: ui-monospace, Consolas, monospace; margin-right: 6px; }
+.changelog h4 .cl-date { color: var(--text-dim); font-weight: 400; font-size: 12px; margin-left: 6px; }
+.changelog ul { margin: 2px 0 0 18px; padding: 0; color: var(--text-dim); font-size: 13px; line-height: 1.5; }
+.changelog p { margin: 2px 0; }
+.changelog code { font-size: 12px; }
+.update-wait { position: fixed; inset: 0; z-index: 60; background: rgba(5, 8, 12, 0.86); display: flex;
+  align-items: center; justify-content: center; padding: 16px; }
+.update-wait[hidden] { display: none; }
+.update-wait .modal-box { text-align: center; }
 
 .tabs {
   display: flex;

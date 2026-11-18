@@ -22,6 +22,7 @@ from .api.auth_api import router as auth_router
 from .api.cases import router as cases_router
 from .api.registry_api import router as registry_router
 from .api.settings_api import router as settings_router
+from .api.version_api import router as version_router
 from .api.yara import router as yara_router
 from .config import settings
 from .deps import log_startup_report, run_checks
@@ -86,6 +87,7 @@ def create_app() -> FastAPI:
     app.include_router(yara_router)
     app.include_router(settings_router)
     app.include_router(ai_router)
+    app.include_router(version_router)
 
     @app.get("/health", response_class=JSONResponse)
     async def health() -> dict:

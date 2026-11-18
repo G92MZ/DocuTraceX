@@ -17,6 +17,8 @@ os.environ.setdefault("DOCUTRACEX_AUTO_MODULES", "yara,ml,c2")
 # The API is behind a sign-in: tests call it directly (test_auth turns this off to
 # exercise the real gate). Only honoured while pytest is loaded.
 os.environ.setdefault("DOCUTRACEX_TEST_NO_AUTH", "1")
+# no background "is there a newer version" call to GitHub from the tests
+os.environ.setdefault("DOCUTRACEX_NO_UPDATE_CHECK", "1")
 
 ROOT = Path(__file__).resolve().parent.parent
 ARCHIVE = ROOT / "samples" / "samples.zip"

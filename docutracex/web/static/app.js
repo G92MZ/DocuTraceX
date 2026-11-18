@@ -8332,3 +8332,135 @@ async function renderAudit() {
   });
   loadMe();
 })();
+
+
+// --- Version: a newer one on GitHub lights up the header; Update (admin); what's new -----
+const VERSION_NOW = (document.getElementById("version-chip")?.textContent || "").trim().replace(/^v/, "");
+let _versionState = null;
+
+function changelogHtml(entries) {
+  // the CHANGELOG.md subset we write: "## X — date (#n)", a bold title, "- " bullets, `code`, **bold**
+  const inline = (t) => escapeHtml(t).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  return `<div class="changelog">${entries.map((e) => {
+    const rest = e.title.replace(e.version, "").replace(/^\s*[—-]\s*/, "");
+    let html = `<h4><span class="cl-ver">v${escapeHtml(e.version)}</span><span class="cl-date">${escapeHtml(rest)}</span></h4>`;
+    let list = false;
+    for (const raw of e.body.split("\n")) {
+      const line = raw.trim();
+      if (!line) continue;
+      if (line.startsWith("- ")) {
+        if (!list) { html += "<ul>"; list = true; }
+        html += `<li>${inline(line.slice(2))}</li>`;
+      } else {
+        if (list) { html += "</ul>"; list = false; }
+        html += `<p>${inline(line)}</p>`;
+      }
+    }
+    return html + (list ? "</ul>" : "");
+  }).join("")}</div>`;
+}
+
+function wideModal(on) {
+  document.querySelector("#modal .modal-box")?.classList.toggle("modal-wide", on);
+}
+
+async function checkVersion(again = 0) {
+  let st;
+  try { st = await fetch("/api/version").then((r) => r.json()); } catch (_e) { return; }
+  _versionState = st;
+  const chip = document.getElementById("version-chip");
+  const btn = document.getElementById("update-btn");
+  if (!chip) return;
+  if (st.update_available) {
+    chip.classList.add("version-new");
+    chip.textContent = `v${st.current} → v${st.latest}`;
+    chip.title = `DocuTraceX ${st.latest} is available (you have ${st.current}). Click to see what changes.`;
+    if (btn) btn.hidden = _me.role !== "admin";
+  } else if (st.checking && again < 6) {
+    setTimeout(() => checkVersion(again + 1), 5000);   // the first check runs in the background
+  }
+}
+
+async function showUpcoming() {
+  if (!_versionState || !_versionState.update_available) return;
+  let up = { entries: [] };
+  try { up = await fetch("/api/version/upcoming").then((r) => r.json()); } catch (_e) { /* offline */ }
+  const admin = _me.role === "admin";
+  const how = `<p>To update, stop DocuTraceX and run <code>python run.py</code> again (it asks before updating)` +
+    (admin ? ", or press <b>Update</b>: it stops DocuTraceX, updates without asking and starts it again." : ".") + "</p>";
+  const body = (up.entries.length ? changelogHtml(up.entries) : "<p>The list of changes could not be read from GitHub.</p>") + how;
+  wideModal(true);
+  const actions = [{ label: "Close", value: "close" }];
+  if (admin) actions.push({ label: "Update now", value: "update", primary: true });
+  const v = await showModal(`DocuTraceX ${_versionState.latest} is available`, body, actions);
+  wideModal(false);
+  if (v === "update") runUpdate();
+}
+
+async function runUpdate() {
+  const st = _versionState || {};
+  let tasks = 0;
+  try { tasks = (await fetch("/api/tasks").then((r) => r.json())).active || 0; } catch (_e) { /* ignore */ }
+  const warn = tasks ? `<p class="bad-text"><b>${tasks} analysis task(s) are still running</b> and will be cut off (run them again afterwards).</p>` : "";
+  const ok = await showModal(`Update to ${st.latest || "the latest version"}?`,
+    `<p>DocuTraceX stops, <code>run.py --update</code> updates it without asking, re-provisions the toolchain and starts it again on the same address. Everyone using it is disconnected for a minute or two; this page reloads by itself.</p>
+     <p>Cases, rules, settings and tools are kept.</p>${warn}`,
+    [{ label: "Cancel", value: false }, { label: tasks ? "Stop the tasks and update" : "Update", value: true, primary: true }]);
+  if (!ok) return;
+  let r;
+  try {
+    r = await fetch("/api/version/update", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force: !!tasks }) });
+  } catch (e) { await showModal("Update not started", `<p>${escapeHtml(e.message)}</p>`, [{ label: "OK", value: 1 }]); return; }
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    await showModal("Update not started", `<p>${escapeHtml(j.detail || j.error || r.statusText)}</p>`, [{ label: "OK", value: 1 }]);
+    return;
+  }
+  waitForRestart(j.from || VERSION_NOW, j.log || "");
+}
+
+function waitForRestart(from, log) {
+  const w = document.createElement("div");
+  w.className = "update-wait";
+  w.innerHTML = `<div class="modal-box"><h3>Updating DocuTraceX…</h3>
+    <p id="update-wait-msg">Stopping, updating and starting again. This page reloads when it is back.</p></div>`;
+  document.body.appendChild(w);
+  const t0 = Date.now();
+  let down = false;
+  const tick = async () => {
+    try {
+      const h = await fetch("/health", { cache: "no-store" }).then((r) => r.json());
+      if (down || h.version !== from) {
+        if (h.version !== from || Date.now() - t0 > 20000) { location.reload(); return; }
+      }
+    } catch (_e) { down = true; }
+    if (Date.now() - t0 > 15 * 60 * 1000) {
+      document.getElementById("update-wait-msg").innerHTML =
+        `It is taking long. Check the window or log of the update${log ? ` (<code>${escapeHtml(log)}</code>)` : ""}, or run <code>python run.py</code> again.`;
+      return;
+    }
+    setTimeout(tick, 2000);
+  };
+  setTimeout(tick, 2500);
+}
+
+async function showWhatsNew() {
+  let wn;
+  try { wn = await fetch("/api/version/whatsnew").then((r) => r.json()); } catch (_e) { return; }
+  if (!wn.entries || !wn.entries.length) return;
+  wideModal(true);
+  await showModal(`What's new since v${wn.since}`,
+    `<p>DocuTraceX was updated to <b>v${escapeHtml(wn.current)}</b>. Changes since the version you had:</p>${changelogHtml(wn.entries)}`,
+    [{ label: "Got it", value: 1, primary: true }]);
+  wideModal(false);
+  fetch("/api/version/seen", { method: "POST" }).catch(() => {});
+}
+
+(async function initVersion() {
+  document.getElementById("version-chip")?.addEventListener("click", showUpcoming);
+  document.getElementById("update-btn")?.addEventListener("click", runUpdate);
+  await loadMe();
+  checkVersion();
+  showWhatsNew();
+})();
