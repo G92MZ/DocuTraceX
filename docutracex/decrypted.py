@@ -37,7 +37,7 @@ MAX_BYTES = 8 * 1024 * 1024
 _B64 = re.compile(r"""["']([A-Za-z0-9+/\r\n]{200,}={0,2})["']""")
 # any quoted base64 / hex literal worth decoding (shorter, but strict alphabet)
 _B64_LIT = re.compile(r"""(?:["']|-e(?:nc|ncodedcommand)?\s+)([A-Za-z0-9+/]{100,}={0,2})(?:["']|\s|$)""")
-_HEX_LIT = re.compile(r"""["']((?:[0-9A-Fa-f]{2}){48,})["']""")
+_HEX_LIT = re.compile(r"""["'](?:0x)?((?:[0-9A-Fa-f]{2}){48,})["']""")   # AutoIt binary strings: "0x4D5A…"
 # PowerShell here-strings (@'…'@ / @"…"@) holding hex split over lines: a payload
 # when long, key material when short (``$k = @'<32 hex bytes>'@`` + a -bxor loop)
 _HERE = re.compile(r"""@(['"])[ \t]*\r?\n(.*?)\r?\n\1@""", re.S)
@@ -395,6 +395,122 @@ def _pe_after_stub(raw: bytes) -> int:
     return 0
 
 
+MAX_CARVED_PES = 8
+PADDING_MIN = 64 * 1024     # bytes after a PE's last section that count as padding (T1027.001)
+
+
+def pe_extent(raw: bytes, at: int = 0) -> int:
+    """Size on disk of the PE starting at ``at`` (headers, sections, Authenticode
+    blob), from its headers alone; 0 when the headers do not hold together."""
+    try:
+        e = at + int.from_bytes(raw[at + 0x3C:at + 0x40], "little")
+        if raw[e:e + 4] != b"PE\0\0":
+            return 0
+        nsec = int.from_bytes(raw[e + 6:e + 8], "little")
+        optsz = int.from_bytes(raw[e + 20:e + 22], "little")
+        if not 0 < nsec <= 96 or optsz > 0x400:
+            return 0
+        opt, sec = e + 24, e + 24 + optsz
+        end = sec + 40 * nsec - at
+        for i in range(nsec):
+            h = sec + 40 * i
+            size = int.from_bytes(raw[h + 16:h + 20], "little")
+            ptr = int.from_bytes(raw[h + 20:h + 24], "little")
+            if size and ptr:
+                end = max(end, ptr + size)
+        magic = int.from_bytes(raw[opt:opt + 2], "little")
+        dd = opt + (96 if magic == 0x10B else 112 if magic == 0x20B else 0)
+        if dd > opt and dd + 40 <= sec:                      # entry 4: the certificate table (file offset)
+            cptr = int.from_bytes(raw[dd + 32:dd + 36], "little")
+            csz = int.from_bytes(raw[dd + 36:dd + 40], "little")
+            if cptr and csz and cptr + csz <= len(raw) - at + 0x1000:
+                end = max(end, cptr + csz)
+        avail = len(raw) - at
+        if end > avail and end - avail <= max(0x10000, end // 20):
+            end = avail                                      # a few KB short: kept, cut where the bytes end
+        return end if 0 < end <= avail else 0
+    except (IndexError, ValueError):
+        return 0
+
+
+def _valid_mz(raw: bytes, i: int) -> bool:
+    off = int.from_bytes(raw[i + 0x3C:i + 0x40], "little")
+    return 0x40 <= off < 0x400 and raw[i + off:i + off + 4] == b"PE\0\0"
+
+
+def carve_pes(raw: bytes, start: int = 0, inner: bool = False) -> list[tuple[int, int]]:
+    """(offset, size) of the PEs lying one after another in ``raw`` from ``start``
+    (a loader DLL and the program it maps, behind a shellcode stub). MZ headers
+    inside a PE already carved (its resources, overlay) are not separate PEs —
+    unless ``inner``: a reflective loader packed as shellcode often carries the
+    program inside its own sections, and that program is the payload."""
+    out: list[tuple[int, int]] = []
+    i = start
+    while len(out) < MAX_CARVED_PES:
+        i = raw.find(b"MZ", i)
+        if i < 0:
+            break
+        if not _valid_mz(raw, i):
+            i += 2
+            continue
+        size = pe_extent(raw, i)
+        out.append((i, size))
+        i += 0x40 if inner else max(size, 0x40)
+    return out
+
+
+def _padding(tail: bytes) -> str:
+    """What fills the bytes after a PE: zeros, one repeated pattern, or text."""
+    sample = tail[:1 << 20]
+    if not sample.strip(b"\0"):
+        return "zeros"
+    if len(set(sample[i:i + 16] for i in range(0, min(len(sample), 1 << 16), 16))) <= 4:
+        return "a repeated pattern"
+    printable = sum(1 for b in sample[:65536] if 32 <= b < 127 or b in (9, 10, 13))
+    return "text (word lists, CSS, script)" if printable >= min(len(sample), 65536) * 0.9 else "junk bytes"
+
+
+def payload_children(raw: bytes, how: str, origin: str, keys: dict[str, list[bytes]] | None = None,
+                     recipe: list[str] | None = None) -> list[dict[str, Any]]:
+    """``payload_child``, but every PE behind a shellcode stub (or one after another
+    in the bytes) becomes its own child, cut to its real size: the padding behind it
+    (word lists, CSS, zeros) is left out and named in the recipe."""
+    pe_at = _pe_after_stub(raw)
+    if not pe_at and not (raw[:2] == b"MZ" and _valid_mz(raw, 0)):
+        p = payload_child(raw, how, origin, keys=keys, recipe=recipe)
+        return [p] if p else []
+    pes = carve_pes(raw, pe_at, inner=bool(pe_at))
+    out = []
+    for k, (at, size) in enumerate(pes):
+        # the next PE that starts after this one ends (an inner PE does not cut its host)
+        nxt = next((a for a, _s in pes[k + 1:] if a >= at + size), len(raw)) if size else \
+            (pes[k + 1][0] if k + 1 < len(pes) else len(raw))
+        end = at + size if size else nxt
+        steps = list(recipe or []) + (["shellcode stub"] if pe_at else []) + [f"PE at +0x{at:x}"]
+        note = ""
+        pad = nxt - end
+        if size and pad >= PADDING_MIN:
+            kind = _padding(raw[end:nxt])
+            steps.append(f"padding stripped ({pad} bytes of {kind})")
+            note = f", {pad} bytes of padding ({kind}) after it left out"
+        what = (f"shellcode stub + PE {k + 1}/{len(pes)}" if pe_at else f"PE {k + 1}/{len(pes)}") if len(pes) > 1 \
+            else ("shellcode stub + PE" if pe_at else "PE")
+        out.append({"how": how, "ext": _pe_ext(raw[at:end]), "data": raw[at:end], "recipe": steps,
+                    "origin": f"{origin} → {what} at offset 0x{at:x} ({end - at} bytes{note})"})
+    if not out:
+        p = payload_child(raw, how, origin, keys=keys, recipe=recipe)
+        return [p] if p else []
+    return out
+
+
+def _pe_ext(pe: bytes) -> str:
+    try:
+        e = int.from_bytes(pe[0x3C:0x40], "little")
+        return ".dll" if int.from_bytes(pe[e + 22:e + 24], "little") & 0x2000 else ".exe"
+    except (IndexError, ValueError):
+        return ".exe"
+
+
 def payload_child(raw: bytes, how: str, origin: str, keys: dict[str, list[bytes]] | None = None,
                   recipe: list[str] | None = None) -> dict[str, Any] | None:
     """``classify``, except that shellcode stays the exact bytes (never text)."""
@@ -439,6 +555,21 @@ def byte_arrays(code: str, binary_only: bool = False) -> list[tuple[str, bytes]]
     else:   # decimal lists are everywhere (tables, char codes): only as payloads
         out = [(k, b) for k, b in out if k != "number array" or _is_binary_payload(b) or _magic_ext(b)]
     return out
+
+
+def python_bytes_literals(code: str, min_size: int = 512) -> list[bytes]:
+    """Bytes literals of Python source as Python reads them (largest first); [] when
+    the text does not parse as Python."""
+    import ast
+    if "b'" not in code and 'b"' not in code and "B'" not in code and 'B"' not in code:
+        return []
+    try:
+        tree = ast.parse(code)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return []
+    found = {n.value for n in ast.walk(tree) if isinstance(n, ast.Constant)
+             and isinstance(n.value, bytes) and len(n.value) >= min_size}
+    return sorted(found, key=len, reverse=True)[:8]
 
 
 def _decode_literals(code: str) -> list[tuple[str, bytes]]:
@@ -537,6 +668,7 @@ def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[s
     # layers, Execute'd strings, exec chains): each one is ALSO a nested child
     # with its recipe, analysed again on its own (its deeper layers come out
     # there, one level down).
+    carved_raw: list[bytes] = []          # binary stages carved whole (shellcode, PE)
     for key, ext in (("powershell", ".ps1"), ("vbscript", ".vbs"), ("python", ".py"), ("batch", ".bat")):
         for sc in (mods.get(key) or {}).get("scripts") or []:
             if not isinstance(sc, dict) or sc.get("from_nested"):
@@ -549,9 +681,9 @@ def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[s
                         raw = base64.b64decode(st["data_b64"])
                     except (ValueError, TypeError):
                         continue
-                    p = payload_child(raw, f"{key}-stage", f"{key} {loc}: {' → '.join(recipe)}", recipe=recipe)
-                    if p:
-                        out.append(p)
+                    carved_raw.append(raw)
+                    out += payload_children(raw, f"{key}-stage", f"{key} {loc}: {' → '.join(recipe)}",
+                                            recipe=recipe)
                     continue
                 if worth_text_child(text, ext if len(text.strip()) >= 8 else None):
                     out.append({"how": f"{key}-stage", "origin": f"{key} {loc}: {' → '.join(recipe)}",
@@ -563,14 +695,12 @@ def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[s
         olevba = (((mods.get(mkey) or {}).get("tools") or {}).get("olevba") or {})
         code = olevba.get("_full_code") or "\n".join(m.get("code") or "" for m in olevba.get("modules") or [])
         for kind, raw in byte_arrays(code, binary_only=True)[:PER_SCRIPT] if code else []:
-            p = payload_child(raw, f"vba-{kind}", f"VBA macro: {kind}", recipe=["vba", kind])
-            if p:
-                out.append(p)
+            out += payload_children(raw, f"vba-{kind}", f"VBA macro: {kind}", recipe=["vba", kind])
 
     # Every encoded literal in the recovered code (base64 / hex, gzip/zlib in
     # them) is decoded and becomes a child, whatever comes out — unless the
     # deobfuscator already inlined it in the code that was analysed.
-    langs = ("javascript", "powershell", "vbscript", "batch", "python")
+    langs = ("javascript", "powershell", "vbscript", "batch", "python", "script")
     scripts = [(key, sc, *_sources(sc, root)) for key in langs
                for sc in (mods.get(key) or {}).get("scripts") or []
                # scripts surfaced from nested children are handled by that child
@@ -588,19 +718,29 @@ def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[s
         # only when they turn out to be a FILE (e.g. HTML smuggling's PE),
         # since their text/decryption is already in the analysed code
         for resolved, code in ((False, src), (True, orig)):
-            for kind, raw in _decode_literals(code):
+            lits = _decode_literals(code)
+            if key == "python":
+                # whole bytes literals first (b'MZ\x90…text…' mixes escapes and plain
+                # characters); the \x runs cut out of them are not payloads of their own
+                whole = [("bytes literal", b) for b in python_bytes_literals(code)]
+                lits = whole + [(k, b) for k, b in lits
+                                if not (whole and k == "escaped bytes") and not any(b in w for _k, w in whole)]
+            for kind, raw in lits:
                 if n >= PER_SCRIPT or raw in seen_lits:
                     continue
+                if carved_raw and (kind == "escaped bytes" and key == "python"
+                                   or len(raw) < (1 << 20) and any(raw in big for big in carved_raw)):
+                    continue                   # pieces of a payload already carved whole
+
                 seen_lits.add(raw)
-                p = payload_child(raw, f"{key}-{kind}", f"{key} {loc}: {kind} literal", keys=keys, recipe=[kind])
-                if not p:
-                    continue
-                if resolved and not (p.get("ext") and p["ext"] != ".bin"):
-                    continue
-                if "text" in p and _already_in(p["text"], analysed):
-                    continue           # already decoded in place and analysed
-                out.append(p)
-                n += 1
+                for p in payload_children(raw, f"{key}-{kind}", f"{key} {loc}: {kind} literal",
+                                          keys=keys, recipe=[kind]):
+                    if resolved and not (p.get("ext") and p["ext"] != ".bin"):
+                        continue
+                    if "text" in p and _already_in(p["text"], analysed):
+                        continue           # already decoded in place and analysed
+                    out.append(p)
+                    n += 1
 
     # Unique by content.
     seen: set[str] = set()

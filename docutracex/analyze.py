@@ -253,6 +253,7 @@ def _try_7z_archive(run, original: Path, paths: CasePaths, user_pw: str | None, 
     files = arc.pop("_files", [])
     if not arc:
         return False
+    _interpreter_findings(arc, files, original.name)
     if not files and not arc.get("encrypted"):
         # 7-Zip listed it but nothing usable came out (corrupt, bomb guard...): the
         # failed attempt is in the Tasks tab; analyse it as an unknown file.
@@ -267,6 +268,25 @@ def _try_7z_archive(run, original: Path, paths: CasePaths, user_pw: str | None, 
             write_subresult(paths, "nested", nested_res)
             ran.append("nested")
     return True
+
+
+def _interpreter_findings(arc: dict[str, Any], files: list[tuple[str, str]], where: str) -> None:
+    """A portable interpreter among the archive's entries (pythonw.exe + python3XX._pth,
+    node.exe, javaw.exe + jvm.dll, AutoIt3.exe…): finding on the archive's result."""
+    if not arc or not files:
+        return
+    try:
+        from . import interpreters
+        got = interpreters.findings([(n, f) for f, n in files], where)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("interpreter check skipped: %s", exc)
+        return
+    if got:
+        arc.setdefault("findings", []).extend(got)
+        counts = arc.setdefault("counts", {})
+        counts["findings"] = counts.get("findings", 0) + len(got)
+        if arc.get("status") == "ok":
+            arc["status"] = "ok_with_findings"
 
 
 def _probe_record(p: dict[str, Any]) -> dict[str, Any]:
@@ -891,6 +911,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 
         arc = run("archive: list · extract (bounded) · password (analyst / defaults)", _archive) or {}
         files = arc.pop("_files", [])
+        _interpreter_findings(arc, files, original.name)
         if arc:
             write_subresult(paths, "archive", arc)
             ran.append("archive")
@@ -1092,6 +1113,28 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             findings_total += nst.get("counts", {}).get("findings", 0)
             family = "archive"   # not "unknown" any more: no text fallback over the raw archive
 
+    # An HTML page that is also a program in another language (polyglot): finding,
+    # and the code around the page goes to the nested analysis with the stages.
+    poly_children: list[dict[str, Any]] = []
+    try:
+        from . import polyglot
+        if family not in ("email", "ooxml", "ole", "pdf", "rtf") and original.is_file() \
+                and original.stat().st_size <= polyglot.MAX_SIZE:
+            prec = polyglot.detect(original.read_bytes(), original.name)
+            if prec:
+                pres = {"module": "polyglot", "status": "ok",
+                        "findings": [polyglot.finding(prec, original.name)],
+                        **{k: prec[k] for k in ("language", "how", "lines", "suspicious")}}
+                got = polyglot.write_child(prec, original.name, paths.extracted_dir / "polyglot")
+                if got:
+                    pres["code_file"] = got["filename"]
+                    poly_children.append(got)
+                write_subresult(paths, "polyglot", pres)
+                ran.append("polyglot")
+                findings_total += 1
+    except Exception as exc:  # noqa: BLE001  (never fails the case)
+        log.warning("polyglot check skipped for %s: %s", paths.root.name, exc)
+
     # HTML / SVG / MHT page, or the HTML body of an email: offline preview (no JavaScript,
     # no network), structure, phishing rules (the email engine already judged a body),
     # QR codes drawn with HTML / CSS, and the victim's prefilled address.
@@ -1244,6 +1287,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         log.warning("Could not surface nested code for %s: %s", paths.root.name, exc)
 
     code_children: list[dict[str, Any]] = []      # files the code analysis recovers (go:embed, streams)
+    code_children += poly_children
     # Go Malware Intelligence — identification of every PE / ELF / Mach-O object
     # of the case (original + nested, after unpacking), before YARA / ML / C2 so
     # they can use it. Own parser + GoReSym contrast; never fails the case.

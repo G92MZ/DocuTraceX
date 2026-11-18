@@ -14,6 +14,14 @@ with a `.lnk` and a `.bat` (the Mark-of-the-Web bypass) shows both with what the
 
 ![An ISO image with a shortcut and a batch file](../assets/shots/archives/iso.webp){ .shot }
 
+**Portable interpreters.** An archive (or an installer, see *Installers*) that brings its own
+interpreter — the embeddable Python (`pythonw.exe` + `python3XX._pth` / `.zip` / `.dll`),
+`node.exe`, a private JRE (`javaw.exe` + `jvm.dll`), `AutoIt3.exe`, AutoHotkey, portable Ruby,
+Perl, PHP, Lua, Tcl, PowerShell 7… — is reported as an **embedded *language* interpreter**, with
+its runtime files, the scripts it can run and the files in the bundle that launch it. High when it
+runs without a window, a launcher in the bundle starts it, or what it is given does not look like
+that language (`node.exe readme.txt`, `pythonw.exe notas.html`).
+
 !!! tip "Passwords"
     An encrypted archive is opened with the password you give, a password **the carrying email
     states** (in many languages: *"la contraseña es…"*), or the usual defaults (`infected`…).

@@ -429,6 +429,9 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
                     kids.append((Path(e["file"]), Path(e["name"]).name))
                     if "/" in e["name"].replace("\\", "/").strip("/"):
                         members[str(Path(e["file"]))] = e["name"]
+            from . import interpreters
+            add_findings(interpreters.findings([(e["name"], e.get("file")) for e in rec["entries"]],
+                                               f"nested:{this_chain}"), "archive")
         elif kind in ("ooxml", "ole"):
             from .parsers import oletools_suite
             with timed("oletools"):
@@ -587,6 +590,24 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
     except Exception as exc:  # noqa: BLE001
         node.setdefault("code_error", f"html: {exc}")
 
+    # An HTML page that is also a program (Python in a triple-quoted string, PowerShell
+    # in <# #>, a <!-- : batch hybrid…): the code around the page becomes a child,
+    # analysed by its language (layers peeled, byte arrays carved…).
+    if depth < MAX_DEPTH and kind not in ("binary", "archive", "ooxml", "ole", "pdf", "email", "onenote"):
+        try:
+            from . import polyglot
+            with timed("polyglot"):
+                prec = polyglot.detect(data, name)
+            if prec:
+                add_findings([polyglot.finding(prec, f"nested:{this_chain}")], "polyglot")
+                got = polyglot.write_child(prec, name, work / "polyglot" / node["sha256"][:12])
+                if got:
+                    kids.append((Path(got["path"]), got["filename"]))
+                    origins[got["path"]] = got["origin"]
+                    node["polyglot"] = {k: prec[k] for k in ("language", "how", "lines", "suspicious")}
+        except Exception as exc:  # noqa: BLE001
+            node.setdefault("code_error", f"polyglot: {exc}")
+
     # Deobfuscation phase on THIS child: JavaScript / PowerShell / VBScript that
     # hides inside the child's own structure (VBA JScript, PDF /JS, email body
     # scripts, commands mined from VBA/DDE) is deobfuscated statically (no V8
@@ -603,8 +624,13 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
         try:
             from . import decrypted
             with timed("decrypted stages"):
-                got = decrypted.write(decrypted.payloads_from(mods, paths.root),
-                                      work / decrypted.DIRNAME / node["sha256"][:12], {node["sha256"]})
+                # a stage an ancestor already carved (the PE behind the shellcode that the
+                # decoded loader also holds) is not added again one level down
+                lineage = ctx.setdefault("_carved_shas", set())
+                pays = decrypted.payloads_from(mods, paths.root)
+                got = decrypted.write(pays, work / decrypted.DIRNAME / node["sha256"][:12],
+                                      {node["sha256"]} | lineage)
+                lineage.update(p["sha256"] for p in pays)
             for it in got:
                 kids.append((Path(it["path"]), it["filename"]))
                 origins[it["path"]] = it["origin"]
@@ -858,7 +884,7 @@ def _scan_code_languages(abs_path: Path, paths: CasePaths, node: dict[str, Any],
     deobfuscated code is merged back into ``mods`` so the common IOC builder
     mines it, and the complete source is dumped under ``extracted/code/.../nested/``."""
     from . import codefiles, decrypted
-    from .parsers import batch, javascript, powershell, python, vbscript
+    from .parsers import batch, genscript, javascript, powershell, python, vbscript
 
     # A path that does not exist, so each collector's ``extracted_dir.rglob``
     # yields nothing and only the child file + its mods are scanned.
@@ -876,6 +902,8 @@ def _scan_code_languages(abs_path: Path, paths: CasePaths, node: dict[str, Any],
         ("batch", lambda: batch.analyze(abs_path, empty, mods), "batch", "bat"),
         ("powershell", lambda: powershell.analyze(abs_path, empty, mods), "powershell", "ps1"),
         ("python", lambda: python.analyze(abs_path, empty, mods), "python", "py"),
+        # AutoIt, Lua, Ruby, Perl, Tcl, shell, PHP… (polyglot code, scripts next to a portable interpreter)
+        ("script", lambda: genscript.analyze(abs_path), "script", "txt"),
     )
     timed = timed or (lambda _tool: contextlib.nullcontext())
     for key, fn, sub, ext in specs:
