@@ -316,6 +316,18 @@ def _stage_text(code: str) -> str:
     return text if len(text) <= _STAGE_TEXT else text[:text.rfind("\n", 0, _STAGE_TEXT) + 1]
 
 
+def _source_binaries(src: str) -> list[dict[str, Any]]:
+    """Payloads written as bytes literals in a script without exec layers (a loader's
+    ``buf = b'\\xe9…'``): read whole from the source, which the displayed code cuts."""
+    import base64
+
+    from ..decrypted import python_bytes_literals
+    if len(src) < 2048:
+        return []
+    return [{"recipe": ["bytes literal"], "data_b64": base64.b64encode(raw).decode()}
+            for raw in python_bytes_literals(src)[:4] if len(raw) <= _MAX_BIN_STAGE]
+
+
 def _binary_stages(lay: dict[str, Any]) -> list[dict[str, Any]]:
     """Payloads written as bytes in the last peeled layer (``b"\\xe9\\x23…"`` shellcode, a PE):
     the layer's text is cut for display, so they are carved from the whole of it."""
@@ -395,7 +407,7 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any] | None 
             "decoded_stages": ([{"recipe": _squash(lay["steps"]) + (["code object"] if lay["kind"] == "marshal" else []),
                                  "text": _stage_text(lay.get("code") or "")}]
                                if not is_pyc and lay.get("layers") and (lay.get("code") or "").strip() else [])
-                              + _binary_stages(lay),
+                              + (_binary_stages(lay) or ([] if is_pyc else _source_binaries(src))),
             "source": source_kind, "python_version": pyver,
             "hits": hits, "metrics": mets, "_full_code": code,
         }

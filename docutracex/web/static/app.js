@@ -757,6 +757,7 @@ function pivotTarget(f, ids) {
   if (src === "powershell" || src === "boxps") return has("powershell") ? "powershell" : null;
   if (src === "vbscript") return has("vbscript") ? "vbscript" : null;
   if (src === "batch") return has("batch") ? "batch" : null;
+  if (src === "script") return has("script") ? "script" : null;
   // The Binary tab's id is "msi" (MSI and PE share it; label "Binary" for a PE).
   if (src === "python" || src === "pyinstaller") return has("python") ? "python" : (has("msi") ? "msi" : null);
   if (src === "pe" || src === "msi") return has("msi") ? "msi" : null;
@@ -3831,6 +3832,12 @@ async function openComponents(analysisId, keepTab, viewId) {
     if (pym && (pym.scripts || []).length) {
       sections.push({ id: "python", label: `Python (${pym.scripts.length})`,
         html: paneCodeLanguage(pym, { label: "Python", noun: "module", src: "python", markKind: "py_hit" }) });
+    }
+    const gsm = mods.script;
+    if (gsm && (gsm.scripts || []).length) {
+      const langs = [...new Set(gsm.scripts.map((x) => x.kind).filter(Boolean))];
+      sections.push({ id: "script", label: `${langs.length === 1 ? langs[0] : "Scripts"} (${gsm.scripts.length})`,
+        html: paneCodeLanguage(gsm, { label: langs.join(" / ") || "Script", noun: "script", src: "script", markKind: "script_hit" }) });
     }
     const gom = mods.golang;
     if (gom && (gom.objects || []).some((o) => (o.result || {}).state && (o.result || {}).state !== "Not detected")) {

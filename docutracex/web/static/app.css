@@ -1109,3 +1109,9 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
 .panel img, .panel iframe, .panel table { max-width: 100%; }
 /* a table wider than its panel scrolls inside it instead of spilling over the edge */
 .panel .table-wrap, .net-view .table-wrap { overflow-x: auto; }
+/* column headers are short words: never split them letter by letter ("Li / ne") */
+th { overflow-wrap: normal; word-break: normal; }
+/* Hex on a phone: the grid scrolls inside its box, the bar's controls shrink to the screen */
+.hex-root, .hex-main, .hex-main > *, .hex-bar > * { min-width: 0; max-width: 100%; }
+@media (max-width: 900px) { .hex-main { grid-template-columns: minmax(0, 1fr); } }
+.hex-root { grid-template-columns: minmax(0, 1fr); }

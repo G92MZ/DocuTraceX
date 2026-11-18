@@ -433,6 +433,77 @@ def pe_extent(raw: bytes, at: int = 0) -> int:
         return 0
 
 
+def _pe_layout(raw: bytes, at: int = 0) -> dict[str, Any] | None:
+    """Headers of the PE at ``at``: sections, SizeOfHeaders / SizeOfImage, import RVA."""
+    import struct
+    try:
+        e = at + struct.unpack_from("<I", raw, at + 0x3C)[0]
+        nsec, = struct.unpack_from("<H", raw, e + 6)
+        optsz, = struct.unpack_from("<H", raw, e + 20)
+        opt = e + 24
+        magic, = struct.unpack_from("<H", raw, opt)
+        dd = opt + (96 if magic == 0x10B else 112)
+        secs = [struct.unpack_from("<IIII", raw, e + 24 + optsz + 40 * i + 8)    # VirtualSize, VA, SizeOfRawData, Ptr
+                for i in range(min(nsec, 96))]
+        return {"secs": secs, "headers": struct.unpack_from("<I", raw, opt + 60)[0],
+                "image": struct.unpack_from("<I", raw, opt + 56)[0],
+                "imports": struct.unpack_from("<I", raw, dd + 8)[0] if dd + 12 <= opt + optsz else 0}
+    except struct.error:
+        return None
+
+
+def _dll_name_at(raw: bytes, at: int, lay: dict[str, Any], mapped: bool) -> bool:
+    """The first import descriptor's DLL name reads as one, with RVAs taken as file
+    offsets (``mapped``) or converted through the section table."""
+    import struct
+
+    def off(rva: int) -> int | None:
+        if mapped:
+            return at + rva
+        for vsz, va, rsz, ptr in lay["secs"]:
+            if va <= rva < va + max(vsz, rsz):
+                return at + rva - va + ptr
+        return None
+    try:
+        o = off(lay["imports"])
+        if o is None:
+            return False
+        o2 = off(struct.unpack_from("<I", raw, o + 12)[0])
+        if o2 is None:
+            return False
+        name = raw[o2:o2 + 64].split(b"\0", 1)[0]
+        return bool(re.fullmatch(rb"[A-Za-z0-9_.\-]{1,60}\.(?:dll|DLL|drv|sys|exe)", name))
+    except struct.error:
+        return False
+
+
+def is_mapped_pe(raw: bytes, at: int = 0) -> bool:
+    """A PE stored as it lies in memory (each section at its RVA, as a loader mapped it
+    or a dump left it), not as a file: its imports only make sense with RVAs as offsets."""
+    lay = _pe_layout(raw, at)
+    if not lay or not lay["imports"] or not lay["secs"]:
+        return False
+    if any(va != ptr for _v, va, _r, ptr in lay["secs"] if ptr):
+        return _dll_name_at(raw, at, lay, True) and not _dll_name_at(raw, at, lay, False)
+    return False
+
+
+def unmap_pe(raw: bytes, at: int = 0) -> bytes:
+    """The file form of a PE kept in memory layout: headers, then each section copied
+    from its RVA to its PointerToRawData (what pefile, LIEF and debloat expect)."""
+    lay = _pe_layout(raw, at)
+    if not lay:
+        return raw[at:]
+    end = max((ptr + rsz for _v, _va, rsz, ptr in lay["secs"]), default=0)
+    out = bytearray(max(end, lay["headers"]))
+    out[:lay["headers"]] = raw[at:at + lay["headers"]]
+    for _vsz, va, rsz, ptr in lay["secs"]:
+        if rsz and ptr:
+            chunk = raw[at + va:at + va + rsz]
+            out[ptr:ptr + len(chunk)] = chunk
+    return bytes(out)
+
+
 def _valid_mz(raw: bytes, i: int) -> bool:
     off = int.from_bytes(raw[i + 0x3C:i + 0x40], "little")
     return 0x40 <= off < 0x400 and raw[i + off:i + off + 4] == b"PE\0\0"
@@ -495,8 +566,16 @@ def payload_children(raw: bytes, how: str, origin: str, keys: dict[str, list[byt
             note = f", {pad} bytes of padding ({kind}) after it left out"
         what = (f"shellcode stub + PE {k + 1}/{len(pes)}" if pe_at else f"PE {k + 1}/{len(pes)}") if len(pes) > 1 \
             else ("shellcode stub + PE" if pe_at else "PE")
-        out.append({"how": how, "ext": _pe_ext(raw[at:end]), "data": raw[at:end], "recipe": steps,
-                    "origin": f"{origin} → {what} at offset 0x{at:x} ({end - at} bytes{note})"})
+        data = raw[at:end]
+        if is_mapped_pe(raw, at):
+            # kept as it lies in memory (a loader's mapped copy): back to its file form, from
+            # SizeOfImage bytes, so its imports, resources and padding read as in any PE
+            lay = _pe_layout(raw, at) or {}
+            data = unmap_pe(raw[:at + max(lay.get("image") or 0, end - at)], at)
+            steps.append("unmapped (memory layout → file)")
+            note += ", stored in memory layout: rebuilt as a file"
+        out.append({"how": how, "ext": _pe_ext(data), "data": data, "recipe": steps,
+                    "origin": f"{origin} → {what} at offset 0x{at:x} ({len(data)} bytes{note})"})
     if not out:
         p = payload_child(raw, how, origin, keys=keys, recipe=recipe)
         return [p] if p else []

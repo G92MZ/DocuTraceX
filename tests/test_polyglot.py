@@ -179,3 +179,39 @@ def test_standalone_au3_runs_the_generic_engine(tmp_path: Path) -> None:
     tree = json.loads((root / "results" / "nested.json").read_text())["tree"]
     names = [n["filename"] for n in tree]
     assert any(n.endswith(".dll") for n in names) and any(n.endswith(".exe") for n in names)
+
+
+def test_pe_in_memory_layout_is_unmapped_and_its_resource_padding_found(tmp_path: Path) -> None:
+    """A loader's payload kept as it lies in memory (sections at their RVAs): carved, rebuilt
+    as a file (its imports read again) and its 2 MB resource padding left to debloat."""
+    file_form, mem = ms._inert_pe_resources(b"inert " * 20, rsrc_pad=2 * 1024 * 1024)
+    assert decrypted.is_mapped_pe(mem) and not decrypted.is_mapped_pe(file_form)
+    kids = decrypted.payload_children(ms.mapped_payload_shellcode(), "python-stage", "python x")
+    assert len(kids) == 1 and "unmapped (memory layout → file)" in kids[0]["recipe"]
+    import pefile
+    pe = pefile.PE(data=kids[0]["data"])
+    assert [e.dll for e in pe.DIRECTORY_ENTRY_IMPORT] == [b"KERNEL32.dll"]
+    from docutracex.parsers import debloat_pe
+    if not debloat_pe.available():
+        pytest.skip("debloat not installed")
+    src = tmp_path / "payload.exe"
+    src.write_bytes(kids[0]["data"])
+    rec = debloat_pe.run(src, tmp_path / "debloated.exe")
+    assert rec["status"] == "debloated" and rec["size_after"] < 64 * 1024
+
+
+def test_python_loader_without_layers_gives_its_payload_whole() -> None:
+    """A plain .py loader (no exec layer) with a multi-MB b'…' literal: the literal is a
+    binary stage, read from the whole source (the displayed code is cut)."""
+    from docutracex.parsers.python import _source_binaries
+    st = _source_binaries(ms.mapped_payload_py().decode())
+    assert len(st) == 1 and st[0]["recipe"] == ["bytes literal"]
+
+
+def test_generic_scripts_have_a_code_tab_shape(tmp_path: Path) -> None:
+    from docutracex.parsers import genscript
+    p = tmp_path / "loader.au3"
+    p.write_bytes(ms.autoit_loader_au3())
+    sc = genscript.analyze(p)["scripts"][0]
+    assert sc["kind"] == "AutoIt" and sc["metrics"]["lines"] > 3
+    assert all({"label", "line_no", "line", "severity"} <= set(h) for h in sc["hits"])

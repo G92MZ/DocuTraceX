@@ -49,6 +49,14 @@ RULES: list[tuple[str, str, str, re.Pattern[str]]] = [
 ]
 
 
+def _metrics(code: str) -> dict[str, Any]:
+    from .javascript import metrics
+    try:
+        return metrics(code[:2_000_000])
+    except Exception:  # noqa: BLE001
+        return {"lines": code.count("\n") + 1}
+
+
 def _lang(path: Path) -> str | None:
     return LANGS.get(path.suffix.lower())
 
@@ -68,7 +76,10 @@ def analyze(original: Path, extracted_dir: Path | None = None,
         m = rx.search(code[:4_000_000])
         if m:
             line = code.count("\n", 0, m.start()) + 1
-            hits.append({"rule": rule, "severity": sev, "line": line, "match": m.group(0)[:200]})
+            a = code.rfind("\n", 0, m.start()) + 1
+            b = code.find("\n", m.start())
+            hits.append({"rule": rule, "severity": sev, "label": what, "line_no": line,
+                         "line": code[a:b if b >= 0 else len(code)][:300], "match": m.group(0)[:200]})
             res["findings"].append({"tool": "script", "rule": rule, "severity": sev,
                                     "detail": f"[{original.name}] {lang} script {what}",
                                     "location": f"file:{original.name}:{line}",
@@ -81,5 +92,6 @@ def analyze(original: Path, extracted_dir: Path | None = None,
     res["scripts"].append({"id": 1, "kind": lang, "origin": f"file:{original.name}",
                            "location": f"file:{original.name}", "size": len(code),
                            "code": code[:_KEEP], "code_truncated": len(code) > _KEEP,
-                           "hits": hits, "_full_code": code})
+                           "hits": hits, "_full_code": code,
+                           "metrics": _metrics(code)})
     return res
