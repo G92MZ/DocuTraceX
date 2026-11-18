@@ -136,6 +136,7 @@ include = ["docutracex*"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+extend-exclude = ["docutracex/vendor/autoit_ripper"]   # third-party, kept unmodified
 
 [tool.pytest.ini_options]
 # Only our tests: tools/ holds third-party interpreters (PyPy ships its own tests).

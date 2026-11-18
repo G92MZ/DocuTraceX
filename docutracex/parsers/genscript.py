@@ -171,9 +171,13 @@ def analyze(original: Path, extracted_dir: Path | None = None,
             return res
         res["sniffed"] = lang
     try:
-        code = original.read_bytes()[:MAX_BYTES].decode("utf-8", "replace")
+        blob = original.read_bytes()[:MAX_BYTES]
     except OSError:
         return res
+    from ..contentcheck import is_text
+    if not is_text(blob):
+        return res                      # binary under a script name: not code (see contentcheck)
+    code = blob.decode("utf-8", "replace")
     hits = []
     for rule, sev, what, rx in RULES:
         m = rx.search(code[:4_000_000])

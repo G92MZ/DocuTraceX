@@ -7,6 +7,17 @@ of a shortcut, a PDF, an archive entry — and on the stages those scripts decod
 
 ## How a script is analysed
 
+0. **Content before extension.** A file named like a script (`.au3`, `.py`, `.pl`, `.ps1`, `.js`, `.vbs`,
+   `.bat`…) has to be text to be read as one. UTF-16 with or without BOM, ANSI and encoded
+   `.vbe` / `.jse` count as text. Binary content is reported (*disguised_binary*: the extension says
+   one thing, the content another) and **not** read as code. Instead it goes down the binary path:
+   - it is identified by its content (a PE, a ZIP, an OLE…);
+   - the pieces embedded anywhere in it are carved out as children: a compiled AutoIt blob with junk
+     in front, PEs cut to their real size, ZIP / 7z / CAB / OLE / PDF.
+
+   Compiled AutoIt is always decompiled: AutoIt-Ripper (MIT) ships with DocuTraceX and is used when
+   the portable Python does not have its own copy.
+
 1. **Deobfuscate first.** Encodings (Base64, hex, percent, char codes), XOR and compression
    layers, string tricks (concatenation, reversal, `replace`, format operators) and the usual
    obfuscators (obfuscator.io, JSFuck, Invoke-Obfuscation, DOSfuscation, PyArmor…) are peeled,

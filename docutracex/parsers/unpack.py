@@ -223,7 +223,7 @@ def tool_status() -> dict[str, str]:
     return {"die": p(die), "upx": p(upx_exe()), "innoextract": p(innoextract_exe()),
             "innounp": p(innounp_exe()),
             "7zip": p(sevenzip_exe()), "nuitka-extractor": p(nuitka_exe()),
-            "autoit-ripper": "portable" if _has_module("autoit_ripper") else "",
+            "autoit-ripper": "portable" if _has_module("autoit_ripper") else "bundled",
             "evbunpack": "portable" if _has_module("evbunpack") else ""}
 
 
@@ -499,11 +499,14 @@ def _unpack_upx(path: Path, out: Path) -> dict[str, Any]:
 
 
 def _unpack_autoit(path: Path, out: Path) -> dict[str, Any]:
-    if not _has_module("autoit_ripper"):
-        return {"status": "not_provisioned", "tool": "autoit-ripper",
-                "detail": "AutoIt-Ripper not installed in the portable Python"}
+    """AutoIt-Ripper: the portable Python's when it has it, else the copy bundled with
+    DocuTraceX (docutracex/vendor, MIT), run with this interpreter — always in a child process."""
     out.mkdir(parents=True, exist_ok=True)
-    r = _run([str(_portable()), "-m", "autoit_ripper.cli", str(path), str(out)], UNPACK_TIMEOUT)
+    if _has_module("autoit_ripper"):
+        r = _run([str(_portable()), "-m", "autoit_ripper.cli", str(path), str(out)], UNPACK_TIMEOUT)
+    else:
+        runner = Path(__file__).resolve().parent.parent / "vendor" / "run_autoit_ripper.py"
+        r = _run([sys.executable, "-I", str(runner), str(path), str(out)], UNPACK_TIMEOUT)
     rec = {"tool": "autoit-ripper", "duration_s": r["duration_s"]}
     if any(out.iterdir()):
         return {**rec, "status": "ok", "detail": "AutoIt script recovered"}
