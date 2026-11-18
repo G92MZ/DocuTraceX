@@ -71,3 +71,35 @@ def test_disguised_autoit_au3_is_decompiled_end_to_end(tmp_path: Path) -> None:
     walk(mods["nested"]["tree"])
     assert any(n.endswith(".a3x") for n in names) and "script.au3" in names
     assert any(n.endswith(".dll") for n in names) and any(n.endswith(".exe") for n in names)
+
+
+def test_autoit_strings_are_decrypted_with_the_scripts_own_decoders(tmp_path: Path) -> None:
+    """Obfuscated AutoIt: every string behind the script's decoders (hex + XOR in a junk state
+    machine, dotted decimals; numbers as the decompiler prints them). Decrypted statically, the
+    behaviour shows: process hollowing, AMSI patch, AV check — and the URL / IP become IOCs."""
+    from docutracex.parsers import au3eval, genscript
+    src = ms.obfuscated_autoit_au3()
+    r = au3eval.deobfuscate(src)
+    vals = {d["value"] for d in r["decoded"]}
+    assert {"kernel32.dll", "CreateProcessW", "NtWriteVirtualMemory", "amsi.dll", "AmsiScanBuffer",
+            "https://facturas-cdn.example/update.bin", "198.51.100.23"} <= vals
+    assert set(r["functions"]) == {"notafactura", "remesapendiente"}
+    p = tmp_path / "loader.au3"
+    p.write_text(src)
+    res = genscript.analyze(p)
+    rules = {f["rule"] for f in res["findings"]}
+    assert {"script_strings_decrypted", "script_process_injection", "script_amsi_etw_patch",
+            "script_av_check", "script_shellcode_loader"} - rules == {"script_shellcode_loader"} or \
+        {"script_strings_decrypted", "script_process_injection", "script_amsi_etw_patch", "script_av_check"} <= rules
+    sc = res["scripts"][0]
+    assert sc["code_is_deobfuscated"] and '"CreateProcessW"' in sc["_full_deob"] and "NOTAFACTURA" in sc["_full_code"]
+
+
+def test_evaluator_never_reaches_outside() -> None:
+    """Anything beyond pure string / number work is not run: the call is just not decrypted."""
+    from docutracex.parsers import au3eval
+    src = ('Func F ( $A )\n\tFileWrite ( "x.txt" , $A )\n\tReturn "done"\nEndFunc\n'
+           'Func G ( $A )\n\tWhile 1\n\tWEnd\nEndFunc\n$X = F ( "a" )\n$Y = G ( "b" )\n')
+    r = au3eval.deobfuscate(src)
+    assert r["decoded"] == [] and 'F ( "a" )' in r["code"] and 'G ( "b" )' in r["code"]
+    assert au3eval._num("4294967196") == -100 and au3eval._num("312345678901") == 312345678901
