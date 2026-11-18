@@ -1096,3 +1096,16 @@ tr.reg-sus td { background: color-mix(in srgb, var(--bad, #e5534b) 8%, transpare
 
 /* a nested card reached from another tab ("go to it in Nested") */
 .nested-card.flash { outline: 2px solid var(--accent); outline-offset: 2px; transition: outline-color 1.2s; }
+
+/* Long unbroken values (URLs, hashes, base64, paths, header lines) never push a box wider than
+   its panel: they wrap inside it, in every tab. Views that must keep their columns (hex, code,
+   pre-formatted dumps) set white-space: pre with their own horizontal scroll and keep it. */
+.content, .panel, .view, details, summary, td, th, li, dd, dt, p, label, .hint-line, .kv > div,
+.net-view, .net-card, .settings-card, .nested-card, .finding, .evidence, .badge, .pill, .chip, .tag {
+  overflow-wrap: anywhere; min-width: 0; }
+.mono, code, kbd, samp, a { overflow-wrap: anywhere; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
+.panel, .net-view, .net-body, .settings-card, .nested-card { max-width: 100%; }
+.panel img, .panel iframe, .panel table { max-width: 100%; }
+/* a table wider than its panel scrolls inside it instead of spilling over the edge */
+.panel .table-wrap, .net-view .table-wrap { overflow-x: auto; }
