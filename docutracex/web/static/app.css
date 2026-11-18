@@ -1166,3 +1166,32 @@ th { overflow-wrap: normal; word-break: normal; }
   .ntree-detail { height: auto; max-height: 50vh; }
   .ntree-help { display: none; }
 }
+/* the analysed file itself, at the root of the tree */
+.ntree-node.root { border-left-color: var(--accent); background: #13202c; }
+/* file types filtered out: still in place, but switched off */
+.ntree-node.dim { opacity: .28; filter: grayscale(1); }
+.ntree-node.dim:hover { opacity: .6; }
+.ntree-tog { min-width: 2.6em; font-weight: 700; }
+/* maximised: the tree takes the whole window */
+.ntree.ntree-max { position: fixed; inset: 0; z-index: 60; border-radius: 0; padding: 12px 14px; background: var(--panel);
+  display: flex; flex-direction: column; }
+.ntree.ntree-max .ntree-body { flex: 1; min-height: 0; }
+.ntree.ntree-max .ntree-view, .ntree.ntree-max .ntree-detail { height: auto; min-height: 0; }
+.ntree.ntree-max .ntree-body { grid-template-rows: minmax(0, 1fr); }
+body.ntree-max-open { overflow: hidden; }
+.ntree-max-btn { border-color: var(--accent-dim); }
+/* extension filter */
+.ntree-ext { position: relative; }
+.ntree-ext > summary { list-style: none; cursor: pointer; }
+.ntree-ext > summary::-webkit-details-marker { display: none; }
+.ntree-ext-menu { position: absolute; z-index: 70; top: calc(100% + 4px); left: 0; min-width: 220px; max-height: 50vh; overflow: auto;
+  background: #10151d; border: 1px solid var(--panel-border); border-radius: 9px; padding: 8px; box-shadow: 0 8px 24px #0008; }
+.ntree-ext-acts { display: flex; gap: 6px; margin-bottom: 6px; }
+.ntree-ext-row { display: flex; align-items: center; gap: 8px; padding: 2px 4px; border-radius: 6px; cursor: pointer; font-size: 12.5px; }
+.ntree-ext-row:hover { background: #18212d; }
+.ntree-ext-row.off span { color: var(--text-dim); text-decoration: line-through; }
+.ntree-ext-n { margin-left: auto; color: var(--text-dim); font-size: 11.5px; }
+@media (max-width: 900px) {
+  .ntree-ext[open] { flex: 1 1 100%; }
+  .ntree-ext-menu { position: static; margin-top: 4px; max-width: 100%; box-shadow: none; }
+}
