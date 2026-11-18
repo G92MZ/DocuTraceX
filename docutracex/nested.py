@@ -693,11 +693,17 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
         except Exception as exc:  # noqa: BLE001  (presentation only)
             node.setdefault("code_error", f"view: {exc}")
 
+    stdlib = _is_python_stdlib(name, [c for _p, c in kids])
+    if stdlib:
+        # the Python runtime's own library (python311.zip of an embeddable Python): listed, not analysed —
+        # its doctest / imaplib / importlib only look like exec, sockets and registry writes
+        node["read_as"] = "python standard library"
+        node["note"] = stdlib
     if depth < MAX_DEPTH:
-        _prefetch_tools([c for c, _ in kids[:MAX_CHILDREN]])
+        _prefetch_tools([c for c, _ in kids[:MAX_CHILDREN]] if not stdlib else [])
         for i, (cpath, cname) in enumerate(kids[:MAX_LISTED]):
-            deep = i < MAX_CHILDREN and ctx["_budget"][0] > 0
-            if not deep and i < MAX_CHILDREN and "truncated_reason" not in node:
+            deep = i < MAX_CHILDREN and ctx["_budget"][0] > 0 and not stdlib
+            if not deep and not stdlib and i < MAX_CHILDREN and "truncated_reason" not in node:
                 node["truncated_reason"] = f"node limit ({MAX_NODES}) reached: the rest is listed, not analysed"
             if not cpath.is_file():
                 # Tools store paths relative to the parent of their output dir
@@ -712,6 +718,7 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
                     child = _scan_one(cpath, cname, paths, depth + 1, this_chain, ctx, sources_out)
                 else:
                     child = _listed_node(cpath, cname, paths, depth + 1,
+                                         "Python standard library" if stdlib else
                                          f"more than {MAX_CHILDREN} files here" if i >= MAX_CHILDREN
                                          else f"node limit ({MAX_NODES})")
                     node["listed_children"] = node.get("listed_children", 0) + 1
@@ -909,6 +916,30 @@ def _flatten(nodes: list[dict[str, Any]], out: list[dict[str, Any]]) -> None:
     for n in nodes:
         out.extend(n.get("findings", []))
         _flatten(n.get("children", []), out)
+
+
+_PY_STDLIB = frozenset("""abc aifc argparse ast asynchat asyncore base64 bdb bisect bz2 calendar cgi cgitb chunk cmd code
+codecs codeop colorsys compileall configparser contextlib contextvars copy copyreg cprofile crypt csv dataclasses datetime
+decimal difflib dis doctest enum filecmp fileinput fnmatch fractions ftplib functools genericpath getopt getpass gettext glob
+graphlib gzip hashlib heapq hmac imaplib imghdr imp inspect io ipaddress keyword linecache locale lzma mailbox mailcap
+mimetypes modulefinder netrc nntplib ntpath nturl2path numbers opcode operator optparse os pathlib pdb pickle pickletools
+pipes pkgutil platform plistlib poplib posixpath pprint profile pstats pty pyclbr pydoc py_compile queue quopri random
+reprlib rlcompleter runpy sched secrets selectors shelve shlex shutil signal site smtpd smtplib sndhdr socket socketserver
+sre_compile sre_constants sre_parse ssl stat statistics string stringprep struct subprocess sunau symtable sysconfig
+tabnanny tarfile telnetlib tempfile textwrap this threading timeit token tokenize trace traceback tracemalloc tty types
+typing uu uuid warnings wave weakref webbrowser xdrlib zipapp zipfile zipimport _collections_abc _compat_pickle
+_compression _markupbase _osx_support _pydecimal _pyio _py_abc _sitebuiltins _strptime _threading_local _weakrefset
+__future__""".split())
+
+
+def _is_python_stdlib(name: str, kids: list[str]) -> str:
+    """'' or why an archive is the Python runtime's own library (python3xx.zip / Lib folder)."""
+    stems = {Path(str(k).replace("\\", "/")).name.rsplit(".", 1)[0].lower() for k in kids
+             if str(k).lower().endswith((".pyc", ".py"))}
+    hit = len(stems & _PY_STDLIB)
+    if hit >= 40 or (hit >= 15 and re.fullmatch(r"(?i)python3\d{1,2}\.zip", Path(name).name or "")):
+        return f"Python standard library ({hit} of its modules)"
+    return ""
 
 
 def scan_children(items: list[dict[str, Any]], paths: CasePaths,

@@ -203,3 +203,53 @@ def test_nested_shortcut_in_zip(client: TestClient, tmp_path: Path) -> None:
     rules = {f["rule"] for f in comp["findings"]}
     # The LNK command was deobfuscated inside the archive and the .url flagged.
     assert "lnk_lolbin_target" in rules and "url_unc_icon_ntlm" in rules
+
+
+# --- MSI tables read as rows ---------------------------------------------------
+def test_msi_tables_custom_actions_and_noise(tmp_path: Path) -> None:
+    """sample_portable_python_lure.msi: the custom actions read from the tables (an embedded
+    pythonw.exe run on InstallNotes.html, a decoy MSI installed with msiexec); the decoy itself, a
+    vendor installer, raises nothing high: builder DLLs, a Session-driven VBScript, icons."""
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import make_samples as ms
+    from docutracex.parsers import msidb, pe as pe_mod, vbscript
+    lure = tmp_path / "lure.msi"
+    lure.write_bytes(ms.portable_python_lure_msi())
+    with msidb.MsiDb(lure) as db:
+        ca = {r["Action"]: r for r in db.table("CustomAction")}
+        files = {r["File"]: r["FileName"] for r in db.table("File")}
+    assert ca["LaunchNotes"]["Type"] == 242 and files["Asset0"] == "InstallNotes.html"
+    it = msi.analyze_msi(lure, "lure.msi")
+    by = {f["rule"]: f for f in it["findings"]}
+    assert by["msi_embedded_interpreter"]["severity"] == "high"
+    assert "Python" in by["msi_embedded_interpreter"]["detail"] and "InstallNotes.html" in by["msi_embedded_interpreter"]["detail"]
+    assert "(stream Asset0)" in by["msi_embedded_interpreter"]["detail"]
+    assert by["msi_decoy_installer"]["severity"] == "high" and "facturas-setup4.8.1.msi" in by["msi_decoy_installer"]["detail"]
+    assert "msi_lolbin_string" not in by and "bat_lolbin" not in by          # msiexec /i of its own MSI is not a LOLBin call
+    assert it["embedded_interpreters"][0]["stream"] == "Asset0"
+    decoy = tmp_path / "decoy.msi"
+    decoy.write_bytes(ms.decoy_vendor_msi())
+    d = msi.analyze_msi(decoy, "decoy.msi")
+    assert not [f for f in d["findings"] if f["severity"] == "high"]
+    assert next(f for f in d["findings"] if f["rule"] == "msi_custom_action")["severity"] in ("info", "low")
+    # the vendor's VBScript custom action: COM, WMI and a registry write are installer business (medium)
+    vbs = tmp_path / "Binary.SetVendorSetting.vbs"
+    import re as _re
+    vbs.write_bytes(_re.search(rb"Function SetVendorSetting.*?End Function\n", ms.decoy_vendor_msi(), _re.S).group(0))
+    (tmp_path / "x").mkdir()
+    v = vbscript.analyze(vbs, tmp_path / "x", {}, fallback=True)
+    assert v["findings"] and not [f for f in v["findings"] if f["severity"] == "high"], v["findings"]
+    ico = tmp_path / "Icon._6A1B2C3D00004000800000AC10.exe"
+    ico.write_bytes(b"\x00\x00\x01\x00\x01\x00\x10\x10" + b"\x00" * 120)
+    assert not pe_mod.analyze(ico, ico.name)["findings"]                    # an icon, not a masquerade
+
+
+def test_python_stdlib_archive_is_listed_not_analysed() -> None:
+    from docutracex import nested
+    std = ["abc.pyc", "ast.pyc", "base64.pyc", "codecs.pyc", "doctest.pyc", "imaplib.pyc", "os.pyc", "socket.pyc",
+           "ssl.pyc", "subprocess.pyc", "threading.pyc", "typing.pyc", "zipfile.pyc", "zipimport.pyc", "io.pyc",
+           "re.pyc", "string.pyc", "struct.pyc", "tempfile.pyc", "traceback.pyc"]
+    assert nested._is_python_stdlib("python311.zip", std).startswith("Python standard library")
+    assert not nested._is_python_stdlib("tools.zip", std)                      # 20 modules and no runtime name
+    assert not nested._is_python_stdlib("python311.zip", ["main.pyc", "config.pyc", "stealer.pyc"])
