@@ -328,7 +328,7 @@ def _office_extras(run, original: Path, paths: CasePaths, family: str, declared_
     return out
 
 
-_CODE_TABS = ("javascript", "powershell", "vbscript", "batch", "python")
+_CODE_TABS = ("javascript", "powershell", "vbscript", "batch", "python", "script")
 
 
 def _surface_nested_code(paths: CasePaths, ran: list[str]) -> None:

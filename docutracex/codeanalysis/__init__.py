@@ -54,6 +54,7 @@ MAX_BLOCKS = 400                  # CFG view
 BLOCK_OPS = 40
 DECOMPILE_MAX_SIZE = _env_int("DOCUTRACEX_CODE_DECOMPILE_MAX_BYTES", 24000)   # bigger: on demand only
 DECOMPILE_MAX_SIZE = _env_int("DOCUTRACEX_CODE_DECOMPILE_MAX_BYTES", 24000)   # bigger: on demand only
+MAX_FN_BYTES = 256 * 1024     # larger 'functions' are data / zeros walked as code
 BATCH = 250
 DEC_BATCH = 10
 _FLAG_BAD = re.compile(r"[^A-Za-z0-9_.]")
@@ -252,14 +253,23 @@ def analyze(path: Path, *, mode: str, names: list[dict[str, Any]] | None, out_fi
                 # every later step re-runs the same analysis (the prelude): it would only be
                 # killed again, each time with the rest of the hard limit — stop here
                 afl = []
+            huge = 0
             for f in afl:
                 nm = f.get("name") or ""
                 if nm.startswith(("sym.imp.", "loc.imp.", "reloc.")):
+                    continue
+                if (f.get("size") or 0) > MAX_FN_BYTES:
+                    # not a function: Rizin walking zeros / data (an entry point at 0, in the
+                    # headers, of a PE with no code) — disassembling it as JSON takes minutes
+                    huge += 1
                     continue
                 names_by_addr[f["offset"]] = nm
                 fn_list.append({"name": nm, "start": f["offset"], "end": f["offset"] + (f.get("size") or 0),
                                 "user": not nm.startswith(("flirt.", "sym.std")), "named": not nm.startswith("fcn.")})
             fn_list = sorted(fn_list, key=lambda n: (not n["user"], n["start"]))[:INVENTORY_MAX]
+            if huge:
+                summary["warnings"].append(f"{huge} 'function(s)' larger than {MAX_FN_BYTES // 1024} KB skipped "
+                                           "(data or padding walked as code)")
         summary["functions_total"] = len(names or []) if mode == "go" else len(fn_list)
 
         # 1. inventory

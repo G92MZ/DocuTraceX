@@ -48,7 +48,12 @@ version information (the same goes for the other portable interpreters).
 followed by PEs — a reflective loader DLL and the program it maps — each PE becomes its own
 child, **cut to the size its headers give**. What lies after it (zeros, a repeated pattern,
 word lists or CSS used to inflate the file past size limits) is left out and named in the
-recipe, so only the real program is analysed.
+recipe, so only the real program is analysed. A PE kept **in memory layout** (each section at its RVA, the
+way a reflective loader maps it — its imports only make sense like that) is rebuilt as a file
+first, so the usual engines can read it and padding hidden in its resources is stripped too.
+
+The code of AutoIt, Lua, Ruby, Perl, Tcl, shell or PHP scripts has its own **Script** tab, with
+the lines the rules flagged, like the other languages.
 
 ## Tabs
 
