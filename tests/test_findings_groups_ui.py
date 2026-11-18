@@ -91,7 +91,7 @@ def test_findings_grouped_by_source(tmp_path: Path, monkeypatch: pytest.MonkeyPa
             assert page.eval_on_selector('[data-fg-group="pe"]', "e => e.open") is True
             # 'By file' lasts until reload; a reload (even with an old saved choice) opens By source again
             page.click('[data-fview="tree"]')
-            page.wait_for_selector(".nested-tree")
+            page.wait_for_selector(".subpane .nested-tree")   # the Nested panel above keeps its own (hidden) list
             page.evaluate("() => { try { localStorage.setItem('dtx.findingsView', 'tree'); } catch (e) {} }")
             page.reload()
             page.evaluate("(id) => openComponents(id, 'findings')", cid)

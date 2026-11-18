@@ -61,12 +61,115 @@ def _lang(path: Path) -> str | None:
     return LANGS.get(path.suffix.lower())
 
 
+# AutoHotkey / AutoIt source recognised by its content (a renamed script has no extension)
+_AHK_MARK = re.compile(r"(?im)^\s*(?:#NoEnv|#NoTrayIcon|#SingleInstance|#Persistent|#Requires\s+AutoHotkey|"
+                       r"#ErrorStdOut|#KeyHistory|#MaxThreads|SetWorkingDir\b|SendMode\b|SetBatchLines\b|"
+                       r"DetectHiddenWindows\b|ListLines\b|[A-Za-z_]\w*\s*:=)")
+_AU3_MARK = re.compile(r"(?im)^\s*(?:#include\s*<\w+\.au3>|#Region\b|#AutoIt3Wrapper|Func\s+\w+\s*\(|EndFunc\b|"
+                       r"(?:Local|Global|Dim)\s+\$\w+|\$\w+\s*=\s*[^=]|Opt\s*\(\s*\"|#NoTrayIcon\b)")
+SNIFF_MAX = 4 * 1024 * 1024
+
+
+def sniff(text: str) -> str | None:
+    """The language of a script without a telling extension: AutoHotkey or AutoIt."""
+    head = text[:200_000]
+    ahk = {m.group(0).strip().split()[0].lower().split(":=")[0] for m in _AHK_MARK.finditer(head)}
+    ahk_dir = {x for x in ahk if x.startswith("#") or x in ("setworkingdir", "sendmode", "setbatchlines",
+                                                             "detecthiddenwindows", "listlines")}
+    au3 = {m.group(0).strip()[:6].lower() for m in _AU3_MARK.finditer(head)}
+    if "#requires" in ahk or len(ahk_dir) >= 2 or (ahk_dir and re.search(r"\bDllCall\s*\(|\w+\s*:=", head)):
+        return "AutoHotkey"
+    if len(au3) >= 3 or re.search(r"(?im)^\s*#include\s*<\w+\.au3>", head):
+        return "AutoIt"
+    return None
+
+
+def _text_of(path: Path) -> str | None:
+    try:
+        with path.open("rb") as fh:
+            raw = fh.read(SNIFF_MAX)
+    except OSError:
+        return None
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        try:
+            return raw.decode("utf-16")
+        except UnicodeDecodeError:
+            return None
+    if b"\x00" in raw[:4096]:
+        return None
+    return raw.decode("utf-8", "replace").lstrip("\ufeff")
+
+
+# System DLLs: calling into them is ordinary scripting. Anything else named in a DllCall is a
+# library the script brought (a side-loaded payload, often with an odd name and extension).
+_SYSTEM_DLL = re.compile(r"(?i)^(?:kernel32|user32|ntdll|advapi32|shell32|ole32|oleaut32|ws2_32|wininet|winhttp|"
+                         r"msvcrt|gdi32|gdiplus|comctl32|comdlg32|shlwapi|crypt32|psapi|iphlpapi|version|bcrypt|"
+                         r"secur32|netapi32|urlmon|winmm|dwmapi|uxtheme|imm32|userenv|wtsapi32|setupapi|dbghelp|"
+                         r"mpr|rpcrt4|winspool|wintrust|kernelbase|msimg32|powrprof|ncrypt|dnsapi)(?:\.dll)?$")
+_DLLCALL = re.compile(r"(?i)\bDllCall\s*\(\s*([^,)]+)")
+_ASSIGN_AHK = re.compile(r"(?m)^\s*([A-Za-z_]\w*)\s*:=\s*(\"(?:[^\"]|\"\")*\"|'[^']*')\s*$")
+_ASSIGN_AHK_LEGACY = re.compile(r"(?m)^\s*([A-Za-z_]\w*)\s*=\s*([^\r\n%]+?)\s*$")
+_ASSIGN_AU3 = re.compile(r"(?m)^\s*(?:(?:Local|Global|Dim|Const)\s+)*\$(\w+)\s*=\s*(\"[^\"]*\"|'[^']*')\s*$")
+
+
+def _resolve(expr: str, env: dict[str, str]) -> str | None:
+    """A DllCall's first argument with simple string variables and concatenation
+    (``a . "\\b"`` in AutoHotkey, ``$a & "\\b"`` in AutoIt) put back together."""
+    out = []
+    for tok in re.split(r"\s*(?:\.|&)\s*(?=(?:[\"'$A-Za-z_]))", expr.strip()):
+        tok = tok.strip()
+        if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in "\"'":
+            out.append(tok[1:-1].replace('""', '"'))
+        elif re.fullmatch(r"\$?[A-Za-z_]\w*", tok) and tok.lstrip("$").lower() in env:
+            out.append(env[tok.lstrip("$").lower()])
+        else:
+            return None
+    return "".join(out) or None
+
+
+def dll_calls(code: str) -> list[dict[str, str]]:
+    """Libraries (not system DLLs) a script loads with DllCall, and the export it calls."""
+    env: dict[str, str] = {}
+    for rx in (_ASSIGN_AHK, _ASSIGN_AU3):
+        for m in rx.finditer(code[:2_000_000]):
+            env[m.group(1).lower()] = m.group(2)[1:-1]
+    for m in _ASSIGN_AHK_LEGACY.finditer(code[:2_000_000]):
+        env.setdefault(m.group(1).lower(), m.group(2).strip())
+    out, seen = [], set()
+    for m in _DLLCALL.finditer(code[:4_000_000]):
+        target = _resolve(m.group(1), env)
+        if not target:
+            continue
+        lib, _, export = target.replace("/", "\\").rpartition("\\") if "\\" in target or "/" in target else (target, "", "")
+        if not export:                       # DllCall("lib.dll", …) in AutoIt: the function is the 2nd argument
+            lib, export = target, ""
+        base = re.split(r"[\\/]", lib)[-1]
+        if not base or _SYSTEM_DLL.match(base):
+            continue
+        key = (base.lower(), export)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"library": lib, "file": base, "export": export,
+                    "line_no": code.count("\n", 0, m.start()) + 1, "call": m.group(0)[:200], "resolved": target})
+    return out[:20]
+
+
 def analyze(original: Path, extracted_dir: Path | None = None,
             modules: dict[str, Any] | None = None) -> dict[str, Any]:
     res: dict[str, Any] = {"module": "script", "status": "ok", "scripts": [], "findings": []}
     lang = _lang(original)
-    if not lang or not original.is_file():
+    if not original.is_file():
         return res
+    if not lang:
+        # no telling extension (a renamed script): recognised by its content
+        if original.stat().st_size > SNIFF_MAX:
+            return res
+        text = _text_of(original)
+        lang = sniff(text) if text else None
+        if not lang:
+            return res
+        res["sniffed"] = lang
     try:
         code = original.read_bytes()[:MAX_BYTES].decode("utf-8", "replace")
     except OSError:
@@ -81,15 +184,26 @@ def analyze(original: Path, extracted_dir: Path | None = None,
             hits.append({"rule": rule, "severity": sev, "label": what, "line_no": line,
                          "line": code[a:b if b >= 0 else len(code)][:300], "match": m.group(0)[:200]})
             res["findings"].append({"tool": "script", "rule": rule, "severity": sev,
-                                    "detail": f"[{original.name}] {lang} script {what}",
+                                    "detail": f"{lang} script {what}",
                                     "location": f"file:{original.name}:{line}",
                                     "evidence": m.group(0)[:400]})
+    for c in dll_calls(code):
+        what = (f"loads the library '{c['file']}' and calls its export '{c['export']}'" if c["export"]
+                else f"loads the library '{c['file']}'")
+        hits.append({"rule": "script_dll_load", "severity": "high", "label": what, "line_no": c["line_no"],
+                     "line": c["call"], "match": c["resolved"]})
+        res["findings"].append({"tool": "script", "rule": "script_dll_load", "severity": "high",
+                                "detail": f"{lang} script {what} (not a system DLL: "
+                                          "a payload brought along and run through the interpreter)",
+                                "location": f"file:{original.name}:{c['line_no']}",
+                                "evidence": f"{c['call']}  →  {c['resolved']}", "attack": "T1129"})
+    res["dll_calls"] = dll_calls(code)
     if len({h["rule"] for h in hits} & {"script_shellcode_loader", "script_download", "script_exec", "script_eval"}) >= 2:
         res["findings"].append({"tool": "script", "rule": "script_attack_chain", "severity": "high",
-                                "detail": f"[{original.name}] {lang} script chains "
+                                "detail": f"{lang} script chains "
                                           + ", ".join(sorted({h['rule'][7:] for h in hits})),
                                 "location": f"file:{original.name}", "evidence": ""})
-    res["scripts"].append({"id": 1, "kind": lang, "origin": f"file:{original.name}",
+    res["scripts"].append({"id": 1, "kind": lang + (" (by content)" if res.get("sniffed") else ""), "origin": f"file:{original.name}",
                            "location": f"file:{original.name}", "size": len(code),
                            "code": code[:_KEEP], "code_truncated": len(code) > _KEEP,
                            "hits": hits, "_full_code": code,

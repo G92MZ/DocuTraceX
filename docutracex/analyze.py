@@ -1246,7 +1246,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             findings_total += py_res.get("counts", {}).get("findings", 0)
         # AutoIt, AutoHotkey, Lua, Ruby, Perl, Tcl, shell, PHP… uploaded on their own
         from .parsers import genscript
-        if original.suffix.lower() in genscript.LANGS:
+        if original.suffix.lower() in genscript.LANGS or (scripting_fallback and genscript.sniff(fallback_text or "")):
             gs_res = run("script: AutoIt / Lua / Ruby / Perl / Tcl / shell / PHP · behaviour rules · literals",
                          lambda: genscript.analyze(original))
             if gs_res.get("scripts"):

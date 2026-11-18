@@ -75,6 +75,24 @@ def original_filename(path: str | Path) -> str | None:
     return m.group(1).decode("utf-16-le").strip().lower() if m else None
 
 
+_NOT_PE = {".txt", ".ini", ".json", ".xml", ".html", ".htm", ".js", ".vbs", ".bat", ".cmd", ".ps1", ".py", ".ahk",
+           ".au3", ".lnk", ".url", ".png", ".jpg", ".gif", ".ico", ".pdf", ".zip", ".pyc", ".a3x", ".pth"}
+
+
+def _has_export(path: str, name: str) -> bool:
+    """The PE at ``path`` exports ``name`` (by name)."""
+    try:
+        import pefile
+        if Path(path).stat().st_size > _SNIFF_MAX:
+            return False
+        pe = pefile.PE(path, fast_load=True)
+        pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_EXPORT"]])
+        return any((e.name or b"").decode("latin-1") == name
+                   for e in getattr(getattr(pe, "DIRECTORY_ENTRY_EXPORT", None), "symbols", []) or [])
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _a3x(path: str | None) -> bool:
     if not path:
         return False
@@ -96,15 +114,33 @@ def bundle(entries: list[tuple[str, str | None]]) -> list[dict[str, Any]]:
     # what each renamed executable really is
     real: dict[str, str] = {}
     for n, b, f in names:
-        if f and b.endswith(".exe") and b not in _ALL_EXES:
+        # any name, extension or none: a random name without extension can be AutoHotkey.exe
+        if f and b not in _ALL_EXES and not PurePosixPath(b).suffix in _NOT_PE:
             orig = original_filename(f)
             if orig in _ALL_EXES:
                 real[b] = orig
     a3x = [n for n, b, f in names if not b.endswith(".a3x") and _a3x(f)]
+    # scripts of a language recognised by their content (renamed, no extension)
+    from .parsers import genscript
+    by_content: dict[str, list[tuple[str, str]]] = {}
+    for n, b, f in names:
+        if not f or PurePosixPath(b).suffix.lower() in genscript.LANGS:
+            continue
+        try:
+            if Path(f).stat().st_size > genscript.SNIFF_MAX:
+                continue
+        except OSError:
+            continue
+        text = genscript._text_of(Path(f))
+        lang_c = genscript.sniff(text) if text else None
+        if lang_c:
+            by_content.setdefault(lang_c, []).append((n, f))
+    files = {b: (n, f) for n, b, f in names}
+    shown = {b: PurePosixPath(n.replace("\\", "/")).name for n, b, _f in names}   # names as written
     out = []
     for lang, (exes, runtime, exts) in CATALOGUE.items():
         found = sorted({b for _n, b, _f in names if b in exes})
-        renamed = sorted(f"{b} (really {real[b]})" for b in real if real[b] in exes)
+        renamed = sorted(f"{shown.get(b, b)} (really {real[b]})" for b in real if real[b] in exes)
         if not found and not renamed:
             continue
         found += [b for b in real if real[b] in exes]
@@ -112,6 +148,17 @@ def bundle(entries: list[tuple[str, str | None]]) -> list[dict[str, Any]]:
         scripts = [n for n, b, _f in names if PurePosixPath(b).suffix in exts][:50]
         if lang == "AutoIt":
             scripts += a3x[:20]
+        sniffed = [n for n, _f in by_content.get(lang, [])]
+        scripts += [n for n in sniffed if n not in scripts]
+        # libraries those scripts load from the bundle (DllCall("payload.dat\\Export"))
+        loads = []
+        for n, f in [(n, f) for n, b, f in names if n in scripts and f]:
+            text = genscript._text_of(Path(f)) or ""
+            for c in genscript.dll_calls(text):
+                hit = files.get(c["file"].lower())
+                if hit:
+                    loads.append({"script": n, "library": hit[0], "export": c["export"],
+                                  "exported": _has_export(hit[1], c["export"]) if c["export"] else None})
         # launchers that name one of the interpreters (run.bat: "pythonw.exe notes.html")
         exe_re = re.compile("|".join(re.escape(e) for e in found), re.I)
         launchers, disguised = [], []
@@ -133,10 +180,11 @@ def bundle(entries: list[tuple[str, str | None]]) -> list[dict[str, Any]]:
             arg = re.search(r"[\w\-. ]+\.(\w{1,6})\b", text[m.end():m.end() + 300])
             if arg and f".{arg.group(1).lower()}" not in exts and not arg.group(0).strip().lower().endswith(".exe"):
                 disguised.append(arg.group(0).strip())
-        out.append({"language": lang, "interpreters": sorted(set(found)), "runtime": rt, "scripts": scripts,
+        out.append({"language": lang, "interpreters": sorted({shown.get(b, b) for b in found}), "runtime": rt, "scripts": scripts,
                     "launchers": launchers[:10], "disguised": sorted(set(disguised))[:10],
                     "windowless": sorted({real.get(b, b) for b in found} & WINDOWLESS),
-                    "renamed": renamed, "compiled_scripts": a3x[:20] if lang == "AutoIt" else []})
+                    "renamed": renamed, "compiled_scripts": a3x[:20] if lang == "AutoIt" else [],
+                    "sniffed": sniffed, "loads": loads[:10]})
     return out
 
 
@@ -161,14 +209,22 @@ def findings(entries: list[tuple[str, str | None]], where: str, container: str =
         rec["disguised"] = [d for d in rec["disguised"] if d.lower() not in compiled]
         if rec["disguised"]:
             parts.append(f"on a file that does not look like {lang}: {', '.join(rec['disguised'][:3])}")
+        if rec["sniffed"]:
+            parts.append(f"{lang} script(s) without their extension: "
+                         f"{', '.join(PurePosixPath(s).name for s in rec['sniffed'][:3])}")
+        for ld in rec["loads"][:3]:
+            ex = f"'s export {ld['export']}" + (" (present in its export table)" if ld["exported"] else "") if ld["export"] else ""
+            parts.append(f"{PurePosixPath(ld['script']).name} loads {PurePosixPath(ld['library']).name}{ex} — "
+                         "a DLL side-loaded through the interpreter")
         if rec["scripts"]:
             parts.append(f"{len(rec['scripts'])} {lang} file(s) it can run: {', '.join(PurePosixPath(s).name for s in rec['scripts'][:5])}")
-        high = bool(rec["launchers"] or rec["disguised"] or rec["renamed"] or rec["compiled_scripts"]
+        high = bool(rec["launchers"] or rec["disguised"] or rec["renamed"] or rec["compiled_scripts"] or rec["loads"]
                     or (rec["windowless"] and (rec["scripts"] or portable)))
         ev = "\n".join(["interpreters: " + ", ".join(rec["interpreters"]),
                         "runtime: " + (", ".join(rec["runtime"]) or "-"),
                         "scripts: " + (", ".join(rec["scripts"][:20]) or "-")]
-                       + [f"launcher {x}" for x in rec["launchers"]])
+                       + [f"launcher {x}" for x in rec["launchers"]]
+                       + [f"{ld['script']} → DllCall {ld['library']}\\{ld['export']}" for ld in rec["loads"]])
         out.append({"tool": container, "rule": f"embedded_interpreter_{re.sub(r'[^a-z0-9]+', '', lang.lower())}",
                     "severity": "high" if high else "medium", "detail": " — ".join(parts),
                     "location": where, "evidence": ev, "attack": "T1059"})
