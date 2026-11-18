@@ -3398,6 +3398,7 @@ function paneNested(nested, opts) {
   if (!(opts && opts.tree)) return head("") + list;
   const id = `nt${++_ntreeSeq}`;
   _ntreeData[id] = tree;
+  _ntreeRoot[id] = opts.rootName || "";
   const mode = ntreeMode();
   const sw = `<span class="ntree-switch"><button class="btn btn-sm${mode === "tree" ? " on" : ""}" type="button" data-ntree-mode="tree">Tree</button><button class="btn btn-sm${mode === "list" ? " on" : ""}" type="button" data-ntree-mode="list">List</button></span>`;
   return head(sw) + `<div class="ntree-wrap" data-ntree-mode-view="tree"${mode === "tree" ? "" : " hidden"}>${ntreeShell(id)}</div>`
@@ -3411,10 +3412,14 @@ function paneNested(nested, opts) {
 let _ntreeSeq = 0;
 const _ntreeData = {};
 const _ntreeState = {};
+const _ntreeRoot = {};
 function ntreeMode() { try { return localStorage.getItem("dtx.nested.view") || "tree"; } catch (e) { return "tree"; } }
 function ntreeShell(id) {
   return `<div class="ntree" data-ntree="${id}">
     <div class="ntree-bar">
+      <button class="btn btn-sm ntree-max-btn" type="button" data-nt="max" title="Maximise the tree to the whole window (Esc to go back)">⤢ Maximise</button>
+      <button class="btn btn-sm" type="button" data-nt="full" title="Full screen">⛶ Full screen</button>
+      <span class="ntree-sep"></span>
       <button class="btn btn-ghost btn-sm" type="button" data-nt="zoom-out" title="Zoom out">−</button>
       <span class="ntree-zoom" data-nt-zoom>100%</span>
       <button class="btn btn-ghost btn-sm" type="button" data-nt="zoom-in" title="Zoom in">+</button>
@@ -3425,8 +3430,10 @@ function ntreeShell(id) {
       <button class="btn btn-ghost btn-sm" type="button" data-nt="expand" title="Open every branch (folded groups stay folded)">Expand all</button>
       <button class="btn btn-ghost btn-sm" type="button" data-nt="collapse" title="Only the first level">Collapse all</button>
       <span class="ntree-sep"></span>
-      <button class="btn btn-ghost btn-sm" type="button" data-nt="full" title="Full screen">⛶ Full screen</button>
-      <span class="hint-line ntree-help">drag or wheel to move · Ctrl + wheel (or pinch) to zoom · click a box for its details · ▸ opens a branch</span>
+      <details class="ntree-ext" data-nt-ext><summary class="btn btn-ghost btn-sm" title="Dim the file types you do not want to see">Extensions <span data-nt-ext-count></span></summary>
+        <div class="ntree-ext-menu"><div class="ntree-ext-acts"><button class="btn btn-ghost btn-sm" type="button" data-nt-ext-all="1">All</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-nt-ext-all="0">None</button></div><div data-nt-ext-list></div></div></details>
+      <span class="hint-line ntree-help">drag or wheel to move · Ctrl + wheel (or pinch) to zoom · click a box for its details · + opens a branch</span>
     </div>
     <div class="ntree-body">
       <div class="ntree-view" data-nt-view><div class="ntree-canvas" data-nt-canvas></div></div>
@@ -3440,6 +3447,17 @@ function ntWorstDeep(n) {
   let w = n._group ? "info" : ntWorst(n);
   for (const c of n.children || []) { const x = ntWorstDeep(c); if (NT_RANK[x] > NT_RANK[w]) w = x; }
   return w;
+}
+function ntExt(name) {
+  const b = (name || "").split(/[\\/]/).pop();
+  const i = b.lastIndexOf(".");
+  return i > 0 && i < b.length - 1 && b.length - i <= 9 ? b.slice(i).toLowerCase() : "(no extension)";
+}
+// a box is dimmed when its type is filtered out (a group: when all its members are)
+function ntDim(st, n) {
+  if (!st.hide || !st.hide.size || n._root) return false;
+  if (n._group) return n._members.every((m) => st.hide.has(ntExt(m.filename)));
+  return st.hide.has(ntExt(n.filename));
 }
 function ntNoise(n) { return (n.filename || "").startsWith("!") || n.listed_only; }
 // a node's children with the noise folded into group nodes
@@ -3468,9 +3486,16 @@ function ntIndex(id) {
     n._kids = kids;
     kids.forEach((c, i) => walk(c, `${key}.${c._key || i}`, depth + 1));
   };
-  const root = { filename: "", _root: true, children: _ntreeData[id] };
+  const root = { filename: _ntreeRoot[id] || "case", _root: true, kind: "case", children: _ntreeData[id] };
   walk(root, "r", 0);
   st.root = root;
+  // every extension in this case, with how many files have it
+  const exts = {};
+  const all = (n) => { for (const c of n.children || []) { const e = ntExt(c.filename); exts[e] = (exts[e] || 0) + 1; all(c); } };
+  all(root);
+  st.exts = Object.entries(exts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  st.total = Object.values(exts).reduce((a, b) => a + b, 0);
+  st.hide = st.hide || new Set();
 }
 function ntOpenFindings(st) {
   st.open = new Set(["r"]);
@@ -3484,16 +3509,16 @@ function ntLayout(st) {
   const place = (n, depth) => {
     const kids = st.open.has(n._k) ? n._kids : [];
     const me = { n, depth, y: 0 };
-    if (!n._root) nodes.push(me);
+    nodes.push(me);
     if (!kids.length) me.y = row++;
     else {
       const ys = kids.map((c) => place(c, depth + 1));
       me.y = (ys[0].y + ys[ys.length - 1].y) / 2;
-      if (!n._root) ys.forEach((c) => edges.push([me, c]));
+      ys.forEach((c) => edges.push([me, c]));
     }
     return me;
   };
-  place(st.root, -1);
+  place(st.root, 0);
   return { nodes, edges, rows: row };
 }
 function ntRender(id) {
@@ -3510,20 +3535,20 @@ function ntRender(id) {
   const paths = edges.map(([a, b]) => {
     const x1 = px(a) + NT_W, y1 = py(a) + NT_H / 2, x2 = px(b), y2 = py(b) + NT_H / 2, mx = (x1 + x2) / 2;
     const w = ntWorstDeep(b.n);
-    return `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="${COL[w]}" stroke-width="${w === "high" ? 2.4 : 1.4}"/>`;
+    return `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="${COL[w]}" stroke-width="${w === "high" ? 2.4 : 1.4}"${ntDim(st, b.n) ? ' opacity="0.25"' : ""}/>`;
   }).join("");
   const boxes = nodes.map((x) => {
     const n = x.n, w = n._group ? "group" : ntWorst(n), deep = ntWorstDeep(n);
     const cnt = { high: 0, medium: 0, low: 0 };
     (n.findings || []).forEach((f) => { if (f.severity in cnt) cnt[f.severity]++; });
     const kids = n._kids.length;
-    const tog = kids ? `<button class="ntree-tog" type="button" data-nt-tog="${escapeHtml(n._k)}" title="${st.open.has(n._k) ? "Close" : "Open"} this branch">${st.open.has(n._k) ? "▾" : "▸"} ${kids}</button>` : "";
+    const tog = kids ? `<button class="ntree-tog" type="button" data-nt-tog="${escapeHtml(n._k)}" title="${st.open.has(n._k) ? "Hide" : "Show"} its ${kids} child(ren)">${st.open.has(n._k) ? "−" : "+"} ${kids}</button>` : "";
     const hidden = !st.open.has(n._k) && kids && NT_RANK[deep] > NT_RANK[w] ? ` <span class="ntree-c ${deep}" title="inside this branch">${deep} inside</span>` : "";
     const name = n._group ? `⋯ ${n.filename}` : n.filename;
-    return `<div class="ntree-node ${n._group ? "group" : w}${st.sel === n._k ? " sel" : ""}" data-nt-node="${escapeHtml(n._k)}"
+    return `<div class="ntree-node ${n._root ? "root" : (n._group ? "group" : w)}${st.sel === n._k ? " sel" : ""}${ntDim(st, n) ? " dim" : ""}" data-nt-node="${escapeHtml(n._k)}"
         style="left:${px(x)}px;top:${py(x)}px;width:${NT_W}px;height:${NT_H}px" title="${escapeHtml(n.filename || "")}">
       <div class="ntree-nm">${escapeHtml(name)}</div>
-      <div class="ntree-meta">${n._group ? `<span class="ntree-k">folded</span>` : `<span class="ntree-k">${escapeHtml(n.kind || "")}</span>`}
+      <div class="ntree-meta">${n._group ? `<span class="ntree-k">folded</span>` : (n._root ? `<span class="ntree-k">${st.total || 0} inside</span>` : `<span class="ntree-k">${escapeHtml(n.kind || "")}</span>`)}
         ${["high", "medium", "low"].filter((k) => cnt[k]).map((k) => `<span class="ntree-c ${k}">${cnt[k]} ${k}</span>`).join("")}${hidden}</div>
       ${tog}</div>`;
   }).join("");
@@ -3558,6 +3583,11 @@ function ntDetail(id, key) {
   const n = st.byKey[key];
   const el = document.querySelector(`[data-ntree="${id}"] [data-nt-detail]`);
   if (!n || !el) return;
+  if (n._root) {
+    el.innerHTML = `<h4 class="ntree-dh mono">${escapeHtml(n.filename)}</h4><p class="hint-line">The analysed file. + shows what is inside it, one level at a time; "Branches with findings" opens the way to every finding.</p>`
+      + `<p class="hint-line">${st.total} file(s) inside · ${st.exts.length} extension(s)</p>`;
+    return;
+  }
   if (n._group) {
     el.innerHTML = `<h4 class="ntree-dh">⋯ ${escapeHtml(n.filename)}</h4><p class="hint-line">Folded: ${{ tables: "the installer database's own tables (read by the MSI engine)", listed: "files only listed, not analysed one by one", quiet: "analysed, nothing found and nothing inside (resources, icons, images…)" }[n._key] || ""}. ▸ opens the group.</p>`
       + `<div class="ntree-members">${n._members.slice(0, 400).map((m) => `<div class="mono">${escapeHtml(m.filename)}</div>`).join("")}${n._members.length > 400 ? `<div class="hint-line">… ${n._members.length - 400} more</div>` : ""}</div>`;
@@ -3574,6 +3604,30 @@ function ntDetail(id, key) {
         <button class="btn btn-ghost btn-sm" type="button" data-nt-list="${escapeHtml(n.filename || "")}">Show in the list (marks, files) ↓</button>
         ${n.view_id ? `<button class="btn btn-sm" type="button" data-nt-open="${escapeHtml(n.view_id)}">Open analysis ↗</button>` : ""}</div>`;
 }
+function ntExtMenu(id) {
+  const st = _ntreeState[id];
+  const root = document.querySelector(`[data-ntree="${id}"]`);
+  if (!root || !st.exts) return;
+  root.querySelector("[data-nt-ext-list]").innerHTML = st.exts.map(([e, c]) =>
+    `<label class="ntree-ext-row${st.hide.has(e) ? " off" : ""}"><input type="checkbox" data-nt-ext-cb="${escapeHtml(e)}"${st.hide.has(e) ? "" : " checked"}>
+      <span class="mono">${escapeHtml(e)}</span><span class="ntree-ext-n">${c}</span></label>`).join("");
+  const shown = st.exts.length - st.hide.size;
+  root.querySelector("[data-nt-ext-count]").textContent = st.hide.size ? `(${shown}/${st.exts.length})` : `(${st.exts.length})`;
+}
+function ntMax(id, on) {
+  const root = document.querySelector(`[data-ntree="${id}"]`);
+  if (!root) return;
+  root.classList.toggle("ntree-max", on);
+  document.body.classList.toggle("ntree-max-open", on);
+  const b = root.querySelector('[data-nt="max"]');
+  if (b) b.textContent = on ? "⤡ Restore" : "⤢ Maximise";
+  setTimeout(() => ntFit(id, 0.5), 60);
+}
+document.addEventListener("keydown", (ev) => {
+  if (ev.key !== "Escape") return;
+  const m = document.querySelector(".ntree.ntree-max");
+  if (m) ntMax(m.getAttribute("data-ntree"), false);
+});
 function wireNestedTree(scope) {
   scope.querySelectorAll("[data-ntree-mode]").forEach((b) => b.addEventListener("click", () => {
     const mode = b.getAttribute("data-ntree-mode");
@@ -3581,17 +3635,18 @@ function wireNestedTree(scope) {
     const box = b.closest(".nested-content") || scope;
     box.querySelectorAll("[data-ntree-mode]").forEach((x) => x.classList.toggle("on", x === b));
     box.querySelectorAll("[data-ntree-mode-view]").forEach((v) => { v.hidden = v.getAttribute("data-ntree-mode-view") !== mode; });
-    box.querySelectorAll("[data-ntree]").forEach((t) => { const st = _ntreeState[t.getAttribute("data-ntree")]; if (st && !st.fitted) { ntFit(t.getAttribute("data-ntree"), 0.6); st.fitted = true; } });
+    box.querySelectorAll("[data-ntree]").forEach((t) => { const st = _ntreeState[t.getAttribute("data-ntree")]; if (st && !st.fitted) { st.z = 1; st.tx = 16; st.ty = 16; ntApply(t.getAttribute("data-ntree")); st.fitted = true; } });
   }));
   scope.querySelectorAll("[data-ntree]").forEach((root) => {
     const id = root.getAttribute("data-ntree");
     if (!_ntreeData[id] || root.dataset.wired) return;
     root.dataset.wired = "1";
     const fresh = !_ntreeState[id];   // re-rendered tabs keep the tree as it was left (open branches, zoom)
-    if (fresh) { _ntreeState[id] = { z: 1, tx: 10, ty: 10 }; ntIndex(id); ntOpenFindings(_ntreeState[id]); }
+    if (fresh) { _ntreeState[id] = { z: 1, tx: 10, ty: 10 }; ntIndex(id); _ntreeState[id].open = new Set(); }
+    ntExtMenu(id);
     ntRender(id);
     const st = _ntreeState[id];
-    if (fresh && !root.closest("[hidden]")) { ntFit(id, 0.6); st.fitted = true; }
+    if (fresh && !root.closest("[hidden]")) { st.z = 1; st.tx = 16; st.ty = 16; ntApply(id); st.fitted = true; }
     if (!fresh && st.sel) ntDetail(id, st.sel);
     const view = root.querySelector("[data-nt-view]");
     let drag = null;
@@ -3638,12 +3693,18 @@ function wireNestedTree(scope) {
         if (a === "reset") { st.z = 1; st.tx = 10; st.ty = 10; ntApply(id); }
         if (a === "findings") { ntOpenFindings(st); ntRender(id); ntFit(id); }
         if (a === "expand") { st.open = new Set(Object.values(st.byKey).filter((n) => !n._group).map((n) => n._k)); ntRender(id); ntFit(id); }
-        if (a === "collapse") { st.open = new Set(["r"]); ntRender(id); ntFit(id); }
+        if (a === "collapse") { st.open = new Set(); ntRender(id); st.z = 1; st.tx = 16; st.ty = 16; ntApply(id); }
+        if (a === "max") { ntMax(id, !root.classList.contains("ntree-max")); return; }
         if (a === "full") {
           if (document.fullscreenElement) document.exitFullscreen();
-          else (root.requestFullscreen ? root.requestFullscreen() : Promise.reject()).then(() => setTimeout(() => ntFit(id), 120)).catch(() => root.classList.toggle("ntree-max"));
+          else (root.requestFullscreen ? root.requestFullscreen() : Promise.reject()).then(() => setTimeout(() => ntFit(id), 120)).catch(() => ntMax(id, true));
         }
         return;
+      }
+      const ea = ev.target.closest("[data-nt-ext-all]");
+      if (ea) {
+        st.hide = ea.getAttribute("data-nt-ext-all") === "1" ? new Set() : new Set(st.exts.map(([e]) => e));
+        ntExtMenu(id); ntRender(id); return;
       }
       const lst = ev.target.closest("[data-nt-list]");
       if (lst) {
@@ -3656,6 +3717,13 @@ function wireNestedTree(scope) {
       }
       const op = ev.target.closest("[data-nt-open]");
       if (op) openComponents(_openCaseId, null, op.getAttribute("data-nt-open"));
+    });
+    root.addEventListener("change", (ev) => {
+      const cb = ev.target.closest("[data-nt-ext-cb]");
+      if (!cb) return;
+      const e = cb.getAttribute("data-nt-ext-cb");
+      cb.checked ? st.hide.delete(e) : st.hide.add(e);
+      ntExtMenu(id); ntRender(id);
     });
     document.addEventListener("fullscreenchange", () => { if (document.fullscreenElement !== root) setTimeout(() => ntFit(id), 120); });
   });
@@ -4056,7 +4124,7 @@ async function openComponents(analysisId, keepTab, viewId) {
     sections.push({
       id: "nested",
       label: `Nested (${nestedCount})`,
-      html: nestedTree.length ? paneNested(nested, { tree: true }) : `<p class="hint-line">No nested files were extracted for this analysis.</p>`
+      html: nestedTree.length ? paneNested(nested, { tree: true, rootName: d.chain || d.filename || "" }) : `<p class="hint-line">No nested files were extracted for this analysis.</p>`
     });
     if (nestedTree.length && !viewId) {
       // a direct tab per FIRST-level child that has its own analysis
