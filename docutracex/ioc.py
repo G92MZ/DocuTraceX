@@ -1040,6 +1040,9 @@ _MODULE_SKIP_PATHS = {
 # relays and stamps are not indicators: the block is cut before mining.
 _HDR_MARKED = re.compile(r"(?im)^[ \t>]*-{3,}\s*begin\s+(?:e-?mail\s+|message\s+)?headers?\s*-{3,}[ \t]*$"
                          r".*?(?:^[ \t>]*-{3,}\s*end\s+(?:e-?mail\s+|message\s+)?headers?\s*-{3,}[ \t]*$|\Z)", re.DOTALL)
+# the same block flattened into one line (a page's visible text, a table cell)
+_HDR_MARKED_FLAT = re.compile(r"(?is)-{3,}\s*begin\s+(?:e-?mail\s+|message\s+)?headers?\s*-{3,}"
+                              r".*?(?:-{3,}\s*end\s+(?:e-?mail\s+|message\s+)?headers?\s*-{3,}|\Z)")
 _HDR_LINE = re.compile(r"^[ \t>]*(?:[A-Za-z][A-Za-z0-9-]{1,76}:(?:[ \t].*)?|[ \t]+\S.*)$")
 _HDR_NAME = re.compile(r"^[ \t>]*([A-Za-z][A-Za-z0-9-]{1,76}):")
 # names that only appear in a real header block (an Outlook "From / Sent / To /
@@ -1055,6 +1058,7 @@ def strip_header_blocks(text: str) -> str:
     if not text or ":" not in text:
         return text
     text = _HDR_MARKED.sub("\n", text)
+    text = _HDR_MARKED_FLAT.sub(" ", text)
     lines = text.split("\n")
     out: list[str] = []
     i = 0
