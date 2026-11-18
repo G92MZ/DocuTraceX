@@ -215,3 +215,36 @@ def test_generic_scripts_have_a_code_tab_shape(tmp_path: Path) -> None:
     sc = genscript.analyze(p)["scripts"][0]
     assert sc["kind"] == "AutoIt" and sc["metrics"]["lines"] > 3
     assert all({"label", "line_no", "line", "severity"} <= set(h) for h in sc["hits"])
+
+
+def test_autohotkey_script_without_extension_is_recognised_with_its_dll_call(tmp_path: Path) -> None:
+    from docutracex.parsers import genscript
+    p = tmp_path / "notas_factura"                      # no extension, as the side-loading kits ship it
+    p.write_bytes(ms._AHK_SCRIPT.encode())
+    res = genscript.analyze(p)
+    assert res.get("sniffed") == "AutoHotkey"
+    f = next(x for x in res["findings"] if x["rule"] == "script_dll_load")
+    assert f["severity"] == "high" and "datos.bin" in f["detail"] and "Iniciar" in f["detail"]
+    assert genscript.sniff("Local $a = 1\nFunc x()\nEndFunc\n") == "AutoIt"
+    assert genscript.sniff("hello world\nthis is text: nothing else\n") is None
+    # system DLLs are ordinary scripting, not a finding
+    assert genscript.dll_calls('DllCall("kernel32\\Sleep", "UInt", 10)') == []
+
+
+def test_renamed_autohotkey_bundle_side_loads_a_dll(tmp_path: Path) -> None:
+    got = interpreters.findings(_bundle(ms.portable_ahk_bundle_zip, tmp_path), "bundle.zip")
+    assert [f["rule"] for f in got] == ["embedded_interpreter_autohotkey"]
+    d = got[0]["detail"]
+    assert got[0]["severity"] == "high" and "really autohotkey.exe" in d and "notas_factura loads datos.bin" in d
+
+
+def test_ahk2exe_compiled_script_is_recovered(tmp_path: Path) -> None:
+    import pefile
+    from docutracex.parsers import unpack
+    blob = ms.ahk_compiled_exe()
+    assert [h["family"] for h in unpack.heuristics(blob, pefile.PE(data=blob))] == ["ahk"]
+    p = tmp_path / "viewer.exe"
+    p.write_bytes(blob)
+    rec = unpack._unpack_ahk(p, tmp_path / "out")
+    assert rec["status"] == "ok"
+    assert b"DllCall" in (tmp_path / "out" / "script.ahk").read_bytes()

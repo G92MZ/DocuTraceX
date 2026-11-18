@@ -44,6 +44,18 @@ AutoIt-Ripper recovers the script (as it does for compiled AutoIt EXEs) and the 
 reads it. Next to it, a renamed `AutoIt3.exe` is still found by the *OriginalFilename* of its
 version information (the same goes for the other portable interpreters).
 
+**AutoHotkey** is covered the same way:
+
+- `.ahk` scripts, and scripts with **no extension** recognised by their content (`#NoEnv`,
+  `#NoTrayIcon`, `:=`…).
+- EXEs compiled with **Ahk2Exe**: the script is taken from the `>AUTOHOTKEY SCRIPT<` resource. Old
+  `JB01` ones go through AutoIt-Ripper.
+- A renamed `AutoHotkey.exe` next to its script, even with no extension.
+- `DllCall` is followed through simple variables (`lib := "x.dat"` then `DllCall(lib . "\Export")`).
+  A script that loads a library it brought along and calls its export is reported (*script_dll_load*,
+  high). The archive's finding names the DLL in the bundle and whether its export table has that
+  function: the side-loading shape of AutoHotkey loaders.
+
 **Shellcode with PEs inside.** When a loader's bytes are a short stub (`jmp` over a few bytes)
 followed by PEs — a reflective loader DLL and the program it maps — each PE becomes its own
 child, **cut to the size its headers give**. What lies after it (zeros, a repeated pattern,

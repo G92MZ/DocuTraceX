@@ -55,6 +55,7 @@ FAMILIES: dict[str, str] = {
     "nuitka": "Nuitka onefile",
     "evb": "Enigma Virtual Box",
     "autoit": "AutoIt (compiled script)",
+    "ahk": "AutoHotkey (compiled script, Ahk2Exe)",
     "inno": "Inno Setup",
     "nsis": "NSIS installer",
     "sfx7z": "7-Zip SFX",
@@ -75,7 +76,7 @@ _DIE_WRAPPER_TYPES = ("packer", "protector", "cryptor", "installer", "sfx", "joi
 _PRIORITY_EXT = {".exe", ".dll", ".scr", ".sys", ".ocx", ".cpl", ".com", ".msi",
                  ".au3", ".a3x", ".ps1", ".psm1", ".bat", ".cmd", ".vbs", ".vbe", ".js",
                  ".jse", ".wsf", ".hta", ".py", ".pyc", ".lnk", ".iss", ".nsi"}
-_SCRIPT_EXT = {".au3", ".ps1", ".psm1", ".bat", ".cmd", ".vbs", ".js", ".wsf", ".hta",
+_SCRIPT_EXT = {".au3", ".ahk", ".ps1", ".psm1", ".bat", ".cmd", ".vbs", ".js", ".wsf", ".hta",
                ".py", ".iss", ".nsi"}
 
 # Protectors / packers with no static unpacker: detected and reported only.
@@ -295,6 +296,15 @@ def heuristics(blob: bytes, pe: Any | None) -> list[dict[str, str]]:
     # AutoIt: script resource / overlay markers.
     if b"AU3!EA06" in blob or b"AU3!EA05" in blob:
         add("autoit", "marker", "AU3!EA0x script marker")
+    # AutoHotkey compiled with Ahk2Exe: the script is an RCDATA resource named >AUTOHOTKEY SCRIPT<
+    # (>AHK WITH ICON< when built with an icon); AutoHotkey 1.0 stored it encrypted as a JB01 blob
+    for rname in _AHK_RES:
+        if rname.encode("utf-16-le") in blob:
+            add("ahk", "resource", f"RCDATA resource {rname}")
+            break
+    else:
+        if _JB01 in blob:
+            add("ahk", "marker", "JB01 script blob (AutoHotkey 1.0 / AutoIt 2)")
     # Inno Setup
     if b"Inno Setup Setup Data" in blob or b"Inno Setup Messages" in blob or b"zlb\x1a" in blob[tail_from:tail_from + 64]:
         add("inno", "marker", "Inno Setup data marker")
@@ -650,17 +660,72 @@ def _unpack_evb(path: Path, out: Path) -> dict[str, Any]:
     return {**rec, "status": "error", "detail": f"evbunpack failed: {err}"}
 
 
+_AHK_RES = (">AUTOHOTKEY SCRIPT<", ">AHK WITH ICON<")
+_JB01 = bytes.fromhex("a3484bbe986c4aa9994c530a86d6487d") + b"JB01"
+
+
+def ahk_script(blob: bytes) -> tuple[str, bytes] | None:
+    """(resource name, script bytes) of an Ahk2Exe-compiled EXE: plain text in an RCDATA
+    resource (UTF-8, with or without BOM). None when there is none."""
+    try:
+        import pefile
+        pe = pefile.PE(data=blob, fast_load=True)
+        pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_RESOURCE"]])
+    except Exception:  # noqa: BLE001
+        return None
+    for t in getattr(getattr(pe, "DIRECTORY_ENTRY_RESOURCE", None), "entries", []) or []:
+        if t.id != 10:                                   # RT_RCDATA
+            continue
+        for n in t.directory.entries:
+            name = str(n.name) if n.name is not None else ""
+            if name.upper() not in _AHK_RES:
+                continue
+            for lang in n.directory.entries:
+                d = lang.data.struct
+                return name, pe.get_data(d.OffsetToData, d.Size)
+    return None
+
+
+def _unpack_ahk(path: Path, out: Path) -> dict[str, Any]:
+    """The script of an AutoHotkey EXE: the RCDATA resource as is (Ahk2Exe 1.1+ / v2), or the
+    JB01 blob of AutoHotkey 1.0 through AutoIt-Ripper (which decrypts that format too)."""
+    rec = {"tool": "resource", "duration_s": 0}
+    try:
+        blob = path.read_bytes()
+    except OSError as exc:
+        return {**rec, "status": "error", "detail": str(exc)}
+    got = ahk_script(blob)
+    if got:
+        name, raw = got
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "script.ahk").write_bytes(raw)
+        return {**rec, "status": "ok", "detail": f"AutoHotkey script recovered from the {name} resource"}
+    if _JB01 in blob:
+        r = _unpack_autoit(path, out)
+        if r.get("status") == "ok":
+            for p in out.iterdir():                      # AutoIt-Ripper names it after the resource subtype
+                if p.is_file() and p.suffix.lower() not in (".ahk", ".au3"):
+                    p.rename(p.with_suffix(".ahk"))
+        return r
+    return {**rec, "status": "error", "detail": "no AutoHotkey script resource found"}
+
+
 _UNPACKERS = {
     "upx": _unpack_upx,
     "nuitka": _unpack_nuitka,
     "evb": _unpack_evb,
     "autoit": _unpack_autoit,
+    "ahk": _unpack_ahk,
     "inno": _unpack_inno,
     "nsis": lambda p, o: _unpack_7z(p, o, "NSIS installer"),
     "sfx7z": lambda p, o: _unpack_7z(p, o, "7-Zip SFX"),
     "sfxrar": lambda p, o: _unpack_7z(p, o, "RAR SFX"),
     "sfxzip": lambda p, o: _unpack_7z(p, o, "ZIP SFX"),
 }
+
+# AutoHotkey commands / functions worth flagging in a recovered script.
+_AHK_RISKY = ("Run", "RunWait", "DllCall", "URLDownloadToFile", "ComObjCreate", "RegWrite", "FileInstall",
+              "Download", "WinHttp", "FileAppend", "Send", "ClipboardAll", "#NoTrayIcon")
 
 # AutoIt functions worth flagging in a recovered script.
 _AU3_RISKY = ("Run", "RunWait", "ShellExecute", "ShellExecuteWait", "InetGet", "InetRead",
@@ -797,6 +862,12 @@ def _add_findings(rec: dict[str, Any]) -> None:
                     f"AutoIt script recovered ({s['lines']} lines)"
                     + (f"; uses {', '.join(hits[:10])}" if hits else ""),
                     s["text"][:1500], "T1059.010")
+            elif s["file"].lower().endswith(".ahk"):
+                hits = sorted({fn for fn in _AHK_RISKY if fn.lower() in s["text"].lower()})
+                add("ahk_script", "medium" if hits else "low",
+                    f"AutoHotkey script recovered from the compiled EXE ({s['lines']} lines)"
+                    + (f"; uses {', '.join(hits[:10])}" if hits else "") + " — analysed in Nested",
+                    s["text"][:1500], "T1059")
     elif rec["status"] in ("failed", "not_provisioned"):
         add("pe_unpack_failed", "low" if installer_only else "medium",
             f"{labels}: could not unpack statically — {rec.get('detail', '')}", "",
