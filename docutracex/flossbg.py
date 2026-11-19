@@ -55,6 +55,108 @@ def clear_requests(root: Path) -> None:
     (Path(root) / "results" / REQUESTS).unlink(missing_ok=True)
 
 
+# Jobs running now, per case (results/background_running.json): a restart of the app ends
+# them, and on the next start ``recover_interrupted`` marks what they left as interrupted.
+RUNNING = "background_running.json"
+
+
+def _track(root: Path, tid: str, kind: str, sha256: str, mode: str | None = None) -> None:
+    from .storage import read_json, write_json
+    f = Path(root) / "results" / RUNNING
+    with _req_lock:
+        cur = read_json(f) or {}
+        cur[tid] = {"kind": kind, "sha256": sha256, "mode": mode}
+        f.parent.mkdir(parents=True, exist_ok=True)
+        write_json(f, cur)
+
+
+def _untrack(root: Path, tid: str) -> None:
+    from .storage import read_json, write_json
+    f = Path(root) / "results" / RUNNING
+    with _req_lock:
+        cur = read_json(f) or {}
+        cur.pop(tid, None)
+        if cur:
+            write_json(f, cur)
+        else:
+            f.unlink(missing_ok=True)
+
+
+def _launch(root: Path, kind: str, sha256: str, name: str, target: str, step: str, run: Any,
+            task_id: str | None, mode: str | None = None) -> str:
+    """start_background, tracked in the case until the job ends (any way)."""
+    from . import tasks
+    tid = task_id or tasks.manager.new_id()
+    _track(root, tid, kind, sha256, mode)
+
+    def tracked(task: Any, cancel: Any) -> Any:
+        try:
+            return run(task, cancel)
+        finally:
+            _untrack(root, tid)
+    try:
+        tasks.manager.start_background(kind if kind != "priority" else "floss", root.name, name, target, tracked,
+                                       step=step, cases_dir=root.parent, task_id=tid)
+    except Exception:
+        _untrack(root, tid)
+        raise
+    return tid
+
+
+INTERRUPTED = "the app restarted while it ran in the background: re-run the analysis to run it again"
+
+
+def recover_interrupted(cases_dir: Path) -> int:
+    """On start: background jobs a restart ended leave their placeholders "running" for
+    ever. Mark them interrupted (Binary tab, Code → Strings). Jobs live in this process are
+    left alone. Returns how many were marked."""
+    from . import tasks
+    from .storage import CasePaths, read_json, write_json, write_subresult
+    live = {t["id"] for t in tasks.manager.list() if t.get("background") and t.get("state") in ("running", "cancelling")}
+    n = 0
+    for f in sorted(Path(cases_dir).glob(f"*/results/{RUNNING}")):
+        root = f.parent.parent
+        try:
+            with _req_lock:
+                cur = read_json(f) or {}
+                gone = {tid: r for tid, r in cur.items() if tid not in live}
+                if not gone:
+                    continue
+                paths = CasePaths(root.name, cases_dir=root.parent)
+                res = read_json(paths.subresult("msi")) or {}
+                changed = False
+                for it in res.get("items") or []:
+                    for key in ("floss", "capa"):
+                        rec = it.get(key) or {}
+                        if rec.get("task_id") in gone and rec.get("status") == "running":
+                            it[key] = {"status": "interrupted", "background": True, "task_id": rec["task_id"],
+                                       "detail": INTERRUPTED}
+                            changed, n = True, n + 1
+                if changed:
+                    write_subresult(paths, "msi", res)
+                from .codeanalysis import case as code_case
+                for tid, r in gone.items():
+                    if r.get("kind") != "priority":
+                        continue
+                    with code_case._write_lock:
+                        full = code_case.load(root, r["sha256"], r.get("mode") or "native")
+                        fp = (full or {}).get("floss_priority") or {}
+                        if fp.get("task_id") == tid and fp.get("status") == "background":
+                            fp.update(status="interrupted", detail=INTERRUPTED)
+                            code_case.result_file(root, r["sha256"], r.get("mode") or "native").write_text(
+                                json.dumps(full), encoding="utf-8")
+                            n += 1
+                rest = {tid: r for tid, r in cur.items() if tid in live}
+                if rest:
+                    write_json(f, rest)
+                else:
+                    f.unlink(missing_ok=True)
+            (root / "results" / REQUESTS).unlink(missing_ok=True)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("interrupted background jobs not marked for %s: %s", root.name, exc)
+    return n
+
+
 def launch_deferred(root: Path) -> list[str]:
     """In the web service, after the analysis' child process ended: give the jobs it
     requested their task ids, put them in the placeholders, then start the jobs (in that
@@ -147,10 +249,7 @@ def _start_floss(root: Path, path: Path, name: str, sha256: str,
         n = _apply(root, sha256, rec, task, path)
         return f"{n} string(s)" if rec.get("status") == "ok" else str(rec.get("detail") or rec.get("status"))
 
-    t = tasks.manager.start_background("floss", root.name, name, "floss (background)", run,
-                                       step=f"FLOSS · {name} (background)", cases_dir=root.parent,
-                                       task_id=task_id)
-    return t.id
+    return _launch(root, "floss", sha256, name, "floss (background)", f"FLOSS · {name} (background)", run, task_id)
 
 
 def _wait_for_placeholder(root: Path, tid: str, cancel: Any, limit_s: float = 6 * 3600,
@@ -261,10 +360,7 @@ def _start_capa(root: Path, path: Path, name: str, sha256: str, loc: str,
         n = _apply_capa(root, rec, task, loc, sha256)
         return f"{n} capabilit(ies)" if rec.get("status") == "ok" else str(rec.get("detail") or rec.get("status"))
 
-    t = tasks.manager.start_background("capa", root.name, name, "capa (background)", run,
-                                       step=f"capa · {name} (background)", cases_dir=root.parent,
-                                       task_id=task_id)
-    return t.id
+    return _launch(root, "capa", sha256, name, "capa (background)", f"capa · {name} (background)", run, task_id)
 
 
 def _apply_capa(root: Path, rec: dict[str, Any], task: Any, loc: str, sha256: str = "") -> int:
@@ -351,10 +447,8 @@ def _start_priority(root: Path, path: Path, name: str, sha256: str, mode: str, a
                 code_case.result_file(root, sha256, mode).write_text(json.dumps(full), encoding="utf-8")
         return f"{len(located)} tight string(s), {added} new" if status == "ok" else str(status)
 
-    t = tasks.manager.start_background("floss", root.name, name, "floss tight (background)", run,
-                                       step=f"FLOSS tight · {name} · priority functions (background)",
-                                       cases_dir=root.parent, task_id=task_id)
-    return t.id
+    return _launch(root, "priority", sha256, name, "floss tight (background)",
+                   f"FLOSS tight · {name} · priority functions (background)", run, task_id, mode)
 
 
 def _wait_for_code(root: Path, sha256: str, mode: str, tid: str, cancel: Any, limit_s: float = 6 * 3600) -> bool:

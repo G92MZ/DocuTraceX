@@ -415,3 +415,32 @@ def test_run_analysis_on_portable_starts_requested_jobs(capa_env, monkeypatch: p
     assert sorted(t["type"] for t in bg) == ["capa", "floss"]
     cgate.set()
     _wait(lambda: all(tasks.manager.get(t["id"])["state"] == tasks.COMPLETED for t in bg))
+
+
+def test_restart_marks_background_jobs_interrupted(capa_env) -> None:  # noqa: ANN001
+    """A restart ends the background jobs: on the next start their placeholders say
+    "interrupted" (not "running" for ever); jobs live in this process are left alone."""
+    from docutracex import cases, flossbg
+    from docutracex.storage import CasePaths, read_json, write_json, write_subresult
+    tmp, cgate = capa_env
+    m = cases.create_case(io.BytesIO(_exe() + b"restart"), "visor7.exe", cases_dir=tmp / "cases")
+    cid = m["analysis_id"]
+    root = tmp / "cases" / cid
+    t = tasks.manager.submit("analyze", cid, "visor7.exe", cases_dir=tmp / "cases")
+    _wait(lambda: tasks.manager.get(t.id)["state"] == tasks.COMPLETED)
+    capa_id = read_json(CasePaths(cid, cases_dir=tmp / "cases").subresult("msi"))["items"][0]["capa"]["task_id"]
+    marker = root / "results" / flossbg.RUNNING
+    _wait(lambda: list((read_json(marker) or {}).keys()) == [capa_id])   # FLOSS done; capa running, tracked
+    assert flossbg.recover_interrupted(tmp / "cases") == 0                # live here: left alone
+    cgate.set()
+    _wait(lambda: not marker.exists())                                     # untracked when it ends
+    # "after a restart": a job this process does not know, its placeholder still running
+    paths = CasePaths(cid, cases_dir=tmp / "cases")
+    res = read_json(paths.subresult("msi"))
+    res["items"][0]["capa"] = {"status": "running", "background": True, "task_id": "task-0999"}
+    write_subresult(paths, "msi", res)
+    write_json(marker, {"task-0999": {"kind": "capa", "sha256": "x", "mode": None}})
+    assert flossbg.recover_interrupted(tmp / "cases") == 1
+    capa = read_json(paths.subresult("msi"))["items"][0]["capa"]
+    assert capa["status"] == "interrupted" and "restarted" in capa["detail"]
+    assert not marker.exists()
