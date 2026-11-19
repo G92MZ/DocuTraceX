@@ -3,6 +3,14 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.234.0 — 2026-11-19 (#301)
+
+**MCP: everything, never cut — and C2, YARA and raw-record tools**
+
+- Over MCP no answer is clipped or capped any more: long ones come in pages (`offset` / `next_offset`); `get_module` gives any module's whole raw JSON in slices.
+- New tools: `get_c2` (every configuration with all its fields, YARA names, provenance, marks, extractor status), `get_c2_raw` (each extractor's raw output per object), `get_yara` (hits, matched strings, rule source, marks), `list_yara_rules` and `list_modules`.
+- The nested tree over MCP lists every node (path and depth), however deep.
+
 ## 1.233.0 — 2026-11-19 (#300)
 
 **C2: the malware family named by CAPE and ditekSHen YARA rules; clear YARA rules from Settings**
