@@ -3,6 +3,12 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.236.1 — 2026-11-19 (#304)
+
+**Deep FLOSS: what it recovers reaches the IOCs at once**
+
+- The strings Deep FLOSS recovers (tight strings) are added to the case's IOCs and findings when it ends, with the function they come from — no re-analysis needed.
+
 ## 1.236.0 — 2026-11-19 (#303)
 
 **FLOSS without tight strings by default; Deep FLOSS with no time limit**

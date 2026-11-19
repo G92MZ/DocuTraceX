@@ -766,9 +766,11 @@ def full_floss_status(root: Path, sha256: str, mode: str) -> dict[str, Any]:
 
 
 def merge_full_floss(root: Path, sha256: str, mode: str, rec: dict[str, Any]) -> int:
-    """Adds the strings of a full FLOSS run the code result does not have yet
-    (tight strings of a large file, mostly) to the Strings list and to their
-    function. Returns how many were added."""
+    """Adds the strings of a Deep FLOSS run the code result does not have yet (tight
+    strings, mostly) to the Strings list and to their function, then to the case's
+    IOCs and findings. Returns how many were added."""
+    new: list[dict[str, Any]] = []
+    tmp: dict[str, Any] = {"floss": []}
     with _write_lock:
         full = load(root, sha256, mode)
         if full is None:
@@ -781,7 +783,33 @@ def merge_full_floss(root: Path, sha256: str, mode: str, rec: dict[str, Any]) ->
         full["floss"] = ((full.get("floss") or []) + tmp["floss"])[:5000]
         full["floss_full"] = {"status": rec.get("status"), "detail": rec.get("detail", ""), "added": len(new)}
         result_file(root, sha256, mode).write_text(json.dumps(full), encoding="utf-8")
-        return len(new)
+    if new:
+        _refresh_iocs_with(root, sha256, mode, tmp["floss"])
+    return len(new)
+
+
+def _refresh_iocs_with(root: Path, sha256: str, mode: str, added: list[dict[str, Any]]) -> None:
+    """New FLOSS strings (Deep FLOSS) → the object's IOC sources in the case's code result,
+    then the case's IOCs and findings recomputed, as after any re-run. Never raises."""
+    try:
+        from ..analyze import _recompute_derived
+        from ..storage import CasePaths, read_json, write_subresult
+        paths = CasePaths(root.name, cases_dir=root.parent)
+        module = "golang" if mode == "go" else "code"
+        res = read_json(paths.subresult(module)) or {}
+        obj = next((o for o in res.get("objects") or [] if o.get("sha256") == sha256), None)
+        if obj is None:
+            return
+        label = obj.get("label") or sha256[:12]
+        have = {(x.get("location"), x.get("text")) for x in obj.get("ioc_sources") or []}
+        for s in added:
+            rec = {"location": f"{label} › {s.get('function') or 'FLOSS'} ({s.get('source')})", "text": s.get("value") or ""}
+            if rec["text"].strip() and (rec["location"], rec["text"]) not in have:
+                obj.setdefault("ioc_sources", []).append(rec)
+        write_subresult(paths, module, res)
+        _recompute_derived(paths)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("IOCs not refreshed after Deep FLOSS on %s: %s", sha256[:12], exc)
 
 
 _cancels: dict[str, _threading.Event] = {}
