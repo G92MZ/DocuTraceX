@@ -3,6 +3,12 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.236.2 — 2026-11-19 (#305)
+
+**Tasks: which of FLOSS and capa is still running**
+
+- While a binary's FLOSS and capa run, the task says which one has finished and which is still going: "capa running · 23m 42s (FLOSS done in 8m 10s)".
+
 ## 1.236.1 — 2026-11-19 (#304)
 
 **Deep FLOSS: what it recovers reaches the IOCs at once**

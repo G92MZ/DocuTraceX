@@ -128,9 +128,10 @@ class _Clock:
     running · 3m 05s") and afterwards as sub-steps: one row per tool with its time and status.
     Reporting never breaks the triage."""
 
-    def __init__(self, rel: str) -> None:
+    def __init__(self, rel: str, path: Path | None = None) -> None:
         import time as _t
         self._t = _t
+        self.path = path
         self.name = Path(rel).name
         self.rows: list[dict[str, Any]] = []
         try:
@@ -166,9 +167,16 @@ class _Clock:
         t0 = self._t.perf_counter()
 
         def beat() -> None:
+            fmt = lambda x: f"{int(x) // 60}m {int(x) % 60:02d}s"  # noqa: E731
             while not stop.wait(HEARTBEAT_S):
-                s = int(self._t.perf_counter() - t0)
-                self.say(f"FLOSS + capa running · {s // 60}m {s % 60:02d}s")
+                el = self._t.perf_counter() - t0
+                st = live_state(self.path) if self.path is not None else {}
+                done = [f"{n} done in {fmt(st[n] - st.get('start', st[n]))}" for n in ("FLOSS", "capa") if n in st]
+                run = [n for n in ("FLOSS", "capa") if n not in st]
+                if done and run:
+                    self.say(f"{' + '.join(run)} running · {fmt(el)} ({'; '.join(done)})")
+                else:
+                    self.say(f"FLOSS + capa running · {fmt(el)}")
         self.say("FLOSS + capa…")
         th = _threading.Thread(target=beat, name="pe-tools-heartbeat", daemon=True)
         th.start()
@@ -374,7 +382,7 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
     # --- LIEF: imphash, Rich header, PDB path, Authenticode verification,
     # manifest, mitigations, checksum, forwarded exports, overlay (own process).
     from . import lief_info
-    clock = _Clock(rel)
+    clock = _Clock(rel, path)
     lf = clock.run("LIEF (imphash, Rich, PDB, signature)", lambda: lief_info.analyze(path, rel),
                    lambda r: {"status": r.get("status", "ok")} if isinstance(r, dict) else None)
     have = {x["rule"] for x in f}
@@ -694,6 +702,7 @@ def _run_tool(name: str, exe: Path | None, args: list[str], path: Path,
 # bounded (each binary = 2 tool processes; vivisect is memory-hungry):
 # DOCUTRACEX_TOOLS_PARALLEL binaries at once (default 2, never above CPUs - 1).
 import threading as _threading  # noqa: E402
+import time as _time  # noqa: E402
 from concurrent.futures import Future, ThreadPoolExecutor  # noqa: E402
 
 _pool: ThreadPoolExecutor | None = None
@@ -798,6 +807,27 @@ def _cached(path: Path, tool: str, exe: Path | None, extra: list[str], run) -> d
     return dict(rec)
 
 
+# FLOSS / capa of a binary in flight: when each started and finished (monotonic), keyed by
+# SHA-256, so the PE triage's heartbeat can say which one is still running.
+_live: dict[str, dict[str, float]] = {}
+
+
+def _live_for(path: Path) -> dict[str, float]:
+    sha = _sha(path) or str(path)
+    with _lock:
+        rec = _live.setdefault(sha, {})
+        rec.setdefault("start", _time.monotonic())
+        if len(_live) > 256:                       # never grows without bound
+            for k in list(_live)[:128]:
+                _live.pop(k, None)
+        return rec
+
+
+def live_state(path: Path) -> dict[str, float]:
+    with _lock:
+        return dict(_live.get(_sha(path) or str(path)) or {})
+
+
 def _both(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     """FLOSS and capa on one binary: from the cache when this exact file was
     analysed before, skipped for libraries signed by a trusted publisher, else
@@ -816,10 +846,21 @@ def _both(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     fextra = FLOSS_LARGE_ARGS if large else []
     if large and _cache_get(path, "floss_full", settings.floss_executable(), []) is not None:
         fextra = []                     # the analyst already ran the full FLOSS on it: reuse that
+    live = _live_for(path)
+
+    def timed(name: str, fn):  # noqa: ANN001, ANN202
+        def go():  # noqa: ANN202
+            try:
+                return fn()
+            finally:
+                live[name] = _time.monotonic()        # this one is done: the heartbeat says so
+        return go
     with ThreadPoolExecutor(max_workers=2) as ex:
-        ff = ex.submit(_cached, path, "floss_full" if large and not fextra else "floss", settings.floss_executable(),
-                       fextra, lambda: _run_floss(path, fextra) if fextra else _run_floss(path))
-        cf = ex.submit(_cached, path, "capa", settings.capa_executable(), [], lambda: _run_capa(path))
+        ff = ex.submit(timed("FLOSS", lambda: _cached(
+            path, "floss_full" if large and not fextra else "floss", settings.floss_executable(),
+            fextra, lambda: _run_floss(path, fextra) if fextra else _run_floss(path))))
+        cf = ex.submit(timed("capa", lambda: _cached(path, "capa", settings.capa_executable(), [],
+                                                     lambda: _run_capa(path))))
         floss = ff.result()
         if large and fextra and floss.get("status") == "ok":
             floss["note"] = ("tight strings skipped in the automatic run (they emulate every tight loop: "
