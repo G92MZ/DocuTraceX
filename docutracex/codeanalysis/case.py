@@ -765,7 +765,8 @@ def full_floss_status(root: Path, sha256: str, mode: str) -> dict[str, Any]:
     return st
 
 
-def merge_full_floss(root: Path, sha256: str, mode: str, rec: dict[str, Any]) -> int:
+def merge_full_floss(root: Path, sha256: str, mode: str, rec: dict[str, Any], label: str = "full run",
+                     refresh: bool = True) -> int:
     """Adds the strings of a Deep FLOSS run the code result does not have yet (tight
     strings, mostly) to the Strings list and to their function, then to the case's
     IOCs and findings. Returns how many were added."""
@@ -776,7 +777,7 @@ def merge_full_floss(root: Path, sha256: str, mode: str, rec: dict[str, Any]) ->
         if full is None:
             return 0
         have = {(x.get("value"), x.get("addr")) for x in full.get("floss") or []}
-        new = [dict(s, kind=f"{s.get('kind', '')} (full run)") for s in rec.get("located") or []
+        new = [dict(s, kind=f"{s.get('kind', '')} ({label})") for s in rec.get("located") or []
                if (s.get("string"), s.get("function") or s.get("routine")) not in have]
         tmp = {"functions": full.get("functions") or []}      # same function dicts: linked in place
         attach_floss(tmp, new)
@@ -784,11 +785,12 @@ def merge_full_floss(root: Path, sha256: str, mode: str, rec: dict[str, Any]) ->
         full["floss_full"] = {"status": rec.get("status"), "detail": rec.get("detail", ""), "added": len(new)}
         result_file(root, sha256, mode).write_text(json.dumps(full), encoding="utf-8")
     if new:
-        _refresh_iocs_with(root, sha256, mode, tmp["floss"])
+        _refresh_iocs_with(root, sha256, mode, tmp["floss"], recompute=refresh)
     return len(new)
 
 
-def _refresh_iocs_with(root: Path, sha256: str, mode: str, added: list[dict[str, Any]]) -> None:
+def _refresh_iocs_with(root: Path, sha256: str, mode: str, added: list[dict[str, Any]],
+                       recompute: bool = True) -> None:
     """New FLOSS strings (Deep FLOSS) → the object's IOC sources in the case's code result,
     then the case's IOCs and findings recomputed, as after any re-run. Never raises."""
     try:
@@ -807,7 +809,8 @@ def _refresh_iocs_with(root: Path, sha256: str, mode: str, added: list[dict[str,
             if rec["text"].strip() and (rec["location"], rec["text"]) not in have:
                 obj.setdefault("ioc_sources", []).append(rec)
         write_subresult(paths, module, res)
-        _recompute_derived(paths)
+        if recompute:
+            _recompute_derived(paths)
     except Exception as exc:  # noqa: BLE001
         log.warning("IOCs not refreshed after Deep FLOSS on %s: %s", sha256[:12], exc)
 

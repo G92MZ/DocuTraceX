@@ -32,6 +32,8 @@ emulates decoding routines (vivisect) to recover strings.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
+
 import hashlib
 import math
 from pathlib import Path
@@ -485,7 +487,18 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
             item["floss"] = {"status": "skipped", "detail": skip_why}
             item["capa"] = {"status": "skipped", "detail": skip_why}
         else:
-            floss, capa = clock.tools(lambda: tools_for(path))
+            if _background_floss(path):
+                # large: capa now, FLOSS as a background task (the case does not wait for it)
+                from .. import flossbg
+                capa = clock.run("capa", lambda: _capa_only(path),
+                                 lambda r: {"status": r.get("status", "ok"), "detail": str(r.get("detail") or "")[:160]})
+                floss = flossbg.start(_bg_root.get(), path, Path(rel).name, _sha(path) or "")
+                clock.rows.append({"name": f"{clock.name} · FLOSS", "chain": "FLOSS", "depth": 1, "kind": "tool",
+                                   "duration_s": 0, "status": "background",
+                                   "detail": f"running in the background ({floss.get('task_id')}): the case did "
+                                             "not wait for it; its strings, IOCs and findings arrive when it ends"})
+            else:
+                floss, capa = clock.tools(lambda: tools_for(path))
             floss_strings = floss.pop("strings", [])
             item["floss"] = floss
             if floss_strings:
@@ -828,6 +841,63 @@ def live_state(path: Path) -> dict[str, float]:
         return dict(_live.get(_sha(path) or str(path)) or {})
 
 
+def _floss_plan(path: Path) -> tuple[str, list[str]]:
+    """Which FLOSS run a file gets: (cache key, extra args). Tight strings off unless the
+    file is under DOCUTRACEX_FLOSS_LARGE_MB; a Deep FLOSS already run on it is reused."""
+    from ..config import settings
+    try:
+        large = path.stat().st_size > FLOSS_LARGE_BYTES or FLOSS_LARGE_BYTES == 0
+    except OSError:
+        large = False
+    if large and _cache_get(path, "floss_full", settings.floss_executable(), []) is not None:
+        return "floss_full", []         # the analyst already ran Deep FLOSS on it: reuse that
+    return ("floss", FLOSS_LARGE_ARGS) if large else ("floss", [])
+
+
+def floss_record(path: Path, cancel: Any = None) -> dict[str, Any]:
+    """The automatic FLOSS run of one file on its own (the background job), cached like
+    the one ``_both`` runs."""
+    from ..config import settings
+    key, fextra = _floss_plan(path)
+    rec = dict(_cached(path, key, settings.floss_executable(), fextra,
+                       lambda: _run_floss(path, fextra, cancel=cancel)))
+    if fextra and rec.get("status") == "ok":
+        rec["tight_skipped"] = True
+    return rec
+
+
+def _floss_cached(path: Path) -> bool:
+    from ..config import settings
+    key, fextra = _floss_plan(path)
+    return _cache_get(path, key, settings.floss_executable(), fextra) is not None
+
+
+def _capa_only(path: Path) -> dict[str, Any]:
+    from ..config import settings
+    return dict(_cached(path, "capa", settings.capa_executable(), [], lambda: _run_capa(path)))
+
+
+# The case's own binary above this size gets FLOSS as a background job (flossbg): the case
+# does not wait for it. 0 disables. Set by msi.analyze for the top-level file only.
+FLOSS_BACKGROUND_BYTES = int(float(_os.environ.get("DOCUTRACEX_FLOSS_BACKGROUND_MB", "2")) * 1024 * 1024)
+_bg_root: ContextVar[Path | None] = ContextVar("dtx_floss_bg_root", default=None)
+
+
+def _background_floss(path: Path) -> bool:
+    if _bg_root.get() is None or not FLOSS_BACKGROUND_BYTES or not _tools_available():
+        return False
+    try:
+        if path.stat().st_size <= FLOSS_BACKGROUND_BYTES:
+            return False
+    except OSError:
+        return False
+    sha = _sha(path)
+    with _lock:
+        if sha in _pending:
+            return False
+    return not _floss_cached(path) and _trusted_signer(path) is None
+
+
 def _both(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     """FLOSS and capa on one binary: from the cache when this exact file was
     analysed before, skipped for libraries signed by a trusted publisher, else
@@ -839,13 +909,8 @@ def _both(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
                f"(DOCUTRACEX_TOOLS_SKIP_TRUSTED=0 analyses it)")
         return {"status": "skipped", "detail": why, "trusted_signer": pub}, \
                {"status": "skipped", "detail": why, "trusted_signer": pub}
-    try:
-        large = path.stat().st_size > FLOSS_LARGE_BYTES or FLOSS_LARGE_BYTES == 0
-    except OSError:
-        large = False
-    fextra = FLOSS_LARGE_ARGS if large else []
-    if large and _cache_get(path, "floss_full", settings.floss_executable(), []) is not None:
-        fextra = []                     # the analyst already ran the full FLOSS on it: reuse that
+    key, fextra = _floss_plan(path)
+    large = bool(fextra) or key == "floss_full"
     live = _live_for(path)
 
     def timed(name: str, fn):  # noqa: ANN001, ANN202
@@ -857,7 +922,7 @@ def _both(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         return go
     with ThreadPoolExecutor(max_workers=2) as ex:
         ff = ex.submit(timed("FLOSS", lambda: _cached(
-            path, "floss_full" if large and not fextra else "floss", settings.floss_executable(),
+            path, key, settings.floss_executable(),
             fextra, lambda: _run_floss(path, fextra) if fextra else _run_floss(path))))
         cf = ex.submit(timed("capa", lambda: _cached(path, "capa", settings.capa_executable(), [],
                                                      lambda: _run_capa(path))))

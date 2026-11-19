@@ -2492,6 +2492,10 @@ function paneCapa(c) {
 function paneFloss(it) {
   const fl = it.floss;
   const ss = it.floss_strings || [];
+  if (fl && fl.background && fl.status === "running")
+    return `<p class="hint-line"><span class="spin">●</span> Large binary: FLOSS is running in the <b>background</b> (${escapeHtml(fl.task_id || "")} in <b>Tasks</b>, with its time and Cancel). The case did not wait for it: its strings appear here, in Code → Strings, in IOCs and in Findings when it ends — reopen the case then.</p>`;
+  if (fl && fl.background && fl.status === "cancelled")
+    return `<p class="hint-line">FLOSS (background) was cancelled. Re-run the analysis to run it again, or Deep FLOSS in the Code view.</p>`;
   if (!fl || fl.status !== "ok") return "";
   const tight = fl.tight_skipped
     ? `<p class="hint-line">Tight strings skipped in this automatic run (they emulate every tight loop: minutes to hours). The code analysis ran them on its priority functions; <b>Deep FLOSS</b> in the <b>Code</b> view runs them on every function, with no time limit.</p>`
@@ -2535,7 +2539,8 @@ const _TOOL_STATUS = { ok: ["ok", "ran"], skipped: ["skip", "skipped"], not_prov
                        not_installed: ["off", "not installed"], timeout: ["bad", "timeout"], error: ["bad", "error"],
                        unpacked: ["ok", "unpacked"], none: ["ok", "not packed"], detected: ["skip", "detected"],
                        failed: ["bad", "failed"], no_static: ["bad", "protector"], obfuscated: ["skip", ".NET obfuscator"],
-                       debloated: ["bad", "padded"], clean: ["ok", "no padding"] };
+                       debloated: ["bad", "padded"], clean: ["ok", "no padding"],
+                       running: ["skip", "running in background"], cancelled: ["off", "cancelled"] };
 function toolTab(id, label, rec, html) {
   const st = rec ? (_TOOL_STATUS[rec.status] || ["off", rec.status || ""]) : null;
   const line = rec ? `<p class="hint-line">${escapeHtml(peToolLine(rec))}</p>` : "";

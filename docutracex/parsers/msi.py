@@ -571,9 +571,15 @@ def analyze(original: Path, extracted_dir: Path | None = None,
     ext = original.suffix.lower()
     if ext in _MSI_EXT or ext in _PE_EXT or native_kind(original) or is_msi_file(original):
         digest = hashlib.sha256(original.read_bytes()).hexdigest()[:12] if extracted_dir is not None else ""
-        item = analyze_binary(original, original.name,
-                              (extracted_dir / UNPACK_DIRNAME / digest)
-                              if extracted_dir is not None else None)
+        from . import pe as pe_mod
+        # the case's own binary: a large one gets FLOSS in the background (flossbg)
+        tok = pe_mod._bg_root.set(extracted_dir.parent if extracted_dir is not None else None)
+        try:
+            item = analyze_binary(original, original.name,
+                                  (extracted_dir / UNPACK_DIRNAME / digest)
+                                  if extracted_dir is not None else None)
+        finally:
+            pe_mod._bg_root.reset(tok)
     else:
         return res
     timings = item.pop("timings", None)

@@ -27,6 +27,12 @@ analysed.
       with **no time limit**, in the background, cancellable. The tools' time and status are
       sub-steps of the PE triage step in Tasks. `DOCUTRACEX_FLOSS_LARGE_MB=N` keeps tight
       strings in the automatic run for files up to N MB.
+    - **FLOSS in the background** for the case's own binary above 2 MB
+      (`DOCUTRACEX_FLOSS_BACKGROUND_MB`, 0 = off): the case does not wait for it (capa still
+      runs inline). The job is listed in Tasks with its time and Cancel; other tasks of the case
+      (C2, YARA, ML) are not blocked by it. When it ends its strings are added to the Binary
+      tab, to Code → Strings with their function, and the case's IOCs and findings are
+      recomputed — marks stay. A file whose FLOSS result is cached runs inline (instant).
 
     ![Binary tab of sample_packed.exe](../assets/shots/windows-pe/binary.webp){ .shot }
 
