@@ -464,7 +464,8 @@ _UNPACKERS = (
      "pip install autoit-ripper in the portable Python"),
     ("evbunpack", "evbunpack", "Unpacks Enigma Virtual Box executables",
      "Enigma Virtual Box payloads are not extracted",
-     "pip install evbunpack in the portable Python"),
+     "Retry, or in the portable Python: pip install \"evbunpack @ https://github.com/mos9527/evbunpack/archive/"
+     "ee7b647acf2a46617b0c448dfa83d63132ea917b.zip\" (no longer on PyPI)"),
 )
 
 
