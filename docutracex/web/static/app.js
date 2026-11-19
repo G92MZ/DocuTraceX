@@ -4377,7 +4377,7 @@ function substepRows(s, key) {
   const open = _openSubsteps.has(key);
   const slow = subs.reduce((a, b) => ((b.duration_s || 0) > (a.duration_s || 0) ? b : a), subs[0]);
   const toggle = `<tr class="substep-toggle"><td colspan="4">
-      <button class="btn btn-ghost btn-sm" type="button" data-substeps="${escapeHtml(key)}">${open ? "▾" : "▸"} ${subs.length} ${s.step.startsWith("nested") ? "child(ren)" : "object(s)"}</button>
+      <button class="btn btn-ghost btn-sm" type="button" data-substeps="${escapeHtml(key)}">${open ? "▾" : "▸"} ${subs.length} ${s.step.startsWith("nested") ? "child(ren)" : subs.every((c) => c.kind === "tool") ? "tool(s)" : "object(s)"}</button>
       <span class="hint-line">slowest: <span class="mono">${escapeHtml(slow.name || "")}</span> ${fmtDuration(slow.duration_s)}${slow.slowest_tool ? ` (${escapeHtml(slow.slowest_tool)} ${fmtDuration(slow.slowest_tool_s)})` : ""}</span>
     </td></tr>`;
   if (!open) return toggle;
@@ -4453,11 +4453,24 @@ function renderTasks(data) {
   const summary = document.getElementById("tasks-summary");
   const body = document.getElementById("tasks-body");
   const tasks = (data && data.tasks) || [];
-  summary.textContent = `${data.active || 0} active · ${tasks.length} total`;
+  const nbg = tasks.filter((x) => x.background && TASK_ACTIVE.has(x.state)).length;
+  summary.textContent = `${data.active || 0} active${nbg ? ` (${nbg} in background)` : ""} · ${tasks.length} total`;
   summary.className = "status " + ((data.active || 0) ? "" : "ok-text");
   if (!tasks.length) { body.innerHTML = `<p class="hint-line">No tasks yet.</p>`; return; }
+  // background jobs a task started (FLOSS of a large binary…) and still running: the task
+  // says "completed · 1 in background" so its case is not taken for finished
+  const bgOf = {};
+  tasks.forEach((b) => {
+    if (b.background && TASK_ACTIVE.has(b.state) && b.parent) (bgOf[b.parent] = bgOf[b.parent] || []).push(b);
+  });
   body.innerHTML = tasks.map((t) => {
     const cls = TASK_STATE_CLS[t.state] || "muted";
+    const bgs = bgOf[t.id] || [];
+    const bgBadge = bgs.length
+      ? ` <span class="badge badge-warn" title="${escapeHtml(bgs.map((b) => `${b.id} · ${b.target}`).join("\n"))}">+ ${bgs.length} in background</span>` : "";
+    const bgLine = bgs.length
+      ? `<div class="hint-line">Still running in the background for this case: ${bgs.map((b) => `<span class="mono">${escapeHtml(b.id)}</span> ${escapeHtml(b.target)}`).join(", ")} — its results are added to the case when it ends.</div>` : "";
+    const parentNote = t.background && t.parent ? ` · started by ${escapeHtml(t.parent)}` : "";
     const target = t.target && t.target !== "full" ? t.target : "full case";
     const cancel = TASK_ACTIVE.has(t.state)
       ? `<button class="btn btn-ghost btn-sm" data-cancel="${escapeHtml(t.id)}">Cancel</button>` : "";
@@ -4475,11 +4488,11 @@ function renderTasks(data) {
       <summary>
         <span class="mono">${escapeHtml(t.id)}</span>
         <span class="file">${escapeHtml(t.filename || "")}</span>
-        <span class="badge badge-${cls}">${escapeHtml(t.state)}</span>
-        <span class="hint-line">${escapeHtml(t.type)} · ${escapeHtml(target)}${dur}${when}${TASK_ACTIVE.has(t.state) ? ` · ${taskProgress(t)}` : ""}${nsteps ? ` · ${nsteps} sub-steps` : ""}</span>
+        <span class="badge badge-${cls}">${escapeHtml(t.state)}</span>${bgBadge}
+        <span class="hint-line">${escapeHtml(t.type)} · ${escapeHtml(target)}${parentNote}${dur}${when}${TASK_ACTIVE.has(t.state) ? ` · ${taskProgress(t)}` : ""}${nsteps ? ` · ${nsteps} sub-steps` : ""}</span>
         ${cancel}
       </summary>
-      <div style="padding:8px 10px">${err}${stepsTable(t.steps, t.id)}</div>
+      <div style="padding:8px 10px">${err}${bgLine}${stepsTable(t.steps, t.id)}</div>
     </details>`;
   }).join("");
   body.querySelectorAll("details[data-task] > summary").forEach((sm) => {

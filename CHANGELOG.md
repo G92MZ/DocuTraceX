@@ -3,6 +3,13 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.238.1 — 2026-11-19 (#308)
+
+**Tasks: "completed + N in background"**
+
+- An analysis whose case still has background work (FLOSS of a large binary) shows *completed* plus a "+ 1 in background" badge and which task it is; the background job says which analysis started it, and the header counts them.
+- The PE triage's per-tool rows say "5 tool(s)", not "5 object(s)".
+
 ## 1.238.0 — 2026-11-19 (#307)
 
 **Code step: what it is doing, live; FLOSS tight on priority functions in the background**

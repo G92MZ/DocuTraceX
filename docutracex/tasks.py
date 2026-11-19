@@ -90,6 +90,7 @@ class Task:
     # holds the case (like a running task) while it writes its results (``applying``)
     background: bool = False
     applying: bool = False
+    parent: str | None = None          # background job: the task that started it
 
     def public(self) -> dict[str, Any]:
         return {
@@ -100,7 +101,7 @@ class Task:
             "finished_utc": self.finished_utc, "duration_s": self.duration_s,
             "error": self.error, "counts": self.counts, "steps": self.steps,
             "params": {k: v for k, v in self.params.items() if k in ("kind", "target", "check_id", "form")},
-            "background": self.background,
+            "background": self.background, "parent": self.parent,
         }
 
 
@@ -210,9 +211,11 @@ class TaskManager:
         into the case it calls ``hold_case(task, cancel)`` first and ``release_case(task)``."""
         with self._lock:
             tid = f"task-{next(self._counter):04d}"
+            parent = next((o.id for o in self._tasks.values() if o.analysis_id == analysis_id
+                           and o.state == RUNNING and not o.background), None)
             task = Task(id=tid, type=type, analysis_id=analysis_id, filename=filename, target=target,
                         state=RUNNING, started_utc=_now(), t0=time.monotonic(), phase=step,
-                        cases_dir=str(cases_dir) if cases_dir else None, background=True)
+                        cases_dir=str(cases_dir) if cases_dir else None, background=True, parent=parent)
             task.steps = [{"step": step, "status": "running", "started_utc": _now_ms()}]
             self._tasks[tid] = task
             self._order.append(tid)

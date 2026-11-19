@@ -77,6 +77,7 @@ def test_case_finishes_first_floss_lands_later(env) -> None:  # noqa: ANN001
     assert msi["items"][0]["capa"]["status"] == "ok"
     bg = _bg(cid)
     assert bg["state"] == tasks.RUNNING and bg["target"] == "floss (background)"
+    assert bg["parent"] == t.id                                              # the analysis that started it
     assert calls and calls[0]["extra"] == ["--no", "tight"]
     # a re-run of the same case is not blocked by the background FLOSS
     r = tasks.manager.submit("rerun_module", cid, "visor.exe", target="ml", cases_dir=tmp / "cases")
@@ -124,3 +125,52 @@ def test_small_or_cached_files_run_floss_inline(tmp_path: Path, monkeypatch: pyt
     finally:
         pe_mod._bg_root.reset(tok)
     assert not pe_mod._background_floss(exe)                     # nested files: never in the background
+
+
+def test_tasks_view_shows_completed_with_background(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tasks: "completed + 1 in background" on the analysis, "started by" on the job, the
+    count in the header; a step of tools says "N tool(s)"."""
+    import importlib.util
+    import socket
+
+    if importlib.util.find_spec("playwright") is None:
+        pytest.skip("playwright not installed")
+    import uvicorn
+
+    from docutracex.app import create_app
+    monkeypatch.setenv("DOCUTRACEX_CONFIG_DIR", str(tmp_path / "config"))
+    app = create_app()
+    with socket.socket() as so:
+        so.bind(("127.0.0.1", 0))
+        port = so.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    threading.Thread(target=server.run, daemon=True).start()
+    _wait(lambda: server.started, 10)
+    tools = [{"name": f"v.exe · {n}", "chain": n, "kind": "tool", "depth": 1, "status": "ok", "duration_s": 1}
+             for n in ("LIEF", "FLOSS", "capa")]
+    data = {"active": 1, "tasks": [
+        {"id": "task-0002", "type": "floss", "analysis_id": "c1", "filename": "v.exe", "target": "floss (background)",
+         "state": "running", "background": True, "parent": "task-0001", "started_utc": "2026-11-19T20:00:00Z",
+         "steps": [{"step": "FLOSS · v.exe (background)", "status": "running"}]},
+        {"id": "task-0001", "type": "analyze", "analysis_id": "c1", "filename": "v.exe", "target": "full",
+         "state": "completed", "duration_s": 75, "finished_utc": "2026-11-19T20:01:15Z",
+         "steps": [{"step": "binary: PE triage", "status": "ok", "duration_s": 11, "substeps": tools}]}]}
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            try:
+                browser = pw.chromium.launch()
+            except Exception as exc:  # noqa: BLE001
+                pytest.skip(f"chromium not available: {exc}")
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{port}/")
+            page.evaluate("(d) => renderTasks(d)", data)
+            body = page.inner_text("#tasks-body")
+            assert "+ 1 in background" in body and "started by task-0001" in body
+            assert "Still running in the background for this case: task-0002" in body
+            assert "1 active (1 in background)" in page.inner_text("#tasks-summary")
+            page.evaluate("() => document.querySelector('details[data-task=\"task-0001\"]').open = true")
+            assert "3 tool(s)" in page.inner_text("details[data-task='task-0001']")
+            browser.close()
+    finally:
+        server.should_exit = True
