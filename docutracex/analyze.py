@@ -1137,6 +1137,28 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001  (never fails the case)
         log.warning("polyglot check skipped for %s: %s", paths.root.name, exc)
 
+    # A "script" whose content is binary (a compiled AutoIt blob named .au3, a PE named .py):
+    # not code — a finding, and every piece in it (the whole file included) goes to Nested.
+    disguised_top = None
+    try:
+        from . import contentcheck
+        if original.is_file() and original.stat().st_size <= contentcheck.MAX_SCAN:
+            blob = original.read_bytes()
+            disguised_top = contentcheck.check(original.name, blob)
+            if disguised_top:
+                pieces = disguised_top["pieces"] or ([{"kind": disguised_top["kind"], "offset": 0, "size": len(blob)}]
+                                                     if disguised_top["kind"] else [])
+                got = contentcheck.carve(blob, pieces, original.name, paths.extracted_dir / "pieces")
+                poly_children += got
+                cres = {"module": "content", "status": "ok", **{k: disguised_top[k] for k in ("ext", "language", "kind")},
+                        "pieces": disguised_top["pieces"],
+                        "findings": [contentcheck.finding(disguised_top, original.name, original.name)]}
+                write_subresult(paths, "content", cres)
+                ran.append("content")
+                findings_total += 1
+    except Exception as exc:  # noqa: BLE001  (never fails the case)
+        log.warning("content check skipped for %s: %s", paths.root.name, exc)
+
     # A compiled AutoIt script on its own (.a3x, or renamed): recovered with
     # AutoIt-Ripper, the script goes to the nested analysis with the stages.
     try:
@@ -1181,16 +1203,16 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     # family parser ran (scripts hide inside those) or the case file itself is a
     # scripting file — so a standalone .js/.ps1/.vbs/.bat/.hta is analysed too.
     from .parsers import javascript
-    scripting_file = original.suffix.lower() in _SCRIPTING_EXT
+    scripting_file = original.suffix.lower() in _SCRIPTING_EXT and not disguised_top
     # A PE's "msi" categorisation does not feed the scripting engine (it carries
     # no script); an MSI's string-mined command does.
     other_ran = [m for m in ran if m != "file" and not (pe_binary and m == "msi")]
 
     # Unknown file types: retain generic/YARA analysis and try all scripting parsers.
     fallback_text = (_read_reasonable_text(original)
-                     if family is None and not pe_binary and not scripting_file else None)
+                     if family is None and not pe_binary and not scripting_file and not disguised_top else None)
     scripting_fallback = fallback_text is not None
-    run_scripting = bool(other_ran or scripting_file or scripting_fallback)
+    run_scripting = bool(other_ran or scripting_file or scripting_fallback) and not disguised_top
 
     # JavaScript / JScript (PDF /JS, HTML body, attachments, OLE, nested, VBA).
     if run_scripting:
@@ -1246,7 +1268,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
             findings_total += py_res.get("counts", {}).get("findings", 0)
         # AutoIt, AutoHotkey, Lua, Ruby, Perl, Tcl, shell, PHP… uploaded on their own
         from .parsers import genscript
-        if original.suffix.lower() in genscript.LANGS or (scripting_fallback and genscript.sniff(fallback_text or "")):
+        if (original.suffix.lower() in genscript.LANGS and not disguised_top) or (scripting_fallback and genscript.sniff(fallback_text or "")):
             gs_res = run("script: AutoIt / Lua / Ruby / Perl / Tcl / shell / PHP · behaviour rules · literals",
                          lambda: genscript.analyze(original))
             if gs_res.get("scripts"):

@@ -227,11 +227,17 @@ def _python_source(path: Path, head: bytes) -> bool:
 
 
 def _kind(path: Path, name: str) -> str:
-    """Decide how to analyze a child: by extension, then by content sniff."""
+    """Decide how to analyze a child: by extension, then by content sniff. A script
+    extension on binary content (a compiled AutoIt blob called .au3, a PE called .py)
+    is ignored: the content decides."""
     ext = _ext(name)
     try:
+        from . import contentcheck
         with path.open("rb") as fh:
-            head24 = fh.read(24)
+            head64k = fh.read(contentcheck.HEAD)
+        head24 = head64k[:24]
+        if ext in contentcheck.SCRIPT_EXT and not contentcheck.is_text(head64k):
+            ext = ""
         if head24.lstrip(b"\xef\xbb\xbf")[:4] == b"{\\rt":
             return "rtf"  # Word opens RTF whatever the extension (.doc that is RTF)
         from .parsers import autoit
@@ -603,6 +609,23 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
     except Exception as exc:  # noqa: BLE001
         node.setdefault("code_error", f"html: {exc}")
 
+    # A "script" that is binary (a compiled AutoIt blob called .au3, a PE called .py): a finding,
+    # no script engine, and the pieces embedded in it carved out as children.
+    try:
+        from . import contentcheck
+        dis = contentcheck.check(name, data)
+        if dis:
+            node["disguised"] = {k: dis[k] for k in ("ext", "language", "kind")}
+            add_findings([contentcheck.finding(dis, name, f"nested:{this_chain}")], "content")
+            # a piece that IS the whole file (a PE named .py) is this node, analysed by its kind
+            pieces = [p for p in dis["pieces"] if not (p["offset"] == 0 and kind != "other")]
+            if depth < MAX_DEPTH and pieces:
+                for got in contentcheck.carve(data, pieces, name, work / "pieces" / node["sha256"][:12]):
+                    kids.append((Path(got["path"]), got["filename"]))
+                    origins[got["path"]] = got["origin"]
+    except Exception as exc:  # noqa: BLE001
+        node.setdefault("code_error", f"content check: {exc}")
+
     # An HTML page that is also a program (Python in a triple-quoted string, PowerShell
     # in <# #>, a <!-- : batch hybrid…): the code around the page becomes a child,
     # analysed by its language (layers peeled, byte arrays carved…).
@@ -627,7 +650,8 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
     # sandbox here). Results feed the child's findings, its IOC sources and a
     # per-child full-code dump — the same _full_code/code_file plumbing.
     try:
-        _scan_code_languages(abs_path, paths, node, this_chain, mods, add_findings, timed)
+        if not node.get("disguised"):            # binary content: not code, whatever its name says
+            _scan_code_languages(abs_path, paths, node, this_chain, mods, add_findings, timed)
     except Exception as exc:  # noqa: BLE001
         node.setdefault("code_error", str(exc))
 

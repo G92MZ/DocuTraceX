@@ -7,6 +7,17 @@ of a shortcut, a PDF, an archive entry — and on the stages those scripts decod
 
 ## How a script is analysed
 
+0. **Content before extension.** A file named like a script (`.au3`, `.py`, `.pl`, `.ps1`, `.js`, `.vbs`,
+   `.bat`…) has to be text to be read as one. UTF-16 with or without BOM, ANSI and encoded
+   `.vbe` / `.jse` count as text. Binary content is reported (*disguised_binary*: the extension says
+   one thing, the content another) and **not** read as code. Instead it goes down the binary path:
+   - it is identified by its content (a PE, a ZIP, an OLE…);
+   - the pieces embedded anywhere in it are carved out as children: a compiled AutoIt blob with junk
+     in front, PEs cut to their real size, ZIP / 7z / CAB / OLE / PDF.
+
+   Compiled AutoIt is always decompiled: AutoIt-Ripper (MIT) ships with DocuTraceX and is used when
+   the portable Python does not have its own copy.
+
 1. **Deobfuscate first.** Encodings (Base64, hex, percent, char codes), XOR and compression
    layers, string tricks (concatenation, reversal, `replace`, format operators) and the usual
    obfuscators (obfuscator.io, JSFuck, Invoke-Obfuscation, DOSfuscation, PyArmor…) are peeled,
@@ -43,6 +54,22 @@ interpreter (`.a3x`: `AU3!EA05` / `EA06` blob) is recognised by its content what
 AutoIt-Ripper recovers the script (as it does for compiled AutoIt EXEs) and the generic engine
 reads it. Next to it, a renamed `AutoIt3.exe` is still found by the *OriginalFilename* of its
 version information (the same goes for the other portable interpreters).
+
+**Obfuscated AutoIt strings are decrypted statically.** Obfuscated AutoIt (DarkGate and other
+loaders) hides every string behind the script's own decoder functions: `F("C4B2CAC7…", "key")`. A
+small AutoIt evaluator built into DocuTraceX runs those decoders on their constant arguments and
+puts the result back in the code (*script_strings_decrypted*). Calls nested inside calls are
+resolved too.
+
+- **What the evaluator can do:** only pure string and number work — loops, `StringMid`, `Chr`,
+  `BitXOR`, `Dec`… — inside a step budget.
+- **What it never does:** nothing outside its own values is reachable. `DllCall` returns zeros,
+  file, registry, process and network functions do not exist, and a decoder that needs one is
+  simply left as it was.
+
+The rules then read the decrypted code, which brings up process hollowing, AMSI / ETW patching,
+ntdll unhooking and checks for security products. The URLs and IPs become IOCs. The AutoIt tab
+shows the decrypted code, and the original stays one click away.
 
 **AutoHotkey** is covered the same way:
 

@@ -44,9 +44,40 @@ RULES: list[tuple[str, str, str, re.Pattern[str]]] = [
      re.compile(r"(?i)\b(?:BinaryToString|_Base64Decode|Base64\.decode64|unpack\s*\(\s*['\"]m|decode_base64|"
                 r"base64_decode|gzinflate|gzuncompress|str_rot13|Buffer\.from\s*\([^)]*['\"](?:base64|hex)|"
                 r"binary\s+decode\s+base64|mime\.unb64|base64\s+-d)\b")),
+    ("script_unhook", "medium", "reads a clean ntdll (KnownDlls / disk) to unhook security products",
+     re.compile(r"(?i)\\KnownDlls(?:32)?\\ntdll\.dll|System32\\ntdll\.dll.{0,200}(?:CreateFileMapping|MapViewOfFile)")),
+    ("script_av_check", "medium", "looks for security products' processes",
+     re.compile(r"(?i)\b(?:avp|avpui|bdagent|bdservicehost|avastui|avastsvc|avgui|msmpeng|mssense|ekrn|egui|"
+                r"mbam|mbamservice|sophos\w*|savservice|cylancesvc|csfalconservice|sentinelagent|"
+                r"xagt|tmbmsrv|ntrtscan|wrsa|hmpalert)\.exe\b")),
     ("script_persistence", "medium", "persistence (Run key, scheduled task, startup folder)",
      re.compile(r"(?i)CurrentVersion\\+Run|schtasks|RegWrite|@StartupDir|\\Startup\\|crontab|systemctl\s+enable")),
 ]
+
+
+# behaviours made of several API names anywhere in the script (each looked up on its own: a
+# lookahead over a multi-MB line of hex would backtrack for minutes)
+_ALL_OF: list[tuple[str, str, str, list[re.Pattern[str]]]] = [
+    ("script_process_injection", "high", "injects into another process (create / open it, write its memory, "
+     "start or redirect a thread — process hollowing)",
+     [re.compile(r"\b(?:CreateProcess[AW]?|NtCreateUserProcess|OpenProcess|NtOpenProcess)\b"),
+      re.compile(r"\b(?:WriteProcessMemory|NtWriteVirtualMemory|NtMapViewOfSection)\b"),
+      re.compile(r"\b(?:ResumeThread|NtResumeThread|SetThreadContext|NtSetContextThread|CreateRemoteThread|"
+                 r"NtCreateThreadEx|QueueUserAPC|NtQueueApcThread)\b")]),
+    ("script_amsi_etw_patch", "high", "patches AMSI / ETW in memory (defence evasion)",
+     [re.compile(r"\b(?:VirtualProtect|NtProtectVirtualMemory)\b"),
+      re.compile(r"(?i)\b(?:AmsiScanBuffer|amsi\.dll|EtwEventWrite\w*|NtTraceEvent)\b")]),
+]
+
+
+def _all_of(code: str, parts: list[re.Pattern[str]]) -> re.Match[str] | None:
+    last = None
+    for rx in parts:
+        m = rx.search(code)
+        if not m:
+            return None
+        last = m
+    return last
 
 
 def _metrics(code: str) -> dict[str, Any]:
@@ -171,12 +202,27 @@ def analyze(original: Path, extracted_dir: Path | None = None,
             return res
         res["sniffed"] = lang
     try:
-        code = original.read_bytes()[:MAX_BYTES].decode("utf-8", "replace")
+        blob = original.read_bytes()[:MAX_BYTES]
     except OSError:
         return res
+    from ..contentcheck import is_text
+    if not is_text(blob):
+        return res                      # binary under a script name: not code (see contentcheck)
+    code = blob.decode("utf-8", "replace")
+    orig = code
+    deob: dict[str, Any] = {}
+    if lang == "AutoIt" and "func" in code[:4_000_000].lower():
+        # strings hidden behind the script's own decoder functions: decrypted statically
+        from . import au3eval
+        try:
+            deob = au3eval.deobfuscate(code[:au3eval.MAX_SCRIPT])
+        except Exception:  # noqa: BLE001  (never fails the analysis)
+            deob = {}
+        if deob.get("decoded"):
+            code = deob["code"]
     hits = []
-    for rule, sev, what, rx in RULES:
-        m = rx.search(code[:4_000_000])
+    for rule, sev, what, rx in RULES + _ALL_OF:
+        m = rx.search(code[:4_000_000]) if not isinstance(rx, list) else _all_of(code[:4_000_000], rx)
         if m:
             line = code.count("\n", 0, m.start()) + 1
             a = code.rfind("\n", 0, m.start()) + 1
@@ -198,14 +244,30 @@ def analyze(original: Path, extracted_dir: Path | None = None,
                                 "location": f"file:{original.name}:{c['line_no']}",
                                 "evidence": f"{c['call']}  →  {c['resolved']}", "attack": "T1129"})
     res["dll_calls"] = dll_calls(code)
+    if deob.get("decoded"):
+        fns = ", ".join(f"{k} ({v})" for k, v in sorted(deob["functions"].items(), key=lambda x: -x[1])[:6])
+        uniq = list(dict.fromkeys(d["value"] for d in deob["decoded"]))
+        res["decoded_strings"] = uniq[:2000]
+        res["findings"].append({"tool": "script", "rule": "script_strings_decrypted", "severity": "medium",
+                                "detail": f"{lang} script hides its strings behind its own decoder functions: "
+                                          f"{len(deob['decoded'])} call(s) decrypted statically ({len(uniq)} "
+                                          f"distinct strings) with {fns}",
+                                "location": f"file:{original.name}", "evidence": "\n".join(uniq[:200]),
+                                "attack": "T1027"})
     if len({h["rule"] for h in hits} & {"script_shellcode_loader", "script_download", "script_exec", "script_eval"}) >= 2:
         res["findings"].append({"tool": "script", "rule": "script_attack_chain", "severity": "high",
                                 "detail": f"{lang} script chains "
                                           + ", ".join(sorted({h['rule'][7:] for h in hits})),
                                 "location": f"file:{original.name}", "evidence": ""})
-    res["scripts"].append({"id": 1, "kind": lang + (" (by content)" if res.get("sniffed") else ""), "origin": f"file:{original.name}",
-                           "location": f"file:{original.name}", "size": len(code),
-                           "code": code[:_KEEP], "code_truncated": len(code) > _KEEP,
-                           "hits": hits, "_full_code": code,
-                           "metrics": _metrics(code)})
+    sc = {"id": 1, "kind": lang + (" (by content)" if res.get("sniffed") else ""), "origin": f"file:{original.name}",
+          "location": f"file:{original.name}", "size": len(orig),
+          "code": code[:_KEEP], "code_truncated": len(code) > _KEEP,
+          "hits": hits, "_full_code": orig,
+          "metrics": _metrics(code)}
+    if deob.get("decoded"):
+        sc.update({"code_is_deobfuscated": True, "_full_deob": code, "original_code": orig[:_KEEP],
+                   "original_truncated": len(orig) > _KEEP,
+                   "deob_methods": [f"{len(deob['decoded'])} string(s) decrypted with the script's decoders "
+                                    f"({', '.join(sorted(deob['functions']))[:200]})"]})
+    res["scripts"].append(sc)
     return res
