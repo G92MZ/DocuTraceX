@@ -3,6 +3,12 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.232.1 — 2026-11-19 (#298)
+
+**Fix: the hidden-payload sweep no longer gives up on short trailing data**
+
+- A stream shorter than a file signature (seen after an Inno Setup part) made the whole sweep stop with "index out of range", so files hidden in the case's other images and resources were not looked for. It is now skipped.
+
 ## 1.232.0 — 2026-11-19 (#297)
 
 **DLL side-loading with the HijackLibs catalogue, kept up to date**
