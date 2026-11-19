@@ -33,6 +33,9 @@ analysed.
       (C2, YARA, ML) are not blocked by it. When it ends its strings are added to the Binary
       tab, to Code → Strings with their function, and the case's IOCs and findings are
       recomputed — marks stay. A file whose FLOSS result is cached runs inline (instant).
+      The code analysis' FLOSS tight strings on its priority functions go to the background
+      the same way, and the code step says live what it is doing (Rizin analysis,
+      decompiling n/N, FLOSS) and for how long.
 
     ![Binary tab of sample_packed.exe](../assets/shots/windows-pe/binary.webp){ .shot }
 

@@ -883,6 +883,21 @@ FLOSS_BACKGROUND_BYTES = int(float(_os.environ.get("DOCUTRACEX_FLOSS_BACKGROUND_
 _bg_root: ContextVar[Path | None] = ContextVar("dtx_floss_bg_root", default=None)
 
 
+def tight_cached(path: Path, addrs: list[int]) -> bool:
+    from ..config import settings
+    hexes = [hex(a) for a in sorted(set(int(a) for a in addrs))[:PRIORITY_TIGHT_MAX]]
+    return _cache_get(path, "floss_tight", settings.floss_executable(), ["--only", "tight", "--functions", *hexes]) \
+        is not None
+
+
+def background_size(path: Path) -> bool:
+    """Large enough for FLOSS work to go to the background (and the tools are there)."""
+    try:
+        return bool(FLOSS_BACKGROUND_BYTES) and path.stat().st_size > FLOSS_BACKGROUND_BYTES and _tools_available()
+    except OSError:
+        return False
+
+
 def _background_floss(path: Path) -> bool:
     if _bg_root.get() is None or not FLOSS_BACKGROUND_BYTES or not _tools_available():
         return False
@@ -939,7 +954,7 @@ def _both(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
 PRIORITY_TIGHT_MAX = int(_os.environ.get("DOCUTRACEX_FLOSS_PRIORITY_FUNCS", "128") or 128)
 
 
-def tight_on_functions(path: Path, addrs: list[int]) -> dict[str, Any]:
+def tight_on_functions(path: Path, addrs: list[int], cancel: Any = None) -> dict[str, Any]:
     """FLOSS tight strings of only these functions (``--only tight --functions``):
     what a large file skipped on the whole binary, recovered where it matters.
     Cached by SHA-256 + function list like the full run."""
@@ -951,9 +966,10 @@ def tight_on_functions(path: Path, addrs: list[int]) -> dict[str, Any]:
 
     def run() -> dict[str, Any]:
         # FLOSS releases call the filter --functions; newer builds --analyze-functions
-        r = _run_floss(path, ["--only", "tight", "--functions", *hexes])
+        kw = {"cancel": cancel} if cancel is not None else {}
+        r = _run_floss(path, ["--only", "tight", "--functions", *hexes], **kw)
         if r.get("status") == "error" and "unrecognized arguments" in str(r.get("detail") or ""):
-            r = _run_floss(path, ["--only", "tight", "--analyze-functions", *hexes])
+            r = _run_floss(path, ["--only", "tight", "--analyze-functions", *hexes], **kw)
         return r
     extra = ["--only", "tight", "--functions", *hexes]
     rec = _cached(path, "floss_tight", settings.floss_executable(), extra, run)
