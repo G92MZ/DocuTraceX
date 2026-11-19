@@ -20,7 +20,13 @@ analysed.
       are named, with why their content cannot be read statically.
     - **Debloat**: padded binaries (hundreds of MB of zeros to evade scanners) are shrunk to
       their real size and analysed.
-    - **FLOSS** strings (static, stack, tight, decoded) and **capa** capabilities with ATT&CK.
+    - **FLOSS** strings (static, stack, decoded) and **capa** capabilities with ATT&CK. The
+      automatic run skips FLOSS's *tight strings* (strings decrypted on the stack in a tight loop:
+      FLOSS emulates every such loop, minutes to hours on large binaries); the code analysis
+      runs them on its priority functions, and **Deep FLOSS** (Code view) on every function
+      with **no time limit**, in the background, cancellable. The tools' time and status are
+      sub-steps of the PE triage step in Tasks. `DOCUTRACEX_FLOSS_LARGE_MB=N` keeps tight
+      strings in the automatic run for files up to N MB.
 
     ![Binary tab of sample_packed.exe](../assets/shots/windows-pe/binary.webp){ .shot }
 

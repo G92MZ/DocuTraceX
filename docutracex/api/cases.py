@@ -963,6 +963,14 @@ def code_floss_full_status(analysis_id: str, sha256: str, mode: str) -> dict:
     return code_case.full_floss_status(paths.root, sha256, mode)
 
 
+@router.post("/{analysis_id}/code/{sha256}/{mode}/floss-full/cancel")
+def code_floss_full_cancel(analysis_id: str, sha256: str, mode: str) -> dict:
+    """Stop a running Deep FLOSS (kills its process tree)."""
+    from ..codeanalysis import case as code_case
+    _m, paths, _full = _code_ctx(analysis_id, sha256, mode)
+    return code_case.cancel_full_floss(paths.root, sha256, mode)
+
+
 @router.post("/{analysis_id}/code/{sha256}/{mode}/floss-full")
 def code_floss_full(analysis_id: str, sha256: str, mode: str) -> dict:
     """Run the full FLOSS in the background on a large file whose automatic run

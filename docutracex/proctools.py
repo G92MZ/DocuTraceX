@@ -64,9 +64,11 @@ def _read(f: Any, limit: int) -> str:
         return ""
 
 
-def run_bounded(cmd: list[str], timeout: int, cwd: Path | None = None,
-                env: dict[str, str] | None = None) -> dict[str, Any]:
-    """Run ``cmd`` with a hard ``timeout`` (seconds). See the module docstring."""
+def run_bounded(cmd: list[str], timeout: int | None, cwd: Path | None = None,
+                env: dict[str, str] | None = None, cancel: Any = None) -> dict[str, Any]:
+    """Run ``cmd`` with a hard ``timeout`` (seconds; None: no limit). ``cancel`` (a
+    threading.Event) stops it at any time, killing the tree like a timeout
+    (``cancelled`` in the record). See the module docstring."""
     t0 = time.perf_counter()
     rec: dict[str, Any] = {"rc": None, "out": "", "err": "", "timed_out": False}
     kw: dict[str, Any] = {}
@@ -84,7 +86,22 @@ def run_bounded(cmd: list[str], timeout: int, cwd: Path | None = None,
             rec["duration_s"] = round(time.perf_counter() - t0, 2)
             return rec
         try:
-            rec["rc"] = proc.wait(timeout=timeout)
+            if cancel is None:
+                rec["rc"] = proc.wait(timeout=timeout)
+            else:                              # wait in steps, so a cancel is seen within a second
+                end = None if timeout is None else time.monotonic() + timeout
+                while True:
+                    try:
+                        rec["rc"] = proc.wait(timeout=1)
+                        break
+                    except subprocess.TimeoutExpired:
+                        if cancel.is_set():
+                            rec["cancelled"] = True
+                            log.info("%s cancelled — killing its process tree (pid %s)", Path(cmd[0]).name, proc.pid)
+                            _kill_tree(proc)
+                            break
+                        if end is not None and time.monotonic() > end:
+                            raise
         except subprocess.TimeoutExpired:
             rec["timed_out"] = True
             log.warning("%s timed out after %ss — killing its process tree (pid %s)",

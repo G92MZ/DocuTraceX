@@ -2493,8 +2493,11 @@ function paneFloss(it) {
   const fl = it.floss;
   const ss = it.floss_strings || [];
   if (!fl || fl.status !== "ok") return "";
-  if (!ss.length) return `<p class="hint-line">FLOSS: no decoded / stack / tight strings.</p>`;
-  return `<details class="disclose"><summary>FLOSS decoded / stack / tight strings — ${escapeHtml(String(ss.length))}</summary>
+  const tight = fl.tight_skipped
+    ? `<p class="hint-line">Tight strings skipped in this automatic run (they emulate every tight loop: minutes to hours). The code analysis ran them on its priority functions; <b>Deep FLOSS</b> in the <b>Code</b> view runs them on every function, with no time limit.</p>`
+    : "";
+  if (!ss.length) return `<p class="hint-line">FLOSS: no decoded / stack${fl.tight_skipped ? "" : " / tight"} strings.</p>${tight}`;
+  return `${tight}<details class="disclose"><summary>FLOSS decoded / stack${fl.tight_skipped ? "" : " / tight"} strings — ${escapeHtml(String(ss.length))}</summary>
     <pre class="text-sample">${escapeHtml(ss.join("\n"))}</pre></details>`;
 }
 
@@ -7385,25 +7388,41 @@ function cxWireOpen(scope, caseId, sha, mode, group) {
     cxOpen(caseId, sha, mode, group, b.getAttribute("data-cx-open"))));
 }
 
-// Large file: FLOSS ran tight strings only on the priority functions. "Full
-// FLOSS" runs them on every function in the background (the tab can be left).
+// FLOSS's automatic run skips tight strings (they emulate every tight loop: minutes to
+// hours); the code analysis ran them on its priority functions. "Deep FLOSS" runs them on
+// every function in the background with NO time limit; it can be cancelled.
 async function cxFullFloss(el, caseId, sha, mode, d, onDone) {
   const box = el.querySelector(".cx-ffloss");
   if (!box) return;
   const url = `/api/cases/${encodeURIComponent(caseId)}/code/${sha}/${mode}/floss-full`;
   const fp = d.floss_priority || {};
+  const ago = (t) => { const s = Math.max(0, Math.round(Date.now() / 1000 - t)); return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`; };
   const draw = (st) => {
     if (st.state === "running") {
-      box.innerHTML = `<div class="hint-line"><span class="spin">●</span> Full FLOSS running in the background (tight strings on every function) — it can take minutes; you can leave this tab.</div>`;
+      box.innerHTML = `<div class="hint-line"><span class="spin">●</span> Deep FLOSS running in the background — tight strings on every function, no time limit — for <b>${ago(st.started)}</b>. You can leave this tab; new strings land in Strings when it ends.
+        <button class="btn btn-ghost btn-sm cx-ffcancel" type="button">Cancel</button></div>`;
+      const c = box.querySelector(".cx-ffcancel");
+      c.addEventListener("click", async () => {
+        c.disabled = true;
+        try { await fetch(`${url}/cancel`, { method: "POST" }); } catch (_) { /* polled */ }
+      });
       return;
     }
-    const last = st.state === "completed" ? ` · full run done: <b>${st.added}</b> new string(s)`
-      : st.state === "failed" ? ` · full run failed: ${escapeHtml(st.error || "")}`
-      : st.state === "interrupted" ? " · full run interrupted (app restarted)" : "";
-    box.innerHTML = `<div class="hint-line">Large file: FLOSS tight strings ran on the ${fp.functions || 0} priority function(s) only (${fp.strings || 0} found).${last}
-      ${st.state === "completed" ? "" : '<button class="btn btn-ghost btn-sm cx-ffrun" type="button">Full FLOSS (every function)</button>'}</div>`;
+    const took = st.duration_s ? ` in ${Math.floor(st.duration_s / 60)}m ${String(Math.round(st.duration_s % 60)).padStart(2, "0")}s` : "";
+    const last = st.state === "completed" ? ` · Deep FLOSS done${took}: <b>${st.added}</b> new string(s)`
+      : st.state === "failed" ? ` · Deep FLOSS failed: ${escapeHtml(st.error || "")}`
+      : st.state === "cancelled" ? ` · Deep FLOSS cancelled${took}`
+      : st.state === "interrupted" ? " · Deep FLOSS interrupted (app restarted)" : "";
+    box.innerHTML = `<div class="hint-line">FLOSS tight strings ran on the ${fp.functions || 0} priority function(s) only (${fp.strings || 0} found); the automatic run skips them on the whole binary.${last}
+      ${st.state === "completed" ? "" : '<button class="btn btn-ghost btn-sm cx-ffrun" type="button" title="Tight strings on every function, no time limit">Deep FLOSS…</button>'}</div>`;
     const b = box.querySelector(".cx-ffrun");
     if (b) b.addEventListener("click", async () => {
+      const go = await showModal("Deep FLOSS",
+        `<p>Runs FLOSS with <b>tight strings on every function</b>: strings built encrypted on the stack and decrypted in a tight loop inside the same function. FLOSS has to find and emulate every such loop.</p>
+         <p><b>It can take a long time — from minutes to hours</b> on large, code-dense binaries (Go, Rust, Delphi, big C++), and it has <b>no time limit</b>: it runs until it ends or you cancel it. It uses one CPU core and a fair amount of memory.</p>
+         <p>It runs in the background: you can leave this tab and keep working. The new strings are added to Strings and to their function, and the result is cached for this file.</p>`,
+        [{ label: "Cancel", value: false }, { label: "Run Deep FLOSS", value: true, primary: true }]);
+      if (!go) return;
       b.disabled = true;
       const r = await fetch(url, { method: "POST" });
       const j = await r.json();
