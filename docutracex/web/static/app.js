@@ -2474,6 +2474,10 @@ function peToolLine(t) {
 }
 
 function paneCapa(c) {
+  if (c && c.background && c.status === "running")
+    return `<p class="hint-line"><span class="spin">●</span> Large binary: capa is running in the <b>background</b> (${escapeHtml(c.task_id || "")} in <b>Tasks</b>, with its time and Cancel). The case did not wait for it: its capabilities and ATT&amp;CK techniques appear here and in Findings when it ends — reopen the case then.</p>`;
+  if (c && c.background && c.status === "cancelled")
+    return `<p class="hint-line">capa (background) was cancelled. Re-run the analysis to run it again.</p>`;
   if (!c || c.status !== "ok") return "";
   const caps = c.capabilities || [];
   if (!caps.length) return `<p class="hint-line">capa: no capabilities matched.</p>`;

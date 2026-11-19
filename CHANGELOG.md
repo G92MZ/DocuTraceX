@@ -3,6 +3,14 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.239.0 — 2026-11-19 (#311)
+
+**capa of a large binary also runs in the background**
+
+- On a large binary capa no longer holds the case: it runs as a background task (Tasks, with its time and Cancel) next to FLOSS.
+- When it ends its capabilities and ATT&CK techniques are added to the Binary tab and to Findings; a cached result still runs inline.
+- The code analysis' capa corroboration only sees it after a re-analysis.
+
 ## 1.238.3 — 2026-11-19 (#310)
 
 **Fix: background FLOSS starts before capa, not after**
