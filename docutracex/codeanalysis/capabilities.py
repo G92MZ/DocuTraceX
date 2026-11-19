@@ -200,7 +200,12 @@ def analyze(full: dict[str, Any], graph: dict[str, Any], capa: dict[str, Any] | 
     for c in out:
         c["functions"].sort(key=lambda x: x["confidence"] != "high")
         c["functions"] = c["functions"][:20]
-    # contrast with capa (same binary): by ATT&CK technique (parent technique matches sub-techniques)
+    return contrast(out, capa)
+
+
+def contrast(out: list[dict[str, Any]], capa: dict[str, Any] | None) -> dict[str, Any]:
+    """The capabilities contrasted with capa (same binary), by ATT&CK technique (a parent
+    technique matches its sub-techniques). Cheap: re-run when a background capa ends."""
     capa_caps = (capa or {}).get("capabilities") or []
     capa_ids = {a["id"]: c["name"] for c in capa_caps for a in c.get("attack") or [] if a.get("id")}
     mine = {c["attack"] for c in out}

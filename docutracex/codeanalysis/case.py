@@ -843,6 +843,39 @@ def merge_full_floss(root: Path, sha256: str, mode: str, rec: dict[str, Any], la
     return len(new)
 
 
+def recontrast_capa(root: Path, sha256: str, capa: dict[str, Any]) -> int:
+    """A background capa ended after the code analysis: contrast every code result of the
+    case's own binary with it again (the capa column, capa_only) and replace the code
+    capability findings (those capa covers are dropped). No Rizin re-run. Returns how many
+    code results were updated; the caller recomputes the case's findings."""
+    from ..storage import CasePaths, read_json, write_subresult
+    from . import capabilities as _caps
+    paths = CasePaths(root.name, cases_dir=root.parent)
+    n = 0
+    for module, mode in (("code", "native"), ("golang", "go")):
+        res = read_json(paths.subresult(module)) or {}
+        changed = False
+        for obj in res.get("objects") or []:
+            sha = obj.get("sha256")
+            if not sha or sha != sha256:
+                continue
+            label = obj.get("label") or sha[:12]
+            with _write_lock:
+                full = load(root, sha, mode)
+                if full is None or not isinstance(full.get("capabilities"), dict) \
+                        or "capabilities" not in full["capabilities"]:
+                    continue
+                full["capabilities"] = _caps.contrast(full["capabilities"]["capabilities"], capa)
+                result_file(root, sha, mode).write_text(json.dumps(full), encoding="utf-8")
+            res["findings"] = [f for f in res.get("findings") or []
+                               if not (str(f.get("rule", "")).startswith("code:cap:") and f.get("location") == label)]
+            res["findings"].extend(_caps.findings(full["capabilities"], label))
+            changed, n = True, n + 1
+        if changed:
+            write_subresult(paths, module, res)
+    return n
+
+
 def _refresh_iocs_with(root: Path, sha256: str, mode: str, added: list[dict[str, Any]],
                        recompute: bool = True) -> None:
     """New FLOSS strings (Deep FLOSS) → the object's IOC sources in the case's code result,

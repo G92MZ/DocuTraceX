@@ -7,6 +7,10 @@ the wrong trade: the case's own binary (above ``DOCUTRACEX_FLOSS_BACKGROUND_MB``
 everything else; the job is listed in Tasks (time running, Cancel); when it ends
 its strings land in the Binary tab, in Code → Strings (with their function) and
 — the case's IOCs and findings recomputed — in IOCs and Findings. Marks stay.
+
+capa of the same binary goes to the background too (``start_capa``) unless its
+result is cached: its capabilities and ATT&CK techniques reach the Binary tab
+and the findings when it ends.
 """
 
 from __future__ import annotations
@@ -57,7 +61,8 @@ def start(root: Path, path: Path, name: str, sha256: str) -> dict[str, Any]:
                       "are added to the case when it ends"}
 
 
-def _wait_for_placeholder(root: Path, tid: str, cancel: Any, limit_s: float = 6 * 3600) -> bool:
+def _wait_for_placeholder(root: Path, tid: str, cancel: Any, limit_s: float = 6 * 3600,
+                          key: str = "floss") -> bool:
     """The analysis that started the job writes its result (with this job's placeholder)
     when it ends: wait for it, so the strings are not written before — and then lost."""
     import time as _t
@@ -67,7 +72,7 @@ def _wait_for_placeholder(root: Path, tid: str, cancel: Any, limit_s: float = 6 
     f = root / "results" / "msi.json"
     while _t.monotonic() < end:
         res = read_json(f) or {}
-        if any((it.get("floss") or {}).get("task_id") == tid for it in res.get("items") or []):
+        if any((it.get(key) or {}).get("task_id") == tid for it in res.get("items") or []):
             return True
         if cancel.wait(1):
             return False
@@ -123,6 +128,76 @@ def _apply(root: Path, sha256: str, rec: dict[str, Any], task: Any, path: Path |
     except Exception as exc:  # noqa: BLE001
         log.warning("background FLOSS: IOCs / findings not recomputed for %s: %s", root.name, exc)
     return len(strings) or added
+
+
+def start_capa(root: Path, path: Path, name: str, sha256: str, loc: str) -> dict[str, Any]:
+    """Start capa on ``path`` (the case's own binary) as a background task. Returns the
+    placeholder record the Binary tab shows until it ends."""
+    from . import tasks
+    from .parsers import pe as pe_mod
+
+    def run(task: Any, cancel: Any) -> str:
+        import threading
+        import time as _t
+        t0, done = _t.monotonic(), [False]
+
+        def beat() -> None:
+            while not cancel.wait(5) and task.state == tasks.RUNNING and not done[0]:
+                s = int(_t.monotonic() - t0)
+                tasks.manager.set_step_detail(task, f"capa running · {s // 60}m {s % 60:02d}s")
+        threading.Thread(target=beat, name="capabg-heartbeat", daemon=True).start()
+        try:
+            rec = pe_mod._capa_only(path, cancel=cancel)
+        finally:
+            done[0] = True
+        if rec.get("status") == "cancelled" or cancel.is_set():
+            _apply_capa(root, {"status": "cancelled", "detail": "capa cancelled by the analyst"}, task, loc, sha256)
+            return "cancelled"
+        tasks.manager.set_step_detail(task, "capa done · waiting for the case's other tasks to write its results")
+        if not _wait_for_placeholder(root, task.id, cancel, key="capa") or not tasks.manager.hold_case(task, cancel):
+            return "cancelled before writing its results"
+        n = _apply_capa(root, rec, task, loc, sha256)
+        return f"{n} capabilit(ies)" if rec.get("status") == "ok" else str(rec.get("detail") or rec.get("status"))
+
+    t = tasks.manager.start_background("capa", root.name, name, "capa (background)", run,
+                                       step=f"capa · {name} (background)", cases_dir=root.parent)
+    return {"status": "running", "background": True, "task_id": t.id, "capabilities": [],
+            "detail": "large binary: capa runs in the background (Tasks); its capabilities and ATT&CK "
+                      "techniques are added to the case when it ends"}
+
+
+def _apply_capa(root: Path, rec: dict[str, Any], task: Any, loc: str, sha256: str = "") -> int:
+    """Write a background capa record into the case: Binary tab (msi item) and its
+    capability findings; the code analysis' capabilities contrasted with it again (capa
+    column, capa only, no duplicate findings); then the case's findings recomputed."""
+    from .analyze import _recompute_derived
+    from .parsers import pe as pe_mod
+    from .storage import CasePaths, read_json, write_subresult
+    paths = CasePaths(root.name, cases_dir=root.parent)
+    res = read_json(paths.subresult("msi")) or {}
+    tid = getattr(task, "id", None)
+    item = next((it for it in res.get("items") or [] if (it.get("capa") or {}).get("task_id") == tid), None)
+    if item is None:
+        return 0
+    rec = dict(rec, background=True)
+    item["capa"] = rec
+    new = pe_mod.capa_findings(rec, item.get("location") or loc)
+    if new:
+        for lst in (item.setdefault("findings", []), res.setdefault("findings", [])):
+            seen = {(f.get("rule"), f.get("detail")) for f in lst}
+            lst.extend(f for f in new if (f.get("rule"), f.get("detail")) not in seen)
+    write_subresult(paths, "msi", res)
+    if rec.get("status") == "ok" and sha256:
+        try:
+            from .codeanalysis import case as code_case
+            code_case.recontrast_capa(root, sha256, rec)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("background capa: code capabilities not contrasted for %s: %s", sha256[:12], exc)
+    try:
+        _recompute_derived(paths)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("background capa: findings not recomputed for %s: %s", root.name, exc)
+    return len(rec.get("capabilities") or [])
 
 
 def start_priority(root: Path, path: Path, name: str, sha256: str, mode: str, addrs: list[int]) -> str:

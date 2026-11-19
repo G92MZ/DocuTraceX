@@ -22,6 +22,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN201
     monkeypatch.setattr(settings, "cases_dir", tmp_path / "cases")
     (tmp_path / "cases").mkdir()
     monkeypatch.setattr(pe_mod, "FLOSS_BACKGROUND_BYTES", 16)
+    monkeypatch.setattr(pe_mod, "CAPA_BACKGROUND", False)        # capa in the background: its own tests
     monkeypatch.setattr(pe_mod, "_tools_available", lambda: True)
     monkeypatch.setattr(pe_mod, "_trusted_signer", lambda p: None)
     monkeypatch.setattr(pe_mod, "_cache_file", lambda sha, tool: tmp_path / "cache" / f"{sha}.{tool}.json")
@@ -183,6 +184,7 @@ def test_floss_starts_before_capa(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(flossbg, "start", lambda *a: order.append("floss") or {"status": "running", "task_id": "t"})
     monkeypatch.setattr(pe_mod, "_capa_only", lambda p: order.append("capa") or {"status": "ok", "capabilities": []})
     monkeypatch.setattr(pe_mod, "_background_floss", lambda p: True)
+    monkeypatch.setattr(pe_mod, "CAPA_BACKGROUND", False)
     exe = tmp_path / "v.exe"
     exe.write_bytes(_exe())
     tok = pe_mod._bg_root.set(tmp_path)
@@ -191,3 +193,120 @@ def test_floss_starts_before_capa(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     finally:
         pe_mod._bg_root.reset(tok)
     assert order == ["floss", "capa"]
+
+
+CAP = {"name": "inject shellcode into remote process", "namespace": "host-interaction/process/inject",
+       "attack": [{"id": "T1055"}], "matches": 2}
+
+
+@pytest.fixture()
+def capa_env(env, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN001, ANN201
+    """FLOSS ends at once; capa is the slow one, in the background."""
+    tmp, gate, _calls = env
+    gate.set()
+    monkeypatch.setattr(pe_mod, "CAPA_BACKGROUND", True)
+    cgate = threading.Event()
+
+    def capa(path, cancel=None):  # noqa: ANN001, ANN202
+        while not cgate.is_set():
+            if cancel is not None and cancel.is_set():
+                return {"status": "cancelled", "detail": "capa cancelled by the analyst"}
+            time.sleep(0.02)
+        return {"status": "ok", "duration_s": 1.0, "capabilities": [CAP], "total": 1, "attack_ids": ["T1055"]}
+    monkeypatch.setattr(pe_mod, "_run_capa", capa)
+    return tmp, cgate
+
+
+def _capa_bg(cid: str) -> dict:
+    return next(t for t in tasks.manager.list(cid) if t.get("background") and t["type"] == "capa")
+
+
+def test_capa_runs_in_background_and_lands_later(capa_env) -> None:  # noqa: ANN001
+    from docutracex import cases
+    from docutracex.storage import CasePaths, read_json
+    tmp, cgate = capa_env
+    m = cases.create_case(io.BytesIO(_exe() + b"capa"), "visor3.exe", cases_dir=tmp / "cases")
+    cid = m["analysis_id"]
+    t = tasks.manager.submit("analyze", cid, "visor3.exe", cases_dir=tmp / "cases")
+    _wait(lambda: tasks.manager.get(t.id)["state"] == tasks.COMPLETED)      # capa still running
+    paths = CasePaths(cid, cases_dir=tmp / "cases")
+    capa = read_json(paths.subresult("msi"))["items"][0]["capa"]
+    assert capa["status"] == "running" and capa["background"] and capa["task_id"]
+    bg = _capa_bg(cid)
+    assert bg["state"] == tasks.RUNNING and bg["target"] == "capa (background)" and bg["parent"] == t.id
+    cgate.set()
+    _wait(lambda: _capa_bg(cid)["state"] == tasks.COMPLETED)
+    msi = read_json(paths.subresult("msi"))
+    item = msi["items"][0]
+    assert item["capa"]["status"] == "ok" and item["capa"]["background"]
+    hits = [f for f in item["findings"] if f["rule"] == "pe_capa_capability"]
+    assert hits and "inject shellcode" in hits[0]["detail"]
+    assert any(f["rule"] == "pe_capa_capability" for f in msi["findings"])
+
+
+def test_background_capa_can_be_cancelled(capa_env) -> None:  # noqa: ANN001
+    from docutracex import cases
+    from docutracex.storage import CasePaths, read_json
+    tmp, _cgate = capa_env
+    m = cases.create_case(io.BytesIO(_exe() + b"capa2"), "visor4.exe", cases_dir=tmp / "cases")
+    cid = m["analysis_id"]
+    t = tasks.manager.submit("analyze", cid, "visor4.exe", cases_dir=tmp / "cases")
+    _wait(lambda: tasks.manager.get(t.id)["state"] == tasks.COMPLETED)
+    assert tasks.manager.cancel(_capa_bg(cid)["id"])
+    _wait(lambda: _capa_bg(cid)["state"] == tasks.CANCELLED)
+    capa = read_json(CasePaths(cid, cases_dir=tmp / "cases").subresult("msi"))["items"][0]["capa"]
+    assert capa["status"] == "cancelled"
+
+
+def test_cached_capa_runs_inline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from docutracex import flossbg
+    monkeypatch.setattr(flossbg, "start", lambda *a: {"status": "running", "task_id": "t"})
+    monkeypatch.setattr(flossbg, "start_capa", lambda *a: pytest.fail("cached capa went to the background"))
+    monkeypatch.setattr(pe_mod, "_background_floss", lambda p: True)
+    monkeypatch.setattr(pe_mod, "_capa_cached", lambda p: True)
+    monkeypatch.setattr(pe_mod, "_capa_only", lambda p: {"status": "ok", "capabilities": [CAP]})
+    exe = tmp_path / "v.exe"
+    exe.write_bytes(_exe())
+    tok = pe_mod._bg_root.set(tmp_path)
+    try:
+        res = pe_mod.analyze(exe, "v.exe")
+    finally:
+        pe_mod._bg_root.reset(tok)
+    item = res["items"][0] if "items" in res else res
+    assert item["capa"]["status"] == "ok"
+
+
+def test_background_capa_recontrasts_code_capabilities(tmp_path: Path) -> None:
+    """capa ends after the code analysis: the capa column / capa_only are filled and the
+    code finding capa now covers is dropped (no duplicate), with no Rizin re-run."""
+    import json
+
+    from docutracex.codeanalysis import case as code_case
+    from docutracex.storage import CasePaths, read_json, write_subresult
+    root = tmp_path / "cases" / "c1"
+    (root / "results").mkdir(parents=True)
+    paths = CasePaths("c1", cases_dir=root.parent)
+    sha = "ab" * 32
+    fn = {"addr": 4096, "name": "fcn.inject", "confidence": "high",
+          "evidence": [{"kind": "call", "detail": "WriteProcessMemory"}]}
+    mine = [{"id": "inject", "name": "Process injection", "attack": "T1055", "severity": "high",
+             "confidence": "high", "functions": [fn]},
+            {"id": "persist", "name": "Run key", "attack": "T1547.001", "severity": "medium",
+             "confidence": "high", "functions": [fn]}]
+    from docutracex.codeanalysis import capabilities as caps
+    before = caps.contrast(mine, {"status": "running", "background": True})
+    assert before["capa_status"] == "running" and not before["capa_available"]
+    full = {"capabilities": before}
+    f = code_case.result_file(root, sha, "native")
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(full), encoding="utf-8")
+    write_subresult(paths, "code", {"module": "code", "objects": [{"label": "visor.exe", "sha256": sha}],
+                                    "findings": caps.findings(before, "visor.exe")})
+    assert len(read_json(paths.subresult("code"))["findings"]) == 2
+    capa = {"status": "ok", "capabilities": [CAP, {"name": "query environment variable", "attack": [{"id": "T1082"}]}]}
+    assert code_case.recontrast_capa(root, sha, capa) == 1
+    got = code_case.load(root, sha, "native")["capabilities"]
+    assert got["capa_available"] and got["capabilities"][0]["capa"] == [CAP["name"]]
+    assert [x["attack"] for x in got["capa_only"]] == ["T1082"]
+    rules = [x["rule"] for x in read_json(paths.subresult("code"))["findings"]]
+    assert rules == ["code:cap:persist"]                    # T1055 is capa's finding now

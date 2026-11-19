@@ -492,12 +492,21 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
                 from .. import flossbg
                 # FLOSS first: it starts in the background before capa runs, not after
                 floss = flossbg.start(_bg_root.get(), path, Path(rel).name, _sha(path) or "")
-                capa = clock.run("capa", lambda: _capa_only(path),
-                                 lambda r: {"status": r.get("status", "ok"), "detail": str(r.get("detail") or "")[:160]})
                 clock.rows.append({"name": f"{clock.name} · FLOSS", "chain": "FLOSS", "depth": 1, "kind": "tool",
                                    "duration_s": 0, "status": "background",
                                    "detail": f"running in the background ({floss.get('task_id')}): the case did "
                                              "not wait for it; its strings, IOCs and findings arrive when it ends"})
+                if CAPA_BACKGROUND and not _capa_cached(path):
+                    # capa too: its capabilities (ATT&CK) reach the findings when it ends
+                    capa = flossbg.start_capa(_bg_root.get(), path, Path(rel).name, _sha(path) or "", loc)
+                    clock.rows.append({"name": f"{clock.name} · capa", "chain": "capa", "depth": 1, "kind": "tool",
+                                       "duration_s": 0, "status": "background",
+                                       "detail": f"running in the background ({capa.get('task_id')}): its "
+                                                 "capabilities and ATT&CK reach the findings when it ends"})
+                else:
+                    capa = clock.run("capa", lambda: _capa_only(path),
+                                     lambda r: {"status": r.get("status", "ok"),
+                                                "detail": str(r.get("detail") or "")[:160]})
             else:
                 floss, capa = clock.tools(lambda: tools_for(path))
             floss_strings = floss.pop("strings", [])
@@ -516,17 +525,7 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
                     loc))
 
             item["capa"] = capa
-            # Only capabilities that matter for triage become findings (low+);
-            # the full list (incl. "info" ones) is shown in the Binary tab.
-            for cap in capa.get("capabilities", []):
-                sev = _capa_severity(cap)
-                if sev == "info":
-                    continue
-                attack = ", ".join(a["id"] for a in cap.get("attack", []) if a.get("id"))
-                f.append(_finding("pe_capa_capability", sev,
-                    f"capa: {cap['name']}"
-                    + (f" [{cap['namespace']}]" if cap.get("namespace") else ""),
-                    loc, f"{cap.get('matches', 0)} match(es)", attack))
+            f.extend(capa_findings(capa, loc))
 
     if children:
         item["_children"] = children
@@ -873,9 +872,33 @@ def _floss_cached(path: Path) -> bool:
     return _cache_get(path, key, settings.floss_executable(), fextra) is not None
 
 
-def _capa_only(path: Path) -> dict[str, Any]:
+def capa_findings(capa: dict[str, Any], loc: str) -> list[dict[str, Any]]:
+    """Only capabilities that matter for triage become findings (low+); the full list
+    (incl. "info" ones) is shown in the Binary tab."""
+    out = []
+    for cap in capa.get("capabilities", []):
+        sev = _capa_severity(cap)
+        if sev == "info":
+            continue
+        attack = ", ".join(a["id"] for a in cap.get("attack", []) if a.get("id"))
+        out.append(_finding("pe_capa_capability", sev,
+                            f"capa: {cap['name']}" + (f" [{cap['namespace']}]" if cap.get("namespace") else ""),
+                            loc, f"{cap.get('matches', 0)} match(es)", attack))
+    return out
+
+
+# capa goes to the background with FLOSS (large binaries): DOCUTRACEX_CAPA_BACKGROUND=0 keeps it inline
+CAPA_BACKGROUND = _os.environ.get("DOCUTRACEX_CAPA_BACKGROUND", "1") != "0"
+
+
+def _capa_cached(path: Path) -> bool:
     from ..config import settings
-    return dict(_cached(path, "capa", settings.capa_executable(), [], lambda: _run_capa(path)))
+    return _cache_get(path, "capa", settings.capa_executable(), []) is not None
+
+
+def _capa_only(path: Path, cancel: Any = None) -> dict[str, Any]:
+    from ..config import settings
+    return dict(_cached(path, "capa", settings.capa_executable(), [], lambda: _run_capa(path, cancel) if cancel is not None else _run_capa(path)))
 
 
 # The case's own binary above this size gets FLOSS as a background job (flossbg): the case
@@ -1147,7 +1170,7 @@ def _floss_language_crash(detail: str) -> bool:
     return any(m.lower() in d for m in _FLOSS_LANGUAGE_CRASH)
 
 
-def _run_capa(path: Path) -> dict[str, Any]:
+def _run_capa(path: Path, cancel: Any = None) -> dict[str, Any]:
     """capa (standalone binary, embedded rules): matched capabilities with their
     namespace, ATT&CK and MBC ids. Returns a status record plus
     ``capabilities`` (list of dicts) when it ran."""
@@ -1155,7 +1178,7 @@ def _run_capa(path: Path) -> dict[str, Any]:
 
     from ..config import settings
 
-    rec, out = _run_tool("capa", settings.capa_executable(), ["-j", "-q"], path, CAPA_TIMEOUT)
+    rec, out = _run_tool("capa", settings.capa_executable(), ["-j", "-q"], path, CAPA_TIMEOUT, cancel)
     if rec["status"] != "ok":
         return rec
     try:

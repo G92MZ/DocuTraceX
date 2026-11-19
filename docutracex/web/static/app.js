@@ -2474,6 +2474,10 @@ function peToolLine(t) {
 }
 
 function paneCapa(c) {
+  if (c && c.background && c.status === "running")
+    return `<p class="hint-line"><span class="spin">●</span> Large binary: capa is running in the <b>background</b> (${escapeHtml(c.task_id || "")} in <b>Tasks</b>, with its time and Cancel). The case did not wait for it: its capabilities and ATT&amp;CK techniques appear here and in Findings when it ends — reopen the case then.</p>`;
+  if (c && c.background && c.status === "cancelled")
+    return `<p class="hint-line">capa (background) was cancelled. Re-run the analysis to run it again.</p>`;
   if (!c || c.status !== "ok") return "";
   const caps = c.capabilities || [];
   if (!caps.length) return `<p class="hint-line">capa: no capabilities matched.</p>`;
@@ -7119,7 +7123,8 @@ function cxCaps(d) {
   if (c.error) return `<p class="bad-text">Capability analysis failed: ${e(c.error)}</p>`;
   const caps = c.capabilities || [];
   const capaNote = c.capa_available ? "contrasted with capa (same ATT&CK technique)"
-    : `capa ${c.capa_status === "skipped" ? "was skipped on this object" : "did not run on this object"}: no contrast`;
+    : c.capa_status === "running" ? "capa is still running in the background: the contrast is added when it ends — reopen the case then"
+    : `capa ${c.capa_status === "skipped" ? "was skipped on this object" : c.capa_status === "cancelled" ? "was cancelled" : "did not run on this object"}: no contrast`;
   const rows = caps.map((x, i) => `<details class="disclose cx-cap"${i < 3 ? " open" : ""}>
       <summary><span class="badge badge-${CX_SEV[x.severity] || "muted"}">${e(x.severity)}</span>
         <b>${e(x.name)}</b> <span class="mono hint-line">${e(x.attack)}</span>
