@@ -2482,6 +2482,8 @@ function paneCapa(c) {
     return `<p class="hint-line"><span class="spin">●</span> Large binary: capa is running in the <b>background</b> (${escapeHtml(c.task_id || "")} in <b>Tasks</b>, with its time and Cancel). The case did not wait for it: its capabilities and ATT&amp;CK techniques appear here and in Findings when it ends — reopen the case then.</p>`;
   if (c && c.background && c.status === "cancelled")
     return `<p class="hint-line">capa (background) was cancelled. Re-run the analysis to run it again.</p>`;
+  if (c && c.background && c.status === "interrupted")
+    return `<p class="hint-line">capa (background) was interrupted: the app restarted while it ran. Re-run the analysis to run it again.</p>`;
   if (!c || c.status !== "ok") return "";
   const caps = c.capabilities || [];
   if (!caps.length) return `<p class="hint-line">capa: no capabilities matched.</p>`;
@@ -2504,6 +2506,8 @@ function paneFloss(it) {
     return `<p class="hint-line"><span class="spin">●</span> Large binary: FLOSS is running in the <b>background</b> (${escapeHtml(fl.task_id || "")} in <b>Tasks</b>, with its time and Cancel). The case did not wait for it: its strings appear here, in Code → Strings, in IOCs and in Findings when it ends — reopen the case then.</p>`;
   if (fl && fl.background && fl.status === "cancelled")
     return `<p class="hint-line">FLOSS (background) was cancelled. Re-run the analysis to run it again, or Deep FLOSS in the Code view.</p>`;
+  if (fl && fl.background && fl.status === "interrupted")
+    return `<p class="hint-line">FLOSS (background) was interrupted: the app restarted while it ran. Re-run the analysis to run it again, or Deep FLOSS in the Code view.</p>`;
   if (!fl || fl.status !== "ok") return "";
   const tight = fl.tight_skipped
     ? `<p class="hint-line">Tight strings skipped in this automatic run (they emulate every tight loop: minutes to hours). The code analysis ran them on its priority functions; <b>Deep FLOSS</b> in the <b>Code</b> view runs them on every function, with no time limit.</p>`
@@ -2548,7 +2552,8 @@ const _TOOL_STATUS = { ok: ["ok", "ran"], skipped: ["skip", "skipped"], not_prov
                        unpacked: ["ok", "unpacked"], none: ["ok", "not packed"], detected: ["skip", "detected"],
                        failed: ["bad", "failed"], no_static: ["bad", "protector"], obfuscated: ["skip", ".NET obfuscator"],
                        debloated: ["bad", "padded"], clean: ["ok", "no padding"],
-                       running: ["skip", "running in background"], cancelled: ["off", "cancelled"] };
+                       running: ["skip", "running in background"], cancelled: ["off", "cancelled"],
+                       interrupted: ["bad", "interrupted"] };
 function toolTab(id, label, rec, html) {
   const st = rec ? (_TOOL_STATUS[rec.status] || ["off", rec.status || ""]) : null;
   const line = rec ? `<p class="hint-line">${escapeHtml(peToolLine(rec))}</p>` : "";
@@ -4457,18 +4462,50 @@ setInterval(() => {
   });
 }, 1000);
 
+// Tasks filter: one or more states (none selected = all), remembered in this browser.
+const TASK_STATE_ORDER = ["queued", "running", "cancelling", "completed", "failed", "cancelled"];
+let _taskStates = new Set();
+try { _taskStates = new Set(JSON.parse(localStorage.getItem("dtx.taskStates") || "[]")); } catch (e) { /* defaults */ }
+
+function renderTaskFilters(all, data) {
+  const box = document.getElementById("tasks-filters");
+  if (!box) return;
+  const count = {};
+  all.forEach((t) => { count[t.state] = (count[t.state] || 0) + 1; });
+  // every known state, plus any other one a task has (and one still selected)
+  const states = [...TASK_STATE_ORDER, ...Object.keys(count).filter((x) => !TASK_STATE_ORDER.includes(x)).sort()];
+  const chip = (id, label, on) => `<button class="subtab${on ? " is-active" : ""}" type="button" data-task-state="${escapeHtml(id)}" aria-pressed="${on}">${subtabLabel(label)}</button>`;
+  box.innerHTML = chip("", `All (${all.length})`, !_taskStates.size)
+    + states.map((x) => chip(x, `${x} (${count[x] || 0})`, _taskStates.has(x))).join("");
+  box.querySelectorAll("[data-task-state]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const st = btn.getAttribute("data-task-state");
+      if (!st) _taskStates.clear();
+      else if (_taskStates.has(st)) _taskStates.delete(st);
+      else _taskStates.add(st);
+      if (_taskStates.size >= states.length) _taskStates.clear();     // every state = All
+      try { localStorage.setItem("dtx.taskStates", JSON.stringify([..._taskStates])); } catch (e) { /* per-viewer only */ }
+      renderTasks(data);
+    });
+  });
+}
+
 function renderTasks(data) {
   const summary = document.getElementById("tasks-summary");
   const body = document.getElementById("tasks-body");
-  const tasks = (data && data.tasks) || [];
-  const nbg = tasks.filter((x) => x.background && TASK_ACTIVE.has(x.state)).length;
-  summary.textContent = `${data.active || 0} active${nbg ? ` (${nbg} in background)` : ""} · ${tasks.length} total`;
+  const all = (data && data.tasks) || [];
+  renderTaskFilters(all, data);
+  const tasks = _taskStates.size ? all.filter((t) => _taskStates.has(t.state)) : all;
+  const nbg = all.filter((x) => x.background && TASK_ACTIVE.has(x.state)).length;
+  summary.textContent = `${data.active || 0} active${nbg ? ` (${nbg} in background)` : ""} · ${all.length} total`
+    + (tasks.length !== all.length ? ` · ${tasks.length} shown` : "");
   summary.className = "status " + ((data.active || 0) ? "" : "ok-text");
-  if (!tasks.length) { body.innerHTML = `<p class="hint-line">No tasks yet.</p>`; return; }
+  if (!all.length) { body.innerHTML = `<p class="hint-line">No tasks yet.</p>`; return; }
+  if (!tasks.length) { body.innerHTML = `<p class="hint-line">No tasks in the selected state(s).</p>`; return; }
   // background jobs a task started (FLOSS of a large binary…) and still running: the task
   // says "completed · 1 in background" so its case is not taken for finished
   const bgOf = {};
-  tasks.forEach((b) => {
+  all.forEach((b) => {
     if (b.background && TASK_ACTIVE.has(b.state) && b.parent) (bgOf[b.parent] = bgOf[b.parent] || []).push(b);
   });
   body.innerHTML = tasks.map((t) => {
@@ -7128,7 +7165,7 @@ function cxCaps(d) {
   const caps = c.capabilities || [];
   const capaNote = c.capa_available ? "contrasted with capa (same ATT&CK technique)"
     : c.capa_status === "running" ? "capa is still running in the background: the contrast is added when it ends — reopen the case then"
-    : `capa ${c.capa_status === "skipped" ? "was skipped on this object" : c.capa_status === "cancelled" ? "was cancelled" : "did not run on this object"}: no contrast`;
+    : `capa ${c.capa_status === "skipped" ? "was skipped on this object" : c.capa_status === "cancelled" ? "was cancelled" : c.capa_status === "interrupted" ? "was interrupted (app restarted)" : "did not run on this object"}: no contrast`;
   const rows = caps.map((x, i) => `<details class="disclose cx-cap"${i < 3 ? " open" : ""}>
       <summary><span class="badge badge-${CX_SEV[x.severity] || "muted"}">${e(x.severity)}</span>
         <b>${e(x.name)}</b> <span class="mono hint-line">${e(x.attack)}</span>
@@ -7442,6 +7479,8 @@ async function cxFullFloss(el, caseId, sha, mode, d, onDone) {
       : st.state === "interrupted" ? " · Deep FLOSS interrupted (app restarted)" : "";
     const prio = fp.status === "background"
       ? `<span class="spin">●</span> FLOSS tight strings on the ${fp.functions || 0} priority function(s) are running in the <b>background</b> (${escapeHtml(fp.task_id || "")} in Tasks); they land here and in IOCs when it ends — reopen the case then.`
+      : fp.status === "interrupted"
+      ? `FLOSS tight strings on the ${fp.functions || 0} priority function(s) were interrupted: the app restarted while they ran in the background. Re-run the analysis, or Deep FLOSS.`
       : `FLOSS tight strings ran on the ${fp.functions || 0} priority function(s) only (${fp.strings || 0} found${fp.background ? ", in the background" : ""}); the automatic run skips them on the whole binary.`;
     box.innerHTML = `<div class="hint-line">${prio}${last}
       ${st.state === "completed" ? "" : '<button class="btn btn-ghost btn-sm cx-ffrun" type="button" title="Tight strings on every function, no time limit">Deep FLOSS…</button>'}</div>`;

@@ -80,6 +80,13 @@ def create_app() -> FastAPI:
         except Exception as exc:  # noqa: BLE001
             log.warning("RECmd batch files not refreshed: %s", exc)
 
+    try:                                           # background jobs a restart ended: interrupted
+        from . import flossbg
+        if (n := flossbg.recover_interrupted(settings.cases_dir)):
+            log.info("%d background job(s) ended by a restart marked as interrupted", n)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("interrupted background jobs not checked: %s", exc)
+
     app = FastAPI(title="DocuTraceX", version=__version__)
 
     static_dir = _WEB_DIR / "static"

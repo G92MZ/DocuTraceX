@@ -415,3 +415,86 @@ def test_run_analysis_on_portable_starts_requested_jobs(capa_env, monkeypatch: p
     assert sorted(t["type"] for t in bg) == ["capa", "floss"]
     cgate.set()
     _wait(lambda: all(tasks.manager.get(t["id"])["state"] == tasks.COMPLETED for t in bg))
+
+
+def test_restart_marks_background_jobs_interrupted(capa_env) -> None:  # noqa: ANN001
+    """A restart ends the background jobs: on the next start their placeholders say
+    "interrupted" (not "running" for ever); jobs live in this process are left alone."""
+    from docutracex import cases, flossbg
+    from docutracex.storage import CasePaths, read_json, write_json, write_subresult
+    tmp, cgate = capa_env
+    m = cases.create_case(io.BytesIO(_exe() + b"restart"), "visor7.exe", cases_dir=tmp / "cases")
+    cid = m["analysis_id"]
+    root = tmp / "cases" / cid
+    t = tasks.manager.submit("analyze", cid, "visor7.exe", cases_dir=tmp / "cases")
+    _wait(lambda: tasks.manager.get(t.id)["state"] == tasks.COMPLETED)
+    capa_id = read_json(CasePaths(cid, cases_dir=tmp / "cases").subresult("msi"))["items"][0]["capa"]["task_id"]
+    marker = root / "results" / flossbg.RUNNING
+    _wait(lambda: list((read_json(marker) or {}).keys()) == [capa_id])   # FLOSS done; capa running, tracked
+    assert flossbg.recover_interrupted(tmp / "cases") == 0                # live here: left alone
+    cgate.set()
+    _wait(lambda: not marker.exists())                                     # untracked when it ends
+    # "after a restart": a job this process does not know, its placeholder still running
+    paths = CasePaths(cid, cases_dir=tmp / "cases")
+    res = read_json(paths.subresult("msi"))
+    res["items"][0]["capa"] = {"status": "running", "background": True, "task_id": "task-0999"}
+    write_subresult(paths, "msi", res)
+    write_json(marker, {"task-0999": {"kind": "capa", "sha256": "x", "mode": None}})
+    assert flossbg.recover_interrupted(tmp / "cases") == 1
+    capa = read_json(paths.subresult("msi"))["items"][0]["capa"]
+    assert capa["status"] == "interrupted" and "restarted" in capa["detail"]
+    assert not marker.exists()
+
+
+def test_tasks_filter_by_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tasks: filter by one or more states; none (or every one) selected = All; remembered."""
+    import importlib.util
+    import socket
+
+    if importlib.util.find_spec("playwright") is None:
+        pytest.skip("playwright not installed")
+    import uvicorn
+
+    from docutracex.app import create_app
+    monkeypatch.setenv("DOCUTRACEX_CONFIG_DIR", str(tmp_path / "config"))
+    app = create_app()
+    with socket.socket() as so:
+        so.bind(("127.0.0.1", 0))
+        port = so.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    threading.Thread(target=server.run, daemon=True).start()
+    _wait(lambda: server.started, 10)
+    data = {"active": 1, "tasks": [
+        {"id": f"task-000{i}", "type": "analyze", "analysis_id": f"c{i}", "filename": f"f{i}.exe", "target": "full",
+         "state": st, "steps": []}
+        for i, st in enumerate(["running", "completed", "completed", "failed", "cancelled"], 1)]}
+    shown = "() => [...document.querySelectorAll('#tasks-body details[data-task]')].map(d => d.dataset.task)"
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            try:
+                browser = pw.chromium.launch()
+            except Exception as exc:  # noqa: BLE001
+                pytest.skip(f"chromium not available: {exc}")
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{port}/")
+            page.evaluate("() => { try { localStorage.removeItem('dtx.taskStates'); } catch (e) {} }")
+            page.reload()
+            page.evaluate("(d) => { window._d = d; renderTasks(d); }", data)
+            assert len(page.evaluate(shown)) == 5
+            assert page.inner_text('[data-task-state="completed"]').replace("\n", "") == "completed2"
+            page.evaluate("() => document.querySelector('[data-task-state=\"completed\"]').click()")
+            assert page.evaluate(shown) == ["task-0002", "task-0003"]
+            page.evaluate("() => document.querySelector('[data-task-state=\"failed\"]').click()")
+            assert page.evaluate(shown) == ["task-0002", "task-0003", "task-0004"]
+            assert "3 shown" in page.inner_text("#tasks-summary")
+            page.reload()                                                     # remembered
+            page.evaluate("(d) => renderTasks(d)", data)
+            assert page.evaluate(shown) == ["task-0002", "task-0003", "task-0004"]
+            page.evaluate("() => document.querySelector('[data-task-state=\"\"]').click()")   # All
+            assert len(page.evaluate(shown)) == 5
+            page.evaluate("() => document.querySelector('[data-task-state=\"queued\"]').click()")
+            assert "No tasks in the selected state(s)" in page.evaluate("() => document.getElementById('tasks-body').textContent")
+            browser.close()
+    finally:
+        server.should_exit = True
