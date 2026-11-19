@@ -52,3 +52,30 @@ def test_floss_capa_heartbeat_and_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     rows = {r["chain"]: r for r in clock.rows}
     assert rows["FLOSS"]["status"] == "ok" and rows["FLOSS"]["duration_s"] == 0.3
     assert rows["capa"]["status"] == "timeout" and "timed out" in rows["capa"]["detail"]
+
+
+def test_heartbeat_says_which_tool_is_still_running(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """FLOSS finished, capa still going: "capa running · … (FLOSS done in …)"."""
+    from docutracex import analyze
+    from docutracex.parsers import pe
+    exe = tmp_path / "dense.exe"
+    exe.write_bytes(b"MZ dense inert stub")
+    monkeypatch.setattr(pe, "HEARTBEAT_S", 0.05)
+    monkeypatch.setattr(pe, "_trusted_signer", lambda p: None)
+    monkeypatch.setattr(pe, "_cache_get", lambda *a: None)
+    monkeypatch.setattr(pe, "_cache_file", lambda *a: tmp_path / "nocache" / "x.json")
+    monkeypatch.setattr(pe, "_run_floss", lambda p, *a, **k: {"status": "ok", "duration_s": 0.0, "strings": []})
+
+    def slow_capa(p, *a):  # noqa: ANN001, ANN002, ANN202
+        time.sleep(0.5)
+        return {"status": "ok", "duration_s": 0.5, "capabilities": []}
+    monkeypatch.setattr(pe, "_run_capa", slow_capa)
+    seen: list[str] = []
+    analyze._step_local.fn = lambda ev, rec: seen.append(rec.get("detail") or "") if ev == "progress" else None
+    analyze._step_local.current = "binary: PE triage"
+    try:
+        pe._Clock("dense.exe", exe).tools(lambda: pe._both(exe))
+    finally:
+        analyze._step_local.fn = None
+        analyze._step_local.current = None
+    assert any(d.endswith(")") and "capa running" in d and "FLOSS done in 0m 00s" in d for d in seen), seen
