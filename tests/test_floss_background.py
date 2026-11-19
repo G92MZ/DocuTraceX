@@ -174,3 +174,20 @@ def test_tasks_view_shows_completed_with_background(tmp_path: Path, monkeypatch:
             browser.close()
     finally:
         server.should_exit = True
+
+
+def test_floss_starts_before_capa(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The background FLOSS is started before the (inline) capa run, not after it."""
+    order: list[str] = []
+    from docutracex import flossbg
+    monkeypatch.setattr(flossbg, "start", lambda *a: order.append("floss") or {"status": "running", "task_id": "t"})
+    monkeypatch.setattr(pe_mod, "_capa_only", lambda p: order.append("capa") or {"status": "ok", "capabilities": []})
+    monkeypatch.setattr(pe_mod, "_background_floss", lambda p: True)
+    exe = tmp_path / "v.exe"
+    exe.write_bytes(_exe())
+    tok = pe_mod._bg_root.set(tmp_path)
+    try:
+        pe_mod.analyze(exe, "v.exe")
+    finally:
+        pe_mod._bg_root.reset(tok)
+    assert order == ["floss", "capa"]

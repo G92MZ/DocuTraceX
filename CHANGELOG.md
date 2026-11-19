@@ -3,6 +3,12 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.238.3 — 2026-11-19 (#310)
+
+**Fix: background FLOSS starts before capa, not after**
+
+- On a large binary the background FLOSS task was only started once capa had finished; it now starts first, so both run at the same time.
+
 ## 1.238.2 — 2026-11-19 (#309)
 
 **Fix: evbunpack installs again (it left PyPI)**
