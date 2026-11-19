@@ -6037,6 +6037,33 @@ async function loadLolrmm() {
   });
 }
 
+function renderHijacklibs(t) {
+  const el = document.getElementById("hijacklibs-line");
+  if (!el) return;
+  t = t || {};
+  el.innerHTML = t.source === "hijacklibs"
+    ? `<a href="https://hijacklibs.net" target="_blank" rel="noopener noreferrer">HijackLibs</a> catalogue, ${t.dlls} DLLs (${t.system} Windows ones), updated ${escapeHtml(t.updated || "")} — refreshed weekly in the background.`
+    : 'HijackLibs catalogue not downloaded yet: the built-in list of ~100 Windows library names is used.';
+}
+
+async function loadHijacklibs() {
+  try { renderHijacklibs(await (await fetch("/api/settings/hijacklibs")).json()); } catch (_) { /* optional */ }
+  const btn = document.getElementById("hijacklibs-refresh");
+  if (!btn || btn.dataset.wired) return;
+  btn.dataset.wired = "1";
+  btn.addEventListener("click", async () => {
+    const msg = document.getElementById("hijacklibs-msg");
+    btn.disabled = true; msg.className = "status"; msg.textContent = "Downloading…";
+    try {
+      const r = await fetch("/api/settings/hijacklibs/refresh", { method: "POST" });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.detail || r.statusText);
+      renderHijacklibs(j); msg.className = "status ok-text"; msg.textContent = "Updated; applies to new analyses.";
+    } catch (err) { msg.className = "status bad-text"; msg.textContent = String(err.message || err); }
+    btn.disabled = false;
+  });
+}
+
 async function loadC2Families() {
   const box = document.querySelector("#c2-families .c2-fam-list");
   if (!box || box.dataset.loaded) return;
@@ -8029,6 +8056,7 @@ async function loadC2View(caseId) {
   if (!sel || !body) return;
   loadC2Shared();
   loadLolrmm();
+  loadHijacklibs();
   loadC2Families();
   const id = await fillCaseSelect(sel, caseId || _c2Case || _openCaseId);
   _c2Case = id;
@@ -8339,8 +8367,9 @@ const VERSION_NOW = (document.getElementById("version-chip")?.textContent || "")
 let _versionState = null;
 
 function changelogHtml(entries) {
-  // the CHANGELOG.md subset we write: "## X — date (#n)", a bold title, "- " bullets, `code`, **bold**
-  const inline = (t) => escapeHtml(t).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  // the CHANGELOG.md subset we write: "## X — date (#n)", a bold title, "- " bullets, `code`, **bold**, *italic*
+  const inline = (t) => escapeHtml(t).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+    .replace(/(^|[\s(])\*([^*\s][^*]*?)\*(?=[\s.,;:)]|$)/g, "$1<i>$2</i>");
   return `<div class="changelog">${entries.map((e) => {
     const rest = e.title.replace(e.version, "").replace(/^\s*[—-]\s*/, "");
     let html = `<h4><span class="cl-ver">v${escapeHtml(e.version)}</span><span class="cl-date">${escapeHtml(rest)}</span></h4>`;

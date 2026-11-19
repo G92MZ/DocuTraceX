@@ -12,7 +12,11 @@ Signals, per DLL next to an EXE in the same folder:
 * a system library name the EXE imports (or delay-loads) — loaded from there,
   not from System32;
 * the EXE carries a signature and the DLL none, or another signer;
-* the DLL forwards its exports to the real system library (a proxy DLL).
+* the DLL forwards its exports to the real system library (a proxy DLL);
+* the program is one HijackLibs lists as loading that DLL from its own folder
+  (``hijacklibs``: the catalogue is downloaded and kept current, ~600 DLLs; it also
+  adds vendor DLLs — ``libcurl.dll`` next to the updater that loads it — and says
+  where each DLL is expected). Without it, the built-in system names below.
 
 The signer is read from the certificate table as names only (the subject CNs):
 the signature is *not* verified here. Pure byte reading: nothing is run.
@@ -45,6 +49,11 @@ SYSTEM_DLLS = {
     "atl.dll", "feclient.dll", "msi.dll", "wdscore.dll", "ntdsapi.dll", "authz.dll", "tapi32.dll",
     "linkinfo.dll", "ntshrui.dll", "cscui.dll", "fltlib.dll", "powrprof.dll", "umpdc.dll", "winnsi.dll",
 }
+# Runtimes applications deploy next to themselves by design (Microsoft's app-local
+# deployment): only suspicious when the pair does not hold together (signature, proxy).
+_APP_LOCAL = re.compile(r"^(?:vcruntime\d+(?:_\d)?|msvcp\d+(?:_\w+)?|msvcr\d+|ucrtbase|api-ms-win-[\w-]+|"
+                        r"concrt\d+|vccorlib\d+|mfc\d+\w*|vcomp\d+|d3dcompiler_\d+|xinput1_\d|"
+                        r"libcrypto[\w-]*|libssl[\w-]*)\.dll$")
 _MAX_PE = 256 * 1024 * 1024
 _CN = re.compile(rb"\x06\x03\x55\x04\x03[\x0c\x13\x14\x16\x1e]([\x01-\x7f])")
 _CA_LIKE = re.compile(r"\b(?:CA|Root|Authority|Certification|Time ?Stamp\w*|TSA|Timestamping)\b|CA\d*$", re.IGNORECASE)
@@ -184,9 +193,34 @@ def _read(path: str | None) -> _PE | None:
         return None
 
 
+def catalogue() -> dict[str, dict[str, Any]]:
+    """DLL name → what is known about it: the downloaded HijackLibs catalogue when there
+    is one, plus the built-in system names (``source`` says which)."""
+    out: dict[str, dict[str, Any]] = {n: {"name": n, "vendor": "Microsoft", "locations": ["%SYSTEM32%"],
+                                          "system": True, "hosts": {}, "url": "", "source": "builtin"}
+                                      for n in SYSTEM_DLLS}
+    try:
+        from . import hijacklibs
+        for n, rec in (hijacklibs.dlls() or {}).items():
+            out[n] = {**rec, "system": rec["system"] or n in SYSTEM_DLLS, "source": "hijacklibs"}
+    except Exception:  # noqa: BLE001, S110  (catalogue unreadable: the built-in names)
+        pass
+    return out
+
+
+def _host(info: dict[str, Any], exe_names: set[str]) -> dict[str, Any] | None:
+    """A program next to the DLL that the catalogue lists as loading it from its own folder."""
+    for e in exe_names:
+        if e in info["hosts"]:
+            return {"exe": e, **info["hosts"][e]}
+    return None
+
+
 def pairs(entries: list[tuple[str, str | None]]) -> list[dict[str, Any]]:
-    """Side-loading candidates among ``entries`` (name inside the container, local
-    file): one record per DLL with a system library's name that sits next to an EXE."""
+    """Side-loading candidates among ``entries`` (name inside the container, local file):
+    one record per DLL next to an EXE when the DLL has a system library's name, or is a
+    third-party DLL the catalogue lists with that very program as its known host."""
+    cat = catalogue()
     by_dir: dict[str, list[tuple[str, str, str]]] = {}
     for name, f in entries:
         if not name or not f:
@@ -195,7 +229,7 @@ def pairs(entries: list[tuple[str, str | None]]) -> list[dict[str, Any]]:
         by_dir.setdefault(str(pp.parent).lower(), []).append((name, pp.name.lower(), f))
     out = []
     for files in by_dir.values():
-        dlls = [(n, b, f) for n, b, f in files if b in SYSTEM_DLLS]
+        dlls = [(n, b, f) for n, b, f in files if b in cat]
         if not dlls:
             continue
         exes = []
@@ -203,22 +237,35 @@ def pairs(entries: list[tuple[str, str | None]]) -> list[dict[str, Any]]:
             if b.endswith((".exe", ".scr", ".com")) or "." not in b:
                 pe = _read(f)
                 if pe and not pe.is_dll:
-                    exes.append((n, pe))
+                    from .interpreters import original_filename
+                    exes.append((n, pe, {b, original_filename(f) or b}))
         if not exes:
             continue
         for n, b, f in dlls:
+            info = cat[b]
+            host = None
+            for en, _pe, names in exes:
+                host = _host(info, names)
+                if host:
+                    host["entry"] = en
+                    break
+            if not info["system"] and not host:
+                continue                        # a vendor DLL next to some program: normal, unless a known pair
             dll = _read(f)
             if not dll or not dll.is_dll:
                 continue
-            importers = [(en, pe) for en, pe in exes if b in pe.imports()]
-            exe_name, exe = (importers or exes)[0]
+            importers = [(en, pe) for en, pe, _n in exes if b in pe.imports()]
+            hosts = [(en, pe) for en, pe, _n in exes if host and en == host["entry"]]
+            exe_name, exe = (hosts or importers or [(en, pe) for en, pe, _n in exes])[0]
             exports, fwd = dll.exports()
             to_system = {k: v for k, v in fwd.items()
                          if re.search(r"(?i)(?:system32|syswow64)[\\/]|^" + re.escape(b[:-4]) + r"(?:_?orig\w*|\d+)?\.", v)}
             e_sig, d_sig = exe.signers(), dll.signers()
             e_pub, d_pub = _signer(e_sig), _signer(d_sig)
             out.append({
-                "dll": n, "exe": exe_name, "imported": bool(importers),
+                "dll": n, "exe": exe_name, "imported": bool(importers) and exe_name in {x for x, _p in importers},
+                "system": info["system"], "vendor": info["vendor"], "locations": info["locations"][:4],
+                "known_host": host, "catalogue": info["source"], "url": info.get("url") or "",
                 "exe_signed": e_sig is not None, "dll_signed": d_sig is not None,
                 "exe_signer": sorted(e_pub), "dll_signer": sorted(d_pub),
                 "other_signer": bool(e_pub and d_pub and not e_pub & d_pub),
@@ -233,15 +280,26 @@ def findings(entries: list[tuple[str, str | None]], where: str, container: str =
     out = []
     for r in pairs(entries):
         dll, exe = PurePosixPath(r["dll"].replace("\\", "/")).name, PurePosixPath(r["exe"].replace("\\", "/")).name
-        parts = [f"{dll} (a Windows system library's name) ships next to {exe}"
-                 + (" which imports it" if r["imported"] else "")
-                 + ": Windows loads it from that folder instead of System32"]
+        where_ok = ", ".join(r["locations"][:2]) or "its vendor's folder"
+        if r["system"]:
+            head = (f"{dll} (a Windows system library's name) ships next to {exe}"
+                    + (" which imports it" if r["imported"] else "")
+                    + f": Windows loads it from that folder instead of System32 (expected in {where_ok})")
+        else:
+            head = (f"{dll} ({r['vendor'] or 'third-party'} library, expected in {where_ok}) ships next to {exe}, "
+                    "a program known to load it from its own folder")
+        parts = [head]
+        if r["known_host"]:
+            kh = r["known_host"]
+            parts.append(f"HijackLibs lists {kh['exe']} as a {kh['type'].lower() or 'side-loading'} host for {dll}"
+                         + (f" ({kh['condition']})" if kh["condition"] else ""))
         strong = False
         genuine = r["dll_signed"] and any("microsoft" in n.lower() for n in r["dll_signer"]) \
-            and not r["forwarded_to_system"]
+            and not r["forwarded_to_system"] and r["system"]
         if genuine:
             parts.append(f"{dll} is signed by {', '.join(r['dll_signer'][:2])}: likely a redistributable copy "
                          "(dbghelp, d3d…), unless the signature does not verify")
+            strong = False
         elif r["exe_signed"] and not r["dll_signed"]:
             parts.append(f"{exe} carries a signature"
                          + (f" ({', '.join(r['exe_signer'][:2])})" if r["exe_signer"] else "")
@@ -255,14 +313,21 @@ def findings(entries: list[tuple[str, str | None]], where: str, container: str =
             parts.append(f"a proxy DLL: {r['forwarded_to_system']} of its {r['exports']} exports are forwarded to the "
                          "real library" + (f"; its own: {', '.join(r['own_exports'][:4])}" if r["own_exports"] else ""))
             strong = True
+        # a vendor's own DLL, or a runtime apps ship next to themselves, that holds together: normal
+        if not strong and (not r["system"] or _APP_LOCAL.match(dll.lower())) and not genuine:
+            continue
         parts.append("signatures read, not verified")
+        kh = r["known_host"]
         ev = "\n".join([f"exe: {r['exe']}  signed={r['exe_signed']}  signer={', '.join(r['exe_signer']) or '-'}",
                         f"dll: {r['dll']}  signed={r['dll_signed']}  signer={', '.join(r['dll_signer']) or '-'}",
                         f"imported by the exe: {r['imported']}",
+                        f"expected location: {', '.join(r['locations']) or '-'}  (list: {r['catalogue']})",
                         f"exports: {r['exports']}  forwarded: {r['forwarded']}"]
-                       + [f"  {k} → {v}" for k, v in r["forward_sample"]])
+                       + [f"  {k} → {v}" for k, v in r["forward_sample"]]
+                       + ([f"known host: {kh['path']}"] if kh else [])
+                       + ([f"HijackLibs: {r['url']}"] if r["url"] else []))
+        hit = r["imported"] or r["forwarded_to_system"] or bool(kh)
         out.append({"tool": container, "rule": "dll_sideloading",
-                    "severity": "low" if genuine else
-                    "high" if strong and (r["imported"] or r["forwarded_to_system"]) else "medium",
+                    "severity": "low" if genuine else "high" if strong and hit else "medium",
                     "detail": " — ".join(parts), "location": where, "evidence": ev, "attack": "T1574.002"})
     return out
