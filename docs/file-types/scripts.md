@@ -55,6 +55,22 @@ AutoIt-Ripper recovers the script (as it does for compiled AutoIt EXEs) and the 
 reads it. Next to it, a renamed `AutoIt3.exe` is still found by the *OriginalFilename* of its
 version information (the same goes for the other portable interpreters).
 
+**Obfuscated AutoIt strings are decrypted statically.** Obfuscated AutoIt (DarkGate and other
+loaders) hides every string behind the script's own decoder functions: `F("C4B2CAC7…", "key")`. A
+small AutoIt evaluator built into DocuTraceX runs those decoders on their constant arguments and
+puts the result back in the code (*script_strings_decrypted*). Calls nested inside calls are
+resolved too.
+
+- **What the evaluator can do:** only pure string and number work — loops, `StringMid`, `Chr`,
+  `BitXOR`, `Dec`… — inside a step budget.
+- **What it never does:** nothing outside its own values is reachable. `DllCall` returns zeros,
+  file, registry, process and network functions do not exist, and a decoder that needs one is
+  simply left as it was.
+
+The rules then read the decrypted code, which brings up process hollowing, AMSI / ETW patching,
+ntdll unhooking and checks for security products. The URLs and IPs become IOCs. The AutoIt tab
+shows the decrypted code, and the original stays one click away.
+
 **AutoHotkey** is covered the same way:
 
 - `.ahk` scripts, and scripts with **no extension** recognised by their content (`#NoEnv`,
