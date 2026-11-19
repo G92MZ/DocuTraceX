@@ -10,6 +10,7 @@ the entries between the version you had and the new one.
 - The automatic FLOSS run skips *tight strings* on every file (they emulate every tight loop: minutes to hours on large binaries); decoded, stack and static strings stay, and the code analysis still runs tight strings on its priority functions.
 - **Deep FLOSS…** in the Code view runs them on every function in the background with **no time limit**; it shows how long it has been running and can be cancelled.
 - The Binary tab's FLOSS pane says when tight strings were skipped and where to run them.
+- What Deep FLOSS recovers goes into the case's IOCs and findings at once (no re-analysis needed).
 
 ## 1.235.0 — 2026-11-19 (#302)
 
