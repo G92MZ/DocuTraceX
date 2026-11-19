@@ -3,6 +3,15 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.232.0 — 2026-11-19 (#297)
+
+**DLL side-loading with the HijackLibs catalogue, kept up to date**
+
+- The list of side-loadable DLLs is now [HijackLibs](https://hijacklibs.net) (~600 Windows and vendor DLLs), downloaded and refreshed weekly in the background; offline, the built-in list of ~100 names is used.
+- Findings say where the DLL is expected and whether the program next to it is a *known host*; vendor DLLs (`libcurl.dll` next to its updater) are caught when the pair does not hold together.
+- Runtimes apps ship next to themselves (`vcruntime140.dll`…) stay quiet unless the signatures do not match.
+- The "What's new" panel shows *italics* properly.
+
 ## 1.231.0 — 2026-11-19 (#296)
 
 **Check for updates now from the header**

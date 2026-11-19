@@ -194,6 +194,23 @@ async def lolrmm_refresh() -> dict:
     return st
 
 
+@router.get("/hijacklibs")
+async def hijacklibs_status() -> dict:
+    """The HijackLibs catalogue the DLL side-loading check uses: source, size, date."""
+    from .. import hijacklibs
+    return hijacklibs.status()
+
+
+@router.post("/hijacklibs/refresh")
+async def hijacklibs_refresh() -> dict:
+    """Download the HijackLibs catalogue again (through the HTTP proxy if one is set)."""
+    from .. import hijacklibs
+    try:
+        return await asyncio.to_thread(hijacklibs.download, appsettings.proxy_url())
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Could not download the HijackLibs catalogue: {exc}") from exc
+
+
 @router.get("/c2-shared")
 async def c2_shared_get() -> dict:
     """Cobalt Strike watermarks / public-key SHA-256 known to be shared (leaked, cracked):

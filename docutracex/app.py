@@ -62,6 +62,11 @@ def create_app() -> FastAPI:
             lolrmm.refresh_in_background(appsettings.proxy_url())
         except Exception as exc:  # noqa: BLE001
             log.warning("LOLRMM catalogue not refreshed: %s", exc)
+        try:                                       # HijackLibs (DLL side-loading catalogue): weekly
+            from . import appsettings, hijacklibs
+            hijacklibs.refresh_in_background(appsettings.proxy_url())
+        except Exception as exc:  # noqa: BLE001
+            log.warning("HijackLibs catalogue not refreshed: %s", exc)
         try:                                       # RECmd batch files (registry catalogue): weekly
             from . import appsettings
             from .registry import catalog as reg_catalog

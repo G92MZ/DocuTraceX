@@ -32,6 +32,17 @@ DLL has another signer, or the DLL is a **proxy** that forwards its exports to t
 (a redistributable `dbghelp.dll`, `d3dcompiler`…) is low. Signatures are read for their names,
 not verified.
 
+The list of names comes from [HijackLibs](https://hijacklibs.net), the community catalogue of
+side-loadable DLLs (~600: Windows libraries and vendor ones, with where each is expected and the
+programs known to load it). It is **downloaded** into `tools/hijacklibs/` and refreshed weekly in
+the background (C2 view → *DLL side-loading list* → *Refresh now*); it is never shipped with
+DocuTraceX (GPL-3.0). Offline or before the first download, a built-in list of ~100 Windows names
+is used. With the catalogue the finding also says where the DLL is expected and whether the program
+next to it is a **known host** — and it catches **vendor DLLs** too (`libcurl.dll` next to the
+updater that loads it), but only when the pair does not hold together (signed program, unsigned
+DLL; another signer; a proxy): a vendor's DLL next to its own program, and runtimes apps deploy
+next to themselves (`vcruntime140.dll`, `msvcp140.dll`…), are how software ships.
+
 !!! tip "Passwords"
     An encrypted archive is opened with the password you give, a password **the carrying email
     states** (in many languages: *"la contraseña es…"*), or the usual defaults (`infected`…).

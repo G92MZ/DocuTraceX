@@ -198,9 +198,11 @@ def _resolve(text: str, props: dict[str, str], files: dict[str, str], depth: int
 def _sideloading(t: dict[str, Any], files: dict[str, str], actions: list[dict[str, Any]],
                  loc: str) -> list[dict[str, Any]]:
     """A Windows system library's name installed in the same folder as a program the
-    package installs (``version.dll`` next to ``App.exe``): DLL side-loading. Names only
+    package installs (``version.dll`` next to ``App.exe``), or a vendor DLL next to the
+    program HijackLibs lists as loading it: DLL side-loading. Names only
     here; the bytes (signature, proxy exports) are judged when the files are extracted."""
-    from ..sideload import SYSTEM_DLLS
+    from ..sideload import catalogue
+    cat = catalogue()
     comp_dir = {str(r.get("Component") or ""): str(r.get("Directory_") or "") for r in t.get("Component") or []}
     by_dir: dict[str, list[str]] = {}
     for r in t.get("File") or []:
@@ -209,15 +211,22 @@ def _sideloading(t: dict[str, Any], files: dict[str, str], actions: list[dict[st
     out = []
     for d, names in by_dir.items():
         low = [n.lower() for n in names]
-        dlls = [n for n in names if n.lower() in SYSTEM_DLLS]
         exes = [n for n, lo in zip(names, low) if lo.endswith(".exe")]
+        exe_low = {e.lower() for e in exes}
+        # a Windows library's name (not a runtime apps deploy next to themselves). Only names here:
+        # a vendor DLL next to the program that loads it is how software ships, so it is judged
+        # by its bytes when the files are extracted, not by its name
+        from ..sideload import _APP_LOCAL
+        dlls = [n for n in names if n.lower() in cat and cat[n.lower()]["system"] and not _APP_LOCAL.match(n.lower())]
         if not dlls or not exes:
             continue
+        known = [f"{e} is a known host of {d}" for d in dlls for e in exe_low & set(cat[d.lower()]["hosts"])]
         run = [a for a in actions if any(e.lower() in (a["runs"] or "").lower() for e in exes)]
         sev = "high" if run else "medium"
         out.append(_finding("msi_dll_sideloading", sev,
                             f"installs {', '.join(dlls[:3])} (Windows system library name) in the same folder as "
                             f"{', '.join(exes[:3])}: the program loads it from there instead of System32"
+                            + (f" (HijackLibs: {'; '.join(known[:2])})" if known else "")
                             + (f"; the installer then runs it ({run[0]['action']})" if run else ""),
                             loc, f"directory {d}: " + ", ".join(names[:30]), "T1574.002"))
     return out
