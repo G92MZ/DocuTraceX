@@ -649,7 +649,7 @@ def _is_pyinstaller(path: Path) -> bool:
 
 
 def _run_tool(name: str, exe: Path | None, args: list[str], path: Path,
-              timeout: int) -> tuple[dict[str, Any], str]:
+              timeout: int | None, cancel: Any = None) -> tuple[dict[str, Any], str]:
     """Run a standalone tool binary on ``path``. Returns (status record, stdout).
 
     The record always has ``status`` (ok / not_provisioned / timeout / error)
@@ -664,7 +664,11 @@ def _run_tool(name: str, exe: Path | None, args: list[str], path: Path,
                            f"scripts/setup_portable_python.py"}, "")
     # Hard limit + whole-tree kill: floss.exe / capa.exe are PyInstaller onefile
     # (bootloader + child); a plain subprocess.run could hang on the orphan.
-    r = run_bounded([str(exe), *args, str(path)], timeout)
+    cmd = [str(exe), *args, str(path)]
+    r = run_bounded(cmd, timeout, cancel=cancel) if cancel is not None else run_bounded(cmd, timeout)
+    if r.get("cancelled"):
+        return {"status": "cancelled", "detail": f"{name} cancelled by the analyst",
+                "duration_s": r.get("duration_s")}, ""
     if r.get("timed_out"):
         log.warning("%s timed out after %ss on %s", name, timeout, path.name)
         return ({"status": "timeout", "detail": f"{name} timed out after {timeout}s",
@@ -707,9 +711,12 @@ def _tools_workers() -> int:
     return workers(cap, cap)
 
 
-# Large binaries: FLOSS's "tight strings" (emulating every tight loop) is what
-# takes minutes; above this size it is skipped (decoded + stack strings stay).
-FLOSS_LARGE_BYTES = int(_os.environ.get("DOCUTRACEX_FLOSS_LARGE_MB", "15")) * 1024 * 1024
+# FLOSS's "tight strings" (emulating every tight loop) is what takes minutes — hours on
+# large, code-dense binaries. The automatic run skips them (decoded + stack + static strings
+# stay); the code analysis runs them on its priority functions, and *Deep FLOSS* (Code view)
+# on every function with no time limit. DOCUTRACEX_FLOSS_LARGE_MB=N keeps them on files up to
+# N MB (0, the default: never in the automatic run).
+FLOSS_LARGE_BYTES = int(_os.environ.get("DOCUTRACEX_FLOSS_LARGE_MB", "0")) * 1024 * 1024
 FLOSS_LARGE_ARGS = ["--no", "tight"]
 # Valid Authenticode from these publishers = library / runtime code (python3x.dll,
 # vcruntime, Qt…): FLOSS / capa would spend minutes on code nobody suspects.
@@ -803,7 +810,7 @@ def _both(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         return {"status": "skipped", "detail": why, "trusted_signer": pub}, \
                {"status": "skipped", "detail": why, "trusted_signer": pub}
     try:
-        large = path.stat().st_size > FLOSS_LARGE_BYTES
+        large = path.stat().st_size > FLOSS_LARGE_BYTES or FLOSS_LARGE_BYTES == 0
     except OSError:
         large = False
     fextra = FLOSS_LARGE_ARGS if large else []
@@ -815,9 +822,10 @@ def _both(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         cf = ex.submit(_cached, path, "capa", settings.capa_executable(), [], lambda: _run_capa(path))
         floss = ff.result()
         if large and fextra and floss.get("status") == "ok":
-            floss["note"] = (f"large file (> {FLOSS_LARGE_BYTES // 1048576} MB): tight strings skipped on the "
-                             "whole file (decoded and stack strings extracted); the code analysis runs them on "
-                             "its priority functions")
+            floss["note"] = ("tight strings skipped in the automatic run (they emulate every tight loop: "
+                             "minutes to hours); decoded, stack and static strings extracted. The code analysis "
+                             "runs them on its priority functions; Deep FLOSS (Code view) on every function, "
+                             "with no time limit")
             floss["tight_skipped"] = True
         return floss, cf.result()
 
@@ -848,12 +856,13 @@ def tight_on_functions(path: Path, addrs: list[int]) -> dict[str, Any]:
     return rec
 
 
-def full_floss(path: Path) -> dict[str, Any]:
-    """FLOSS with every string type on a file that was too large for the
-    automatic run (tight strings included). Cached: the next analysis of the
-    file reuses it instead of the lighter run."""
+def full_floss(path: Path, cancel: Any = None) -> dict[str, Any]:
+    """Deep FLOSS: every string type, tight strings on every function, with NO time limit
+    (it takes what it takes; ``cancel`` stops it). Cached: the next analysis of the file
+    reuses it instead of the lighter automatic run."""
     from ..config import settings
-    return _cached(path, "floss_full", settings.floss_executable(), [], lambda: _run_floss(path))
+    return _cached(path, "floss_full", settings.floss_executable(), [],
+                   lambda: _run_floss(path, timeout=None, cancel=cancel))
 
 
 def _sha(path: Path) -> str | None:
@@ -936,7 +945,8 @@ def tools_for(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     return _both(path)
 
 
-def _run_floss(path: Path, extra: list[str] | None = None) -> dict[str, Any]:
+def _run_floss(path: Path, extra: list[str] | None = None, timeout: int | None = -1,
+               cancel: Any = None) -> dict[str, Any]:
     """FLOSS (standalone binary): static / decoded / stack / tight strings.
     Returns a status record plus ``strings`` (list[str]) when it ran."""
     import json
@@ -947,7 +957,8 @@ def _run_floss(path: Path, extra: list[str] | None = None) -> dict[str, Any]:
     args = ["--json", "--quiet", *FLOSS_EXTRA_ARGS, *(extra or [])]
     # "--" before the sample: --no / --only / --analyze-functions take several
     # values (nargs="+") and would swallow the path otherwise
-    rec, out = _run_tool("floss", exe, [*args, "--"], path, FLOSS_TIMEOUT)
+    tmo_s = FLOSS_TIMEOUT if timeout == -1 else timeout        # None: no limit (Deep FLOSS)
+    rec, out = _run_tool("floss", exe, [*args, "--"], path, tmo_s, cancel)
     retry_note = ""
     if rec["status"] == "error" and _floss_language_crash(rec.get("detail") or ""):
         # Only this known crash is retried (never a timeout, a missing tool or
@@ -955,7 +966,7 @@ def _run_floss(path: Path, extra: list[str] | None = None) -> dict[str, Any]:
         first = rec.get("detail") or ""
         log.info("floss: language-specific string extraction crashed on %s; "
                  "retrying with --language none", path.name)
-        rec, out = _run_tool("floss", exe, [*args, *FLOSS_NO_LANGUAGE_ARGS, "--"], path, FLOSS_TIMEOUT)
+        rec, out = _run_tool("floss", exe, [*args, *FLOSS_NO_LANGUAGE_ARGS, "--"], path, tmo_s, cancel)
         if rec["status"] != "ok":
             rec["detail"] = (f"{rec.get('detail') or 'floss failed'} (retried with --language none "
                              f"after a Go/Rust string extraction crash; first run: {first[-160:]})")

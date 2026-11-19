@@ -784,9 +784,24 @@ def merge_full_floss(root: Path, sha256: str, mode: str, rec: dict[str, Any]) ->
         return len(new)
 
 
+_cancels: dict[str, _threading.Event] = {}
+
+
+def cancel_full_floss(root: Path, sha256: str, mode: str) -> dict[str, Any]:
+    """Stop a running Deep FLOSS (its process tree is killed)."""
+    key = str(_floss_job_file(root, sha256, mode))
+    with _jobs_lock:
+        ev = _cancels.get(key)
+        job = _jobs.get(key)
+    if ev is None or not job or job.get("state") != "running":
+        return full_floss_status(root, sha256, mode)
+    ev.set()
+    return {**job, "cancelling": True}
+
+
 def start_full_floss(root: Path, path: Path, sha256: str, mode: str) -> dict[str, Any]:
-    """Full FLOSS (tight strings on every function) in the background, for a
-    large file whose automatic run skipped them."""
+    """Deep FLOSS (tight strings on every function, no time limit) in the background;
+    ``cancel_full_floss`` stops it."""
     from ..parsers import pe as _pe
     if load(root, sha256, mode) is None:
         raise FileNotFoundError("no code analysis for this object")
@@ -799,6 +814,7 @@ def start_full_floss(root: Path, path: Path, sha256: str, mode: str) -> dict[str
         job: dict[str, Any] = {"state": "running", "started": time.time(), "finished": None, "added": 0,
                                "detail": "", "error": None}
         _jobs[key] = job
+        cancel = _cancels[key] = _threading.Event()
 
     def save() -> None:
         try:
@@ -809,8 +825,10 @@ def start_full_floss(root: Path, path: Path, sha256: str, mode: str) -> dict[str
 
     def run() -> None:
         try:
-            rec = _pe.full_floss(path)
-            if rec.get("status") != "ok":
+            rec = _pe.full_floss(path, cancel=cancel)
+            if rec.get("status") == "cancelled":
+                job["state"], job["error"] = "cancelled", "cancelled by the analyst"
+            elif rec.get("status") != "ok":
                 job["state"], job["error"] = "failed", str(rec.get("detail") or rec.get("status"))[:300]
             else:
                 job["added"] = merge_full_floss(root, sha256, mode, rec)
@@ -820,6 +838,9 @@ def start_full_floss(root: Path, path: Path, sha256: str, mode: str) -> dict[str
             log.warning("full FLOSS failed on %s: %s", sha256[:12], exc)
             job["state"], job["error"] = "failed", str(exc)[:300]
         job["finished"] = time.time()
+        job["duration_s"] = round(job["finished"] - job["started"], 1)
+        with _jobs_lock:
+            _cancels.pop(key, None)
         save()
 
     _threading.Thread(target=run, name=f"floss-full-{sha256[:8]}", daemon=True).start()

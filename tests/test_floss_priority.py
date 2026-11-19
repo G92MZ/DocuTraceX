@@ -31,8 +31,9 @@ def fake_floss(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setattr(settings, "cases_dir", tmp_path / "cases")
     calls = []
 
-    def run(path, extra=None):
+    def run(path, extra=None, **kw):
         calls.append(list(extra or []))
+        run.kw = kw
         return {"status": "ok", "tool": "floss", "strings": ["hxxp://pay.invoice.example/gate"],
                 "located": [{"kind": "tight", "string": "pay.invoice.example/gate", "function": 0x402010}]}
     monkeypatch.setattr(pe_mod, "_run_floss", run)
@@ -91,3 +92,43 @@ def test_large_file_reuses_the_full_run(tmp_path: Path, fake_floss, monkeypatch)
     n = len(fake_floss)
     floss, _ = pe_mod._both(exe)                   # the full run is reused, not the lighter one
     assert len(fake_floss) == n and not floss.get("tight_skipped") and floss.get("cached")
+
+
+def test_automatic_run_skips_tight_strings_by_default(tmp_path: Path, fake_floss, monkeypatch) -> None:
+    """Any size: the automatic FLOSS has no tight strings; Deep FLOSS has them, with no time limit."""
+    exe = tmp_path / "small.exe"
+    exe.write_bytes(b"MZ inert stub")
+    assert pe_mod.FLOSS_LARGE_BYTES == 0
+    monkeypatch.setattr(pe_mod, "_run_capa", lambda p, *_: {"status": "ok", "capabilities": []})
+    monkeypatch.setattr(pe_mod, "_trusted_signer", lambda p: None)
+    floss, _ = pe_mod._both(exe)
+    assert floss.get("tight_skipped") and fake_floss[-1] == ["--no", "tight"]
+    assert "Deep FLOSS" in floss["note"]
+    exe2 = tmp_path / "other.exe"
+    exe2.write_bytes(b"MZ other inert stub")
+    pe_mod.full_floss(exe2)
+    assert fake_floss[-1] == [] and pe_mod._run_floss.kw["timeout"] is None
+
+
+def test_deep_floss_job_can_be_cancelled(tmp_path: Path, monkeypatch) -> None:
+    import threading
+    import time as _time
+    started = threading.Event()
+
+    def slow(path, cancel=None):  # noqa: ANN001, ANN202
+        started.set()
+        while not cancel.is_set():
+            _time.sleep(0.05)
+        return {"status": "cancelled", "detail": "floss cancelled by the analyst"}
+    monkeypatch.setattr(pe_mod, "full_floss", slow)
+    monkeypatch.setattr(case, "load", lambda *a: {"functions": []})
+    monkeypatch.setattr(case, "_floss_job_file", lambda *a: tmp_path / "job.json")
+    st = case.start_full_floss(tmp_path, tmp_path / "x.exe", "cd" * 32, "native")
+    assert st["state"] == "running" and started.wait(5)
+    assert case.cancel_full_floss(tmp_path, "cd" * 32, "native").get("cancelling")
+    for _ in range(100):
+        if case.full_floss_status(tmp_path, "cd" * 32, "native")["state"] != "running":
+            break
+        _time.sleep(0.05)
+    st = case.full_floss_status(tmp_path, "cd" * 32, "native")
+    assert st["state"] == "cancelled" and st["duration_s"] >= 0

@@ -35,3 +35,20 @@ def test_timeout_kills_tree_and_returns_promptly() -> None:
 def test_missing_executable_is_an_error_not_an_exception() -> None:
     r = proctools.run_bounded(["/nonexistent/tool.exe"], timeout=5)
     assert r.get("error") and r["rc"] is None
+
+
+def test_cancel_kills_tree_with_no_time_limit() -> None:
+    """Deep FLOSS has no time limit; Cancel stops it (tree killed) within seconds."""
+    import threading
+    ev = threading.Event()
+    threading.Timer(1.0, ev.set).start()
+    t0 = time.monotonic()
+    r = proctools.run_bounded([sys.executable, "-c", _TREE], timeout=None, cancel=ev)
+    assert r.get("cancelled") and not r["timed_out"] and time.monotonic() - t0 < 20
+
+
+def test_no_time_limit_waits_for_the_end() -> None:
+    import threading
+    r = proctools.run_bounded([sys.executable, "-c", "import time; time.sleep(2); print('fin')"], timeout=None,
+                              cancel=threading.Event())
+    assert r["rc"] == 0 and r["out"].strip() == "fin" and not r.get("cancelled")

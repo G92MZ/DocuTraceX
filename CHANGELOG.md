@@ -3,6 +3,14 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.236.0 — 2026-11-19 (#303)
+
+**FLOSS without tight strings by default; Deep FLOSS with no time limit**
+
+- The automatic FLOSS run skips *tight strings* on every file (they emulate every tight loop: minutes to hours on large binaries); decoded, stack and static strings stay, and the code analysis still runs tight strings on its priority functions.
+- **Deep FLOSS…** in the Code view runs them on every function in the background with **no time limit**; it shows how long it has been running and can be cancelled.
+- The Binary tab's FLOSS pane says when tight strings were skipped and where to run them.
+
 ## 1.235.0 — 2026-11-19 (#302)
 
 **Tasks: what the PE triage is doing, tool by tool**
