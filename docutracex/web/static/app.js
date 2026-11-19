@@ -7418,7 +7418,10 @@ async function cxFullFloss(el, caseId, sha, mode, d, onDone) {
       : st.state === "failed" ? ` · Deep FLOSS failed: ${escapeHtml(st.error || "")}`
       : st.state === "cancelled" ? ` · Deep FLOSS cancelled${took}`
       : st.state === "interrupted" ? " · Deep FLOSS interrupted (app restarted)" : "";
-    box.innerHTML = `<div class="hint-line">FLOSS tight strings ran on the ${fp.functions || 0} priority function(s) only (${fp.strings || 0} found); the automatic run skips them on the whole binary.${last}
+    const prio = fp.status === "background"
+      ? `<span class="spin">●</span> FLOSS tight strings on the ${fp.functions || 0} priority function(s) are running in the <b>background</b> (${escapeHtml(fp.task_id || "")} in Tasks); they land here and in IOCs when it ends — reopen the case then.`
+      : `FLOSS tight strings ran on the ${fp.functions || 0} priority function(s) only (${fp.strings || 0} found${fp.background ? ", in the background" : ""}); the automatic run skips them on the whole binary.`;
+    box.innerHTML = `<div class="hint-line">${prio}${last}
       ${st.state === "completed" ? "" : '<button class="btn btn-ghost btn-sm cx-ffrun" type="button" title="Tight strings on every function, no time limit">Deep FLOSS…</button>'}</div>`;
     const b = box.querySelector(".cx-ffrun");
     if (b) b.addEventListener("click", async () => {

@@ -3,6 +3,13 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.238.0 — 2026-11-19 (#307)
+
+**Code step: what it is doing, live; FLOSS tight on priority functions in the background**
+
+- While native code is analysed, the task says the phase and its time: "code · a.exe · Rizin analysis · 4m 10s", "decompiling 40/120", "FLOSS tight strings on 120 priority function(s)".
+- On the case's own large binary (> 2 MB), FLOSS tight strings on the priority functions run as a background task too: the case does not wait; they reach Code → Strings and the IOCs when it ends.
+
 ## 1.237.0 — 2026-11-19 (#306)
 
 **FLOSS of a large binary in the background: the case does not wait for it**

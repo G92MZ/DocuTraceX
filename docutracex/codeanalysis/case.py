@@ -181,6 +181,42 @@ def analyze_object(root: Path, path: Path, sha256: str, mode: str, names: list[d
     return s
 
 
+class _Live:
+    """What the code step is doing, live in Tasks: "code · a.exe · decompiling 40/120 ·
+    1m 05s" (a heartbeat keeps the time moving through long silent phases, Rizin's
+    analysis or FLOSS). Never breaks the analysis."""
+
+    def __init__(self, label: str) -> None:
+        self.label, self.phase, self.t0 = label, "", time.monotonic()
+        try:
+            from ..analyze import step_progress_reporter
+            self._report = step_progress_reporter()
+        except Exception:  # noqa: BLE001
+            self._report = lambda _d: None
+        self._stop = _threading.Event()
+        _threading.Thread(target=self._beat, name="code-heartbeat", daemon=True).start()
+
+    def _say(self) -> None:
+        s = int(time.monotonic() - self.t0)
+        try:
+            self._report(f"code · {self.label} · {self.phase} · {s // 60}m {s % 60:02d}s")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _beat(self) -> None:
+        while not self._stop.wait(5):
+            self._say()
+
+    def set(self, phase: str) -> None:
+        if phase.split(" ")[0] != self.phase.split(" ")[0]:
+            self.t0 = time.monotonic()           # a new phase: its own clock
+        self.phase = phase
+        self._say()
+
+    def close(self) -> None:
+        self._stop.set()
+
+
 def analyze_native_case(root: Path, original: Path, nested_tree: list[dict[str, Any]],
                         go_shas: set[str] | None = None) -> dict[str, Any]:
     """The ``code`` module: native (non-Go, non-.NET) PE / ELF / Mach-O objects."""
@@ -221,13 +257,19 @@ def analyze_native_case(root: Path, original: Path, nested_tree: list[dict[str, 
             res["objects"].append(item)
             continue
         done += 1
-        item["code"] = analyze_object(root, p, sha, "native", None)
-        if item["code"].get("status") in ("ok", "partial"):
-            try:
-                res.setdefault("_children", []).extend(enrich(root, p, data, sha, "native", item))
-                res.setdefault("findings", []).extend(item.pop("findings", None) or [])
-            except Exception as exc:  # noqa: BLE001
-                log.warning("resources / strings step failed on %s: %s", item["label"], exc)
+        live = _Live(Path(item["label"]).name)
+        try:
+            live.set("Rizin analysis")
+            item["code"] = analyze_object(root, p, sha, "native", None, progress=live.set)
+            if item["code"].get("status") in ("ok", "partial"):
+                try:
+                    live.set("strings, FLOSS and resources")
+                    res.setdefault("_children", []).extend(enrich(root, p, data, sha, "native", item, live=live))
+                    res.setdefault("findings", []).extend(item.pop("findings", None) or [])
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("resources / strings step failed on %s: %s", item["label"], exc)
+        finally:
+            live.close()
         res["objects"].append(item)
     if not res["objects"]:
         res["status"] = "empty"
@@ -730,14 +772,26 @@ def priority_functions(full: dict[str, Any], limit: int) -> list[int]:
     return [int(f["addr"]) for f in fns[:limit] if isinstance(f.get("addr"), int)]
 
 
-def priority_tight(root: Path, path: Path, full: dict[str, Any], item: dict[str, Any]) -> list[dict[str, Any]]:
-    """When FLOSS skipped tight strings on a large file, run them on the
-    priority functions only. Returns located strings (kind ``tight (priority)``)."""
+def priority_tight(root: Path, path: Path, full: dict[str, Any], item: dict[str, Any],
+                   live: Any = None, sha256: str = "", mode: str = "native") -> list[dict[str, Any]]:
+    """When FLOSS skipped tight strings, run them on the priority functions only. Returns
+    located strings (kind ``tight (priority)``). The case's own large binary: as a background
+    task (flossbg), merged into Code → Strings and the IOCs when it ends."""
     floss = binary_item(root, item.get("stored_path") or "", bool(item.get("original"))).get("floss") or {}
     if not floss.get("tight_skipped"):
         return []
     from ..parsers import pe as _pe
     addrs = priority_functions(full, _pe.PRIORITY_TIGHT_MAX)
+    if not addrs:
+        return []
+    if item.get("original") and sha256 and _pe.background_size(path) and not _pe.tight_cached(path, addrs):
+        from .. import flossbg
+        tid = flossbg.start_priority(root, path, item.get("label") or path.name, sha256, mode, addrs)
+        full["floss_priority"] = {"status": "background", "task_id": tid, "functions": len(addrs), "strings": 0,
+                                  "detail": "FLOSS tight on the priority functions runs in the background (Tasks)"}
+        return []
+    if live is not None:
+        live.set(f"FLOSS tight strings on {len(addrs)} priority function(s)")
     rec = _pe.tight_on_functions(path, addrs)
     located = [dict(s, kind="tight (priority functions)") for s in rec.pop("located", None) or []
                if s.get("kind") == "tight"]
@@ -883,7 +937,8 @@ MAX_CHILDREN = 60
 
 
 def enrich(root: Path, path: Path, data: bytes, sha256: str, mode: str, item: dict[str, Any], *,
-           names: list[dict[str, Any]] | None = None, buildinfo: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+           names: list[dict[str, Any]] | None = None, buildinfo: dict[str, Any] | None = None,
+           live: Any = None) -> list[dict[str, Any]]:
     """Phase 6 on one analysed object: FLOSS strings per function, embedded
     resources (go:embed, certificates / keys, compressed data) written under
     ``extracted/code_resources/`` for the nested analysis, the declared vs
@@ -898,7 +953,7 @@ def enrich(root: Path, path: Path, data: bytes, sha256: str, mode: str, item: di
     try:
         located = list(floss_located(root, item.get("stored_path") or "", bool(item.get("original"))))
         try:
-            located += priority_tight(root, path, full, item)
+            located += priority_tight(root, path, full, item, live, sha256, mode)
         except Exception as exc:  # noqa: BLE001
             log.warning("FLOSS tight on priority functions failed on %s: %s", label, exc)
         n = attach_floss(full, located)

@@ -11,6 +11,7 @@ its strings land in the Binary tab, in Code → Strings (with their function) an
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -122,3 +123,66 @@ def _apply(root: Path, sha256: str, rec: dict[str, Any], task: Any, path: Path |
     except Exception as exc:  # noqa: BLE001
         log.warning("background FLOSS: IOCs / findings not recomputed for %s: %s", root.name, exc)
     return len(strings) or added
+
+
+def start_priority(root: Path, path: Path, name: str, sha256: str, mode: str, addrs: list[int]) -> str:
+    """FLOSS tight strings on the code analysis' priority functions of the case's own large
+    binary, as a background task: merged into Code → Strings (with their function) and the
+    IOCs / findings when it ends. Returns the task id."""
+    from . import tasks
+    from .codeanalysis import case as code_case
+    from .parsers import pe as pe_mod
+
+    def run(task: Any, cancel: Any) -> str:
+        import threading
+        import time as _t
+        t0, done = _t.monotonic(), [False]
+
+        def beat() -> None:
+            while not cancel.wait(5) and not done[0]:
+                s = int(_t.monotonic() - t0)
+                tasks.manager.set_step_detail(task, f"FLOSS tight on {len(addrs)} function(s) · {s // 60}m {s % 60:02d}s")
+        threading.Thread(target=beat, name="flossbg-tight-heartbeat", daemon=True).start()
+        try:
+            rec = pe_mod.tight_on_functions(path, addrs, cancel=cancel)
+        finally:
+            done[0] = True
+        status = "cancelled" if (cancel.is_set() or rec.get("status") == "cancelled") else rec.get("status")
+        located = [dict(s, kind="tight") for s in rec.get("located") or [] if s.get("kind") == "tight"]
+        if status != "cancelled":
+            tasks.manager.set_step_detail(task, "FLOSS done · waiting for the case's other tasks to write its results")
+        if not _wait_for_code(root, sha256, mode, task.id, cancel) or not tasks.manager.hold_case(task, cancel):
+            return "cancelled before writing its results"
+        added = 0
+        if status == "ok" and located:
+            added = code_case.merge_full_floss(root, sha256, mode, {"located": located},
+                                               label="priority functions, background", refresh=True)
+        with code_case._write_lock:                       # the placeholder → the outcome
+            full = code_case.load(root, sha256, mode)
+            if full is not None:
+                full["floss_priority"] = {"status": status, "detail": str(rec.get("detail") or "")[:300],
+                                          "functions": len(addrs), "strings": len(located), "background": True,
+                                          "added": added}
+                code_case.result_file(root, sha256, mode).write_text(json.dumps(full), encoding="utf-8")
+        return f"{len(located)} tight string(s), {added} new" if status == "ok" else str(status)
+
+    t = tasks.manager.start_background("floss", root.name, name, "floss tight (background)", run,
+                                       step=f"FLOSS tight · {name} · priority functions (background)",
+                                       cases_dir=root.parent)
+    return t.id
+
+
+def _wait_for_code(root: Path, sha256: str, mode: str, tid: str, cancel: Any, limit_s: float = 6 * 3600) -> bool:
+    """The code analysis writes its result (with this job's placeholder) at the end of its
+    step: wait for it, so the merged strings are not overwritten."""
+    import time as _t
+
+    from .codeanalysis import case as code_case
+    end = _t.monotonic() + limit_s
+    while _t.monotonic() < end:
+        full = code_case.load(root, sha256, mode) or {}
+        if (full.get("floss_priority") or {}).get("task_id") == tid:
+            return True
+        if cancel.wait(1):
+            return False
+    return True
