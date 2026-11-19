@@ -3,6 +3,14 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.237.0 — 2026-11-19 (#306)
+
+**FLOSS of a large binary in the background: the case does not wait for it**
+
+- Above 2 MB, the case's own binary gets FLOSS as a background task: the analysis finishes with everything else and C2, YARA or ML can run meanwhile.
+- The task shows in Tasks with how long it has been running and Cancel; the Binary tab says FLOSS is still running.
+- When it ends, its strings are added to the Binary tab and to Code → Strings, and the IOCs and findings are recomputed — no re-analysis, marks kept.
+
 ## 1.236.2 — 2026-11-19 (#305)
 
 **Tasks: which of FLOSS and capa is still running**

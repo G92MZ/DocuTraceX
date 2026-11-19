@@ -86,6 +86,10 @@ class Task:
     cases_dir: str | None = None
     params: dict[str, Any] = field(default_factory=dict)   # netcheck: kind/target/...
     t0: float | None = field(default=None, repr=False)     # monotonic start (precise duration)
+    # a background job (FLOSS of a large binary): runs beside the case's own tasks; it only
+    # holds the case (like a running task) while it writes its results (``applying``)
+    background: bool = False
+    applying: bool = False
 
     def public(self) -> dict[str, Any]:
         return {
@@ -96,6 +100,7 @@ class Task:
             "finished_utc": self.finished_utc, "duration_s": self.duration_s,
             "error": self.error, "counts": self.counts, "steps": self.steps,
             "params": {k: v for k, v in self.params.items() if k in ("kind", "target", "check_id", "form")},
+            "background": self.background,
         }
 
 
@@ -154,6 +159,7 @@ class TaskManager:
         self._hist_dir = ""
         self._workers: list[threading.Thread] = []
         self._max_workers = max_workers
+        self._bg_cancel: dict[str, threading.Event] = {}
 
     def _worker_count(self) -> int:
         if self._max_workers is not None:        # pinned (tests)
@@ -195,9 +201,79 @@ class TaskManager:
         log.info("Queued %s task %s for case %s (target=%s)", type, tid, analysis_id, target)
         return task
 
+    # --- background jobs ---------------------------------------------------------
+
+    def start_background(self, type: str, analysis_id: str, filename: str, target: str, run: Any,
+                         step: str, cases_dir: Path | None = None) -> Task:
+        """A job beside the queue (it does not wait for, nor hold, the case's other tasks):
+        ``run(task, cancel_event)`` in its own thread; listed in Tasks, cancellable. To write
+        into the case it calls ``hold_case(task, cancel)`` first and ``release_case(task)``."""
+        with self._lock:
+            tid = f"task-{next(self._counter):04d}"
+            task = Task(id=tid, type=type, analysis_id=analysis_id, filename=filename, target=target,
+                        state=RUNNING, started_utc=_now(), t0=time.monotonic(), phase=step,
+                        cases_dir=str(cases_dir) if cases_dir else None, background=True)
+            task.steps = [{"step": step, "status": "running", "started_utc": _now_ms()}]
+            self._tasks[tid] = task
+            self._order.append(tid)
+            ev = self._bg_cancel[tid] = threading.Event()
+
+        def go() -> None:
+            err, note = None, None
+            try:
+                note = run(task, ev)
+            except Exception as exc:  # noqa: BLE001
+                err = str(exc)[:500]
+                log.warning("background %s for %s failed: %s", type, analysis_id, exc)
+            self.release_case(task)
+            with self._lock:
+                task.finished_utc = _now()
+                task.duration_s = _duration(task)
+                cancelled = ev.is_set()
+                task.state = CANCELLED if cancelled else FAILED if err else COMPLETED
+                task.error = err
+                task.phase = "done"
+                task.steps = [{"step": step, "status": "cancelled" if cancelled else "error" if err else "ok",
+                               "duration_s": task.duration_s, "note": err or note}]
+                self._bg_cancel.pop(tid, None)
+            paths = CasePaths(analysis_id, cases_dir=Path(task.cases_dir) if task.cases_dir else settings.cases_dir)
+            _append_attempt(paths, task)
+            log.info("Background %s %s finished: %s", type, tid, task.state)
+        threading.Thread(target=go, name=f"dtx-bg-{tid}", daemon=True).start()
+        return task
+
+    def hold_case(self, task: Task, cancel: threading.Event | None = None, poll: float = 1.0) -> bool:
+        """Wait until no other task of the case runs, then hold it (queued tasks of the case
+        wait). False when cancelled while waiting."""
+        while True:
+            with self._lock:
+                busy = any(o.analysis_id == task.analysis_id and o.state == RUNNING and o.id != task.id
+                           and (not o.background or o.applying) for o in self._tasks.values())
+                if not busy:
+                    task.applying = True
+                    return True
+            if cancel is not None and cancel.wait(poll):
+                return False
+            if cancel is None:
+                time.sleep(poll)
+
+    def release_case(self, task: Task) -> None:
+        with self._lock:
+            task.applying = False
+
+    def set_step_detail(self, task: Task, detail: str) -> None:
+        with self._lock:
+            if task.steps and task.steps[-1].get("status") == "running":
+                task.steps = [{**task.steps[-1], "detail": detail}]
+
     def cancel(self, tid: str) -> bool:
         with self._lock:
+            ev = self._bg_cancel.get(tid)
             task = self._tasks.get(tid)
+            if ev is not None and task is not None and task.state == RUNNING:
+                ev.set()
+                task.state = CANCELLING
+                return True
             if task is None:
                 return False
             if task.state == QUEUED:
@@ -300,7 +376,8 @@ class TaskManager:
             with self._lock:
                 t = self._tasks.get(tid)
                 busy = t is not None and t.state == QUEUED and any(
-                    o.analysis_id == t.analysis_id and o.state == RUNNING and o.id != tid for o in self._tasks.values())
+                    o.analysis_id == t.analysis_id and o.state in (RUNNING, CANCELLING) and o.id != tid
+                    and (not o.background or o.applying) for o in self._tasks.values())
             if busy:
                 self._queue.task_done()
                 time.sleep(0.3)
