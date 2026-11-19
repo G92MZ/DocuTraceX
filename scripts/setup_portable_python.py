@@ -1870,8 +1870,21 @@ def install_autoit_ripper() -> bool:
     return _install_portable_pip_package("autoit-ripper", "autoit_ripper")
 
 
+# evbunpack (mos9527, Apache-2.0) is no longer on PyPI (the project page returns 404 since
+# late 2025): when the index has nothing, the pinned source of its repository (0.2.6) is
+# installed instead — a plain HTTPS download, no git needed; its dependencies (pefile,
+# aplib) still come from PyPI.
+EVBUNPACK_SRC = ("evbunpack @ https://github.com/mos9527/evbunpack/archive/"
+                 "ee7b647acf2a46617b0c448dfa83d63132ea917b.zip")
+
+
 def install_evbunpack() -> bool:
-    return _install_portable_pip_package("evbunpack", "evbunpack")
+    if _portable_import_ok("evbunpack"):
+        return True
+    if _install_portable_pip_package("evbunpack", "evbunpack"):
+        return True
+    print("[>] evbunpack is not on PyPI any more: installing its pinned source from GitHub...")
+    return _install_portable_pip_package(EVBUNPACK_SRC, "evbunpack")
 
 
 EMBER_DIR = ROOT / "tools" / "ember"

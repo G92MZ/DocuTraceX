@@ -3,6 +3,12 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.238.2 — 2026-11-19 (#309)
+
+**Fix: evbunpack installs again (it left PyPI)**
+
+- evbunpack (Enigma Virtual Box unpacker) is no longer on PyPI, so a fresh install reported it missing. The installer now falls back to its pinned source on GitHub (0.2.6); Diagnostics → Retry installs it.
+
 ## 1.238.1 — 2026-11-19 (#308)
 
 **Tasks: "completed + N in background"**
