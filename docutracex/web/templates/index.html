@@ -271,6 +271,9 @@
         <div class="hint-line">RMM / remote-access list: <span id="lolrmm-line"></span>
           <button id="lolrmm-refresh" class="btn btn-ghost btn-sm" type="button">Refresh now</button>
           <span id="lolrmm-msg" class="status"></span></div>
+        <div class="hint-line">Family YARA rules: <span id="c2rules-line"></span>
+          <button id="c2rules-refresh" class="btn btn-ghost btn-sm" type="button">Refresh now</button>
+          <span id="c2rules-msg" class="status"></span></div>
         <div class="hint-line">DLL side-loading list: <span id="hijacklibs-line"></span>
           <button id="hijacklibs-refresh" class="btn btn-ghost btn-sm" type="button">Refresh now</button>
           <span id="hijacklibs-msg" class="status"></span></div>
@@ -564,6 +567,7 @@
             </form>
             <div class="settings-row">
               <button id="yara-recompile" class="btn btn-primary btn-sm" type="button">Recompile</button>
+              <button id="yara-reset" class="btn btn-ghost btn-sm" type="button" title="Clear the compiled rules, or every rule source">Clear…</button>
               <progress id="yara-prog" max="100" value="0" style="display:none;width:180px;vertical-align:middle"></progress>
               <span id="yara-add-status" class="status"></span>
               <span id="yara-summary" class="status"></span>

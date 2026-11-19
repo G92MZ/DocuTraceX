@@ -62,6 +62,12 @@ def create_app() -> FastAPI:
             lolrmm.refresh_in_background(appsettings.proxy_url())
         except Exception as exc:  # noqa: BLE001
             log.warning("LOLRMM catalogue not refreshed: %s", exc)
+        try:                                       # family YARA (CAPE / ditekSHen) for the C2 view: weekly
+            from . import appsettings
+            from .c2 import familyrules
+            familyrules.refresh_in_background(appsettings.proxy_url())
+        except Exception as exc:  # noqa: BLE001
+            log.warning("family YARA rules not refreshed: %s", exc)
         try:                                       # HijackLibs (DLL side-loading catalogue): weekly
             from . import appsettings, hijacklibs
             hijacklibs.refresh_in_background(appsettings.proxy_url())

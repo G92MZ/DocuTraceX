@@ -194,6 +194,23 @@ async def lolrmm_refresh() -> dict:
     return st
 
 
+@router.get("/c2rules")
+async def c2rules_status() -> dict:
+    """The family YARA rule sets the C2 analysis uses (CAPE, ditekSHen): files, dates, errors."""
+    from ..c2 import familyrules
+    return familyrules.status()
+
+
+@router.post("/c2rules/refresh")
+async def c2rules_refresh() -> dict:
+    """Download the family YARA rule sets again (through the HTTP proxy if one is set)."""
+    from ..c2 import familyrules
+    try:
+        return await asyncio.to_thread(familyrules.download, appsettings.proxy_url())
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Could not download the family YARA rules: {exc}") from exc
+
+
 @router.get("/hijacklibs")
 async def hijacklibs_status() -> dict:
     """The HijackLibs catalogue the DLL side-loading check uses: source, size, date."""

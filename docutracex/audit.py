@@ -52,6 +52,7 @@ _ACTIONS: list[tuple[str, str, str]] = [
     ("DELETE", r"^/api/cases/[^/]+/manual-findings/", "deleted a manual finding"),
     ("DELETE", r"^/api/cases/[^/]+/?$", "deleted the case"),
     ("PUT", r"^/api/cases/[^/]+/comment", "commented"),
+    ("POST", r"^/api/yara/reset", "cleared the YARA rules"),
     ("POST", r"^/api/yara/", "changed YARA rules"),
     ("DELETE", r"^/api/yara/", "removed YARA rules"),
     ("PUT", r"^/api/settings/", "changed settings"),

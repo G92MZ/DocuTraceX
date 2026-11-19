@@ -3,6 +3,13 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.233.0 — 2026-11-19 (#300)
+
+**C2: the malware family named by CAPE and ditekSHen YARA rules; clear YARA rules from Settings**
+
+- The C2 analysis runs the CAPE and ditekSHen family rules on every object (downloaded and refreshed weekly; *Refresh now* in the C2 view). A family no extractor reads (Formbook, GuLoader, Latrodectus…) is named; one an extractor reads gets the rule names as corroboration.
+- Settings → YARA rules → **Clear…**: drop the compiled rules, or everything (uploads, registered folders, enabled marks — nothing on disk is deleted).
+
 ## 1.232.2 — 2026-11-19 (#299)
 
 **A binary named like a script: its recovered code one click away**
