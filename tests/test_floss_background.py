@@ -346,6 +346,8 @@ def test_cases_list_shows_completed_with_background(tmp_path: Path, monkeypatch:
             page = browser.new_page()
             page.route("**/api/cases", lambda route, request: route.fulfill(
                 status=200, content_type="application/json", body=json.dumps(cases_)))
+            page.route("**/api/tasks", lambda route, request: route.fulfill(     # the poller's refresh
+                status=200, content_type="application/json", body=json.dumps(tdata)))
             page.goto(f"http://127.0.0.1:{port}/")
             page.evaluate("(d) => loadCases(d)", tdata)
             page.wait_for_selector("[data-case-bg]", state="attached")
@@ -356,3 +358,60 @@ def test_cases_list_shows_completed_with_background(tmp_path: Path, monkeypatch:
             browser.close()
     finally:
         server.should_exit = True
+
+def test_child_process_requests_jobs_service_starts_them(capa_env, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: ANN001
+    """The analysis in the portable child only *requests* FLOSS / capa (the child ends, and
+    would take them along); the web service starts them and the placeholders get the ids."""
+    from docutracex import analyze, cases, flossbg
+    from docutracex.storage import CasePaths, read_json
+    tmp, cgate = capa_env
+    m = cases.create_case(io.BytesIO(_exe() + b"child"), "visor5.exe", cases_dir=tmp / "cases")
+    cid = m["analysis_id"]
+    root = tmp / "cases" / cid
+    monkeypatch.setenv(flossbg.DEFER_ENV, "1")              # as the child
+    analyze.analyze_case(root)
+    monkeypatch.delenv(flossbg.DEFER_ENV)
+    assert not [t for t in tasks.manager.list(cid) if t.get("background")]   # nothing started in the child
+    reqs = read_json(root / "results" / flossbg.REQUESTS)
+    assert [r["kind"] for r in reqs] == ["floss", "capa"]
+    paths = CasePaths(cid, cases_dir=tmp / "cases")
+    item = read_json(paths.subresult("msi"))["items"][0]
+    assert item["floss"]["task_id"].startswith("pending-") and item["capa"]["task_id"].startswith("pending-")
+    ids = flossbg.launch_deferred(root)                     # the web service, after the child ended
+    assert len(ids) == 2 and not (root / "results" / flossbg.REQUESTS).exists()
+    assert {t["id"] for t in tasks.manager.list(cid) if t.get("background")} == set(ids)
+    capa = read_json(paths.subresult("msi"))["items"][0]["capa"]
+    assert capa["task_id"] in ids                           # the placeholder has the real id (FLOSS may be done)
+    cgate.set()
+    _wait(lambda: all(tasks.manager.get(i)["state"] == tasks.COMPLETED for i in ids))
+    item = read_json(paths.subresult("msi"))["items"][0]
+    assert item["floss"]["status"] == "ok" and item["capa"]["status"] == "ok"
+    assert any(f["rule"] == "pe_capa_capability" for f in item["findings"])
+
+
+def test_run_analysis_on_portable_starts_requested_jobs(capa_env, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: ANN001
+    """run_analysis with the portable child: the jobs it requested are started by the service."""
+    import os
+    import subprocess
+
+    from docutracex import analyze, cases, flossbg
+    from docutracex.config import settings
+    tmp, cgate = capa_env
+    m = cases.create_case(io.BytesIO(_exe() + b"portable"), "visor6.exe", cases_dir=tmp / "cases")
+    cid = m["analysis_id"]
+    monkeypatch.setattr(settings, "portable_python", lambda: tmp / "portable-python")
+
+    def child(cmd, timeout, listener):  # noqa: ANN001, ANN202 — the child, in-process, with its env
+        os.environ[flossbg.DEFER_ENV] = "1"
+        try:
+            analyze.analyze_case(Path(cmd[3]))
+        finally:
+            del os.environ[flossbg.DEFER_ENV]
+        assert not [t for t in tasks.manager.list(cid) if t.get("background")]
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+    monkeypatch.setattr(analyze, "_run_portable", child)
+    analyze.run_analysis(tmp / "cases" / cid)
+    bg = [t for t in tasks.manager.list(cid) if t.get("background")]
+    assert sorted(t["type"] for t in bg) == ["capa", "floss"]
+    cgate.set()
+    _wait(lambda: all(tasks.manager.get(t["id"])["state"] == tasks.COMPLETED for t in bg))

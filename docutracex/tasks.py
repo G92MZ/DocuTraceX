@@ -204,13 +204,18 @@ class TaskManager:
 
     # --- background jobs ---------------------------------------------------------
 
+    def new_id(self) -> str:
+        """A task id, reserved (for ``start_background(task_id=…)``)."""
+        with self._lock:
+            return f"task-{next(self._counter):04d}"
+
     def start_background(self, type: str, analysis_id: str, filename: str, target: str, run: Any,
-                         step: str, cases_dir: Path | None = None) -> Task:
+                         step: str, cases_dir: Path | None = None, task_id: str | None = None) -> Task:
         """A job beside the queue (it does not wait for, nor hold, the case's other tasks):
         ``run(task, cancel_event)`` in its own thread; listed in Tasks, cancellable. To write
         into the case it calls ``hold_case(task, cancel)`` first and ``release_case(task)``."""
         with self._lock:
-            tid = f"task-{next(self._counter):04d}"
+            tid = task_id or f"task-{next(self._counter):04d}"
             parent = next((o.id for o in self._tasks.values() if o.analysis_id == analysis_id
                            and o.state == RUNNING and not o.background), None)
             task = Task(id=tid, type=type, analysis_id=analysis_id, filename=filename, target=target,

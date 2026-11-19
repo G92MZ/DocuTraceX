@@ -3,6 +3,14 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.239.1 — 2026-11-19 (#312)
+
+**Fix: background FLOSS and capa actually finish**
+
+- With the portable Python (the usual install), the background FLOSS / capa of a large binary were lost when the analysis ended: they never finished and did not show in Tasks. They now run in the app itself, so they show in Tasks and their results reach the case.
+- The same applies to the FLOSS tight strings on the code analysis' priority functions.
+- In the Cases list, a finished case whose FLOSS or capa is still running shows *+ N in background* next to *completed*.
+
 ## 1.239.0 — 2026-11-19 (#311)
 
 **capa of a large binary also runs in the background**
@@ -10,7 +18,6 @@ the entries between the version you had and the new one.
 - On a large binary capa no longer holds the case: it runs as a background task (Tasks, with its time and Cancel) next to FLOSS.
 - When it ends its capabilities and ATT&CK techniques are added to the Binary tab and to Findings; a cached result still runs inline.
 - When it ends, Code → Capabilities is compared with capa again (capa column, *Only in capa*), and code findings that capa already covers are removed, so the same technique doesn't show up twice.
-- In the Cases list, a finished case whose FLOSS or capa is still running shows *+ N in background* next to *completed*.
 
 ## 1.238.3 — 2026-11-19 (#310)
 
