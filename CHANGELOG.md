@@ -3,6 +3,13 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.231.0 — 2026-11-19 (#296)
+
+**Check for updates now from the header**
+
+- The version in the header is always clickable: "up to date · last checked HH:MM" and a **Check now** button that asks GitHub at once (it works even with the automatic check off).
+- If a newer version turns up, the chip lights up and its changes and the **Update** button show straight away.
+
 ## 1.230.0 — 2026-11-19 (#295)
 
 **DLL side-loading: a signed program next to a DLL with a system library's name**

@@ -8371,6 +8371,7 @@ async function checkVersion(again = 0) {
   const chip = document.getElementById("version-chip");
   const btn = document.getElementById("update-btn");
   if (!chip) return;
+  chip.title = st.update_available ? chip.title : `DocuTraceX ${st.current} · ${_checkedWhen(st)} · click to check for updates`;
   if (st.update_available) {
     chip.classList.add("version-new");
     chip.textContent = `v${st.current} → v${st.latest}`;
@@ -8379,6 +8380,44 @@ async function checkVersion(again = 0) {
   } else if (st.checking && again < 6) {
     setTimeout(() => checkVersion(again + 1), 5000);   // the first check runs in the background
   }
+}
+
+function _checkedWhen(st) {
+  if (!st || !st.checked_utc) return "not checked yet";
+  const d = new Date(st.checked_utc);
+  const same = d.toDateString() === new Date().toDateString();
+  return "last checked " + (same ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : d.toLocaleString());
+}
+
+// The version chip, always clickable: what's new when there is a newer version, otherwise
+// "up to date" with Check now (asks GitHub at once).
+async function showVersionPanel() {
+  if (_versionState && _versionState.update_available) return showUpcoming();
+  const st = _versionState || {};
+  const err = st.error ? `<p class="bad-text">The last check failed: ${escapeHtml(st.error)}</p>` : "";
+  const auto = st.check_enabled === false ? "<p>The automatic check is off; Check now still asks GitHub.</p>" : "";
+  const v = await showModal(`DocuTraceX v${escapeHtml(st.current || VERSION_NOW)}`,
+    `<p>${st.latest ? "You're up to date" : "No newer version known"} · ${_checkedWhen(st)}.</p>${err}${auto}`,
+    [{ label: "Close", value: "close" }, { label: "Check now", value: "check", primary: true }]);
+  if (v === "check") checkNow();
+}
+
+async function checkNow() {
+  const chip = document.getElementById("version-chip");
+  const label = chip ? chip.textContent : "";
+  if (chip) { chip.textContent = "checking…"; chip.disabled = true; }
+  let st = null;
+  try {
+    st = await fetch("/api/version?refresh=true").then((r) => r.json());
+    for (let i = 0; st.checking && i < 40; i++) {           // GitHub answers in a second or two; give up after ~30 s
+      await new Promise((res) => setTimeout(res, 750));
+      st = await fetch("/api/version").then((r) => r.json());
+    }
+  } catch (e) { st = { ...(_versionState || {}), error: e.message }; }
+  if (chip) { chip.textContent = label; chip.disabled = false; }
+  _versionState = st;
+  await checkVersion();
+  showVersionPanel();
 }
 
 async function showUpcoming() {
@@ -8458,7 +8497,7 @@ async function showWhatsNew() {
 }
 
 (async function initVersion() {
-  document.getElementById("version-chip")?.addEventListener("click", showUpcoming);
+  document.getElementById("version-chip")?.addEventListener("click", showVersionPanel);
   document.getElementById("update-btn")?.addEventListener("click", runUpdate);
   await loadMe();
   checkVersion();

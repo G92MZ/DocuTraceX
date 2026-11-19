@@ -89,8 +89,15 @@ def test_status_and_upcoming(cfg: Path, monkeypatch: pytest.MonkeyPatch) -> None
     st = versioninfo.status()
     assert st["update_available"] and st["latest"] == "1.5.0"
     assert [x["version"] for x in versioninfo.upcoming()] == ["1.5.0", "1.4.1"]
-    versioninfo.set_check(False)
-    assert not versioninfo.status()["update_available"]
+    versioninfo.set_check(False)                     # automatic check off: no background call…
+    monkeypatch.setitem(versioninfo._STATE, "checked", 0.0)
+    st = versioninfo.status()
+    assert not st["check_enabled"] and not st["checking"]
+    started: list[bool] = []
+    monkeypatch.setattr(versioninfo.threading, "Thread",
+                        lambda **kw: type("T", (), {"start": lambda self: started.append(True)})())
+    assert versioninfo.status(force=True)["checking"] and started     # …but "Check now" still asks GitHub
+    monkeypatch.setitem(versioninfo._STATE, "running", False)
     monkeypatch.setitem(versioninfo._STATE, "latest", None)
 
 
@@ -193,6 +200,75 @@ def test_header_lights_up_and_whats_new_ui(tmp_path: Path, monkeypatch: pytest.M
             body = page.inner_text("#modal-body")
             assert "v1.5.0" in body and "v1.4.1" in body and "run.py" in body
             assert not errors, errors
+            browser.close()
+    finally:
+        server.should_exit = True
+
+
+def test_check_now_button_ui(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Browser: up to date → the chip opens "up to date · last checked" with Check now, which asks
+    GitHub at once and then shows the newer version. (Playwright; skipped without.)"""
+    import importlib.util as iu
+    import json
+    import time
+    if iu.find_spec("playwright") is None:
+        pytest.skip("playwright not installed")
+    import uvicorn
+
+    from docutracex.app import create_app
+    monkeypatch.setenv("DOCUTRACEX_CONFIG_DIR", str(tmp_path))
+    app = create_app()
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    threading.Thread(target=server.run, daemon=True).start()
+    for _ in range(100):
+        if server.started:
+            break
+        time.sleep(0.05)
+    cur = versioninfo.__version__
+    state = {"asked": 0}
+
+    def version(route, request):  # noqa: ANN001, ANN202
+        if "refresh=true" in request.url:
+            state["asked"] += 1
+            body = {"current": cur, "latest": cur, "update_available": False, "checking": True}
+        elif state["asked"]:
+            body = {"current": cur, "latest": "99.0.0", "update_available": True, "checking": False,
+                    "checked_utc": "2026-11-19T02:00:00+00:00"}
+        else:
+            body = {"current": cur, "latest": cur, "update_available": False, "checking": False,
+                    "checked_utc": "2026-11-19T01:00:00+00:00"}
+        route.fulfill(status=200, content_type="application/json", body=json.dumps(body))
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            try:
+                browser = pw.chromium.launch()
+            except Exception as exc:  # noqa: BLE001
+                pytest.skip(f"chromium not available: {exc}")
+            page = browser.new_page()
+            errors: list[str] = []
+            page.on("pageerror", lambda e: errors.append(str(e)))
+            page.route("**/api/auth/status", lambda r, _q: r.fulfill(
+                status=200, content_type="application/json", body=json.dumps({"user": "admin", "role": "admin"})))
+            page.route("**/api/version/whatsnew", lambda r, _q: r.fulfill(
+                status=200, content_type="application/json", body=json.dumps({"entries": []})))
+            page.route("**/api/version/upcoming", lambda r, _q: r.fulfill(
+                status=200, content_type="application/json", body=json.dumps({"entries": []})))
+            page.route("**/api/version?*", version)
+            page.route("**/api/version", version)
+            page.goto(f"http://127.0.0.1:{port}/")
+            page.wait_for_function("() => document.getElementById('version-chip').title.includes('last checked')")
+            page.click("#version-chip")
+            page.wait_for_selector("#modal:not([hidden])")
+            assert "up to date" in page.inner_text("#modal-body") and "last checked" in page.inner_text("#modal-body")
+            page.click("#modal-actions button:has-text('Check now')")
+            page.wait_for_selector("#version-chip.version-new")
+            page.wait_for_selector("#modal:not([hidden])")
+            assert state["asked"] == 1 and "99.0.0 is available" in page.inner_text("#modal-title")
+            assert page.is_visible("#update-btn") and not errors, errors
             browser.close()
     finally:
         server.should_exit = True
