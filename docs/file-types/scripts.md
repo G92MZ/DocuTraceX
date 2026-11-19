@@ -15,6 +15,10 @@ of a shortcut, a PDF, an archive entry — and on the stages those scripts decod
    - the pieces embedded anywhere in it are carved out as children: a compiled AutoIt blob with junk
      in front, PEs cut to their real size, ZIP / 7z / CAB / OLE / PDF.
 
+   In the case view, the **File** tab says the file is named like source but binary and lists what
+   was carved (kind, offset, size); the script recovered from it (a decompiled AutoIt script) gets
+   a direct tab, *AutoIt · script.au3*, with its code, decrypted strings and findings.
+
    Compiled AutoIt is always decompiled: AutoIt-Ripper (MIT) ships with DocuTraceX and is used when
    the portable Python does not have its own copy.
 

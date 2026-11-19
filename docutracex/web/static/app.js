@@ -2363,15 +2363,19 @@ function wireUnlock(root, analysisId) {
 }
 
 // Any file no parser covers: the basic record; YARA, marks and report apply.
-function paneFile(f) {
+function paneFile(f, content) {
   const h = f.hashes || {};
+  // named like source code but binary: say so, and what was carved out of it
+  const c = content && content.ext ? content : null;
+  const disguised = c ? `<div class="unlock-banner disguised-banner"><b>Named like ${escapeHtml(c.language)} source (${escapeHtml(c.ext)}) but binary${c.kind ? ` (${escapeHtml(c.kind)})` : ""}</b>: not analysed as code, read as a binary.${
+    (c.pieces || []).length ? ` Carved out and analysed as nested files: ${c.pieces.map((p) => `${escapeHtml(p.kind)} at <span class="mono">0x${p.offset.toString(16)}</span> (${fmtSize(p.size)})`).join(", ")} — see Nested and the tabs of what was recovered.` : " Nothing recognisable was found inside."}</div>` : "";
   const rows = [
     ["File", `<span class="mono">${escapeHtml(f.filename || "")}</span> ${fileActions(f.stored_path)}`],
     ["Detected type", escapeHtml([f.detected_name, f.detected_mime].filter(Boolean).join(" · ") || "unknown")],
     ["Size", escapeHtml(f.size_bytes != null ? `${f.size_bytes} bytes` : "")],
     ...["md5", "sha1", "sha256"].filter((k) => h[k]).map((k) => [k.toUpperCase(), `<span class="mono">${escapeHtml(h[k])}</span>`]),
   ].map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join("");
-  return `<p class="hint-line">${escapeHtml(f.note || "")}</p>
+  return `${disguised}<p class="hint-line">${escapeHtml(c ? "" : (f.note || ""))}</p>
     <div class="kv">${rows}</div>
     <p style="margin-top:10px">${addMarkCell("file", `File ${f.filename || ""}`, f.stored_path || "file", (h.sha256 || ""))}</p>`;
 }
@@ -3765,8 +3769,33 @@ function childTabKind(n) {
     case "java": return "Java";
     case "onenote": return "OneNote";
     case "archive": return "Archive";
+    case "other": {
+      // a script with its own analysis (recovered from a compiled AutoIt blob, an installer…):
+      // its code is not in the case's code tabs, so it gets a tab, named by its language
+      const vm = n.view_modules || [];
+      const code = { script: null, python: "Python", javascript: "JavaScript", powershell: "PowerShell",
+                     vbscript: "VBScript", batch: "Batch" };
+      const m = vm.find((x) => x in code);
+      if (!m) return null;
+      const items = (((n.code || {})[m] || {}).items) || [];
+      return code[m] || (items[0] && items[0].kind) || "Script";
+    }
     default: return null;
   }
+}
+
+// First-level children for direct tabs; a child without an analysis of its own (a carved
+// compiled AutoIt blob, a decompressed layer) lends its place to the first descendants that
+// have one, so the recovered script is one click away, not three levels down in Nested.
+function directTabNodes(tree) {
+  const out = [];
+  const visit = (n, depth) => {
+    if (n.view_id && childTabKind(n)) { out.push(n); return; }
+    if (n.view_id || depth >= 3) return;
+    (n.children || []).forEach((c) => visit(c, depth + 1));
+  };
+  (tree || []).forEach((n) => visit(n, 0));
+  return out;
 }
 
 function renderSubtabs() {
@@ -4076,7 +4105,7 @@ async function openComponents(analysisId, keepTab, viewId) {
       sections.push({ id: "body", label: "Body", html: paneEmailBody(email, mods.mailrules) });
     }
     if (mods.file) {
-      sections.push({ id: "file", label: "File", html: paneFile(mods.file) });
+      sections.push({ id: "file", label: "File", html: paneFile(mods.file, mods.content) });
     }
     if (mods.html) {
       const h = mods.html;
@@ -4130,7 +4159,7 @@ async function openComponents(analysisId, keepTab, viewId) {
       // a direct tab per FIRST-level child that has its own analysis
       // (deeper ones: "Open analysis" in the Nested tree)
       // same file name twice: say which one by its folder
-      const kids = nestedTree.filter((n) => n.view_id && childTabKind(n));
+      const kids = directTabNodes(nestedTree);
       const seen = {};
       kids.forEach((n) => { seen[n.filename] = (seen[n.filename] || 0) + 1; });
       kids.forEach((n) => {

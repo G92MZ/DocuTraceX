@@ -42,3 +42,15 @@ def pytest_configure(config) -> None:  # noqa: ARG001
     import zipcrypto
 
     zipcrypto.extract(ARCHIVE, ROOT / "samples")
+
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _own_version_state(tmp_path_factory, monkeypatch):  # noqa: ANN001, ANN202
+    """Each test its own "last version shown": the developer's config/ must not pop the
+    What's new modal over a browser test (it would intercept every click)."""
+    from docutracex import versioninfo
+    state = tmp_path_factory.mktemp("vstate") / "version_state.json"
+    monkeypatch.setattr(versioninfo, "_state_file", lambda: state)
