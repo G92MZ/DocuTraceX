@@ -25,6 +25,9 @@ stored in). That replaces the old "the table exists" signals, which fired on eve
 - **an interpreter the package ships, run on a file it also ships** — `pythonw.exe InstallNotes.html`,
   `node.exe`, `javaw.exe`, `AutoIt3.exe`, `wscript.exe`, a renamed `mshta.exe`… — is
   *msi_embedded_interpreter* (high): a script in disguise, whatever its extension;
+- **a Windows system library's name installed in the same folder as a program** (`version.dll`
+  next to `App.exe`) is *msi_dll_sideloading*: medium, high when the installer also runs that
+  program (DLL side-loading, T1574.002);
 - **another MSI installed with msiexec while that payload runs** is *msi_decoy_installer* (high):
   the genuine installer as the decoy;
 - Run keys written by the `Registry` table and shortcuts with a command line.

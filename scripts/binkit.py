@@ -246,11 +246,13 @@ def pe(*, bits: int = 32, dll: bool = False, gui: bool = True,
        text_flags: int = 0x60000020, pdb: str | None = None, version: dict[str, str] | None = None,
        manifest: bool = False, rich: bool = False, reloc: bool = False, checksum: bool = False,
        rcdata: list[tuple[str, bytes]] | None = None, dotnet_md: dict | None = None,
-       resources: list[tuple[int, bytes, str]] | None = None) -> bytes:
+       resources: list[tuple[int, bytes, str]] | None = None,
+       forwards: dict[str, str] | None = None, export_name: str = "module.dll") -> bytes:
     """An inert PE32 / PE32+. ``sections`` are extra (name, data, characteristics).
     ``pdb`` / ``version`` / ``manifest`` / ``rich`` / ``reloc`` / ``checksum`` add
     what a normal MSVC build carries (debug directory, version resource, Rich
-    header, relocations, correct header checksum)."""
+    header, relocations, correct header checksum). ``forwards`` adds forwarded
+    exports (name → "dll.Function", as a proxy DLL has them)."""
     ptr = 8 if bits == 64 else 4
     imports = dict(imports or {})
     if dotnet or dotnet_md:
@@ -285,19 +287,25 @@ def pe(*, bits: int = 32, dll: bool = False, gui: bool = True,
         dbg_dir = (va + dbg_off, 28)
         dbg_fix = (dbg_off, rsds_off, len(rsds))
     exp_dir = (0, 0)
-    if exports:
+    forwards = dict(forwards or {})
+    if exports or forwards:
+        exports = sorted(list(exports or []) + list(forwards))    # the name table is sorted
         exp = bytearray(40)
         name_rva = va + len(rdata) + len(exp)
-        dllname = b"module.dll\x00"
+        dllname = export_name.encode() + b"\x00"
         exp += dllname
         fn_rvas = []
         for e in exports:
             fn_rvas.append(va + len(rdata) + len(exp))
             exp += e.encode() + b"\x00"
+        fwd_rvas = {}
+        for e, target in forwards.items():                    # forwarder strings live inside the directory
+            fwd_rvas[e] = va + len(rdata) + len(exp)
+            exp += target.encode() + b"\x00"
         while len(exp) % 4:
             exp.append(0)
         funcs = va + len(rdata) + len(exp)
-        exp += struct.pack(f"<{len(exports)}I", *([SA] * len(exports)))
+        exp += struct.pack(f"<{len(exports)}I", *[fwd_rvas.get(e, SA) for e in exports])
         names = va + len(rdata) + len(exp)
         exp += struct.pack(f"<{len(exports)}I", *fn_rvas)
         ords = va + len(rdata) + len(exp)

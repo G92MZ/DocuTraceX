@@ -274,15 +274,21 @@ def _try_7z_archive(run, original: Path, paths: CasePaths, user_pw: str | None, 
 
 def _interpreter_findings(arc: dict[str, Any], files: list[tuple[str, str]], where: str) -> None:
     """A portable interpreter among the archive's entries (pythonw.exe + python3XX._pth,
-    node.exe, javaw.exe + jvm.dll, AutoIt3.exe…): finding on the archive's result."""
+    node.exe, javaw.exe + jvm.dll, AutoIt3.exe…) or DLL side-loading (a signed EXE next
+    to a DLL with a system library's name): findings on the archive's result."""
     if not arc or not files:
         return
+    got: list[dict[str, Any]] = []
     try:
         from . import interpreters
-        got = interpreters.findings([(n, f) for f, n in files], where)
+        got += interpreters.findings([(n, f) for f, n in files], where)
     except Exception as exc:  # noqa: BLE001
         log.warning("interpreter check skipped: %s", exc)
-        return
+    try:
+        from . import sideload            # signed EXE + system-named DLL next to it
+        got += sideload.findings([(n, f) for f, n in files], where)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("side-loading check skipped: %s", exc)
     if got:
         arc.setdefault("findings", []).extend(got)
         counts = arc.setdefault("counts", {})
