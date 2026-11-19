@@ -120,6 +120,80 @@ def _entropy(data: bytes) -> float:
     return round(ent, 2)
 
 
+HEARTBEAT_S = 5.0
+
+
+class _Clock:
+    """What the PE triage is doing, live in the Tasks tab ("PE triage · a.exe · FLOSS + capa
+    running · 3m 05s") and afterwards as sub-steps: one row per tool with its time and status.
+    Reporting never breaks the triage."""
+
+    def __init__(self, rel: str) -> None:
+        import time as _t
+        self._t = _t
+        self.name = Path(rel).name
+        self.rows: list[dict[str, Any]] = []
+        try:
+            from ..analyze import step_progress_reporter
+            self._report = step_progress_reporter()
+        except Exception:  # noqa: BLE001
+            self._report = lambda _d: None
+
+    def say(self, what: str) -> None:
+        try:
+            self._report(f"PE triage · {self.name} · {what}")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def run(self, label: str, fn, status_of=None):  # noqa: ANN001, ANN201
+        self.say(f"{label}…")
+        t0 = self._t.perf_counter()
+        res = fn()
+        row = {"name": f"{self.name} · {label}", "chain": label, "depth": 1, "kind": "tool",
+               "duration_s": round(self._t.perf_counter() - t0, 2), "status": "ok"}
+        try:
+            if status_of:
+                row.update(status_of(res) or {})
+        except Exception:  # noqa: BLE001
+            pass
+        self.rows.append(row)
+        return res
+
+    def tools(self, fn):  # noqa: ANN001, ANN201
+        """FLOSS + capa (in parallel): a heartbeat every few seconds while they run, then a
+        row each with their own time and status."""
+        stop = _threading.Event()
+        t0 = self._t.perf_counter()
+
+        def beat() -> None:
+            while not stop.wait(HEARTBEAT_S):
+                s = int(self._t.perf_counter() - t0)
+                self.say(f"FLOSS + capa running · {s // 60}m {s % 60:02d}s")
+        self.say("FLOSS + capa…")
+        th = _threading.Thread(target=beat, name="pe-tools-heartbeat", daemon=True)
+        th.start()
+        try:
+            floss, capa = fn()
+        finally:
+            stop.set()
+        wall = round(self._t.perf_counter() - t0, 2)
+        for label, rec in (("FLOSS", floss), ("capa", capa)):
+            st = str(rec.get("status") or "ok")
+            cached = bool(rec.get("cached"))
+            if cached:
+                st, why = "ok", "from the cache (this exact file was analysed before)"
+            elif rec.get("prefetched"):
+                why = "started ahead while the rest of the case was scanned"
+            else:
+                why = ""
+            detail = "; ".join(x for x in (str(rec.get("detail") or "")[:160], why) if x)
+            self.rows.append({"name": f"{self.name} · {label}", "chain": label, "depth": 1, "kind": "tool",
+                              "duration_s": 0 if cached else rec.get("duration_s", wall if st == "ok" else 0),
+                              "status": st,
+                              **({"detail": detail} if detail else {})})
+        return floss, capa
+
+
 def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | None = None,
             tools_budget_ok: bool = True) -> dict[str, Any]:
     """Static PE triage. ``run_tools`` enables the external tools (DIE, the
@@ -300,7 +374,9 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
     # --- LIEF: imphash, Rich header, PDB path, Authenticode verification,
     # manifest, mitigations, checksum, forwarded exports, overlay (own process).
     from . import lief_info
-    lf = lief_info.analyze(path, rel)
+    clock = _Clock(rel)
+    lf = clock.run("LIEF (imphash, Rich, PDB, signature)", lambda: lief_info.analyze(path, rel),
+                   lambda r: {"status": r.get("status", "ok")} if isinstance(r, dict) else None)
     have = {x["rule"] for x in f}
     for x in lf.pop("findings", []):
         if x["rule"] == "lief_tls_callbacks" and "pe_tls_callback" in have:
@@ -336,7 +412,8 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
         sha12 = hashlib.sha256(blob).hexdigest()[:12]
         out = unpack_dir.parent / "debloated" / sha12 / Path(rel).name
         try:
-            deb = debloat_pe.run(path, out)
+            deb = clock.run("debloat (binary padding)", lambda: debloat_pe.run(path, out),
+                            lambda r: {"status": r.get("status", "ok"), "detail": r.get("detail", "")})
         except Exception as exc:  # noqa: BLE001  (never break the PE triage)
             deb = {"status": "error", "detail": str(exc)}
         item["debloat"] = deb
@@ -358,8 +435,12 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
         from . import unpack
         try:
             dest = (unpack_dir / hashlib.sha256(blob).hexdigest()[:12]) if (unpack_dir and run_tools) else None
-            up = unpack.process(path, blob, pe, dest,
-                                use_die=run_tools)
+            up = clock.run("packer detection / static unpacking (DIE…)",
+                           lambda: unpack.process(path, blob, pe, dest, use_die=run_tools),
+                           lambda r: {"status": "ok" if r.get("status") in (None, "", "none") else r["status"],
+                                      "detail": str(r.get("detail") or "")[:160]
+                                      or ("no packer or installer detected" if r.get("status") in (None, "", "none")
+                                          else "")})
         except Exception as exc:  # noqa: BLE001  (never break the PE triage)
             log.warning("packer detection/unpacking failed on %s: %s", rel, exc)
             up = {"status": "error", "detail": str(exc), "detected": [], "findings": []}
@@ -396,7 +477,7 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
             item["floss"] = {"status": "skipped", "detail": skip_why}
             item["capa"] = {"status": "skipped", "detail": skip_why}
         else:
-            floss, capa = tools_for(path)
+            floss, capa = clock.tools(lambda: tools_for(path))
             floss_strings = floss.pop("strings", [])
             item["floss"] = floss
             if floss_strings:
@@ -432,6 +513,8 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
         pe.close()
     except Exception:  # noqa: BLE001
         pass
+    if clock.rows:
+        item["timings"] = clock.rows          # → sub-steps of the step (popped by the caller)
     return item
 
 

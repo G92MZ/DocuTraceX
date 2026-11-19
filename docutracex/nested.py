@@ -551,6 +551,7 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
                 it = msi.analyze_binary(abs_path, name,
                                         (work / msi.UNPACK_DIRNAME / node["sha256"][:12])
                                         if depth < MAX_DEPTH else None)
+            it.pop("timings", None)                      # per-tool times: the top-level step shows them
             for ch in it.pop("_children", []) or []:   # debloated / unpacked files
                 kids.append((Path(ch["path"]), ch["filename"]))
                 origins[str(Path(ch["path"]))] = ch["origin"]
