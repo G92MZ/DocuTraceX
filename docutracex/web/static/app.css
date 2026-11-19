@@ -41,7 +41,8 @@ body {
   font-size: 13px;
 }
 .version { color: var(--text-dim); font-size: 12px; background: none; border: 1px solid transparent; border-radius: 999px;
-  padding: 2px 8px; font-family: inherit; cursor: default; }
+  padding: 2px 8px; font-family: inherit; cursor: pointer; }
+.version:hover { border-color: var(--panel-border); color: var(--text); }
 .version-box { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 /* a newer version on GitHub: the chip lights up (click: what changes) */
 .version.version-new { color: #ffd479; border-color: #c99a2e; background: rgba(201, 154, 46, 0.14); cursor: pointer;

@@ -163,11 +163,12 @@ def _refresh() -> None:
 
 
 def status(force: bool = False) -> dict[str, Any]:
-    """Current / latest version; starts a background check when the last one is stale."""
+    """Current / latest version; starts a background check when the last one is stale.
+    ``force`` (the "Check now" button) checks at once, even with the automatic check off."""
     enabled = check_enabled()
     with _LOCK:
         stale = force or time.time() - _STATE["checked"] > CHECK_EVERY_S
-        if enabled and stale and not _STATE["running"]:
+        if (force or enabled and stale) and not _STATE["running"]:
             _STATE["running"] = True
             threading.Thread(target=_refresh, name="version-check", daemon=True).start()
         latest = _STATE["latest"]
@@ -175,7 +176,8 @@ def status(force: bool = False) -> dict[str, Any]:
                "checking": _STATE["running"], "error": _STATE["error"],
                "checked_utc": datetime.fromtimestamp(_STATE["checked"], UTC).isoformat()
                if _STATE["checked"] else None}
-    out["update_available"] = bool(enabled and latest and newer(latest, __version__))
+    # a version fetched by "Check now" counts even with the automatic check off
+    out["update_available"] = bool(latest and newer(latest, __version__))
     return out
 
 

@@ -56,7 +56,7 @@ the same address; the page reloads by itself. On Windows the update shows in its
 window; elsewhere it logs to `config/update.log`. After any update, the first page shows
 **What's new** since the version you had ([CHANGELOG.md](https://github.com/G92MZ/DocuTraceX/blob/main/CHANGELOG.md)).
 
-The check asks GitHub at most every six hours and needs nothing configured; with no Internet the
+Click the version at any time to see when it last checked and to **Check now**. The automatic check asks GitHub at most every six hours and needs nothing configured; with no Internet the
 version simply does not light up. `DOCUTRACEX_NO_UPDATE_CHECK=1` turns it off.
 
 Once it runs, take five minutes for the [configuration](configuration.md): the proxy for network
