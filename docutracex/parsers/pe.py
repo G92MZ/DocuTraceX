@@ -490,9 +490,10 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
             if _background_floss(path):
                 # large: capa now, FLOSS as a background task (the case does not wait for it)
                 from .. import flossbg
+                # FLOSS first: it starts in the background before capa runs, not after
+                floss = flossbg.start(_bg_root.get(), path, Path(rel).name, _sha(path) or "")
                 capa = clock.run("capa", lambda: _capa_only(path),
                                  lambda r: {"status": r.get("status", "ok"), "detail": str(r.get("detail") or "")[:160]})
-                floss = flossbg.start(_bg_root.get(), path, Path(rel).name, _sha(path) or "")
                 clock.rows.append({"name": f"{clock.name} · FLOSS", "chain": "FLOSS", "depth": 1, "kind": "tool",
                                    "duration_s": 0, "status": "background",
                                    "detail": f"running in the background ({floss.get('task_id')}): the case did "
