@@ -3,6 +3,14 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.232.2 — 2026-11-19 (#299)
+
+**A binary named like a script: its recovered code one click away**
+
+- A compiled AutoIt blob called `.au3` (or any binary named like source code): the **File** tab now says so and what was carved out of it, with offset and size.
+- The script recovered from it gets a direct tab (*AutoIt · script.au3*) with its decompiled code, decrypted strings and findings — before, it was only reachable three levels down in Nested.
+- A re-analysis drops results an older version left behind (an `.au3` once painted as AutoIt code), so the export and the AI tools show only the current ones.
+
 ## 1.232.1 — 2026-11-19 (#298)
 
 **Fix: the hidden-payload sweep no longer gives up on short trailing data**

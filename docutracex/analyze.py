@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -482,6 +483,29 @@ def _next_stage(paths: CasePaths, original: Path, run, ran: list[str]) -> list[d
     return out
 
 
+# Results a full analysis writes. On a re-analysis, one of these left over from an
+# earlier run that this run did not produce (an older version read the file another
+# way: a binary ".au3" painted as AutoIt code) is removed, so the export, the AI tools
+# and the report do not show it. On-demand results (YARA, network checks, ML, C2,
+# registry, memory dumps) are left alone: they come from their own tasks.
+_FULL_RUN_RESULTS = {
+    "archive", "autoit", "batch", "code", "content", "didier", "dotnet", "email", "file", "golang", "html",
+    "java", "javascript", "mailrules", "msi", "nested", "officemalscanner", "ole", "oletools", "onenote", "ooxml",
+    "pdf", "pdftools", "polyglot", "powershell", "pyinstaller", "python", "qr", "rtf", "script", "shortcut",
+    "unlock", "vbscript", "xlmdeobf",
+}
+
+
+def _drop_stale_results(paths: CasePaths, ran: list[str], started: float) -> None:
+    for p in paths.results_dir.glob("*.json"):
+        try:
+            if p.stem in _FULL_RUN_RESULTS and p.stem not in ran and p.stat().st_mtime < started:
+                p.unlink()
+                log.info("dropped a stale %s result from an earlier analysis of %s", p.stem, paths.root.name)
+        except OSError:
+            pass
+
+
 def analyze_case(case_root: Path) -> dict[str, Any]:
     """Run the applicable parsers on a case (in-process). Returns a summary."""
     case_root = Path(case_root)
@@ -492,6 +516,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
 
     original = paths.root / manifest["original"]["stored_path"]
     user_pw = case_password(paths)
+    started = time.time()
     ran: list[str] = []
     overall_counts: dict[str, int] = {"components": 0, "findings": 0, "iocs": 0}
     state = "completed"
@@ -1591,6 +1616,8 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
         from . import codefiles
         for m in codefiles.annotate(modules, paths):
             write_subresult(paths, m, modules[m])
+
+    _drop_stale_results(paths, ran, started)
 
     # Update summary.json (fast-read view) and the manifest.
     summary = read_json(paths.summary) or {}
