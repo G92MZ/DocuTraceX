@@ -4462,18 +4462,50 @@ setInterval(() => {
   });
 }, 1000);
 
+// Tasks filter: one or more states (none selected = all), remembered in this browser.
+const TASK_STATE_ORDER = ["queued", "running", "cancelling", "completed", "failed", "cancelled"];
+let _taskStates = new Set();
+try { _taskStates = new Set(JSON.parse(localStorage.getItem("dtx.taskStates") || "[]")); } catch (e) { /* defaults */ }
+
+function renderTaskFilters(all, data) {
+  const box = document.getElementById("tasks-filters");
+  if (!box) return;
+  const count = {};
+  all.forEach((t) => { count[t.state] = (count[t.state] || 0) + 1; });
+  // every known state, plus any other one a task has (and one still selected)
+  const states = [...TASK_STATE_ORDER, ...Object.keys(count).filter((x) => !TASK_STATE_ORDER.includes(x)).sort()];
+  const chip = (id, label, on) => `<button class="subtab${on ? " is-active" : ""}" type="button" data-task-state="${escapeHtml(id)}" aria-pressed="${on}">${subtabLabel(label)}</button>`;
+  box.innerHTML = chip("", `All (${all.length})`, !_taskStates.size)
+    + states.map((x) => chip(x, `${x} (${count[x] || 0})`, _taskStates.has(x))).join("");
+  box.querySelectorAll("[data-task-state]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const st = btn.getAttribute("data-task-state");
+      if (!st) _taskStates.clear();
+      else if (_taskStates.has(st)) _taskStates.delete(st);
+      else _taskStates.add(st);
+      if (_taskStates.size >= states.length) _taskStates.clear();     // every state = All
+      try { localStorage.setItem("dtx.taskStates", JSON.stringify([..._taskStates])); } catch (e) { /* per-viewer only */ }
+      renderTasks(data);
+    });
+  });
+}
+
 function renderTasks(data) {
   const summary = document.getElementById("tasks-summary");
   const body = document.getElementById("tasks-body");
-  const tasks = (data && data.tasks) || [];
-  const nbg = tasks.filter((x) => x.background && TASK_ACTIVE.has(x.state)).length;
-  summary.textContent = `${data.active || 0} active${nbg ? ` (${nbg} in background)` : ""} · ${tasks.length} total`;
+  const all = (data && data.tasks) || [];
+  renderTaskFilters(all, data);
+  const tasks = _taskStates.size ? all.filter((t) => _taskStates.has(t.state)) : all;
+  const nbg = all.filter((x) => x.background && TASK_ACTIVE.has(x.state)).length;
+  summary.textContent = `${data.active || 0} active${nbg ? ` (${nbg} in background)` : ""} · ${all.length} total`
+    + (tasks.length !== all.length ? ` · ${tasks.length} shown` : "");
   summary.className = "status " + ((data.active || 0) ? "" : "ok-text");
-  if (!tasks.length) { body.innerHTML = `<p class="hint-line">No tasks yet.</p>`; return; }
+  if (!all.length) { body.innerHTML = `<p class="hint-line">No tasks yet.</p>`; return; }
+  if (!tasks.length) { body.innerHTML = `<p class="hint-line">No tasks in the selected state(s).</p>`; return; }
   // background jobs a task started (FLOSS of a large binary…) and still running: the task
   // says "completed · 1 in background" so its case is not taken for finished
   const bgOf = {};
-  tasks.forEach((b) => {
+  all.forEach((b) => {
     if (b.background && TASK_ACTIVE.has(b.state) && b.parent) (bgOf[b.parent] = bgOf[b.parent] || []).push(b);
   });
   body.innerHTML = tasks.map((t) => {

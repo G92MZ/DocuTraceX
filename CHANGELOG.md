@@ -5,9 +5,10 @@ the entries between the version you had and the new one.
 
 ## 1.239.2 — 2026-11-20 (#313)
 
-**Background jobs cut by a restart show as interrupted**
+**Tasks filter by state; background jobs cut by a restart show as interrupted**
 
 - If the app restarts (an update, closing it) while FLOSS or capa runs in the background, the case no longer shows them as *running* forever: they show as *interrupted*, with a hint to re-run the analysis.
+- Tasks: filter by state (queued, running, completed, failed…). Pick one or several; *All* shows everything, and your choice is remembered.
 
 ## 1.239.1 — 2026-11-19 (#312)
 

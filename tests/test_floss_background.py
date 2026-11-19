@@ -444,3 +444,57 @@ def test_restart_marks_background_jobs_interrupted(capa_env) -> None:  # noqa: A
     capa = read_json(paths.subresult("msi"))["items"][0]["capa"]
     assert capa["status"] == "interrupted" and "restarted" in capa["detail"]
     assert not marker.exists()
+
+
+def test_tasks_filter_by_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tasks: filter by one or more states; none (or every one) selected = All; remembered."""
+    import importlib.util
+    import socket
+
+    if importlib.util.find_spec("playwright") is None:
+        pytest.skip("playwright not installed")
+    import uvicorn
+
+    from docutracex.app import create_app
+    monkeypatch.setenv("DOCUTRACEX_CONFIG_DIR", str(tmp_path / "config"))
+    app = create_app()
+    with socket.socket() as so:
+        so.bind(("127.0.0.1", 0))
+        port = so.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    threading.Thread(target=server.run, daemon=True).start()
+    _wait(lambda: server.started, 10)
+    data = {"active": 1, "tasks": [
+        {"id": f"task-000{i}", "type": "analyze", "analysis_id": f"c{i}", "filename": f"f{i}.exe", "target": "full",
+         "state": st, "steps": []}
+        for i, st in enumerate(["running", "completed", "completed", "failed", "cancelled"], 1)]}
+    shown = "() => [...document.querySelectorAll('#tasks-body details[data-task]')].map(d => d.dataset.task)"
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            try:
+                browser = pw.chromium.launch()
+            except Exception as exc:  # noqa: BLE001
+                pytest.skip(f"chromium not available: {exc}")
+            page = browser.new_page()
+            page.goto(f"http://127.0.0.1:{port}/")
+            page.evaluate("() => { try { localStorage.removeItem('dtx.taskStates'); } catch (e) {} }")
+            page.reload()
+            page.evaluate("(d) => { window._d = d; renderTasks(d); }", data)
+            assert len(page.evaluate(shown)) == 5
+            assert page.inner_text('[data-task-state="completed"]').replace("\n", "") == "completed2"
+            page.evaluate("() => document.querySelector('[data-task-state=\"completed\"]').click()")
+            assert page.evaluate(shown) == ["task-0002", "task-0003"]
+            page.evaluate("() => document.querySelector('[data-task-state=\"failed\"]').click()")
+            assert page.evaluate(shown) == ["task-0002", "task-0003", "task-0004"]
+            assert "3 shown" in page.inner_text("#tasks-summary")
+            page.reload()                                                     # remembered
+            page.evaluate("(d) => renderTasks(d)", data)
+            assert page.evaluate(shown) == ["task-0002", "task-0003", "task-0004"]
+            page.evaluate("() => document.querySelector('[data-task-state=\"\"]').click()")   # All
+            assert len(page.evaluate(shown)) == 5
+            page.evaluate("() => document.querySelector('[data-task-state=\"queued\"]').click()")
+            assert "No tasks in the selected state(s)" in page.evaluate("() => document.getElementById('tasks-body').textContent")
+            browser.close()
+    finally:
+        server.should_exit = True
