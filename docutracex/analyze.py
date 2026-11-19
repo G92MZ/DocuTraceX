@@ -2118,6 +2118,7 @@ def _run_portable(cmd: list[str], timeout: float | None, listener) -> "subproces
 
     env = dict(native.subprocess_env() or os.environ)
     env["DOCUTRACEX_STEP_EVENTS"] = "stderr"
+    env["DOCUTRACEX_DEFER_BACKGROUND"] = "1"   # background jobs: started here when the child ends
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                             encoding="utf-8", errors="replace", env=env)
     out_buf: list[str] = []
@@ -2178,6 +2179,8 @@ def run_analysis(case_root: Path, module: str | None = None) -> None:
         cmd = [str(portable), "-m", "docutracex.analyze", str(case_root)]
         if module:
             cmd += ["--module", module]
+        from . import flossbg
+        flossbg.clear_requests(case_root)
         try:
             proc = _run_portable(
                 cmd,
@@ -2191,7 +2194,14 @@ def run_analysis(case_root: Path, module: str | None = None) -> None:
             log.warning("Could not run analysis on portable: %s", exc)
         else:
             if proc.returncode == 0:
+                # FLOSS / capa of a large binary: the child only requested them (it has ended,
+                # and would have taken them along); they run here, in the web service
+                try:
+                    flossbg.launch_deferred(case_root)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("background jobs not started for %s: %s", case_root.name, exc)
                 return
+            flossbg.clear_requests(case_root)
             # The portable ran and died (e.g. 0xC0000005 native crash). Do NOT
             # repeat the same analysis inside the web server: the same input
             # would crash it too and close the whole app. Fail only this task.

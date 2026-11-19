@@ -16,6 +16,8 @@ and the findings when it ends.
 from __future__ import annotations
 
 import json
+import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -24,9 +26,100 @@ from .logging_config import get_logger
 log = get_logger(__name__)
 
 
+# The analysis may run in a child process (the portable Python), which ends with it — and
+# would take its background jobs along. There, a job is only *requested* (a provisional id
+# in its placeholder, the request in results/background_requests.json); the web service
+# starts it when the child ends (``launch_deferred``) and puts the real task id in place.
+DEFER_ENV = "DOCUTRACEX_DEFER_BACKGROUND"
+REQUESTS = "background_requests.json"
+_req_lock = threading.Lock()
+
+
+def _deferred() -> bool:
+    return os.environ.get(DEFER_ENV) == "1"
+
+
+def _request(root: Path, kind: str, **args: Any) -> str:
+    from .storage import read_json, write_json
+    f = root / "results" / REQUESTS
+    with _req_lock:
+        reqs = read_json(f) or []
+        pid = f"pending-{kind}-{len(reqs) + 1}"
+        reqs.append({"kind": kind, "id": pid, **args})
+        f.parent.mkdir(parents=True, exist_ok=True)
+        write_json(f, reqs)
+    return pid
+
+
+def clear_requests(root: Path) -> None:
+    (Path(root) / "results" / REQUESTS).unlink(missing_ok=True)
+
+
+def launch_deferred(root: Path) -> list[str]:
+    """In the web service, after the analysis' child process ended: give the jobs it
+    requested their task ids, put them in the placeholders, then start the jobs (in that
+    order, so a job never writes before its placeholder is updated). Returns the ids."""
+    from . import tasks
+    from .storage import CasePaths, read_json, write_subresult
+    root = Path(root)
+    f = root / "results" / REQUESTS
+    reqs = [r for r in read_json(f) or [] if r.get("kind") in ("floss", "capa", "priority")]
+    f.unlink(missing_ok=True)
+    if not reqs:
+        return []
+    ids = {r["id"]: tasks.manager.new_id() for r in reqs}
+    try:
+        paths = CasePaths(root.name, cases_dir=root.parent)
+        res = read_json(paths.subresult("msi")) or {}
+        changed = False
+        for it in res.get("items") or []:
+            for key in ("floss", "capa"):
+                rec = it.get(key) or {}
+                if rec.get("task_id") in ids:
+                    rec["task_id"], changed = ids[rec["task_id"]], True
+        if changed:
+            write_subresult(paths, "msi", res)
+        from .codeanalysis import case as code_case
+        for r in reqs:
+            if r["kind"] != "priority":
+                continue
+            with code_case._write_lock:
+                full = code_case.load(root, r["sha256"], r["mode"])
+                if full is not None and (full.get("floss_priority") or {}).get("task_id") == r["id"]:
+                    full["floss_priority"]["task_id"] = ids[r["id"]]
+                    code_case.result_file(root, r["sha256"], r["mode"]).write_text(json.dumps(full),
+                                                                                   encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("background placeholders not updated for %s: %s", root.name, exc)
+    started = []
+    for r in reqs:
+        tid, path = ids[r["id"]], Path(r["path"])
+        try:
+            if r["kind"] == "floss":
+                _start_floss(root, path, r["name"], r["sha256"], task_id=tid)
+            elif r["kind"] == "capa":
+                _start_capa(root, path, r["name"], r["sha256"], r.get("loc") or r["name"], task_id=tid)
+            else:
+                _start_priority(root, path, r["name"], r["sha256"], r["mode"], list(r["addrs"]), task_id=tid)
+            started.append(tid)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("background %s not started for %s: %s", r["kind"], root.name, exc)
+    return started
+
+
 def start(root: Path, path: Path, name: str, sha256: str) -> dict[str, Any]:
-    """Start FLOSS on ``path`` (the case's own binary) as a background task. Returns the
-    placeholder record the Binary tab shows until it ends."""
+    """Start FLOSS on ``path`` (the case's own binary) as a background task (or request it,
+    in the analysis' child process). Returns the placeholder record the Binary tab shows
+    until it ends."""
+    tid = _request(root, "floss", path=str(path), name=name, sha256=sha256) if _deferred() \
+        else _start_floss(root, path, name, sha256)
+    return {"status": "running", "background": True, "task_id": tid, "tight_skipped": True,
+            "detail": "large binary: FLOSS runs in the background (Tasks); its strings, IOCs and findings "
+                      "are added to the case when it ends"}
+
+
+def _start_floss(root: Path, path: Path, name: str, sha256: str,
+                 task_id: str | None = None) -> str:
     from . import tasks
     from .parsers import pe as pe_mod
 
@@ -55,10 +148,9 @@ def start(root: Path, path: Path, name: str, sha256: str) -> dict[str, Any]:
         return f"{n} string(s)" if rec.get("status") == "ok" else str(rec.get("detail") or rec.get("status"))
 
     t = tasks.manager.start_background("floss", root.name, name, "floss (background)", run,
-                                       step=f"FLOSS · {name} (background)", cases_dir=root.parent)
-    return {"status": "running", "background": True, "task_id": t.id, "tight_skipped": True,
-            "detail": "large binary: FLOSS runs in the background (Tasks); its strings, IOCs and findings "
-                      "are added to the case when it ends"}
+                                       step=f"FLOSS · {name} (background)", cases_dir=root.parent,
+                                       task_id=task_id)
+    return t.id
 
 
 def _wait_for_placeholder(root: Path, tid: str, cancel: Any, limit_s: float = 6 * 3600,
@@ -131,8 +223,18 @@ def _apply(root: Path, sha256: str, rec: dict[str, Any], task: Any, path: Path |
 
 
 def start_capa(root: Path, path: Path, name: str, sha256: str, loc: str) -> dict[str, Any]:
-    """Start capa on ``path`` (the case's own binary) as a background task. Returns the
-    placeholder record the Binary tab shows until it ends."""
+    """Start capa on ``path`` (the case's own binary) as a background task (or request it,
+    in the analysis' child process). Returns the placeholder record the Binary tab shows
+    until it ends."""
+    tid = _request(root, "capa", path=str(path), name=name, sha256=sha256, loc=loc) if _deferred() \
+        else _start_capa(root, path, name, sha256, loc)
+    return {"status": "running", "background": True, "task_id": tid, "capabilities": [],
+            "detail": "large binary: capa runs in the background (Tasks); its capabilities and ATT&CK "
+                      "techniques are added to the case when it ends"}
+
+
+def _start_capa(root: Path, path: Path, name: str, sha256: str, loc: str,
+                task_id: str | None = None) -> str:
     from . import tasks
     from .parsers import pe as pe_mod
 
@@ -160,10 +262,9 @@ def start_capa(root: Path, path: Path, name: str, sha256: str, loc: str) -> dict
         return f"{n} capabilit(ies)" if rec.get("status") == "ok" else str(rec.get("detail") or rec.get("status"))
 
     t = tasks.manager.start_background("capa", root.name, name, "capa (background)", run,
-                                       step=f"capa · {name} (background)", cases_dir=root.parent)
-    return {"status": "running", "background": True, "task_id": t.id, "capabilities": [],
-            "detail": "large binary: capa runs in the background (Tasks); its capabilities and ATT&CK "
-                      "techniques are added to the case when it ends"}
+                                       step=f"capa · {name} (background)", cases_dir=root.parent,
+                                       task_id=task_id)
+    return t.id
 
 
 def _apply_capa(root: Path, rec: dict[str, Any], task: Any, loc: str, sha256: str = "") -> int:
@@ -202,8 +303,17 @@ def _apply_capa(root: Path, rec: dict[str, Any], task: Any, loc: str, sha256: st
 
 def start_priority(root: Path, path: Path, name: str, sha256: str, mode: str, addrs: list[int]) -> str:
     """FLOSS tight strings on the code analysis' priority functions of the case's own large
-    binary, as a background task: merged into Code → Strings (with their function) and the
-    IOCs / findings when it ends. Returns the task id."""
+    binary, as a background task (or requested, in the analysis' child process): merged into
+    Code → Strings (with their function) and the IOCs / findings when it ends. Returns the
+    task id (provisional when requested)."""
+    if _deferred():
+        return _request(root, "priority", path=str(path), name=name, sha256=sha256, mode=mode,
+                        addrs=[int(a) for a in addrs])
+    return _start_priority(root, path, name, sha256, mode, addrs)
+
+
+def _start_priority(root: Path, path: Path, name: str, sha256: str, mode: str, addrs: list[int],
+                    task_id: str | None = None) -> str:
     from . import tasks
     from .codeanalysis import case as code_case
     from .parsers import pe as pe_mod
@@ -243,7 +353,7 @@ def start_priority(root: Path, path: Path, name: str, sha256: str, mode: str, ad
 
     t = tasks.manager.start_background("floss", root.name, name, "floss tight (background)", run,
                                        step=f"FLOSS tight · {name} · priority functions (background)",
-                                       cases_dir=root.parent)
+                                       cases_dir=root.parent, task_id=task_id)
     return t.id
 
 

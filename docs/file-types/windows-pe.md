@@ -32,7 +32,8 @@ analysed.
       that binary goes to the background too (`DOCUTRACEX_CAPA_BACKGROUND=0` keeps it inline;
       a cached result runs inline): its capabilities and ATT&CK techniques reach the Binary tab
       and Findings when it ends, and the code analysis' capabilities are contrasted with it
-      again then (capa column, *Only in capa*; code findings capa covers are dropped). Each job is listed in Tasks with its time and Cancel; other tasks of the case
+      again then (capa column, *Only in capa*; code findings capa covers are dropped). These jobs always run in the app itself: an analysis
+      running on the portable Python only requests them, and the app starts them when it ends. Each job is listed in Tasks with its time and Cancel; other tasks of the case
       (C2, YARA, ML) are not blocked by them. When FLOSS ends its strings are added to the Binary
       tab, to Code → Strings with their function, and the case's IOCs and findings are
       recomputed — marks stay. A file whose FLOSS result is cached runs inline (instant).

@@ -494,15 +494,15 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
                 floss = flossbg.start(_bg_root.get(), path, Path(rel).name, _sha(path) or "")
                 clock.rows.append({"name": f"{clock.name} · FLOSS", "chain": "FLOSS", "depth": 1, "kind": "tool",
                                    "duration_s": 0, "status": "background",
-                                   "detail": f"running in the background ({floss.get('task_id')}): the case did "
-                                             "not wait for it; its strings, IOCs and findings arrive when it ends"})
+                                   "detail": "running in the background (Tasks): the case did not wait for it; "
+                                             "its strings, IOCs and findings arrive when it ends"})
                 if CAPA_BACKGROUND and not _capa_cached(path):
                     # capa too: its capabilities (ATT&CK) reach the findings when it ends
                     capa = flossbg.start_capa(_bg_root.get(), path, Path(rel).name, _sha(path) or "", loc)
                     clock.rows.append({"name": f"{clock.name} · capa", "chain": "capa", "depth": 1, "kind": "tool",
                                        "duration_s": 0, "status": "background",
-                                       "detail": f"running in the background ({capa.get('task_id')}): its "
-                                                 "capabilities and ATT&CK reach the findings when it ends"})
+                                       "detail": "running in the background (Tasks): its capabilities and "
+                                                 "ATT&CK reach the findings when it ends"})
                 else:
                     capa = clock.run("capa", lambda: _capa_only(path),
                                      lambda r: {"status": r.get("status", "ok"),
