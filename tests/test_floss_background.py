@@ -310,3 +310,49 @@ def test_background_capa_recontrasts_code_capabilities(tmp_path: Path) -> None:
     assert [x["attack"] for x in got["capa_only"]] == ["T1082"]
     rules = [x["rule"] for x in read_json(paths.subresult("code"))["findings"]]
     assert rules == ["code:cap:persist"]                    # T1055 is capa's finding now
+
+
+def test_cases_list_shows_completed_with_background(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cases list: a completed case with FLOSS / capa still running says "+ N in background"."""
+    import importlib.util
+    import json
+    import socket
+
+    if importlib.util.find_spec("playwright") is None:
+        pytest.skip("playwright not installed")
+    import uvicorn
+
+    from docutracex.app import create_app
+    monkeypatch.setenv("DOCUTRACEX_CONFIG_DIR", str(tmp_path / "config"))
+    app = create_app()
+    with socket.socket() as so:
+        so.bind(("127.0.0.1", 0))
+        port = so.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    threading.Thread(target=server.run, daemon=True).start()
+    _wait(lambda: server.started, 10)
+    cases_ = [{"analysis_id": "c1", "filename": "visor.exe", "state": "completed", "created_utc": "2026-11-19"},
+              {"analysis_id": "c2", "filename": "otro.exe", "state": "completed", "created_utc": "2026-11-18"}]
+    tdata = {"active": 2, "tasks": [
+        {"id": f"task-000{i}", "type": t, "analysis_id": "c1", "target": f"{t} (background)", "state": "running",
+         "background": True, "parent": "task-0001"} for i, t in ((2, "floss"), (3, "capa"))]}
+    try:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as pw:
+            try:
+                browser = pw.chromium.launch()
+            except Exception as exc:  # noqa: BLE001
+                pytest.skip(f"chromium not available: {exc}")
+            page = browser.new_page()
+            page.route("**/api/cases", lambda route, request: route.fulfill(
+                status=200, content_type="application/json", body=json.dumps(cases_)))
+            page.goto(f"http://127.0.0.1:{port}/")
+            page.evaluate("(d) => loadCases(d)", tdata)
+            page.wait_for_selector("[data-case-bg]", state="attached")
+            rows = page.eval_on_selector_all(".case-row", "els => els.map(e => [e.dataset.id, e.textContent])")
+            by = dict(rows)
+            assert "completed" in by["c1"] and "+ 2 in background" in by["c1"]
+            assert "in background" not in by["c2"]
+            browser.close()
+    finally:
+        server.should_exit = True

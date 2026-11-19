@@ -174,13 +174,16 @@ async function loadCases(tasksData) {
         : fetch("/api/tasks").then((r) => r.json()).catch(() => null),
     ]);
     const byCase = new Map();
+    const bgByCase = new Map();                       // FLOSS / capa of a large binary still running
     for (const t of (tdata && tdata.tasks) || []) {
+      if (t.background && TASK_ACTIVE.has(t.state))
+        bgByCase.set(t.analysis_id, [...(bgByCase.get(t.analysis_id) || []), t]);
       if (!_ANALYSIS_TASKS.has(t.type)) continue;      // netcheck etc. don't change the case state
       if (!byCase.has(t.analysis_id)) byCase.set(t.analysis_id, []);
       byCase.get(t.analysis_id).push(t);
     }
     const known = !!(tdata && Array.isArray(tdata.tasks) && !tdata.failed);
-    _casesView.all = cases.map((c) => ({ ...c, _status: caseStatus(c, byCase, known) }));
+    _casesView.all = cases.map((c) => ({ ...c, _status: caseStatus(c, byCase, known), _bg: bgByCase.get(c.analysis_id) || [] }));
     renderCases();
     // e.g. after a page reload while analyses are still queued/running
     if (known && tdata.active) startTaskPoller();
@@ -213,7 +216,7 @@ function renderCases() {
 
   // Tab indicator: something queued or running.
   const dot = document.getElementById("cases-active-dot");
-  if (dot) dot.hidden = !all.some((c) => c._status === "running" || c._status === "queued");
+  if (dot) dot.hidden = !all.some((c) => c._status === "running" || c._status === "queued" || (c._bg || []).length);
 
   const shown = bySearch.filter((c) => inFilter(c, _casesView.status));
   const page = shown.slice(0, _casesView.limit);
@@ -245,7 +248,8 @@ function renderCases() {
         <td>${discrepancyBadge(c.discrepancy)}</td>
         <td>${fmtSize(c.size_bytes)}</td>
         <td class="mono" title="${escapeHtml(c.sha256 || "")}">${shortHash(c.sha256)}</td>
-        <td><span class="badge badge-${st.cls}" title="${escapeHtml(st.tip)}${c.state && c.state !== st.label ? ` (case state: ${escapeHtml(c.state)})` : ""}">${escapeHtml(st.label)}</span></td>
+        <td><span class="badge badge-${st.cls}" title="${escapeHtml(st.tip)}${c.state && c.state !== st.label ? ` (case state: ${escapeHtml(c.state)})` : ""}">${escapeHtml(st.label)}</span>${(c._bg || []).length && c._status !== "running" && c._status !== "queued"
+          ? ` <span class="badge badge-warn" data-case-bg title="${escapeHtml(`Still running in the background: ${c._bg.map((b) => `${b.id} · ${b.target}`).join(", ")} — its results are added to the case when it ends`)}">+ ${c._bg.length} in background</span>` : ""}</td>
         <td class="case-actions">${rerun}</td>
       </tr>`;
   }).join("");
