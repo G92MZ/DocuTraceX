@@ -3,7 +3,15 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
-## 1.229.0 — 2026-11-19
+## 1.230.0 — 2026-11-19 (#295)
+
+**DLL side-loading: a signed program next to a DLL with a system library's name**
+
+- Archives and disk images: `version.dll`, `winhttp.dll`, `dbghelp.dll`… next to a program that imports it is *dll_sideloading* — high when the program is signed and the DLL is not, the DLL has another signer, or it is a proxy forwarding its exports to the real library.
+- Installers: the same pair installed in one folder is *msi_dll_sideloading* (high when the installer runs the program).
+- A Microsoft-signed redistributable copy (dbghelp, d3d…) stays low. Samples: ZIP, ISO and MSI.
+
+## 1.229.0 — 2026-11-19 (#294)
 
 **New version highlighted, one-click update, and what's new after updating**
 

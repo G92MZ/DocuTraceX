@@ -439,9 +439,10 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
                     kids.append((Path(e["file"]), Path(e["name"]).name))
                     if "/" in e["name"].replace("\\", "/").strip("/"):
                         members[str(Path(e["file"]))] = e["name"]
-            from . import interpreters
-            add_findings(interpreters.findings([(e["name"], e.get("file")) for e in rec["entries"]],
-                                               f"nested:{this_chain}"), "archive")
+            from . import interpreters, sideload
+            ents = [(e["name"], e.get("file")) for e in rec["entries"]]
+            add_findings(interpreters.findings(ents, f"nested:{this_chain}"), "archive")
+            add_findings(sideload.findings(ents, f"nested:{this_chain}"), "archive")
         elif kind in ("ooxml", "ole"):
             from .parsers import oletools_suite
             with timed("oletools"):

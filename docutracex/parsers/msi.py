@@ -195,11 +195,39 @@ def _resolve(text: str, props: dict[str, str], files: dict[str, str], depth: int
     return _PROP.sub(sub, text)
 
 
+def _sideloading(t: dict[str, Any], files: dict[str, str], actions: list[dict[str, Any]],
+                 loc: str) -> list[dict[str, Any]]:
+    """A Windows system library's name installed in the same folder as a program the
+    package installs (``version.dll`` next to ``App.exe``): DLL side-loading. Names only
+    here; the bytes (signature, proxy exports) are judged when the files are extracted."""
+    from ..sideload import SYSTEM_DLLS
+    comp_dir = {str(r.get("Component") or ""): str(r.get("Directory_") or "") for r in t.get("Component") or []}
+    by_dir: dict[str, list[str]] = {}
+    for r in t.get("File") or []:
+        name = str(r.get("FileName") or "").split("|")[-1]
+        by_dir.setdefault(comp_dir.get(str(r.get("Component_") or ""), "?"), []).append(name)
+    out = []
+    for d, names in by_dir.items():
+        low = [n.lower() for n in names]
+        dlls = [n for n in names if n.lower() in SYSTEM_DLLS]
+        exes = [n for n, lo in zip(names, low) if lo.endswith(".exe")]
+        if not dlls or not exes:
+            continue
+        run = [a for a in actions if any(e.lower() in (a["runs"] or "").lower() for e in exes)]
+        sev = "high" if run else "medium"
+        out.append(_finding("msi_dll_sideloading", sev,
+                            f"installs {', '.join(dlls[:3])} (Windows system library name) in the same folder as "
+                            f"{', '.join(exes[:3])}: the program loads it from there instead of System32"
+                            + (f"; the installer then runs it ({run[0]['action']})" if run else ""),
+                            loc, f"directory {d}: " + ", ".join(names[:30]), "T1574.002"))
+    return out
+
+
 def _custom_actions(path: Path, item: dict[str, Any], loc: str) -> list[dict[str, Any]] | None:
     """Findings from the CustomAction table read as rows (None when the tables cannot be read)."""
     from . import msidb
     t = msidb.read_tables(path, ("CustomAction", "Property", "File", "Binary", "Shortcut", "Registry",
-                                 "InstallExecuteSequence"))
+                                 "InstallExecuteSequence", "Component"))
     if not t or not (t.get("CustomAction") or t.get("File") or t.get("Property")):
         return None
     props = {str(r.get("Property") or ""): str(r.get("Value") or "") for r in t.get("Property") or []}
@@ -258,6 +286,7 @@ def _custom_actions(path: Path, item: dict[str, Any], loc: str) -> list[dict[str
                                 f"custom action {a['action']} (type {a['type']}): {a['runs']}", "T1059"))
             item.setdefault("embedded_interpreters", []).append(
                 {"interpreter": lang, "exe": m.group(1), "file": m.group(2).strip(), "stream": stream, "action": a["action"]})
+    out.extend(_sideloading(t, files, actions, loc))
     nested_msi = [a for a in actions if re.search(r"(?i)msiexec(?:\.exe)?\W+/i", a["runs"] or "")]
     if nested_msi and item.get("embedded_interpreters"):
         out.append(_finding("msi_decoy_installer", "high",
