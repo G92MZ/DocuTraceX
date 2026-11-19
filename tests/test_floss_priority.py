@@ -132,3 +132,30 @@ def test_deep_floss_job_can_be_cancelled(tmp_path: Path, monkeypatch) -> None:
         _time.sleep(0.05)
     st = case.full_floss_status(tmp_path, "cd" * 32, "native")
     assert st["state"] == "cancelled" and st["duration_s"] >= 0
+
+
+def test_deep_floss_strings_reach_the_iocs(tmp_path: Path, monkeypatch) -> None:
+    """A URL only Deep FLOSS recovers (a tight string) becomes an IOC of the case, with
+    its function, without re-running the analysis."""
+    import io
+    import json
+
+    from docutracex import analyze, cases
+    from docutracex.storage import CasePaths, read_json, write_subresult
+    m = cases.create_case(io.BytesIO(b"MZ inert stub"), "visor.exe", cases_dir=tmp_path / "cases")
+    root = tmp_path / "cases" / m["analysis_id"]
+    analyze.analyze_case(root)
+    paths = CasePaths(m["analysis_id"], cases_dir=tmp_path / "cases")
+    sha = "ef" * 32
+    write_subresult(paths, "code", {"module": "code", "objects": [{"label": "visor.exe", "sha256": sha,
+                                                                   "ioc_sources": []}]})
+    f = tmp_path / "res.json"
+    f.write_text(json.dumps(_full()))
+    monkeypatch.setattr(case, "result_file", lambda *a: f)
+    rec = {"status": "ok", "located": [{"kind": "tight", "string": "https://facturas-cdn.example/gate.php",
+                                        "function": 0x403008}]}
+    assert case.merge_full_floss(root, sha, "native", rec) == 1
+    vals = {i["value"] for i in (read_json(paths.subresult("iocs")) or {}).get("iocs") or []}
+    assert "https://facturas-cdn.example/gate.php" in vals
+    obj = read_json(paths.subresult("code"))["objects"][0]
+    assert obj["ioc_sources"][0]["location"] == "visor.exe › copy (FLOSS tight (full run))"
