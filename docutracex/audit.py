@@ -58,6 +58,8 @@ _ACTIONS: list[tuple[str, str, str]] = [
     ("POST", r"^/api/settings/", "ran a settings action"),
     ("POST", r"^/api/diagnostics/retry", "reinstalled a component (Diagnostics)"),
     ("POST", r"^/api/tasks/[^/]+/cancel", "cancelled a task"),
+    ("POST", r"^/api/version/update", "updated DocuTraceX (restart)"),
+    ("POST", r"^/api/version/check", "turned the new-version check on / off"),
     ("POST", r"^/api/ai/chat", "asked the AI"),
     ("POST", r"^/api/users/?$", "created a user"),
     ("PUT", r"^/api/users/", "changed a user"),

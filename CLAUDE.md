@@ -6,6 +6,10 @@
   version in `VERSION` (semver, no trailing newline). `update.py` compares the
   local `VERSION` with the one on GitHub, so without a bump users never get
   the update.
+- With the bump, add an entry at the top of `CHANGELOG.md` (English):
+  `## X.Y.Z — YYYY-MM-DD (#PR)`, a bold one-line title, then 1–4 short bullets
+  for the user (what changes for them, not the implementation). The app shows
+  these entries in the "new version" popover and in "What's new" after an update.
 
 <!-- gmzpt -->
 

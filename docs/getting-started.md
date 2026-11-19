@@ -27,6 +27,7 @@ Then open `http://127.0.0.1:8000`.
     python run.py --port 8001       # next to another local app
     python run.py --host 127.0.0.1  # this computer only
     python run.py --no-update       # skip the update check (offline, scripts)
+    python run.py --update          # update without asking, then start
     ```
     By default it listens on every interface, so `http://<this machine's IP>:8000` works from
     another computer or a phone. `HOST` / `PORT` environment variables work too.
@@ -46,6 +47,17 @@ python update.py --yes      # update without asking
 ```
 
 Cloned with git? `git pull` works too.
+
+**From the app.** When GitHub has a newer version, the version in the header lights up
+(`v1.226.0 → v1.229.0`); click it to read what changes. To update, stop DocuTraceX and run
+`python run.py` again — or, as admin, press **Update** next to it: DocuTraceX stops, runs
+`python run.py --update` (updates without asking, re-provisions the toolchain) and starts again on
+the same address; the page reloads by itself. On Windows the update shows in its own console
+window; elsewhere it logs to `config/update.log`. After any update, the first page shows
+**What's new** since the version you had ([CHANGELOG.md](https://github.com/G92MZ/DocuTraceX/blob/main/CHANGELOG.md)).
+
+The check asks GitHub at most every six hours and needs nothing configured; with no Internet the
+version simply does not light up. `DOCUTRACEX_NO_UPDATE_CHECK=1` turns it off.
 
 Once it runs, take five minutes for the [configuration](configuration.md): the proxy for network
 checks, your own domains and brands, and, under **Detection rules**, your
