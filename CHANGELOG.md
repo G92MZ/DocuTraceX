@@ -3,6 +3,13 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.235.0 — 2026-11-19 (#302)
+
+**Tasks: what the PE triage is doing, tool by tool**
+
+- While a binary is triaged, the task shows the tool running now and, for FLOSS and capa, for how long ("FLOSS + capa running · 3m 05s").
+- Afterwards the step lists each tool as a sub-step with its time and status: LIEF, debloat, packer detection / unpacking, FLOSS, capa (timeout, cached, skipped and why).
+
 ## 1.234.0 — 2026-11-19 (#301)
 
 **MCP: everything, never cut — and C2, YARA and raw-record tools**

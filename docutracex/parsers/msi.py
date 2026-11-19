@@ -576,6 +576,9 @@ def analyze(original: Path, extracted_dir: Path | None = None,
                               if extracted_dir is not None else None)
     else:
         return res
+    timings = item.pop("timings", None)
+    if timings:
+        res["timings"] = timings              # the PE triage's tools, as sub-steps in the Tasks tab
     res["items"].append(item)
     res["findings"].extend(item.get("findings", []))
     res["counts"] = {"findings": len(res["findings"]), "items": len(res["items"])}
