@@ -18,8 +18,9 @@ clients can reach it by IP or host name.
 It reads the same ``cases/`` folder as the web app (``DOCUTRACEX_CASES_DIR``
 overrides it). Tools (see ``ai_tools``): list_cases, case_summary,
 get_findings, get_iocs, get_module, get_network_checks, search_case,
-list_code_objects, list_functions, get_function, get_decrypted, get_nested_tree, get_ml, query_registry — none
-can modify a case or touch the network.
+list_code_objects, list_functions, get_function, get_decrypted, get_nested_tree, get_ml, query_registry,
+list_modules, get_c2, get_c2_raw, get_yara, list_yara_rules — none can modify a case or touch the network.
+Nothing is clipped: every answer comes whole, in pages of ~40,000 characters (``offset`` / ``next_offset``).
 """
 
 from __future__ import annotations
@@ -41,7 +42,10 @@ INSTRUCTIONS = ("Read-only access to DocuTraceX forensic cases (Office/PDF/RTF/e
                 "raw output and get_network_checks for URL/domain/IP checks. For binaries: list_code_objects → "
                 "list_functions → get_function; get_decrypted for what was decrypted statically, "
                 "get_nested_tree for the chain of stages, get_ml for scores and similar objects in other cases; "
-                "query_registry for registry hives / .reg files (SQL, search, browse).")
+                "query_registry for registry hives / .reg files (SQL, search, browse); get_c2 / get_c2_raw for C2 "
+                "configurations and each extractor's raw output; get_yara / list_yara_rules for YARA. Nothing is "
+                "cut: long answers come in pages — when next_offset is not null, call the same tool again with "
+                "offset=next_offset until it is null.")
 
 
 def build_server():
@@ -51,77 +55,119 @@ def build_server():
         from mcp.server.fastmcp import FastMCP as Server
     server = Server(NAME, instructions=INSTRUCTIONS)
 
+    def call(fn, *a, **kw):  # noqa: ANN001, ANN002, ANN003, ANN202
+        with ai_tools.paged():               # everything, in pages: never clipped, never capped
+            return fn(*a, **kw)
+
     @server.tool()
     def list_cases() -> dict:
         # trace: gmzpt
         """List the analysed cases, newest first (id, file, detected type, state, counts)."""
-        return ai_tools.list_cases()
+        return call(ai_tools.list_cases)
 
     @server.tool()
     def case_summary(case_id: str) -> dict:
         """Summary of a case: file, detected type and match, hashes, counts, modules run and analysis steps."""
-        return ai_tools.case_summary(case_id)
+        return call(ai_tools.case_summary, case_id)
+
+    @server.tool()
+    def list_modules(case_id: str) -> dict:
+        """Every result file of the case (module and size), the C2 runs and the number of code results."""
+        return call(ai_tools.list_modules, case_id)
 
     @server.tool()
     def get_findings(case_id: str, severity: Optional[str] = None, source: Optional[str] = None,
-                     mark: Optional[str] = None, contains: Optional[str] = None, limit: int = 60) -> dict:
-        """Consolidated findings (severity, source tool, rule, detail, location, evidence) with the analyst's
-        mark (unreviewed / true_positive / false_positive / suspicious / informational). Sorted high → info."""
-        return ai_tools.get_findings(case_id, severity, source, mark, contains, limit)
+                     mark: Optional[str] = None, contains: Optional[str] = None, offset: int = 0) -> dict:
+        """Consolidated findings (severity, source tool, rule, detail, location, evidence, ATT&CK) with the
+        analyst's mark. Sorted high → info. Paged: call again with offset=next_offset until it is null."""
+        return call(ai_tools.get_findings, case_id, severity, source, mark, contains, None, offset)
 
     @server.tool()
-    def get_iocs(case_id: str, type: Optional[str] = None, contains: Optional[str] = None, limit: int = 100) -> dict:
-        """IOCs of a case (url, domain, ipv4, ipv6, hash_like) and where each was seen."""
-        return ai_tools.get_iocs(case_id, type, contains, limit)
+    def get_iocs(case_id: str, type: Optional[str] = None, contains: Optional[str] = None, offset: int = 0) -> dict:
+        """IOCs of a case (url, domain, ipv4, ipv6, hash_like) and where each was seen. Paged (next_offset)."""
+        return call(ai_tools.get_iocs, case_id, type, contains, None, offset)
 
     @server.tool()
-    def get_module(case_id: str, module: str, max_chars: int = 20000) -> dict:
-        """Raw JSON result of one module (ooxml, word, excel, oletools, vbatools, vipermonkey, officerules,
-        pdf, pdftools, email, mailrules, javascript, rtf, nested, netcheck, yara…), trimmed."""
-        return ai_tools.get_module(case_id, module, max_chars)
+    def get_module(case_id: str, module: str, offset: int = 0) -> dict:
+        """Raw JSON result of one module (any of list_modules: ooxml, oletools, pdf, email, script, nested,
+        c2, yara, ml, netcheck…), complete, as text slices: call again with offset=next_offset until it is
+        null and join the slices."""
+        return call(ai_tools.get_module, case_id, module, None, offset)
 
     @server.tool()
-    def get_network_checks(case_id: str) -> dict:
-        """URL/domain/IP network checks of a case: redirects, forms, cloaking, brand, RDAP age, ASN, Tor…"""
-        return ai_tools.get_network_checks(case_id)
+    def get_network_checks(case_id: str, offset: int = 0) -> dict:
+        """URL/domain/IP network checks of a case: redirects, forms, cloaking, brand, RDAP age, ASN, Tor…
+        Paged (next_offset)."""
+        return call(ai_tools.get_network_checks, case_id, offset)
 
     @server.tool()
-    def search_case(case_id: str, q: str, limit: int = 40) -> dict:
-        """Case-insensitive text search across every result of a case (findings, IOCs, module outputs)."""
-        return ai_tools.search_case(case_id, q, limit)
+    def search_case(case_id: str, q: str, offset: int = 0) -> dict:
+        """Case-insensitive text search across every result of a case (findings, IOCs, module outputs):
+        every hit, paged (next_offset)."""
+        return call(ai_tools.search_case, case_id, q, None, offset)
 
     @server.tool()
     def list_code_objects(case_id: str) -> dict:
         """Binaries of the case analysed as code (native with Rizin + rz-ghidra, Go, .NET CIL) and the
         'object' id to use with list_functions / get_function."""
-        return ai_tools.list_code_objects(case_id)
+        return call(ai_tools.list_code_objects, case_id)
 
     @server.tool()
     def list_functions(case_id: str, object: str, category: Optional[str] = None, name: Optional[str] = None,
-                       limit: int = 40) -> dict:
-        """Functions (native / Go) or .NET methods of interest of one object, most interesting first."""
-        return ai_tools.list_functions(case_id, object, category, name, limit)
+                       offset: int = 0) -> dict:
+        """Functions (native / Go) or .NET methods of interest of one object, most interesting first, all of
+        them, paged (next_offset)."""
+        return call(ai_tools.list_functions, case_id, object, category, name, None, offset)
 
     @server.tool()
-    def get_function(case_id: str, object: str, function: str, max_chars: int = 12000) -> dict:
-        """One function: pseudocode (if decompiled), disassembly, callers, callees, strings; for .NET the
-        framework calls, literals, static arrays and the strings it decrypts."""
-        return ai_tools.get_function(case_id, object, function, max_chars)
+    def get_function(case_id: str, object: str, function: str, offset: int = 0) -> dict:
+        """One function: callers, callees, strings, and its whole code (pseudocode when decompiled, then the
+        disassembly) as text slices (next_offset); for .NET the framework calls, literals, static arrays and
+        the strings it decrypts."""
+        return call(ai_tools.get_function, case_id, object, function, 12000, offset)
 
     @server.tool()
-    def get_decrypted(case_id: str, limit: int = 80) -> dict:
-        """Everything decrypted or decoded statically in the case, with the routine used."""
-        return ai_tools.get_decrypted(case_id, limit)
+    def get_decrypted(case_id: str, offset: int = 0) -> dict:
+        """Everything decrypted or decoded statically in the case, with the routine used. Paged (next_offset)."""
+        return call(ai_tools.get_decrypted, case_id, 80, offset)
 
     @server.tool()
-    def get_nested_tree(case_id: str, max_depth: int = 6) -> dict:
-        """Tree of extracted, unpacked, hidden and decrypted stages, with how each was obtained."""
-        return ai_tools.get_nested_tree(case_id, max_depth)
+    def get_nested_tree(case_id: str, offset: int = 0) -> dict:
+        """Every extracted, unpacked, hidden and decrypted stage, flat (path › to › node, depth), with how
+        each was obtained and its findings. Paged (next_offset)."""
+        return call(ai_tools.get_nested_tree, case_id, 6, offset)
 
     @server.tool()
-    def get_ml(case_id: str) -> dict:
-        """ML scores, unusual-for-the-model flags, similar objects in other cases, highest score of the chain."""
-        return ai_tools.get_ml(case_id)
+    def get_ml(case_id: str, offset: int = 0) -> dict:
+        """ML scores, unusual-for-the-model flags, top features, family guess, similar objects in other cases,
+        highest score of the chain. Paged (next_offset)."""
+        return call(ai_tools.get_ml, case_id, offset)
+
+    @server.tool()
+    def get_c2(case_id: str, family: Optional[str] = None, offset: int = 0) -> dict:
+        """C2 / implant configurations with every field (family, C2, normalized values, summary, YARA rule
+        names, provenance, objects carrying the same config, mark), how each extractor did, packed objects,
+        the family-YARA rule sets. Paged (next_offset)."""
+        return call(ai_tools.get_c2, case_id, family, offset)
+
+    @server.tool()
+    def get_c2_raw(case_id: str, object: Optional[str] = None, run_id: Optional[str] = None, offset: int = 0) -> dict:
+        """RAW records of a C2 run (the latest unless run_id). Without object: the objects and each extractor's
+        status. With object (index, name or part of its path): every extractor's raw output, as text slices
+        (next_offset)."""
+        return call(ai_tools.get_c2_raw, case_id, object, run_id, offset)
+
+    @server.tool()
+    def get_yara(case_id: str, rule: Optional[str] = None, object: Optional[str] = None, offset: int = 0) -> dict:
+        """YARA hits (rule × object): meta, tags, every matched string (offset, hex, text), the bytes around it,
+        the rule's source and the analyst's mark. Paged (next_offset)."""
+        return call(ai_tools.get_yara, case_id, rule, object, offset)
+
+    @server.tool()
+    def list_yara_rules(contains: Optional[str] = None, offset: int = 0) -> dict:
+        """The compiled YARA ruleset (rules, source files, compile errors) and the C2 family rule sets
+        (CAPE / ditekSHen). Paged (next_offset)."""
+        return call(ai_tools.list_yara_rules, contains, offset)
 
     @server.tool()
     def query_registry(case_id: str, sql: Optional[str] = None, q: Optional[str] = None, key: Optional[str] = None,
@@ -129,7 +175,7 @@ def build_server():
         """Registry hives / .reg of the case. No argument: sources and schema. sql: one read-only SELECT over
         sources, keys(src, path, parent, name, last_write…) and vals(src, "key", name, type, data, size, raw);
         q: text search; key (+ src): subkeys and values of that key."""
-        return ai_tools.query_registry(case_id, sql, q, key, src, limit)
+        return call(ai_tools.query_registry, case_id, sql, q, key, src, limit)
 
     return server
 

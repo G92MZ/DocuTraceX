@@ -23,6 +23,12 @@ Tools:
   - get_ml(case_id)                                ML scores, similar objects in other cases, chain
   - query_registry(case_id, sql?, q?, key?, limit?) the case's registry database (hives / .reg):
                                                    read-only SQL, text search or one key's contents
+  - list_modules(case_id)                          every result file of the case
+  - get_c2(case_id, family?) / get_c2_raw(case_id, object?, run_id?)   C2 configurations / RAW records
+  - get_yara(case_id, rule?, object?) / list_yara_rules(contains?)     YARA hits / the ruleset
+
+The MCP server calls them inside ``paged()``: nothing clipped or capped, every answer in
+pages of ~40,000 characters with ``offset`` / ``next_offset``.
 """
 
 from __future__ import annotations
@@ -57,6 +63,11 @@ TOOLS_DOC = [
     ("get_decrypted(case_id, limit?)", "strings / configs / resources / stages decrypted statically, with the routine and method"),
     ("get_nested_tree(case_id, max_depth?)", "extracted, unpacked, hidden and decrypted stages with how each was obtained"),
     ("get_ml(case_id)", "ML scores, unusual-for-the-model flags, similar objects in other cases, highest score of the chain"),
+    ("list_modules(case_id)", "every result file of the case and its size, C2 runs, code results"),
+    ("get_c2(case_id, family?)", "C2 configurations with every field, YARA names, provenance, marks; extractor status"),
+    ("get_c2_raw(case_id, object?, run_id?)", "RAW per-object records of a C2 run (each extractor's output)"),
+    ("get_yara(case_id, rule?, object?)", "YARA hits with matched strings, bytes around them, rule source and mark"),
+    ("list_yara_rules(contains?)", "compiled YARA rules, their sources and compile errors; the C2 family rule sets"),
     ("query_registry(case_id, sql?, q?, key?, src?, limit?)", "registry hives / .reg of the case: read-only SQL over sources, keys, vals; text search; one key's subkeys and values"),
 ]
 
@@ -86,6 +97,54 @@ def no_limits():  # noqa: ANN201
         yield
     finally:
         _FULL.reset(tok)
+
+
+# The MCP server reads in pages: nothing clipped, nothing capped, each answer split into
+# pages of about PAGE_CHARS (MCP clients refuse very large tool results); ``next_offset``
+# says where the next page starts (None: that was the last).
+_PAGED: ContextVar[bool] = ContextVar("dtx_ai_tools_paged", default=False)
+PAGE_CHARS = 40000
+
+
+@contextmanager
+def paged():  # noqa: ANN201
+    t1, t2 = _FULL.set(True), _PAGED.set(True)
+    try:
+        yield
+    finally:
+        _PAGED.reset(t2)
+        _FULL.reset(t1)
+
+
+def _page(items: list[Any], offset: int | None = 0, limit: int | None = None) -> tuple[list[Any], dict[str, Any]]:
+    """One page of ``items`` from ``offset``: up to ``limit`` (the chat) or, when paged (MCP),
+    as many as fit in PAGE_CHARS (at least one). Returns (page, {total, offset, returned, next_offset})."""
+    off = max(0, int(offset or 0))
+    out: list[Any] = []
+    size, i = 0, off
+    budget = PAGE_CHARS if _PAGED.get() else None
+    cap = None if _FULL.get() else limit
+    while i < len(items) and (cap is None or len(out) < cap):
+        n = len(json.dumps(items[i], ensure_ascii=False, default=str)) if budget else 0
+        if budget and out and size + n > budget:
+            break
+        out.append(items[i])
+        size += n
+        i += 1
+    return out, {"total": len(items), "offset": off, "returned": len(out),
+                 "next_offset": i if i < len(items) else None}
+
+
+def _text_page(text: str, offset: int | None = 0, max_chars: int | None = None) -> dict[str, Any]:
+    """A slice of a long text (a raw JSON, pseudocode) with where the next slice starts."""
+    off = max(0, int(offset or 0))
+    n = PAGE_CHARS if _PAGED.get() else max(1000, min(int(max_chars or MAX_CHARS), 60000))
+    if _PAGED.get() and max_chars:
+        n = max(1000, min(int(max_chars), PAGE_CHARS * 2))
+    chunk = text[off:off + n]
+    end = off + len(chunk)
+    return {"size_chars": len(text), "offset": off, "returned_chars": len(chunk),
+            "next_offset": end if end < len(text) else None, "text": chunk}
 
 
 def _n(n: int) -> int | None:
@@ -130,7 +189,7 @@ def case_summary(case_id: str) -> dict[str, Any]:
 
 
 def get_findings(case_id: str, severity: str | None = None, source: str | None = None, mark: str | None = None,
-                 contains: str | None = None, limit: int = 60) -> dict[str, Any]:
+                 contains: str | None = None, limit: int = 60, offset: int = 0) -> dict[str, Any]:
     from . import marks as marks_service
 
     paths = _paths(case_id)
@@ -146,30 +205,31 @@ def get_findings(case_id: str, severity: str | None = None, source: str | None =
         q = contains.lower()
         items = [f for f in items if q in json.dumps(f, ensure_ascii=False).lower()]
     items = sorted(items, key=lambda f: _SEV_ORDER.get(f.get("severity"), 9))
-    lim = max(1, min(int(limit or 60), MAX_ITEMS))
-    return {"total": len(items), "returned": min(len(items), lim), "findings": [
-        {"id": f.get("id"), "severity": f.get("severity"), "source": f.get("source"), "rule": f.get("rule"),
-         "detail": _clip(f.get("detail"), 400), "location": _clip(f.get("location"), 200),
-         "evidence": _clip(f.get("evidence"), 500),
-         "mark": (f.get("mark") or {}).get("state", "unreviewed"), "comment": (f.get("mark") or {}).get("comment")}
-        for f in items[:lim]]}
+    rows = [{"id": f.get("id"), "severity": f.get("severity"), "source": f.get("source"), "rule": f.get("rule"),
+             "detail": _clip(f.get("detail"), 400), "location": _clip(f.get("location"), 200),
+             "evidence": _clip(f.get("evidence"), 500), "attack": f.get("attack"),
+             "mark": (f.get("mark") or {}).get("state", "unreviewed"), "comment": (f.get("mark") or {}).get("comment")}
+            for f in items]
+    page, meta = _page(rows, offset, max(1, min(int(limit or 60), MAX_ITEMS)))
+    return {**meta, "findings": page}
 
 
-def get_iocs(case_id: str, type: str | None = None, contains: str | None = None, limit: int = 100) -> dict[str, Any]:
+def get_iocs(case_id: str, type: str | None = None, contains: str | None = None, limit: int = 100,
+             offset: int = 0) -> dict[str, Any]:
     paths = _paths(case_id)
     items = (read_json(paths.subresult("iocs")) or {}).get("iocs", [])
     if type:
         items = [i for i in items if i.get("type") == type]
     if contains:
         items = [i for i in items if contains.lower() in str(i.get("value", "")).lower()]
-    lim = max(1, min(int(limit or 100), MAX_ITEMS * 2))
-    return {"total": len(items), "iocs": [
-        {"type": i.get("type"), "value": i.get("value"), "count": i.get("count"),
-         "seen_in": sorted({f"{o.get('module')}/{o.get('location')}" for o in i.get("occurrences", [])})[:6]}
-        for i in items[:lim]]}
+    rows = [{"type": i.get("type"), "value": i.get("value"), "count": i.get("count"),
+             "seen_in": sorted({f"{o.get('module')}/{o.get('location')}" for o in i.get("occurrences", [])})[:_n(6)]}
+            for i in items]
+    page, meta = _page(rows, offset, max(1, min(int(limit or 100), MAX_ITEMS * 2)))
+    return {**meta, "iocs": page}
 
 
-def get_module(case_id: str, module: str, max_chars: int = MAX_CHARS) -> dict[str, Any]:
+def get_module(case_id: str, module: str, max_chars: int = MAX_CHARS, offset: int = 0) -> dict[str, Any]:
     paths = _paths(case_id)
     if not _ID.match(module or ""):
         raise ValueError("invalid module name")
@@ -181,11 +241,28 @@ def get_module(case_id: str, module: str, max_chars: int = MAX_CHARS) -> dict[st
         from .ml import family_info
         data = family_info.enrich(data)          # what each family is, and how sure the model is
     text = json.dumps(data, ensure_ascii=False, default=str)
-    n = max(1000, min(int(max_chars or MAX_CHARS), 60000))
-    return {"module": module, "size_chars": len(text), "truncated": len(text) > n, "json": text[:n]}
+    pg = _text_page(text, offset, max_chars)
+    return {"module": module, "size_chars": pg["size_chars"], "offset": pg["offset"],
+            "next_offset": pg["next_offset"], "truncated": pg["next_offset"] is not None, "json": pg["text"],
+            "hint": "a slice of the JSON text: call again with offset=next_offset until it is null, then join the slices"}
 
 
-def get_network_checks(case_id: str) -> dict[str, Any]:
+def list_modules(case_id: str) -> dict[str, Any]:
+    """Every result file of the case (module → size), the per-object C2 records and the code results."""
+    paths = _paths(case_id)
+    mods = []
+    for p in sorted(paths.results_dir.glob("*.json")):
+        try:
+            mods.append({"module": p.stem, "bytes": p.stat().st_size})
+        except OSError:
+            continue
+    runs_dir = paths.results_dir / "c2_runs"
+    runs = sorted(d.name for d in runs_dir.iterdir() if d.is_dir()) if runs_dir.is_dir() else []
+    return {"modules": mods, "c2_runs": runs, "code_objects": len(_code_files(paths)),
+            "hint": "get_module(case_id, module) for any of them (paged); get_c2_raw for the C2 records"}
+
+
+def get_network_checks(case_id: str, offset: int = 0) -> dict[str, Any]:
     paths = _paths(case_id)
     net = read_json(paths.subresult("netcheck")) or {}
     out = []
@@ -214,17 +291,20 @@ def get_network_checks(case_id: str) -> dict[str, Any]:
         if c.get("kind") != "url":
             rec["data"] = c.get("data", {})
         out.append(rec)
+    if _PAGED.get():
+        page, meta = _page(out, offset)
+        return {**meta, "checks": page, "count": len(out)}
     return {"checks": out, "count": len(out)}
 
 
-def search_case(case_id: str, q: str, limit: int = 40) -> dict[str, Any]:
+def search_case(case_id: str, q: str, limit: int = 40, offset: int = 0) -> dict[str, Any]:
     """Case-insensitive substring search over every JSON result of the case."""
     paths = _paths(case_id)
     if not q or len(q) < 2:
         raise ValueError("q must have at least 2 characters")
     needle = q.lower()
     hits: list[dict[str, Any]] = []
-    lim = max(1, min(int(limit or 40), MAX_ITEMS))
+    lim = max(1, min(int(limit or 40), MAX_ITEMS)) if not _FULL.get() else 10 ** 9
     for p in sorted(paths.results_dir.glob("*.json")):
         if len(hits) >= lim:
             break
@@ -240,6 +320,9 @@ def search_case(case_id: str, q: str, limit: int = 40) -> dict[str, Any]:
                 break
             hits.append({"module": p.stem, "context": text[max(0, i - 160): i + len(q) + 160].replace("\\n", " ")})
             start = i + len(needle)
+    if _PAGED.get():
+        page, meta = _page(hits, offset)
+        return {"q": q, **meta, "hits": page}
     return {"q": q, "hits": hits, "returned": len(hits)}
 
 
@@ -307,11 +390,11 @@ def _pick(paths: CasePaths, obj: str) -> tuple[str, Any]:
 
 
 def list_functions(case_id: str, object: str, category: str | None = None, name: str | None = None,
-                   limit: int = 40) -> dict[str, Any]:
+                   limit: int = 40, offset: int = 0) -> dict[str, Any]:
     """Functions (native / Go) or methods of interest (.NET), most interesting first."""
     paths = _paths(case_id)
     kind, data = _pick(paths, object)
-    lim = max(1, min(int(limit or 40), MAX_ITEMS))
+    lim = max(1, min(int(limit or 40), MAX_ITEMS)) if not _FULL.get() else 10 ** 9
     cat = (category or "").lower()
     nm = (name or "").lower()
     out = []
@@ -336,11 +419,15 @@ def list_functions(case_id: str, object: str, category: str | None = None, name:
                         "il_bytes": m.get("size"), "calls": (m.get("calls") or [])[:10], "strings": (m.get("strings") or [])[:6]})
             if len(out) >= lim:
                 break
-    return {"object": object, "kind": kind, "functions": out, "returned": len(out),
-            "hint": "get_function(case_id, object, function=<name or 0xaddr>) for the code of one"}
+    hint = "get_function(case_id, object, function=<name or 0xaddr>) for the code of one"
+    if _PAGED.get():
+        page, meta = _page(out, offset)
+        return {"object": object, "kind": kind, **meta, "functions": page, "hint": hint}
+    return {"object": object, "kind": kind, "functions": out, "returned": len(out), "hint": hint}
 
 
-def get_function(case_id: str, object: str, function: str, max_chars: int = 12000) -> dict[str, Any]:
+def get_function(case_id: str, object: str, function: str, max_chars: int = 12000,
+                 offset: int = 0) -> dict[str, Any]:
     """One function: pseudocode (when decompiled), disassembly, callers / callees, strings;
     for .NET: the framework calls, the literals it loads, static arrays and what was decrypted."""
     paths = _paths(case_id)
@@ -366,12 +453,21 @@ def get_function(case_id: str, object: str, function: str, max_chars: int = 1200
         dec = (v.get("decompiled") or {})
         code = dec.get("code") if dec.get("status") == "ok" else None
         ops = v.get("ops") or []
-        asm = "\n".join(f"{o.get('offset', 0):#x}  {o.get('disasm') or o.get('opcode') or ''}" for o in ops[:400])
+        asm = "\n".join(f"{o.get('offset', 0):#x}  {o.get('disasm') or o.get('opcode') or ''}"
+                        for o in ops[:_n(400)])
         out = {"name": v.get("name"), "addr": hex(v.get("addr", 0)), "rank": v.get("rank"), "score": v.get("score"),
                "categories": v.get("categories"), "traits": v.get("traits"), "why": v.get("reasons"),
                "callers": [c["name"] for c in v.get("callers") or []][:30],
                "callees": [c["name"] for c in v.get("callees") or []][:30] + (v.get("callee_names") or [])[:30],
                "strings": [s.get("value") if isinstance(s, dict) else s for s in (v.get("strings") or [])][:40]}
+        if _PAGED.get():                 # the code in pages: pseudocode first, then the disassembly
+            text = (f"// pseudocode\n{code}\n\n" if code else "") + "; disassembly\n" + asm
+            if not code:
+                out["note"] = (dec.get("detail") or f.get("decompile_note")
+                               or "not decompiled: use the Code view (Decompile / Decompile all) and ask again")
+            pg = _text_page(text, offset, max_chars if max_chars != 12000 else None)
+            return {**out, "code": pg["text"], "size_chars": pg["size_chars"], "offset": pg["offset"],
+                    "next_offset": pg["next_offset"]}
         if code:
             out["pseudocode"] = _clip(code, int(budget * 0.7))
         else:
@@ -394,7 +490,7 @@ def get_function(case_id: str, object: str, function: str, max_chars: int = 1200
             "note": "IL is summarised (calls and literals), not decompiled to C#"}
 
 
-def get_decrypted(case_id: str, limit: int = 80) -> dict[str, Any]:
+def get_decrypted(case_id: str, limit: int = 80, offset: int = 0) -> dict[str, Any]:
     """Everything the analyses decrypted or decoded statically, with the routine used."""
     paths = _paths(case_id)
     lim = max(1, min(int(limit or 80), 200)) if not _FULL.get() else 10 ** 9
@@ -435,10 +531,13 @@ def get_decrypted(case_id: str, limit: int = 80) -> dict[str, Any]:
         if c.get("decrypted_statically"):
             out.append({"where": c.get("object"), "kind": f"C2 config ({c.get('family')})",
                         "plain": ", ".join(c.get("c2") or []), "how": c.get("method")})
+    if _PAGED.get():
+        page, meta = _page(out, offset)
+        return {**meta, "items": page}
     return {"items": out[:lim], "returned": min(len(out), lim), "total": len(out)}
 
 
-def get_nested_tree(case_id: str, max_depth: int = 6) -> dict[str, Any]:
+def get_nested_tree(case_id: str, max_depth: int = 6, offset: int = 0) -> dict[str, Any]:
     """The chain of children: extracted, unpacked, hidden and decrypted stages."""
     paths = _paths(case_id)
     depth_cap = max(1, min(int(max_depth or 6), 12)) if not _FULL.get() else 10 ** 6
@@ -463,10 +562,27 @@ def get_nested_tree(case_id: str, max_depth: int = 6) -> dict[str, Any]:
             out["children_not_shown"] = len(kids)
         return out
     tree = (read_json(paths.subresult("nested")) or {}).get("tree") or []
+    if _PAGED.get():                       # every node, flat (path + depth), in pages: nothing left out
+        flat: list[dict[str, Any]] = []
+
+        def walk(nodes: list[dict[str, Any]], chain: list[str]) -> None:
+            for n in nodes or []:
+                rec = node({k: v for k, v in n.items() if k != "children"}, 1)
+                here = chain + [str(n.get("filename") or "?")]
+                rec.update(path=" › ".join(here), depth=len(here), children=len(n.get("children") or []),
+                           findings_detail=[{"severity": f.get("severity"), "rule": f.get("rule"),
+                                             "detail": f.get("detail")} for f in n.get("findings") or []],
+                           view_modules=n.get("view_modules"), origin=n.get("origin"))
+                rec["sha256"] = n.get("sha256")
+                flat.append(rec)
+                walk(n.get("children") or [], here)
+        walk(tree, [])
+        page, meta = _page(flat, offset)
+        return {**meta, "nodes": page}
     return {"tree": [node(n, 1) for n in tree[:_n(80)]], "nodes_shown": count[0]}
 
 
-def get_ml(case_id: str) -> dict[str, Any]:
+def get_ml(case_id: str, offset: int = 0) -> dict[str, Any]:
     """ML results: score and verdict per object, unusual-for-the-model flag, similar
     objects in other cases, highest score of the chain."""
     paths = _paths(case_id)
@@ -482,8 +598,11 @@ def get_ml(case_id: str) -> dict[str, Any]:
                       "family_guess": [(f.get("name"), f.get("confidence")) for f in ((x.get("labels") or {}).get("family") or [])[:_n(3)]],
                       "similar": [{"similarity": s.get("similarity"), "case": s.get("case"), "object": s.get("label"),
                                    "same_file": s.get("same_file")} for s in x.get("similar") or []]})
-    return {"chain": ml.get("chain"), "items": items[:_n(60)],
-            "note": "complementary indicator, not a verdict; results are not findings until marked"}
+    note = "complementary indicator, not a verdict; results are not findings until marked"
+    if _PAGED.get():
+        page, meta = _page(items, offset)
+        return {"chain": ml.get("chain"), **meta, "items": page, "note": note}
+    return {"chain": ml.get("chain"), "items": items[:_n(60)], "note": note}
 
 
 def query_registry(case_id: str, sql: str | None = None, q: str | None = None, key: str | None = None,
@@ -522,12 +641,143 @@ def query_registry(case_id: str, sql: str | None = None, q: str | None = None, k
     return res
 
 
+# --- C2 and YARA ----------------------------------------------------------------------
+def _marks(paths: CasePaths) -> dict[str, dict[str, Any]]:
+    from . import marks as marks_service
+    return marks_service.read_marks(paths)
+
+
+def get_c2(case_id: str, family: str | None = None, offset: int = 0) -> dict[str, Any]:
+    """C2 / implant configurations of the case, every field: family, kind, C2, normalized
+    values, the summary shown in the C2 view, YARA rule names, provenance, the objects that
+    carry the same configuration, the analyst's mark; plus how each extractor did, packed
+    objects without a configuration and the family-YARA rule sets used."""
+    paths = _paths(case_id)
+    c2 = read_json(paths.subresult("c2")) or {}
+    if not c2:
+        return {"error": "no C2 run in this case (run it from the C2 view)"}
+    marks = _marks(paths)
+    cfgs = []
+    for c in c2.get("configs") or []:
+        if family and family.lower() not in str(c.get("family", "")).lower():
+            continue
+        rec = {k: v for k, v in c.items() if not k.startswith("_")}
+        if not _FULL.get():                       # the chat: the essentials
+            rec = {k: rec.get(k) for k in ("family", "kind", "c2", "confidence", "method", "object", "provenance",
+                                           "summary", "yara", "also_in", "note")}
+        m = marks.get(c.get("finding_id") or "") or {}
+        rec["mark"] = m.get("state", "unreviewed")
+        if m.get("comment"):
+            rec["comment"] = m["comment"]
+        cfgs.append(rec)
+    page, meta = _page(cfgs, offset, 20)
+    head = {k: c2.get(k) for k in ("run_id", "runs", "objects_scanned", "status", "counts", "warnings",
+                                   "extractor_status", "protected", "family_yara", "timings")}
+    if not _FULL.get():
+        head.pop("timings", None)
+    return {**head, "families_found": sorted({c.get("family", "") for c in c2.get("configs") or []}),
+            **meta, "configs": page,
+            "hint": "get_c2_raw(case_id) lists the objects of a run; get_c2_raw(case_id, object) gives each "
+                    "extractor's raw output for one object"}
+
+
+def get_c2_raw(case_id: str, object: str | None = None, run_id: str | None = None, offset: int = 0) -> dict[str, Any]:
+    """The RAW records of a C2 run (written once, never overwritten): without ``object``, the
+    objects of the run with each extractor's status; with ``object`` (index, name or part of
+    its path), every extractor's raw output for it."""
+    paths = _paths(case_id)
+    base = paths.results_dir / "c2_runs"
+    runs = sorted(d.name for d in base.iterdir() if d.is_dir()) if base.is_dir() else []
+    if not runs:
+        return {"error": "no C2 run in this case"}
+    rid = run_id or runs[-1]
+    if rid not in runs:
+        return {"error": f"no run {rid!r}", "runs": runs}
+    files = sorted((base / rid).glob("*.json"))
+    if object is None:
+        rows = []
+        for f in files:
+            r = read_json(f) or {}
+            rows.append({"index": f.stem, "object": r.get("object"), "sha256": r.get("sha256"),
+                         "extractors": {x.get("extractor"): x.get("status") for x in r.get("extractors") or []}})
+        page, meta = _page(rows, offset, 100)
+        return {"run_id": rid, "runs": runs, **meta, "objects": page}
+    q = str(object).lower()
+    pick = next((f for f in files if f.stem == q.zfill(4)), None)
+    if pick is None:
+        for f in files:
+            r = read_json(f) or {}
+            if q in str(r.get("object", "")).lower() or q == str(r.get("sha256", ""))[:len(q)]:
+                pick = f
+                break
+    if pick is None:
+        return {"error": f"no object {object!r} in run {rid} (call without object to list them)"}
+    rec = read_json(pick) or {}
+    pg = _text_page(json.dumps(rec, ensure_ascii=False, default=str), offset)
+    return {"run_id": rid, "index": pick.stem, "object": rec.get("object"), "size_chars": pg["size_chars"],
+            "offset": pg["offset"], "next_offset": pg["next_offset"], "json": pg["text"]}
+
+
+def get_yara(case_id: str, rule: str | None = None, object: str | None = None, offset: int = 0) -> dict[str, Any]:
+    """YARA hits of the case, one per rule × object: rule, namespace, tags, meta, every matched
+    string (offset, hex, text), the bytes around it, the rule's source and the analyst's mark."""
+    paths = _paths(case_id)
+    y = read_json(paths.subresult("yara")) or {}
+    if not y:
+        return {"error": "no YARA scan in this case (scan it from the YARA tab)"}
+    marks = _marks(paths)
+    info = y.get("rules_info") or {}
+    hits = []
+    for sc in y.get("scanned") or []:
+        if object and object.lower() not in str(sc.get("file", "")).lower():
+            continue
+        for m in sc.get("matches") or []:
+            if rule and rule.lower() not in str(m.get("rule", "")).lower():
+                continue
+            mk = marks.get(m.get("finding_id") or "") or {}
+            ri = info.get(f"{m.get('namespace', '')}:{m.get('rule')}") or {}
+            h = {"rule": m.get("rule"), "namespace": m.get("namespace"), "object": sc.get("file"),
+                 "tags": m.get("tags"), "meta": m.get("meta"), "mark": mk.get("state", "unreviewed"),
+                 "comment": mk.get("comment"), "rule_file": ri.get("file"),
+                 "strings": m.get("strings") if _FULL.get() else (m.get("strings") or [])[:8]}
+            if _FULL.get():
+                h["rule_source"] = ri.get("source")
+                h["context"] = m.get("context")
+            hits.append(h)
+    page, meta = _page(hits, offset, 40)
+    return {"rule_count": y.get("rule_count"), "files_scanned": y.get("files_scanned"),
+            "match_count": y.get("match_count"), "compiled_utc": y.get("compiled_utc"),
+            "errors": y.get("errors") if _FULL.get() else len(y.get("errors") or []), **meta, "hits": page}
+
+
+def list_yara_rules(contains: str | None = None, offset: int = 0) -> dict[str, Any]:
+    """The YARA rules DocuTraceX has: the analyst's compiled ruleset (rules, source files,
+    compile errors) and the C2 view's family rule sets (CAPE / ditekSHen)."""
+    from . import yara_engine
+    lr = yara_engine.list_rules()
+    rules = lr.get("rules") or []
+    if contains:
+        q = contains.lower()
+        rules = [r for r in rules if q in json.dumps(r, ensure_ascii=False).lower()]
+    page, meta = _page(rules, offset, 200)
+    try:
+        from .c2 import familyrules
+        fam = familyrules.status()
+    except Exception as exc:  # noqa: BLE001
+        fam = {"error": str(exc)}
+    return {"compiled": lr.get("compiled"), "stale": lr.get("stale"), "compiled_utc": lr.get("compiled_utc"),
+            "rule_count": lr.get("rule_count"), "file_count": lr.get("file_count"),
+            "sources": lr.get("sources_config"), "compile_errors": lr.get("errors"),
+            **meta, "rules": page, "c2_family_rules": fam}
+
+
 TOOLS = {
     "list_cases": list_cases, "case_summary": case_summary, "get_findings": get_findings, "get_iocs": get_iocs,
     "get_module": get_module, "get_network_checks": get_network_checks, "search_case": search_case,
     "list_code_objects": list_code_objects, "list_functions": list_functions, "get_function": get_function,
     "get_decrypted": get_decrypted, "get_nested_tree": get_nested_tree, "get_ml": get_ml,
-    "query_registry": query_registry,
+    "query_registry": query_registry, "list_modules": list_modules, "get_c2": get_c2, "get_c2_raw": get_c2_raw,
+    "get_yara": get_yara, "list_yara_rules": list_yara_rules,
 }
 
 
@@ -599,6 +849,28 @@ SCHEMAS = [
     {"type": "function", "function": {"name": "get_ml",
                                       "description": "Machine Learning: score and verdict per object, unusual-for-the-model flag, top features, similar objects in other cases and the highest score of the chain.",
                                       "parameters": {"type": "object", "properties": _CASE, "required": ["case_id"]}}},
+    {"type": "function", "function": {"name": "list_modules",
+                                      "description": "Every result file of the case (module and size), the C2 runs and the number of code results.",
+                                      "parameters": {"type": "object", "properties": _CASE, "required": ["case_id"]}}},
+    {"type": "function", "function": {"name": "get_c2",
+                                      "description": "C2 / implant configurations (family, C2, normalized fields, summary, YARA rule names, provenance, mark), how each extractor did, packed objects, family-YARA rule sets.",
+                                      "parameters": {"type": "object", "properties": {
+                                          **_CASE, "family": {"type": "string"}, "offset": {"type": "integer"}},
+                                          "required": ["case_id"]}}},
+    {"type": "function", "function": {"name": "get_c2_raw",
+                                      "description": "RAW records of a C2 run: without object, the objects and each extractor's status; with object (index or name), every extractor's raw output.",
+                                      "parameters": {"type": "object", "properties": {
+                                          **_CASE, "object": {"type": "string"}, "run_id": {"type": "string"},
+                                          "offset": {"type": "integer"}}, "required": ["case_id"]}}},
+    {"type": "function", "function": {"name": "get_yara",
+                                      "description": "YARA hits of the case (rule × object): meta, tags, matched strings, the analyst's mark.",
+                                      "parameters": {"type": "object", "properties": {
+                                          **_CASE, "rule": {"type": "string"}, "object": {"type": "string"},
+                                          "offset": {"type": "integer"}}, "required": ["case_id"]}}},
+    {"type": "function", "function": {"name": "list_yara_rules",
+                                      "description": "The compiled YARA ruleset (rules, sources, compile errors) and the C2 family rule sets.",
+                                      "parameters": {"type": "object", "properties": {
+                                          "contains": {"type": "string"}, "offset": {"type": "integer"}}}}},
     {"type": "function", "function": {"name": "query_registry",
                                       "description": "Registry hives / .reg files of the case, loaded in a database. No other argument: sources and schema. "
                                                      "sql: one read-only SELECT over sources(id, label, kind, hive_type, mount…), keys(src, path, parent, name, last_write…), "

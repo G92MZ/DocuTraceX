@@ -120,6 +120,15 @@ once and the old one stops — no restart — so update every client with it.
     leaves.
 
 All of them use the same **read-only** tools: case summary, findings with your marks, IOCs, any
-analysis result, functions and their pseudocode, decrypted data, the nested tree, ML results and
-network checks. None can modify a case or reach the network; the endpoint is only called when
-you ask, and its key stays in your browser.
+analysis result, functions and their pseudocode, decrypted data, the nested tree, ML results,
+network checks, the registry, **C2** (`get_c2`: every configuration with all its fields, YARA rule
+names, provenance and marks, how each extractor did; `get_c2_raw`: each extractor's raw output per
+object) and **YARA** (`get_yara`: hits with matched strings, the bytes around them, the rule source
+and your mark; `list_yara_rules`: the ruleset and the C2 family rule sets). `list_modules` lists
+every result file of a case. None can modify a case or reach the network; the endpoint is only
+called when you ask, and its key stays in your browser.
+
+**Over MCP nothing is cut.** Every answer comes whole — no text clipped, no list capped — in pages of
+about 40,000 characters (MCP clients refuse larger tool results): when `next_offset` is not null the
+client calls the same tool again with `offset=next_offset`. `get_module` returns the raw JSON of any
+module as text slices to join. The AI chat keeps its short answers (they fill the model's context).
