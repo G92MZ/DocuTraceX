@@ -274,3 +274,39 @@ def test_cached_capa_runs_inline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         pe_mod._bg_root.reset(tok)
     item = res["items"][0] if "items" in res else res
     assert item["capa"]["status"] == "ok"
+
+
+def test_background_capa_recontrasts_code_capabilities(tmp_path: Path) -> None:
+    """capa ends after the code analysis: the capa column / capa_only are filled and the
+    code finding capa now covers is dropped (no duplicate), with no Rizin re-run."""
+    import json
+
+    from docutracex.codeanalysis import case as code_case
+    from docutracex.storage import CasePaths, read_json, write_subresult
+    root = tmp_path / "cases" / "c1"
+    (root / "results").mkdir(parents=True)
+    paths = CasePaths("c1", cases_dir=root.parent)
+    sha = "ab" * 32
+    fn = {"addr": 4096, "name": "fcn.inject", "confidence": "high",
+          "evidence": [{"kind": "call", "detail": "WriteProcessMemory"}]}
+    mine = [{"id": "inject", "name": "Process injection", "attack": "T1055", "severity": "high",
+             "confidence": "high", "functions": [fn]},
+            {"id": "persist", "name": "Run key", "attack": "T1547.001", "severity": "medium",
+             "confidence": "high", "functions": [fn]}]
+    from docutracex.codeanalysis import capabilities as caps
+    before = caps.contrast(mine, {"status": "running", "background": True})
+    assert before["capa_status"] == "running" and not before["capa_available"]
+    full = {"capabilities": before}
+    f = code_case.result_file(root, sha, "native")
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps(full), encoding="utf-8")
+    write_subresult(paths, "code", {"module": "code", "objects": [{"label": "visor.exe", "sha256": sha}],
+                                    "findings": caps.findings(before, "visor.exe")})
+    assert len(read_json(paths.subresult("code"))["findings"]) == 2
+    capa = {"status": "ok", "capabilities": [CAP, {"name": "query environment variable", "attack": [{"id": "T1082"}]}]}
+    assert code_case.recontrast_capa(root, sha, capa) == 1
+    got = code_case.load(root, sha, "native")["capabilities"]
+    assert got["capa_available"] and got["capabilities"][0]["capa"] == [CAP["name"]]
+    assert [x["attack"] for x in got["capa_only"]] == ["T1082"]
+    rules = [x["rule"] for x in read_json(paths.subresult("code"))["findings"]]
+    assert rules == ["code:cap:persist"]                    # T1055 is capa's finding now

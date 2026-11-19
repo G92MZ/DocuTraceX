@@ -151,12 +151,12 @@ def start_capa(root: Path, path: Path, name: str, sha256: str, loc: str) -> dict
         finally:
             done[0] = True
         if rec.get("status") == "cancelled" or cancel.is_set():
-            _apply_capa(root, {"status": "cancelled", "detail": "capa cancelled by the analyst"}, task, loc)
+            _apply_capa(root, {"status": "cancelled", "detail": "capa cancelled by the analyst"}, task, loc, sha256)
             return "cancelled"
         tasks.manager.set_step_detail(task, "capa done · waiting for the case's other tasks to write its results")
         if not _wait_for_placeholder(root, task.id, cancel, key="capa") or not tasks.manager.hold_case(task, cancel):
             return "cancelled before writing its results"
-        n = _apply_capa(root, rec, task, loc)
+        n = _apply_capa(root, rec, task, loc, sha256)
         return f"{n} capabilit(ies)" if rec.get("status") == "ok" else str(rec.get("detail") or rec.get("status"))
 
     t = tasks.manager.start_background("capa", root.name, name, "capa (background)", run,
@@ -166,9 +166,10 @@ def start_capa(root: Path, path: Path, name: str, sha256: str, loc: str) -> dict
                       "techniques are added to the case when it ends"}
 
 
-def _apply_capa(root: Path, rec: dict[str, Any], task: Any, loc: str) -> int:
+def _apply_capa(root: Path, rec: dict[str, Any], task: Any, loc: str, sha256: str = "") -> int:
     """Write a background capa record into the case: Binary tab (msi item) and its
-    capability findings, then the case's findings recomputed."""
+    capability findings; the code analysis' capabilities contrasted with it again (capa
+    column, capa only, no duplicate findings); then the case's findings recomputed."""
     from .analyze import _recompute_derived
     from .parsers import pe as pe_mod
     from .storage import CasePaths, read_json, write_subresult
@@ -186,6 +187,12 @@ def _apply_capa(root: Path, rec: dict[str, Any], task: Any, loc: str) -> int:
             seen = {(f.get("rule"), f.get("detail")) for f in lst}
             lst.extend(f for f in new if (f.get("rule"), f.get("detail")) not in seen)
     write_subresult(paths, "msi", res)
+    if rec.get("status") == "ok" and sha256:
+        try:
+            from .codeanalysis import case as code_case
+            code_case.recontrast_capa(root, sha256, rec)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("background capa: code capabilities not contrasted for %s: %s", sha256[:12], exc)
     try:
         _recompute_derived(paths)
     except Exception as exc:  # noqa: BLE001

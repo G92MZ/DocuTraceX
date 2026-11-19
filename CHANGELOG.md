@@ -9,7 +9,7 @@ the entries between the version you had and the new one.
 
 - On a large binary capa no longer holds the case: it runs as a background task (Tasks, with its time and Cancel) next to FLOSS.
 - When it ends its capabilities and ATT&CK techniques are added to the Binary tab and to Findings; a cached result still runs inline.
-- The code analysis' capa corroboration only sees it after a re-analysis.
+- When it ends, Code → Capabilities is compared with capa again (capa column, *Only in capa*), and code findings that capa already covers are removed, so the same technique doesn't show up twice.
 
 ## 1.238.3 — 2026-11-19 (#310)
 

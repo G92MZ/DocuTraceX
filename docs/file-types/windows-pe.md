@@ -31,8 +31,8 @@ analysed.
       (`DOCUTRACEX_FLOSS_BACKGROUND_MB`, 0 = off): the case does not wait for it. **capa** of
       that binary goes to the background too (`DOCUTRACEX_CAPA_BACKGROUND=0` keeps it inline;
       a cached result runs inline): its capabilities and ATT&CK techniques reach the Binary tab
-      and Findings when it ends — the code analysis' capa corroboration does not wait for it,
-      so a re-analysis (capa then cached) adds it. Each job is listed in Tasks with its time and Cancel; other tasks of the case
+      and Findings when it ends, and the code analysis' capabilities are contrasted with it
+      again then (capa column, *Only in capa*; code findings capa covers are dropped). Each job is listed in Tasks with its time and Cancel; other tasks of the case
       (C2, YARA, ML) are not blocked by them. When FLOSS ends its strings are added to the Binary
       tab, to Code → Strings with their function, and the case's IOCs and findings are
       recomputed — marks stay. A file whose FLOSS result is cached runs inline (instant).

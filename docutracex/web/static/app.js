@@ -7123,7 +7123,8 @@ function cxCaps(d) {
   if (c.error) return `<p class="bad-text">Capability analysis failed: ${e(c.error)}</p>`;
   const caps = c.capabilities || [];
   const capaNote = c.capa_available ? "contrasted with capa (same ATT&CK technique)"
-    : `capa ${c.capa_status === "skipped" ? "was skipped on this object" : "did not run on this object"}: no contrast`;
+    : c.capa_status === "running" ? "capa is still running in the background: the contrast is added when it ends — reopen the case then"
+    : `capa ${c.capa_status === "skipped" ? "was skipped on this object" : c.capa_status === "cancelled" ? "was cancelled" : "did not run on this object"}: no contrast`;
   const rows = caps.map((x, i) => `<details class="disclose cx-cap"${i < 3 ? " open" : ""}>
       <summary><span class="badge badge-${CX_SEV[x.severity] || "muted"}">${e(x.severity)}</span>
         <b>${e(x.name)}</b> <span class="mono hint-line">${e(x.attack)}</span>
