@@ -62,6 +62,16 @@ async def remove_yara_source(name: str) -> dict:
     return {"removed": yara_engine.remove_source(name)}
 
 
+@router.post("/reset")
+async def reset_yara(payload: dict = Body(default={})) -> dict:
+    """Clear the compiled ruleset (``{"scope": "compiled"}``) or the whole rule store
+    (``{"scope": "all"}``: uploads, registered paths, enabled marks; files on disk stay)."""
+    scope = str(payload.get("scope") or "compiled")
+    if scope not in ("compiled", "all"):
+        raise HTTPException(status_code=400, detail="scope must be 'compiled' or 'all'")
+    return yara_engine.reset(scope)
+
+
 @router.post("/enabled")
 async def set_yara_enabled(payload: dict = Body(...)) -> dict:
     """Enable/disable rules for findings (only enabled rules reach the report)."""

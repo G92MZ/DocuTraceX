@@ -102,6 +102,16 @@ EXTRACTORS: dict[str, dict[str, Any]] = {
         "fields": ["SMTP / FTP / Telegram / Discord webhook exfiltration", "accounts"], "output": "exfiltration channel",
         "limits": "builds that encrypt their strings need the .NET string decryption or a memory dump",
     },
+    "family_yara": {
+        "name": "Family YARA (CAPE / ditekSHen)", "version": "1.0", "families": ["any family the rules name"],
+        "formats": ["any object (unpacked payloads match best)"],
+        "engines": ["CAPE YARA rules (kevoreilly/CAPEv2, GPL-3.0)", "ditekSHen malware.yar (BSD-2-Clause)"],
+        "dependencies": ["yara-python", "the rule sets (downloaded, refreshed weekly)"],
+        "fields": ["family", "rules that matched"],
+        "output": "identification (indicators), or the corroboration of a configuration an extractor recovered",
+        "limits": "names the family only; a packed or encrypted payload matches little — the rules are written for "
+                  "unpacked code",
+    },
 }
 
 
@@ -122,6 +132,8 @@ REQUIRES: dict[str, list[tuple[str, str, bool, str]]] = {
     "stealers": [("python", "pefile", False, "PE resources"), ("python", "cryptography", False, "3DES-encrypted strings")],
     "modern": [],
     "go": [],
+    "family_yara": [("python", "yara", True, "YARA matching"),
+                    ("feed", "family YARA rules", False, "CAPE / ditekSHen rule sets (C2 view: Refresh now)")],
     "rmm": [("feed", "LOLRMM catalogue", False, "current product list (Settings → C2: Refresh; built-in list without it)")],
 }
 
@@ -137,6 +149,12 @@ def _available(kind: str, name: str) -> bool:
         try:
             from .. import lolrmm
             return lolrmm.products() is not None
+        except Exception:  # noqa: BLE001
+            return False
+    if kind == "feed" and name == "family YARA rules":
+        try:
+            from . import familyrules
+            return familyrules.status()["downloaded"]
         except Exception:  # noqa: BLE001
             return False
     if kind == "file" and name == "1768.py":

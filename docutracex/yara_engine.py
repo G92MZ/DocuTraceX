@@ -151,6 +151,31 @@ def remove_source(name: str) -> bool:
 
 
 # gmzpt
+def reset(scope: str = "compiled") -> dict[str, Any]:
+    """Clear the rule store. ``compiled``: the compiled ruleset and its report (Recompile
+    builds them again from the same sources). ``all``: also the uploaded rule files, the
+    registered folders / files (only the registration: nothing on disk is touched) and
+    the enabled-rule marks — YARA starts empty."""
+    removed = []
+    for p in (_compiled_path(), _report_path()):
+        if p.is_file():
+            p.unlink()
+            removed.append(p.name)
+    if scope == "all":
+        import shutil
+        if rules_dir().is_dir():
+            n = sum(1 for _ in rules_dir().iterdir())
+            shutil.rmtree(rules_dir(), ignore_errors=True)
+            removed.append(f"{n} uploaded file(s)")
+        cfg = _read_config()
+        if cfg.get("external_paths") or cfg.get("enabled"):
+            removed.append(f"{len(cfg.get('external_paths') or [])} registered path(s), "
+                           f"{len(cfg.get('enabled') or [])} enabled rule mark(s)")
+        _write_config({"enabled": [], "external_paths": []})
+    log.info("YARA rule store reset (%s): %s", scope, ", ".join(removed) or "nothing to clear")
+    return {"scope": scope, "removed": removed}
+
+
 def _iter_rule_files(external_paths: list[str]) -> list[Path]:
     files: list[Path] = []
     if rules_dir().is_dir():

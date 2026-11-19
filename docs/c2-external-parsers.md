@@ -72,3 +72,13 @@ The project rule: only permissive code goes into the repo. GPL tools are downloa
 - **Licence:** **GPL-3.0** (data) — so it is **downloaded at run time, never shipped** with DocuTraceX.
 - **What it is:** the community catalogue of DLLs abused for side-loading and search-order hijacking (~600, Windows and vendor ones): each DLL's expected folders and the legitimate programs known to load it from their own folder.
 - **Integration:** `docutracex/hijacklibs.py` downloads `hijacklibs.json` (hijacklibs.net; falling back to the repository's YAML files when PyYAML is available) into `tools/hijacklibs/` every 7 days in the background; the C2 view has *Refresh now*. Only the catalogue is downloaded. The archive / disk image / MSI check (`docutracex/sideload.py`, *dll_sideloading* / *msi_dll_sideloading*) uses its names, expected locations and known hosts; without the file, a built-in list of ~100 Windows names.
+
+### CAPE YARA rules (kevoreilly/CAPEv2) and ditekSHen (ditekshen/detection) — integrated as feeds
+
+- **Licences:** CAPE **GPL-3.0**, ditekSHen **BSD-2-Clause** — both **downloaded at run time, never shipped** (no rule of theirs is in the repo, not even in tests).
+- **What they are:** the rules CAPE uses to pick a configuration extractor (one per family, written against the unpacked payload: Formbook, GuLoader, Lumma, Latrodectus, BumbleBee, Pure…) and ditekSHen's ~500 `MALWARE_*` family rules (commodity RATs and stealers).
+- **Integration:** `docutracex/c2/familyrules.py` lists `data/yara/CAPE` through the GitHub API (`GITHUB_TOKEN` lifts the rate limit) and fetches the files and `yara/malware.yar` from raw.githubusercontent.com into `tools/c2rules/`, weekly in the background; the C2 view has *Family YARA rules · Refresh now*. On the next C2 run each file is compiled on its own (a file that needs a module this YARA lacks is skipped and reported), and the extractor *family_yara* runs them on every object:
+  - a family no extractor reads → an *indicators* entry, **high** when CAPE (or both sets) named it, medium with ditekSHen alone;
+  - a family an extractor did read → the configuration carries the rule names (corroboration), no second entry.
+- Rule names map to DocuTraceX's family names (`MALWARE_Win_AgentTeslaV2` → AgentTesla, `CobaltStrikeBeacon` → Cobalt Strike, `PureLogsStealer` → Pure family); other families keep the rule's own name. A single built-in rule (DocuTraceX's, Apache-2.0) matches only the inert sample's marker, so the feature works offline.
+

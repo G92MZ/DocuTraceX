@@ -13,6 +13,8 @@ the implants it recognises, without running anything:
 * RedLine / META, Snake Keylogger, Raccoon v2, Warzone / AveMaria, DarkGate
 * Go implants (Sliver, Merlin, Mythic Go agents, generic): framework and C2
   endpoints from the Go analysis, when it ran (``golang_c2``)
+* any family the CAPE / ditekSHen YARA rules name (``familyrules``: downloaded,
+  refreshed weekly): identification, or the corroboration of a configuration
 
 Each configuration becomes a high-severity finding with the C2 endpoints in
 its evidence, and its values feed the common IOC extractor.
@@ -218,6 +220,20 @@ def _scan_detailed(path: Path, data: bytes) -> tuple[list[dict[str, Any]], list[
                 cfg["decrypted_statically"] = hit[:20]
                 cfg["method"] = (f"{cfg.get('method', '')}".replace("plain .NET strings", ".NET strings")
                                  + " · settings decrypted statically by the .NET analysis")
+    # the family rules (CAPE / ditekSHen): a family an extractor already read is corroborated,
+    # traces of our own get the rule names; otherwise the YARA hit is the identification
+    from . import familyrules
+    for hit in run("family_yara", lambda: familyrules.extract(data)):
+        same = [c for c in out if c["family"] == hit["family"]]
+        if same:
+            for c in same:
+                c["yara"] = hit["yara"]
+                c["summary"] = {**(c.get("summary") or {}), "YARA": hit["indicators"]}
+                if c.get("kind") == "indicators":
+                    c["indicators"] = list(dict.fromkeys((c.get("indicators") or []) + hit["indicators"]))
+                    c["confidence"] = "medium"
+        else:
+            out.append(hit)
     # A Cobalt Strike stager also matches the generic block_api shape: keep CS.
     if any(r["family"] == "Cobalt Strike" and r.get("kind") != "indicators" for r in out):
         out = [r for r in out if not r["family"].startswith("Metasploit")]
@@ -233,6 +249,9 @@ def _finding(cfg: dict[str, Any]) -> dict[str, Any]:
     if cfg.get("provenance"):                   # evidence, not detail: the finding id stays the same
         evidence = (f"from: {cfg['provenance']}; " + evidence)[:1800]
     sev = "high" if c2 and cfg.get("confidence") != "low" else "medium"
+    if cfg.get("method") == "family YARA":          # identified by the family rules, no configuration
+        detail = f"{cfg['family']} identified by YARA ({s.get('Sources', '')})"
+        sev = "high" if cfg.get("confidence") == "medium" else "medium"
     if cfg["family"].startswith("RMM: "):         # legitimate software: who deployed it decides
         sev = "medium" if c2 else "low"
         matched = [str(m) for m in s.get("Matched") or []]
@@ -337,6 +356,12 @@ def analyze(original: Path, extracted_dir: Path, only: set[str] | None = None) -
         except OSError:
             continue
         todo.append((label, path, stored))
+    try:                                   # family YARA: compiled once here, loaded by each worker
+        from . import familyrules
+        result["family_yara"] = {**familyrules.ensure_compiled(), **familyrules.status()}
+        result["family_yara"].pop("snapshot", None)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("c2: family YARA rules not compiled: %s", exc)
     prog = ObjectProgress(len(todo))
     die_by_name = _die_detects(case_root)
     for idx, ((label, path, stored), (found, runs)) in enumerate(zip(todo, _scan_all(todo, prog))):

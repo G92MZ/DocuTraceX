@@ -81,6 +81,13 @@ recursively, read in place — a clone of a rule repository, your own rules) and
 (`.yar`, `.zip`, `.tar.gz`). The card lists every source with a button to remove it, then press
 **Recompile**: nothing compiles on its own. It shows the compiled rules (with a filter) and any
 compile error per file. Scans run from the [YARA](engines/yara.md) tab — on a case, or on loose files.
+**Clear…** starts over: *Compiled rules* drops the compiled ruleset (Recompile builds it again from the
+same sources); *Everything* also removes the uploads, the registered folders / files (only from
+DocuTraceX — nothing on disk is deleted) and the enabled-rule marks. Scan results already in cases stay.
+
+The **C2** analysis has its own family rules, separate from these: the CAPE and ditekSHen sets,
+downloaded and refreshed weekly (C2 view → *Family YARA rules* → *Refresh now*); see
+[C2 external parsers](c2-external-parsers.md).
 
 ## Email reputation lists and Microsoft 365
 

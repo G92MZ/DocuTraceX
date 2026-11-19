@@ -5029,6 +5029,25 @@ function setupYara() {
       loadYaraRules(); loadYara();
     } catch (err) { status.textContent = "Compile failed."; prog.style.display = "none"; }
   });
+  const resetBtn = document.getElementById("yara-reset");
+  if (resetBtn) resetBtn.addEventListener("click", async () => {
+    const status = document.getElementById("yara-add-status");
+    const v = await showModal("Clear YARA rules",
+      `<p><b>Compiled rules</b>: drops the compiled ruleset and its report; your folders and uploads stay, press Recompile to build it again.</p>
+       <p><b>Everything</b>: also removes the uploaded rule files, the registered folders / files (only from DocuTraceX — nothing on disk is deleted) and the enabled-rule marks. YARA starts empty.</p>
+       <p>Results of scans already run stay in their cases.</p>`,
+      [{ label: "Cancel", value: null }, { label: "Compiled rules", value: "compiled" },
+       { label: "Everything", value: "all", primary: true }]);
+    if (!v) return;
+    try {
+      const r = await fetch("/api/yara/reset", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope: v }) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.detail || r.statusText);
+      status.textContent = (j.removed || []).length ? `Cleared: ${j.removed.join(", ")}.` : "Nothing to clear.";
+    } catch (err) { status.textContent = `Not cleared: ${err.message || err}`; }
+    loadYaraRules(); loadYara();
+  });
   const scanBtn = document.getElementById("yara-scan");
   if (scanBtn) scanBtn.addEventListener("click", scanCaseWithYara);
   const pathBtn = document.getElementById("yara-path-btn");
@@ -6061,6 +6080,36 @@ async function loadLolrmm() {
       const j = await r.json();
       if (!r.ok) throw new Error(j.detail || r.statusText);
       renderLolrmm(j); msg.className = "status ok-text"; msg.textContent = "Updated; applies to new searches.";
+    } catch (err) { msg.className = "status bad-text"; msg.textContent = String(err.message || err); }
+    btn.disabled = false;
+  });
+}
+
+function renderC2rules(t) {
+  const el = document.getElementById("c2rules-line");
+  if (!el) return;
+  const srcs = (t && t.sources) || [];
+  const parts = srcs.map((x) => `<a href="${escapeHtml(x.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(x.name)}</a> ` +
+    (x.files ? `${x.files} file(s), ${escapeHtml(x.updated || "")}` : "not downloaded") +
+    (x.error ? ` <span class="bad-text" title="${escapeHtml(x.error)}">(last update failed)</span>` : ""));
+  el.innerHTML = (parts.join(" · ") || "not downloaded") +
+    (t && t.rules != null ? ` — ${t.rules} rules compiled${t.compile_errors ? `, ${t.compile_errors} file(s) skipped` : ""}` : "") +
+    " — they name the family of each object; refreshed weekly in the background.";
+}
+
+async function loadC2rules() {
+  try { renderC2rules(await (await fetch("/api/settings/c2rules")).json()); } catch (_) { /* optional */ }
+  const btn = document.getElementById("c2rules-refresh");
+  if (!btn || btn.dataset.wired) return;
+  btn.dataset.wired = "1";
+  btn.addEventListener("click", async () => {
+    const msg = document.getElementById("c2rules-msg");
+    btn.disabled = true; msg.className = "status"; msg.textContent = "Downloading…";
+    try {
+      const r = await fetch("/api/settings/c2rules/refresh", { method: "POST" });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.detail || r.statusText);
+      renderC2rules(j); msg.className = "status ok-text"; msg.textContent = "Updated; compiled on the next C2 run.";
     } catch (err) { msg.className = "status bad-text"; msg.textContent = String(err.message || err); }
     btn.disabled = false;
   });
@@ -8086,6 +8135,7 @@ async function loadC2View(caseId) {
   loadC2Shared();
   loadLolrmm();
   loadHijacklibs();
+  loadC2rules();
   loadC2Families();
   const id = await fillCaseSelect(sel, caseId || _c2Case || _openCaseId);
   _c2Case = id;
