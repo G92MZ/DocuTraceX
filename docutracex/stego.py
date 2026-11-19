@@ -237,6 +237,8 @@ def _decodings(s: bytes, keys: list[tuple[str, bytes]]) -> Iterable[tuple[str, b
             if 0x20 <= n <= len(s) - 4:
                 bodies.append((f"{lab} {n}, ", s[4:4 + n]))
     for label, body in bodies:
+        if len(body) < 8:                        # too short to hold a file (and to index a magic in)
+            continue
         if body[:1] == b"\x78" or body[:2] == b"\x1f\x8b":      # compressed first: the file inside is the payload
             for wbits, zl in ((47, "zlib/gzip"), (-15, "deflate")):
                 try:
@@ -259,7 +261,7 @@ def _decodings(s: bytes, keys: list[tuple[str, bytes]]) -> Iterable[tuple[str, b
         holes = b"\x00" * 64 in body.rstrip(b"\x00")
         for mg in _MAGICS:                          # single-byte XOR that makes a magic appear
             k0 = body[0] ^ mg[0]
-            if k0 and not holes and all(body[i] ^ k0 == mg[i] for i in range(1, len(mg))):
+            if k0 and not holes and len(body) >= len(mg) and all(body[i] ^ k0 == mg[i] for i in range(1, len(mg))):
                 yield f"{label}XOR 0x{k0:02x}", _xor(body, bytes([k0]))
         for kl, kb in keys:
             if len(kb) > 1 and not holes and _plausible_head(_xor(body[:8], kb)):

@@ -171,3 +171,11 @@ def test_stage_chain_loader_to_stealer(tmp_path: Path, monkeypatch: pytest.Monke
     c2 = read_json(paths.subresult("c2"))
     if c2 is not None:                                   # C2 runs when enabled (tests: auto)
         assert any("smtp.billing-portal.example" in (c.get("c2") or []) for c in c2["configs"])
+
+
+def test_short_streams_do_not_break_the_sweep() -> None:
+    """A trailing stream shorter than a file magic (an installer part's last bytes) is skipped,
+    not an IndexError that made the whole hidden-payload sweep give up."""
+    from docutracex import stego
+    for s in (b"", b"\x01", b"MZ", b"\x05\x00\x00\x00ab", b"\x13\x37\x00"):
+        assert list(stego._decodings(s, [("k", b"key")])) == []
