@@ -954,9 +954,17 @@ def start_full_floss(root: Path, path: Path, sha256: str, mode: str) -> dict[str
                 job["waiting"], job["detail"] = False, ""
                 job["started"] = time.time()             # its time runs from here
                 save()
+                done = _threading.Event()
+
+                def beat() -> None:                  # FLOSS's phase and n / N, for the Code view
+                    while not done.wait(5):
+                        job["progress"] = _pe.live_progress(path, "floss")
+                _threading.Thread(target=beat, name="floss-full-progress", daemon=True).start()
                 try:
                     rec = _pe.full_floss(path, cancel=cancel)
                 finally:
+                    done.set()
+                    job["progress"] = ""
                     heavyjobs.release()
             if rec.get("status") == "cancelled":
                 job["state"], job["error"] = "cancelled", "cancelled by the analyst"

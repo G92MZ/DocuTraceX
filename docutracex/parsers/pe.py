@@ -175,10 +175,13 @@ class _Clock:
                 st = live_state(self.path) if self.path is not None else {}
                 done = [f"{n} done in {fmt(st[n] - st.get('start', st[n]))}" for n in ("FLOSS", "capa") if n in st]
                 run = [n for n in ("FLOSS", "capa") if n not in st]
+                prog = {n: live_progress(self.path, n.lower()) for n in run} if self.path is not None else {}
+                what = "; ".join(f"{n}: {p}" for n, p in prog.items() if p)
+                what = f" [{what}]" if what else ""
                 if done and run:
-                    self.say(f"{' + '.join(run)} running · {fmt(el)} ({'; '.join(done)})")
+                    self.say(f"{' + '.join(run)} running · {fmt(el)}{what} ({'; '.join(done)})")
                 else:
-                    self.say(f"FLOSS + capa running · {fmt(el)}")
+                    self.say(f"FLOSS + capa running · {fmt(el)}{what}")
         self.say("FLOSS + capa…")
         th = _threading.Thread(target=beat, name="pe-tools-heartbeat", daemon=True)
         th.start()
@@ -669,6 +672,68 @@ def _is_pyinstaller(path: Path) -> bool:
         return False
 
 
+# FLOSS / capa run by vivtools.py report their phase and n / N functions in a progress file,
+# and FLOSS keeps its strings so far in a partial file: per binary + tool while the run lasts.
+_live_runs: dict[tuple[str, str], dict[str, Path]] = {}
+_live_lock = __import__("threading").Lock()
+
+
+def _live_files(path: Path, name: str) -> dict[str, Path]:
+    import uuid
+
+    from ..config import settings
+    d = Path(settings.cases_dir) / ".tools_cache" / "live"
+    d.mkdir(parents=True, exist_ok=True)
+    tag = uuid.uuid4().hex[:12]
+    files = {"progress": d / f"{tag}.{name}.progress.json", "partial": d / f"{tag}.{name}.partial.json"}
+    with _live_lock:
+        _live_runs[(str(path), name)] = files
+    return files
+
+
+def _live_done(path: Path, name: str) -> None:
+    with _live_lock:
+        files = _live_runs.pop((str(path), name), None)
+    if files:
+        files["progress"].unlink(missing_ok=True)
+        if name != "floss":
+            files["partial"].unlink(missing_ok=True)
+        else:                                       # kept until _take_partial reads it (timeout)
+            with _live_lock:
+                _partials[str(path)] = files["partial"]
+
+
+_partials: dict[str, Path] = {}
+
+
+def _take_partial(path: Path) -> str:
+    with _live_lock:
+        f = _partials.pop(str(path), None)
+    if f is None:
+        return ""
+    try:
+        return f.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    finally:
+        f.unlink(missing_ok=True)
+
+
+def live_progress(path: Path, name: str) -> str:
+    """"stack strings 1200/4800" while ``name`` (floss / capa) runs on ``path``; "" otherwise."""
+    import json
+    with _live_lock:
+        files = _live_runs.get((str(path), name))
+    if not files:
+        return ""
+    try:
+        p = json.loads(files["progress"].read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    total = int(p.get("total") or 0)
+    return f"{p.get('phase', '')}" + (f" {int(p.get('done') or 0)}/{total}" if total else "")
+
+
 def _run_tool(name: str, exe: Path | None, args: list[str], path: Path,
               timeout: int | None, cancel: Any = None) -> tuple[dict[str, Any], str]:
     """Run a standalone tool binary on ``path``. Returns (status record, stdout).
@@ -694,10 +759,23 @@ def _run_tool(name: str, exe: Path | None, args: list[str], path: Path,
         own = ["--cache", str(Path(settings.cases_dir) / ".tools_cache" / "viv")]
         if name == "capa" and settings.capa_rules_dir():
             own += ["--rules", str(settings.capa_rules_dir())]
+        live = _live_files(path, name)
+        own += ["--progress", str(live["progress"])]
+        if name == "floss":
+            own += ["--partial", str(live["partial"])]
         cmd = [str(py), "-I", str(exe), name, *own, "--", *[a for a in args if a != "--"], str(path)]
         if name == "floss":       # FLOSS's own "--" (its options take several values) stays last
             cmd = [*cmd[:-1], "--", str(path)]
-    r = run_bounded(cmd, timeout, cancel=cancel) if cancel is not None else run_bounded(cmd, timeout)
+    try:
+        r = run_bounded(cmd, timeout, cancel=cancel) if cancel is not None else run_bounded(cmd, timeout)
+    finally:
+        _live_done(path, name)
+    part = _take_partial(path) if exe.suffix == ".py" and name == "floss" else ""
+    if r.get("timed_out") and part:                # what FLOSS had found when its time ran out
+        if part:
+            log.warning("%s timed out after %ss on %s: keeping its partial results", name, timeout, path.name)
+            return ({"status": "ok", "partial": True, "duration_s": r.get("duration_s", timeout),
+                     "detail": f"{name} timed out after {timeout}s"}, part)
     if r.get("cancelled"):
         return {"status": "cancelled", "detail": f"{name} cancelled by the analyst",
                 "duration_s": r.get("duration_s")}, ""
@@ -823,7 +901,7 @@ def _cached(path: Path, tool: str, exe: Path | None, extra: list[str], run) -> d
     if got is not None:
         return got
     rec = run()
-    if f is not None and rec.get("status") == "ok":
+    if f is not None and rec.get("status") == "ok" and not rec.get("partial"):   # partial: run again next time
         try:
             f.parent.mkdir(parents=True, exist_ok=True)
             tmp = f.with_suffix(".tmp")
@@ -1173,6 +1251,10 @@ def _run_floss(path: Path, extra: list[str] | None = None, timeout: int | None =
     if retry_note:
         rec["detail"] += f" · {retry_note}"
         rec["language_strings"] = "disabled (crashed)"
+    if rec.get("partial"):
+        phases = [k for k in ("static", "stack", "tight", "decoded") if counts.get(k)]
+        rec["detail"] = (f"PARTIAL — FLOSS timed out after {rec.get('duration_s') or '?'}s; kept what it had "
+                         f"found ({', '.join(phases) or 'nothing'}): " + rec["detail"])
     rec["strings"] = strings
     return rec
 

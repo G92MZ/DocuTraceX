@@ -83,3 +83,16 @@ def test_waits_for_free_memory(monkeypatch: pytest.MonkeyPatch) -> None:
     th.join(15)
     assert got == [True]
     heavyjobs.release()
+
+
+def test_progress_shown_in_tasks(one_slot: Path) -> None:
+    gate = threading.Event()
+    t = tasks.manager.start_background(
+        "floss", "c1", "p.exe", "floss (background)",
+        lambda task, c: heavyjobs.run(task, c, "FLOSS", lambda: (gate.wait(20), {"status": "ok"})[1],
+                                      progress=lambda: "stack strings 1200/4800")["status"],
+        step="FLOSS · p", cases_dir=one_slot)
+    _wait(lambda: "stack strings 1200/4800" in (tasks.manager.get(t.id)["steps"][0].get("detail") or ""), 15)
+    assert tasks.manager.get(t.id)["steps"][0]["detail"].startswith("FLOSS running · ")
+    gate.set()
+    _wait(lambda: tasks.manager.get(t.id)["state"] == tasks.COMPLETED)

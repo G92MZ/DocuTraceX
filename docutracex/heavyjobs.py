@@ -73,7 +73,8 @@ def running() -> int:
     return _running
 
 
-def run(task: Any, cancel: threading.Event, label: str, fn: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+def run(task: Any, cancel: threading.Event, label: str, fn: Callable[[], dict[str, Any]],
+        progress: Callable[[], str] | None = None) -> dict[str, Any]:
     """``fn()`` (a FLOSS / capa run) for a background task: queued until a slot is free,
     then running with a heartbeat in Tasks. ``{"status": "cancelled"}`` when cancelled
     while waiting."""
@@ -91,7 +92,11 @@ def run(task: Any, cancel: threading.Event, label: str, fn: Callable[[], dict[st
     def beat() -> None:
         while not done.wait(5) and not cancel.is_set():
             s = int(time.monotonic() - t0)
-            m.set_step_detail(task, f"{label} running · {s // 60}m {s % 60:02d}s")
+            try:
+                p = progress() if progress else ""
+            except Exception:  # noqa: BLE001
+                p = ""
+            m.set_step_detail(task, f"{label} running · {s // 60}m {s % 60:02d}s" + (f" · {p}" if p else ""))
     threading.Thread(target=beat, name="heavy-heartbeat", daemon=True).start()
     try:
         return fn()
