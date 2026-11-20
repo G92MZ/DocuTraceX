@@ -285,4 +285,4 @@ def test_rust_sample_split_by_the_python_stand_in(tmp_path: Path) -> None:
     data = json.loads(r.stdout)
     assert data["metadata"]["language"] == "rust" and data["metadata"]["language_version"] == "1.74.0"
     got = {s["string"] for s in data["strings"]["language_strings"]}
-    assert "https://facturas-cdn.example/gate.php" in got and "pedido_7731.pdf" in got and len(got) == 7
+    assert "https://facturas-cdn.example/gate.php" in got and "pedido_7731.pdf" in got and len(got) == 11

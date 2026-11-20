@@ -3,6 +3,14 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.244.0 — 2026-11-20 (#323)
+
+**Rust binaries: compiler, crates and the build machine**
+
+- A new **Rust** tab in the Binary view: the compiler version, every crate with its version and what it says the binary does (HTTP client, encryption, string obfuscation, reconnaissance, screen or keyboard capture…), git dependencies, and the project's own source paths.
+- The **user of the build machine** and the **project name** come out of those paths — useful to relate samples built on the same machine.
+- Findings for a Rust binary, for risky crates (obfuscation, capture, injection, browser data, chat C2) and for HTTP + encryption together.
+
 ## 1.243.0 — 2026-11-20 (#322)
 
 **Rust binaries: their strings split apart again, and used**

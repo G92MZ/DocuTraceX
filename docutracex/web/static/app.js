@@ -2745,9 +2745,34 @@ function panePeItem(it, n, fileRec) {
     it.unpack ? toolTab("unpack", "Packer / unpack", { status: it.unpack.status,
                           detail: it.unpack.detail || (it.unpack.status === "none" ? "no packer detected" : "") },
                         paneUnpack(it.unpack) + netFindingsList(byTool("unpack"))) : null,
+    it.rust ? { id: "rust", label: "Rust", html: paneRust(it.rust, it.floss) } : null,
     it.floss ? toolTab("floss", "FLOSS", it.floss, paneFloss(it)) : null,
     it.capa ? toolTab("capa", "capa", it.capa, paneCapa(it.capa, it)) : null,
   ]);
+}
+
+// A Rust binary: compiler, crates (with what each one says the binary does), the build
+// machine's user and the project's own source paths — read from the paths rustc leaves in.
+function paneRust(r, fl) {
+  const ver = r.rustc_version || (fl && fl.language === "rust" && fl.language_version) || "";
+  const overview = kv([
+    ["Compiler", ver ? `rustc ${ver}` : (r.rustc_commit ? "rustc (version unknown)" : "")],
+    ["rustc commit", r.rustc_commit || ""],
+    ["Crates", String((r.crates || []).length)],
+    ["Build machine user", (r.build_users || []).join(", ")],
+    ["Project", (r.projects || []).join(", ")],
+  ]);
+  const roles = Object.entries(r.roles || {});
+  const rolesHtml = roles.length
+    ? `<h4>What the crates say it does</h4>${itable(["Role", "Crates"], roles.map(([k, v]) => [k, v.join(", ")]))}` : "";
+  const crates = (r.crates || []).length
+    ? `<h4>Crates (${r.crates.length})</h4>${itable(["Crate", "Version", "Role"], r.crates.map((c) => [c.name, (c.versions || []).join(", "), c.role || ""]))}` : "";
+  const git = (r.git_dependencies || []).length
+    ? `<h4>Git dependencies</h4>${itable(["Repository @ commit"], r.git_dependencies.map((g) => [g]))}` : "";
+  const paths = (r.project_paths || []).length
+    ? `<h4>The project's own source paths (${r.project_paths.length})</h4>${itable(["Path"], r.project_paths.map((p) => [p]))}` : "";
+  return `<p class="hint-line">Rust keeps, in clear, the source paths of every crate it was built with: they give the compiler, the crates (and so what the binary is made to do), and the machine and project it was built on — useful to relate samples.</p>`
+    + overview + rolesHtml + crates + git + paths;
 }
 
 function paneNativeItem(it, n, fileRec) {
