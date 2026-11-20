@@ -81,11 +81,13 @@ def main() -> None:
     _prefetch_free_proxies()
     for url in access_urls(settings.host, settings.port):
         log.info("DocuTraceX: %s", url)
+    from .winloop import uvicorn_loop
     uvicorn.run(
         "docutracex.app:app",
         host=settings.host,
         port=settings.port,
         log_level=settings.log_level.lower(),
+        loop=uvicorn_loop(),          # Windows: Selector (Proactor stops accepting on WinError 64)
     )
 
 

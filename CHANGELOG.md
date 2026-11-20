@@ -3,6 +3,12 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.239.3 — 2026-11-20 (#314)
+
+**Fix: the app no longer stops answering on Windows after a dropped connection**
+
+- On Windows, a browser or another computer dropping its connection at the wrong moment (`WinError 64`) could make the app stop answering until restarted. It now uses a different Windows network loop that doesn't have this problem.
+
 ## 1.239.2 — 2026-11-20 (#313)
 
 **Tasks filter by state; background jobs cut by a restart show as interrupted**

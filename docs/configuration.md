@@ -108,6 +108,12 @@ downloaded and refreshed weekly (C2 view → *Family YARA rules* → *Refresh no
 - `DOCUTRACEX_TIMEOUT_FACTOR` (default **5**) multiplies every tool's time limit: on a slow machine
   or VM, a slow tool is better than a lost analysis.
 
+## Web service on Windows
+
+- The service runs on asyncio's **Selector** loop on Windows: the default (Proactor) stops
+  accepting connections after a client resets one while it is being accepted (`WinError 64`,
+  a known Python bug). `DOCUTRACEX_EVENT_LOOP=proactor` brings the default back.
+
 ## AI and MCP
 
 - **YARA**: the rules are managed in **Settings → Detection rules** ([above](#yara-rules)); the
