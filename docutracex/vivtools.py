@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 import sys
 import types
@@ -79,12 +80,33 @@ def _sha256(p: Path) -> str:
     return h.hexdigest()
 
 
+def _rm(p: Path) -> None:
+    """Delete, never fail: on Windows a file still open (vivisect keeps the binary it
+    analysed open in this very process) cannot be deleted — a later run cleans it up."""
+    try:
+        p.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+_PRIVATE = re.compile(r"^[0-9a-f]{64}\.\d+\.(?:fast\.)?bin(?:\.viv)?$")
+
+
 def _prune(cache: Path, keep: int) -> None:
-    """Keep the ``keep`` most recently used analyses (they can be hundreds of MB)."""
+    """Keep the ``keep`` most recently used analyses (they can be hundreds of MB), and drop
+    private copies a run could not delete (older than an hour: no longer in use)."""
+    import time
     vivs = sorted(cache.glob("*.bin.viv"), key=lambda f: f.stat().st_mtime, reverse=True)
+    vivs = [v for v in vivs if not _PRIVATE.match(v.name)]
     for v in vivs[keep:]:
         for f in (v, v.with_suffix("")):
-            f.unlink(missing_ok=True)
+            _rm(f)
+    for f in cache.iterdir():
+        try:
+            if _PRIVATE.match(f.name) and time.time() - f.stat().st_mtime > 3600:
+                _rm(f)
+        except OSError:
+            pass
 
 
 class _Live:
@@ -263,7 +285,7 @@ def main(argv: list[str] | None = None) -> int:
             rc = -1
         if rc == 0:
             return 0
-        viv.unlink(missing_ok=True)
+        _rm(viv)
         os.environ["FLOSS_LOAD_VIV_WORKSPACE"] = os.environ["CAPA_LOAD_VIV_WORKSPACE"] = "0"
     # analyse, and save the analysis — on a private copy, renamed into place when complete,
     # so a run never loads a half-written one
@@ -276,15 +298,18 @@ def main(argv: list[str] | None = None) -> int:
         if rc == 0 and saved.is_file():
             if not base.is_file():
                 shutil.copyfile(sample, base)
-            os.replace(saved, viv)
+            try:
+                os.replace(saved, viv)
+            except OSError as exc:               # e.g. the saved one is open by another run
+                print(f"analysis not saved: {exc}", file=sys.stderr)
             if kind == "bin":                    # the complete analysis supersedes the fast one
                 for f in (cache / f"{sha}.fast.bin.viv", cache / f"{sha}.fast.bin"):
-                    f.unlink(missing_ok=True)
+                    _rm(f)
             _prune(cache, VIV_KEEP)
         return rc
-    finally:
-        work.unlink(missing_ok=True)
-        Path(f"{work}.viv").unlink(missing_ok=True)
+    finally:                                     # never turns a finished run into a failure
+        _rm(work)
+        _rm(Path(f"{work}.viv"))
 
 
 if __name__ == "__main__":
