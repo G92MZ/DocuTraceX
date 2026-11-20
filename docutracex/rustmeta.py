@@ -66,7 +66,8 @@ CRATE_ROLES: dict[str, tuple[str, ...]] = {
     "chat / C2 channel": ("teloxide", "frankenstein", "telegram-bot", "serenity", "twilight-http", "discord",
                           "slack-morphism", "matrix-sdk", "tor", "arti-client", "libp2p"),
     "compression / archives": ("zip", "flate2", "tar", "lzma-rs", "brotli", "zstd", "sevenz-rust"),
-    "file encryption at scale": ("walkdir", "rayon", "jwalk", "glob"),
+    "walking the file system": ("walkdir", "jwalk", "glob", "ignore", "globwalk"),
+    "async runtime": ("tokio", "async-std", "smol"),
 }
 _ROLE_OF = {c: r for r, cs in CRATE_ROLES.items() for c in cs}
 # roles worth a finding (on their own, or together)
@@ -147,25 +148,31 @@ def analyze(path: Path) -> dict[str, Any] | None:
     return analyze_bytes(data)
 
 
-def findings(info: dict[str, Any], loc: str, finding: Any) -> list[dict[str, Any]]:
-    """Findings from the Rust build facts (``finding`` = the PE triage's ``_finding``)."""
+def findings(info: dict[str, Any], loc: str, finding: Any, prefix: str = "pe") -> list[dict[str, Any]]:
+    """Findings from the Rust build facts (``finding`` = the triage's ``_finding``; rules
+    ``<prefix>_rust_…``: pe for Windows, native for ELF / Mach-O)."""
     out = []
     ver = info.get("rustc_version") or (info.get("rustc_commit") or "")[:12]
     n = len(info.get("crates") or [])
-    out.append(finding("pe_rust_binary", "info", f"Rust binary (rustc {ver or '?'}), {n} crate(s)", loc,
+    out.append(finding(f"{prefix}_rust_binary", "info", f"Rust binary (rustc {ver or '?'}), {n} crate(s)", loc,
                        ", ".join(c["name"] for c in (info.get("crates") or [])[:20])))
     roles = info.get("roles") or {}
     risky = sorted(r for r in roles if r in _RISKY)
     if risky:
-        out.append(finding("pe_rust_crates_capabilities", "medium",
+        out.append(finding(f"{prefix}_rust_crates_capabilities", "medium",
                            "Rust crates for " + ", ".join(risky), loc,
                            "; ".join(f"{r}: {', '.join(roles[r])}" for r in risky)))
     if "HTTP / network client" in roles and "encryption" in roles:
-        out.append(finding("pe_rust_crates_capabilities", "low", "Rust crates for an HTTP client and encryption",
+        out.append(finding(f"{prefix}_rust_crates_capabilities", "low", "Rust crates for an HTTP client and encryption",
                            loc, f"HTTP: {', '.join(roles['HTTP / network client'])}; encryption: "
                                 f"{', '.join(roles['encryption'])}"))
+    if "encryption" in roles and "walking the file system" in roles:
+        out.append(finding(f"{prefix}_rust_crates_capabilities", "medium",
+                           "Rust crates for encryption and walking the file system (the shape of a locker)", loc,
+                           f"encryption: {', '.join(roles['encryption'])}; file system: "
+                           f"{', '.join(roles['walking the file system'])}"))
     if info.get("build_users"):
-        out.append(finding("pe_rust_build_user", "info",
+        out.append(finding(f"{prefix}_rust_build_user", "info",
                            "Build machine user in the Rust source paths: " + ", ".join(info["build_users"]), loc,
                            "; ".join(info.get("projects") or []) or "(from the cargo registry path)"))
     return out

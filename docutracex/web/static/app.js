@@ -2781,6 +2781,7 @@ function paneNativeItem(it, n, fileRec) {
     fileRec ? { id: "file", label: "File", html: paneFile(fileRec) } : null,
     { id: "findings", label: `Findings (${(it.findings || []).length})`, html: netFindingsList(it.findings || []) },
     toolTab("lief", `LIEF (${lf.format || "?"})`, lf, paneLief(lf)),
+    it.rust ? { id: "rust", label: "Rust", html: paneRust(it.rust, null) } : null,
   ]);
 }
 

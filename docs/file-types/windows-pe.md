@@ -45,7 +45,7 @@ analysed.
       (HTTP, TLS, encryption, string obfuscation, reconnaissance, capture, injection, chat
       C2…), the build machine's user (`C:\Users\<user>\.cargo`, `/home/<user>/`) and the
       project's own paths and name. Findings: `pe_rust_binary`, `pe_rust_crates_capabilities`,
-      `pe_rust_build_user`. Not mined for IOCs (the strings themselves are).
+      `pe_rust_build_user` (ELF / Mach-O: `native_rust_…`; encryption + file-system walking: *the shape of a locker*). Not mined for IOCs (the strings themselves are).
     - **Rust** (and Go) binaries keep their strings back to back without a NUL: FLOSS's
       *language strings* split them (Rust: also the rustc version), and those are what is
       mined — the static string that merely glues several of them is left out. FLOSS's

@@ -74,3 +74,47 @@ def test_pe_triage_on_the_sample() -> None:
     assert r["build_users"] == ["builder"] and r["projects"] == ["factura-loader"]
     rules = {f["rule"] for f in item["findings"]}
     assert {"pe_rust_binary", "pe_rust_crates_capabilities", "pe_rust_build_user"} <= rules
+
+
+def test_elf_triage_on_the_linux_sample(tmp_path: Path) -> None:
+    """A Rust ELF (a Linux locker's shape) gets the same Rust tab and native_rust_* findings."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import zipcrypto
+
+    from docutracex.parsers import msi
+    p = tmp_path / "sample_rust_elf"
+    p.write_bytes(zipcrypto.read(ROOT / "samples" / "samples.zip", "linux-elf/sample_rust_elf"))
+    item = msi.analyze_native(p, "sample_rust_elf")
+    r = item["rust"]
+    assert {c["name"] for c in r["crates"]} == {"tokio", "chacha20poly1305", "walkdir", "teloxide"}
+    assert r["build_users"] == ["dev"] and r["projects"] == ["nas-locker"]
+    assert r["roles"]["chat / C2 channel"] == ["teloxide"]
+    titles = {(f["rule"], f["detail"]) for f in item["findings"]}
+    assert {f["tool"] for f in item["findings"] if "rust" in f["rule"]} == {"native"}
+    assert ("native_rust_crates_capabilities",
+            "Rust crates for encryption and walking the file system (the shape of a locker)") in titles
+    assert any(rule == "native_rust_build_user" for rule, _ in titles)
+    assert not any(rule.startswith("pe_rust") for rule, _ in titles)
+
+
+def test_case_routes_the_rust_elf(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    """End to end: a case of the ELF has the Rust data in the Binary result."""
+    import io
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import zipcrypto
+
+    from docutracex import cases, tasks
+    from docutracex.config import settings
+    from docutracex.storage import CasePaths, read_json
+    monkeypatch.setattr(settings, "cases_dir", tmp_path / "cases")
+    (tmp_path / "cases").mkdir()
+    data = zipcrypto.read(ROOT / "samples" / "samples.zip", "linux-elf/sample_rust_elf")
+    m = cases.create_case(io.BytesIO(data), "sample_rust_elf", cases_dir=tmp_path / "cases")
+    t = tasks.manager.submit("analyze", m["analysis_id"], "sample_rust_elf", cases_dir=tmp_path / "cases")
+    import time
+    for _ in range(600):
+        if tasks.manager.get(t.id)["state"] in (tasks.COMPLETED, tasks.FAILED):
+            break
+        time.sleep(0.1)
+    res = read_json(CasePaths(m["analysis_id"], cases_dir=tmp_path / "cases").subresult("msi"))
+    assert res["items"][0]["rust"]["projects"] == ["nas-locker"]

@@ -481,6 +481,20 @@ def analyze_native(path: Path, rel: str) -> dict[str, Any]:
         pass
     if lf.get("status") != "ok":
         item["error"] = lf.get("detail", "")
+    try:                                     # a Rust binary (ransomware, bots…): compiler, crates, build machine
+        from .. import rustmeta
+        from .pe import _finding
+        rust = rustmeta.analyze(path)
+        if rust:
+            if not rust.get("rustc_version") and rust.get("rustc_commit"):
+                rust["rustc_version"] = rustmeta._rustc_version(rust["rustc_commit"])
+            item["rust"] = rust
+            def native(*a: Any) -> dict[str, Any]:   # the ELF / Mach-O triage's findings
+                return {**_finding(*a), "tool": "native"}
+            item["findings"].extend(rustmeta.findings(rust, rel, native, prefix="native"))
+    except Exception as exc:  # noqa: BLE001
+        from ..logging_config import get_logger
+        get_logger(__name__).warning("rust metadata failed on %s: %s", rel, exc)
     return item
 
 
