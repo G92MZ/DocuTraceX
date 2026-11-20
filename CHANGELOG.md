@@ -3,6 +3,14 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.243.0 — 2026-11-20 (#322)
+
+**Rust binaries: their strings split apart again, and used**
+
+- Rust keeps its strings back to back with no separator. FLOSS splits them apart, but that part needs a module that cannot be installed on Windows; DocuTraceX now ships the same algorithm in Python, so it works again.
+- The split strings now reach the Binary tab, Code and IOCs (before, they were left out even with the old floss.exe), and the blob they form is no longer mined — a C2 URL comes out whole, not run into the next string.
+- The FLOSS tab says when the binary is Rust (and its compiler version).
+
 ## 1.242.3 — 2026-11-20 (#321)
 
 **Fix: tool bookkeeping no longer shows up as IOCs**

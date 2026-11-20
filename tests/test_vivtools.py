@@ -237,3 +237,52 @@ def test_cleanup_failure_never_fails_a_finished_run(tmp_path: Path, monkeypatch:
     vivtools._prune(cache, 6)                                               # the next run's cleanup
     assert not [f for f in cache.iterdir() if re.match(r"^[0-9a-f]{64}\.\d+\.", f.name)]
     assert len(list(cache.glob("*.bin.viv"))) == 1
+
+
+def test_rust_language_strings_used_and_glued_blob_dropped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """FLOSS's language strings (a Rust binary's strings split apart) are taken; the static
+    string that is only those strings glued together is left out, so a URL does not run
+    into the next string."""
+    from docutracex import proctools
+    parts = ["https://facturas-cdn.example/gate.php", "Mozilla/5.0 (Windows NT 10.0)", "pedido_7731.pdf"]
+    offs, o = [], 0x1200
+    for p in parts:
+        offs.append(o)
+        o += len(p)
+    out = {"metadata": {"version": "3.2.0", "language": "rust", "language_version": "1.74.0"},
+           "strings": {"static_strings": [{"string": "!This program cannot be run in DOS mode.", "offset": 0x4e},
+                                          {"string": "".join(parts), "offset": 0x1200}],
+                       "language_strings": [{"string": p, "offset": off} for p, off in zip(parts, offs)]}}
+
+    def fake_run(cmd, timeout, cwd=None, env=None, cancel=None):  # noqa: ANN001, ANN202
+        return {"rc": 0, "out": json.dumps(out), "err": "", "timed_out": False, "duration_s": 1}
+    monkeypatch.setattr(proctools, "run_bounded", fake_run)
+    monkeypatch.setattr(settings, "floss_executable", lambda: tmp_path / "floss.exe")
+    sample = tmp_path / "s.exe"
+    sample.write_bytes(b"MZ")
+    rec = pe._run_floss(sample)
+    assert rec["status"] == "ok" and rec["language"] == "rust" and rec["language_version"] == "1.74.0"
+    assert parts[0] in rec["strings"] and "".join(parts) not in rec["strings"]
+    assert rec["counts"]["language"] == 3 and rec["counts"]["static"] == 1
+    assert "3 rust (split)" in rec["detail"]
+
+
+@pytest.mark.skipif(not VIVPY, reason="no interpreter with flare-floss (DOCUTRACEX_TEST_VIVPYTHON)")
+def test_rust_sample_split_by_the_python_stand_in(tmp_path: Path) -> None:
+    """End to end: FLOSS through vivtools, binary2strings replaced by b2s_compat, on the
+    Rust-like sample: rustc identified and its strings split."""
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    import zipcrypto
+    sample = tmp_path / "sample_rust_strings.exe"
+    sample.write_bytes(zipcrypto.read(Path(__file__).resolve().parent.parent / "samples" / "samples.zip",
+                                      "windows-pe/sample_rust_strings.exe"))
+    env = {**os.environ, "DOCUTRACEX_B2S_COMPAT": "1"}
+    r = subprocess.run([VIVPY, "-I", str(settings.vivtools_script()), "floss", "--cache", str(tmp_path / "viv"), "--",
+                        "--json", "-q", "--no", "tight", "decoded", "stack", "--", str(sample)],
+                       capture_output=True, text=True, timeout=900, env=env)
+    assert r.returncode == 0, r.stderr[-800:]
+    data = json.loads(r.stdout)
+    assert data["metadata"]["language"] == "rust" and data["metadata"]["language_version"] == "1.74.0"
+    got = {s["string"] for s in data["strings"]["language_strings"]}
+    assert "https://facturas-cdn.example/gate.php" in got and "pedido_7731.pdf" in got and len(got) == 7

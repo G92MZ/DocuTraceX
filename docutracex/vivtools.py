@@ -32,24 +32,26 @@ import os
 import re
 import shutil
 import sys
-import types
 from pathlib import Path
 
 VIV_KEEP = int(os.environ.get("DOCUTRACEX_VIV_CACHE_KEEP", "6") or 6)   # analyses kept
 
 
 def _stub_binary2strings() -> None:
-    """FLOSS's Rust-strings helper has no Windows wheel (it needs a C++ compiler). Without
-    it, Rust string extraction fails with a ``language_strings`` error: the caller retries
-    with ``--language none`` (the rest of FLOSS is unaffected)."""
+    """FLOSS's Rust-strings helper (binary2strings, C++) has no Windows wheel: without it,
+    ``b2s_compat.py`` next to this script — the same algorithm in Python — stands in, so
+    FLOSS still splits the strings of a Rust binary."""
     try:
+        if os.environ.get("DOCUTRACEX_B2S_COMPAT") == "1":     # tests: the stand-in even where the module exists
+            raise ImportError
         import binary2strings  # noqa: F401
     except ImportError:
-        def missing(*_a, **_k):  # noqa: ANN002, ANN003, ANN202
-            raise RuntimeError("language_strings: binary2strings is not installed (Rust strings)")
-        mod = types.ModuleType("binary2strings")
-        mod.extract_all_strings = missing
-        mod.extract_string = missing
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("binary2strings", Path(__file__).with_name("b2s_compat.py"))
+        if spec is None or spec.loader is None:
+            return
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
         sys.modules["binary2strings"] = mod
 
 

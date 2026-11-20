@@ -2528,7 +2528,10 @@ function paneFloss(it) {
   if (fl && fl.background && fl.status === "interrupted")
     return `<p class="hint-line">FLOSS (background) was interrupted: the app restarted while it ran. Re-run the analysis to run it again, or Deep FLOSS in the Code view.</p>`;
   if (!fl || fl.status !== "ok") return "";
-  const tight = completeHint(it) + (fl.tight_skipped
+  const langLine = fl.language && (fl.counts || {}).language
+    ? `<p class="hint-line"><b>${escapeHtml(fl.language[0].toUpperCase() + fl.language.slice(1))}${fl.language_version ? " " + escapeHtml(fl.language_version) : ""}</b> binary: its strings are stored back to back without a separator; FLOSS split <b>${escapeHtml(String(fl.counts.language))}</b> of them apart (they are in the list and in IOCs).</p>`
+    : "";
+  const tight = langLine + completeHint(it) + (fl.tight_skipped
     ? `<p class="hint-line">Tight strings skipped in this automatic run (they emulate every tight loop: minutes to hours). The code analysis ran them on its priority functions; <b>Deep FLOSS</b> in the <b>Code</b> view runs them on every function, with no time limit.</p>`
     : "");
   if (!ss.length) return `<p class="hint-line">FLOSS: no decoded / stack${fl.tight_skipped ? "" : " / tight"} strings.</p>${tight}`;
