@@ -599,6 +599,15 @@ Try in the SQL tab: `SELECT "key", name, data FROM vals WHERE regexp_matches(dat
 
 ## FLOSS and capa: speed
 
+FLOSS and capa are Mandiant's **Python libraries** on the portable Python (no
+floss.exe / capa.exe): both start by building a vivisect analysis of the whole binary,
+and the first run **saves it** (`<cases>/.tools_cache/viv/`, the last 6 binaries), so
+the next ones on the same binary — capa after FLOSS, FLOSS tight on the priority
+functions, Deep FLOSS, a re-analysis — **load it** instead of analysing again (on a
+large binary: minutes and GB saved). Try it with `windows-pe/sample_code_loader.exe`:
+after the first analysis its `.viv` is in the cache, and capa (*connect to URL*, *encode
+data using XOR*, *create HTTP request*) reuses it.
+
 On each PE, FLOSS and capa run **at the same time** (two processes), and the PEs
 of a nested batch (an MSI's kits, an archive's binaries, unpacked files…) are
 **started ahead** on a small pool while the scan goes on, so their results are

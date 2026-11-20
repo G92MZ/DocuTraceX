@@ -683,9 +683,20 @@ def _run_tool(name: str, exe: Path | None, args: list[str], path: Path,
         return ({"status": "not_provisioned",
                  "detail": f"{name} not provisioned (tools/{name}/) — run "
                            f"scripts/setup_portable_python.py"}, "")
-    # Hard limit + whole-tree kill: floss.exe / capa.exe are PyInstaller onefile
+    # Hard limit + whole-tree kill: a standalone floss.exe / capa.exe is PyInstaller onefile
     # (bootloader + child); a plain subprocess.run could hang on the orphan.
     cmd = [str(exe), *args, str(path)]
+    if exe.suffix == ".py":       # vivtools.py: the libraries on the portable Python (-I: isolated)
+        from ..config import settings
+        py = settings.portable_python()
+        if py is None:
+            return {"status": "not_provisioned", "detail": "portable Python not provisioned"}, ""
+        own = ["--cache", str(Path(settings.cases_dir) / ".tools_cache" / "viv")]
+        if name == "capa" and settings.capa_rules_dir():
+            own += ["--rules", str(settings.capa_rules_dir())]
+        cmd = [str(py), "-I", str(exe), name, *own, "--", *[a for a in args if a != "--"], str(path)]
+        if name == "floss":       # FLOSS's own "--" (its options take several values) stays last
+            cmd = [*cmd[:-1], "--", str(path)]
     r = run_bounded(cmd, timeout, cancel=cancel) if cancel is not None else run_bounded(cmd, timeout)
     if r.get("cancelled"):
         return {"status": "cancelled", "detail": f"{name} cancelled by the analyst",
@@ -770,6 +781,9 @@ def _trusted_signer(path: Path) -> str | None:
 
 
 def _tool_id(exe: Path | None) -> str:
+    if exe is not None and exe.suffix == ".py":          # the libraries: their pinned versions
+        from ..config import settings
+        return f"lib:{settings.FLOSS_LIB}:{settings.CAPA_LIB}:rules-{settings.CAPA_RULES_VERSION}"
     try:
         st = exe.stat() if exe else None
         return f"{exe.name}:{st.st_size}:{int(st.st_mtime)}" if st else "none"

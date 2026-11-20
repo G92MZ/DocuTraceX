@@ -3,6 +3,14 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.240.0 — 2026-11-20 (#316)
+
+**FLOSS and capa as Python libraries: one analysis per binary, shared**
+
+- FLOSS and capa no longer run as the standalone floss.exe / capa.exe: they are installed as Mandiant's Python libraries (same versions, same results) in the app's Python, and the old executables are removed.
+- The analysis of a binary they both start with is saved and reused: capa after FLOSS, FLOSS tight, Deep FLOSS and re-analyses of the same binary load it instead of analysing it again — much faster on large binaries.
+- After updating, the next start installs them (or press **Retry** for FLOSS / capa in the status page).
+
 ## 1.239.4 — 2026-11-20 (#315)
 
 **Fix: FLOSS and capa no longer exhaust the RAM**

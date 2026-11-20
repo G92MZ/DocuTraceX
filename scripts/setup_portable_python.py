@@ -1054,26 +1054,37 @@ def install_cfr() -> bool:
     return _cfr_ok()
 
 
-# --- Mandiant FLOSS + capa (standalone Windows binaries) --------------------------
-# Official self-contained builds (PyInstaller, Apache-2.0): no Python deps, so no
-# clash with the portable 3.13 (flare-floss needs binary2strings, which has no
-# cp313 Windows wheel). capa's rules and FLIRT signatures are embedded. Pinned
-# version + SHA-256 of the release zip: the download is verified before extracting.
-# Windows only; elsewhere the PE triage just reports them as not provisioned.
-FLOSS_DIR = TOOLS / "floss"
-FLOSS_VERSION = "3.2.0"
-FLOSS_URL = (f"https://github.com/mandiant/flare-floss/releases/download/"
-             f"v{FLOSS_VERSION}/floss-v{FLOSS_VERSION}-windows.zip")
-FLOSS_SHA256 = "c0c73bb99d043fedd8e913038b65d1591fd6308cd938d8a91df87b733b369af5"
-CAPA_DIR = TOOLS / "capa"
-CAPA_VERSION = "10.0.0"
-CAPA_URL = (f"https://github.com/mandiant/capa/releases/download/"
-            f"v{CAPA_VERSION}/capa-v{CAPA_VERSION}-windows.zip")
-CAPA_SHA256 = "8712991044321dbb2a5b0d60f7a5327a50c9c30a295e7ddb5c1088cb17fb59df"
+# --- Mandiant FLOSS + capa (Python libraries on the portable Python) ---------------
+# Run by docutracex/vivtools.py: one vivisect analysis per binary, saved and shared by
+# FLOSS and capa (the standalone floss.exe / capa.exe each analysed it again, in memory).
+# flare-floss goes in without its dependencies: binary2strings (Rust strings only) has no
+# Windows wheel and needs a C++ compiler; vivtools.py stands in for it. capa's rules
+# (Apache-2.0) are downloaded from the pinned tag; the archive must carry its commit.
+FLOSS_LIB = "flare-floss==3.2.0"
+CAPA_LIB = "flare-capa==10.0.0"
+FLOSS_DEPS = ["dncil", "halo", "networkx", "pefile", "pydantic", "rich", "tabulate", "tqdm"]
+CAPA_RULES_DIR = TOOLS / "capa-rules"
+CAPA_RULES_URL = "https://github.com/mandiant/capa-rules/archive/refs/tags/v10.0.0.zip"
+CAPA_RULES_COMMIT = "805f9eaccfb6a4e1ddffc809d71d1e2b5ccc15e5"
+CAPA_RULES_MIN = 500
+OLD_EXE_DIRS = (TOOLS / "floss", TOOLS / "capa")     # the standalone builds used before
+
+
+def _portable_has(package: str) -> bool:
+    """``package`` installed in the portable Python — a look on disk (no process: this runs
+    at every start)."""
+    if not _portable_present():
+        return False
+    py = _portable_python()
+    for root in (py.parent, py.parent.parent):
+        for sp in ("Lib/site-packages", "lib/site-packages", "lib/python3*/site-packages"):
+            if any((d / package / "__init__.py").is_file() for d in root.glob(sp)):
+                return True
+    return False
 
 
 def _floss_ok() -> bool:
-    return (FLOSS_DIR / "floss.exe").is_file()
+    return _portable_has("floss") and _portable_has("vivisect")
 
 
 # --- GoReSym (Go symbol / metadata recovery, Go Malware Intelligence) -------------
@@ -1362,59 +1373,98 @@ def install_rizin() -> bool:
     return True
 
 
+def _capa_rules_ok() -> bool:
+    return CAPA_RULES_DIR.is_dir() and sum(1 for _ in CAPA_RULES_DIR.rglob("*.yml")) >= CAPA_RULES_MIN
+
+
 def _capa_ok() -> bool:
-    return (CAPA_DIR / "capa.exe").is_file()
+    return _portable_has("capa") and _portable_has("floss") and _capa_rules_ok()
 
 
-def _install_mandiant_exe(name: str, url: str, sha256: str, dest: Path, exe: str) -> bool:
-    """Download a pinned release zip, verify its SHA-256, extract only ``exe``."""
-    import hashlib
-    import io
+def _drop_old_exes() -> None:
+    for d in OLD_EXE_DIRS:
+        if d.is_dir():
+            shutil.rmtree(d, ignore_errors=True)
+            print(f"[=] removed the old standalone build in {d.name}/ (now a Python library)")
 
-    if not sys.platform.startswith("win"):
-        print(f"[=] {name}: Windows-only standalone build; skipped on this platform.")
-        return False
-    print(f"[>] Downloading {name} into {dest.relative_to(ROOT)}/")
-    try:
-        data = _get(url)
-    except Exception as exc:  # noqa: BLE001
-        print(f"[!] Could not download {name} ({exc}); it stays disabled. "
-              f"Drop {exe} into {dest} manually (or set DOCUTRACEX_{name.upper()}).")
-        return False
-    got = hashlib.sha256(data).hexdigest()
-    if got != sha256:
-        print(f"[!] {name}: SHA-256 mismatch (got {got}, expected {sha256}) — NOT installed.")
-        return False
-    try:
-        with zipfile.ZipFile(io.BytesIO(data)) as z:
-            member = next((m for m in z.namelist() if Path(m).name.lower() == exe.lower()), None)
-            if member is None:
-                print(f"[!] {name}: {exe} not found in the release zip.")
-                return False
-            dest.mkdir(parents=True, exist_ok=True)
-            with z.open(member) as src, (dest / exe).open("wb") as dst:
-                shutil.copyfileobj(src, dst)
-    except Exception as exc:  # noqa: BLE001
-        print(f"[!] {name}: could not extract ({exc}).")
-        return False
-    print(f"[+] {name} {exe} at {dest}")
-    return True
+
+def _pip_portable(*args: str) -> bool:
+    r = subprocess.run([str(_portable_python()), "-s", "-m", "pip", "install", "--disable-pip-version-check",
+                        "--no-warn-script-location", *args], capture_output=True, text=True)
+    if r.returncode:
+        print((r.stderr or r.stdout)[-1200:])
+    return r.returncode == 0
 
 
 def install_floss() -> bool:
-    """Mandiant FLOSS (decoded/stack/tight strings of PE files) — optional."""
+    """Mandiant FLOSS (decoded / stack / tight strings of PE files) — the Python library."""
     if _floss_ok():
+        _drop_old_exes()
         return True
-    return _install_mandiant_exe("floss", FLOSS_URL, FLOSS_SHA256, FLOSS_DIR, "floss.exe")
+    if not _portable_present():
+        print("[!] FLOSS: the portable Python is missing.")
+        return False
+    print(f"[>] Installing {FLOSS_LIB} into the portable Python...")
+    _pip_portable(CAPA_LIB, *FLOSS_DEPS)          # capa brings vivisect / viv-utils too
+    _pip_portable("--no-deps", FLOSS_LIB)
+    ok = _floss_ok()
+    print("[+] FLOSS installed." if ok else "[!] FLOSS is still unavailable in the portable Python.")
+    if ok:
+        _drop_old_exes()
+    return ok
+
+
+def install_capa_rules() -> bool:
+    if _capa_rules_ok():
+        return True
+    import io
+    print(f"[>] Downloading capa's rules into tools/{CAPA_RULES_DIR.name}/")
+    try:
+        data = _get(CAPA_RULES_URL)
+        z = zipfile.ZipFile(io.BytesIO(data))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] capa rules: could not download ({exc}); capa stays disabled.")
+        return False
+    if z.comment.decode("ascii", "replace").strip() != CAPA_RULES_COMMIT:
+        print("[!] capa rules: the archive is not the pinned commit — NOT installed.")
+        return False
+    tmp = CAPA_RULES_DIR.with_name("capa-rules.tmp")
+    shutil.rmtree(tmp, ignore_errors=True)
+    for m in z.infolist():
+        parts = Path(m.filename).parts[1:]           # drop "capa-rules-10.0.0/"
+        if not parts or m.is_dir() or ".." in parts or not m.filename.endswith(".yml"):
+            continue
+        out = tmp.joinpath(*parts)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with z.open(m) as src, out.open("wb") as dst:
+            shutil.copyfileobj(src, dst)
+    shutil.rmtree(CAPA_RULES_DIR, ignore_errors=True)
+    tmp.rename(CAPA_RULES_DIR)
+    ok = _capa_rules_ok()
+    print("[+] capa rules installed." if ok else "[!] capa rules look incomplete.")
+    return ok
 
 
 def install_capa() -> bool:
-    """Mandiant capa (capabilities + ATT&CK of PE files, embedded rules) — optional."""
+    """Mandiant capa (capabilities + ATT&CK of PE files) — the Python library and its rules
+    (it uses FLOSS's FLIRT signatures, so FLOSS comes along)."""
     if _capa_ok():
+        _drop_old_exes()
         return True
-    return _install_mandiant_exe("capa", CAPA_URL, CAPA_SHA256, CAPA_DIR, "capa.exe")
-
-
+    if not _portable_present():
+        print("[!] capa: the portable Python is missing.")
+        return False
+    if not _floss_ok():
+        install_floss()
+    if not _portable_has("capa"):
+        print(f"[>] Installing {CAPA_LIB} into the portable Python...")
+        _pip_portable(CAPA_LIB)
+    install_capa_rules()
+    ok = _capa_ok()
+    print("[+] capa installed." if ok else "[!] capa is still unavailable.")
+    if ok:
+        _drop_old_exes()
+    return ok
 
 
 # --- PE unpackers / packer identification --------------------------------------
@@ -2081,8 +2131,8 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
     install_boxps()      # PowerShell Core + box-ps (PowerShell sandbox)
     install_pycdc()      # pycdc (.pyc decompiler, built from source)
     install_cfr()        # CFR (.class decompiler jar; run with the host JVM)
-    install_floss()      # Mandiant FLOSS standalone (PE obfuscated strings; Windows)
-    install_capa()       # Mandiant capa standalone (PE capabilities/ATT&CK; Windows)
+    install_floss()      # Mandiant FLOSS, Python library (PE obfuscated strings)
+    install_capa()       # Mandiant capa, Python library + rules (PE capabilities / ATT&CK)
     install_goresym()    # Mandiant GoReSym (Go metadata recovery; Go Malware Intelligence)
     install_rizin()      # Rizin + rz-ghidra (code analysis: functions, disassembly, pseudocode)
     install_ilspy()      # ILSpy CLI + portable .NET runtime (.NET decompilation, on demand)
@@ -2367,7 +2417,7 @@ def _ensure_optional() -> None:
                               ("ember", _ember_ok, install_ember),
                               ("ilspy", _ilspy_ok, install_ilspy),
                               ("de4dot", _de4dot_ok, install_de4dot)):
-        if name in ("floss", "capa", "upx", "7zip", "die", "innoextract", "innounp",
+        if name in ("upx", "7zip", "die", "innoextract", "innounp",
                     "nuitka-extractor", "de4dot") and not sys.platform.startswith("win"):
             continue  # Windows-only standalone builds provisioned by this installer
         try:

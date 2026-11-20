@@ -27,6 +27,9 @@ analysed.
       with **no time limit**, in the background, cancellable. The tools' time and status are
       sub-steps of the PE triage step in Tasks. `DOCUTRACEX_FLOSS_LARGE_MB=N` keeps tight
       strings in the automatic run for files up to N MB.
+    - FLOSS and capa share **one analysis of the binary**: the first of them to run saves
+      it, and capa, FLOSS tight and Deep FLOSS of the same binary load it instead of
+      analysing the binary again (much less time and memory on a large one).
     - **FLOSS in the background** for the case's own binary above 2 MB
       (`DOCUTRACEX_FLOSS_BACKGROUND_MB`, 0 = off): the case does not wait for it. **capa** of
       that binary goes to the background too (`DOCUTRACEX_CAPA_BACKGROUND=0` keeps it inline;
