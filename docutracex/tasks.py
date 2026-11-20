@@ -274,11 +274,17 @@ class TaskManager:
             if task.steps and task.steps[-1].get("status") == "running":
                 task.steps = [{**task.steps[-1], "detail": detail}]
 
+    def set_background_state(self, task: Task, state: str) -> None:
+        """A background job waiting for a slot (``heavyjobs``) is queued, then running."""
+        with self._lock:
+            if task.background and task.state in (QUEUED, RUNNING):
+                task.state = state
+
     def cancel(self, tid: str) -> bool:
         with self._lock:
             ev = self._bg_cancel.get(tid)
             task = self._tasks.get(tid)
-            if ev is not None and task is not None and task.state == RUNNING:
+            if ev is not None and task is not None and task.state in (RUNNING, QUEUED):
                 ev.set()
                 task.state = CANCELLING
                 return True

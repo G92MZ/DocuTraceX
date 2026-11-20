@@ -108,6 +108,15 @@ downloaded and refreshed weekly (C2 view → *Family YARA rules* → *Refresh no
 - `DOCUTRACEX_TIMEOUT_FACTOR` (default **5**) multiplies every tool's time limit: on a slow machine
   or VM, a slow tool is better than a lost analysis.
 
+## Memory-heavy tools
+
+- FLOSS and capa build an analysis of the whole binary in memory (several GB on a large
+  one). Their background runs — FLOSS / capa of a large binary, FLOSS tight on its priority
+  functions, Deep FLOSS — run **one at a time**: the rest wait, *queued* in Tasks.
+  `DOCUTRACEX_HEAVY_JOBS` (default **1**) sets how many run at once (0 = no limit). With
+  `psutil` installed, a job also waits (up to 10 min) while less than
+  `DOCUTRACEX_HEAVY_MIN_FREE_MB` (default **1500**) of RAM is free.
+
 ## Web service on Windows
 
 - The service runs on asyncio's **Selector** loop on Windows: the default (Proactor) stops

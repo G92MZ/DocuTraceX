@@ -7463,7 +7463,10 @@ async function cxFullFloss(el, caseId, sha, mode, d, onDone) {
   const ago = (t) => { const s = Math.max(0, Math.round(Date.now() / 1000 - t)); return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`; };
   const draw = (st) => {
     if (st.state === "running") {
-      box.innerHTML = `<div class="hint-line"><span class="spin">●</span> Deep FLOSS running in the background — tight strings on every function, no time limit — for <b>${ago(st.started)}</b>. You can leave this tab; new strings land in Strings when it ends.
+      box.innerHTML = st.waiting
+        ? `<div class="hint-line"><span class="spin">●</span> Deep FLOSS is <b>waiting</b>: another FLOSS / capa job is running, and they use a lot of memory, so one runs at a time (${escapeHtml(st.detail || "")}). It starts on its own.
+        <button class="btn btn-ghost btn-sm cx-ffcancel" type="button">Cancel</button></div>`
+        : `<div class="hint-line"><span class="spin">●</span> Deep FLOSS running in the background — tight strings on every function, no time limit — for <b>${ago(st.started)}</b>. You can leave this tab; new strings land in Strings when it ends.
         <button class="btn btn-ghost btn-sm cx-ffcancel" type="button">Cancel</button></div>`;
       const c = box.querySelector(".cx-ffcancel");
       c.addEventListener("click", async () => {

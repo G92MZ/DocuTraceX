@@ -3,6 +3,13 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.239.4 — 2026-11-20 (#315)
+
+**Fix: FLOSS and capa no longer exhaust the RAM**
+
+- FLOSS and capa use a lot of memory on large binaries. Their background runs (and Deep FLOSS) now go **one at a time**: the others show as *queued* in Tasks and start on their own; they can be cancelled while waiting.
+- `DOCUTRACEX_HEAVY_JOBS` sets how many run at once (default 1).
+
 ## 1.239.3 — 2026-11-20 (#314)
 
 **Fix: the app no longer stops answering on Windows after a dropped connection**
