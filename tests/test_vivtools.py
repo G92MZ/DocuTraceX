@@ -174,3 +174,28 @@ def test_progress_and_partial_written_by_vivtools(tmp_path: Path) -> None:
     got = json.loads(part.read_text())                            # same FLOSS format, written as it went
     assert len(got["strings"]["static_strings"]) == len(final["strings"]["static_strings"])
     assert json.loads(prog.read_text())["phase"] in ("decoded strings", "stack strings")
+
+
+@pytest.mark.skipif(not (VIVPY and RULES), reason="no interpreter with flare-floss / flare-capa (DOCUTRACEX_TEST_VIVPYTHON)")
+def test_fast_analysis_saved_apart_and_superseded(tmp_path: Path) -> None:
+    from test_js_techniques import _ms
+    sample = tmp_path / "sample_code_loader.exe"
+    sample.write_bytes(_ms().code_loader_exe())
+    cache = tmp_path / "viv"
+    script = str(settings.vivtools_script())
+
+    def run(tool: str, args: list[str], fast: bool) -> dict:
+        own = ["--cache", str(cache)] + (["--rules", RULES] if tool == "capa" else []) + (["--fast", "1"] if fast else [])
+        r = subprocess.run([VIVPY, "-I", script, tool, *own, "--", *args, str(sample)],
+                           capture_output=True, text=True, timeout=900)
+        assert r.returncode == 0, r.stderr[-800:]
+        return json.loads(r.stdout)
+
+    fast = run("floss", ["--json", "-q", "--no", "tight", "--"], fast=True)
+    assert [p.name.split(".", 1)[1] for p in cache.glob("*.viv")] == ["fast.bin.viv"]
+    run("capa", ["-j", "-q"], fast=True)                            # loads the fast analysis
+    full = run("floss", ["--json", "-q", "--no", "tight", "--"], fast=False)
+    assert [p.name.split(".", 1)[1] for p in cache.glob("*.viv")] == ["bin.viv"]   # supersedes the fast one
+    run("floss", ["--json", "-q", "--no", "tight", "--"], fast=True)               # uses the complete one
+    assert [p.name.split(".", 1)[1] for p in cache.glob("*.viv")] == ["bin.viv"]
+    assert len(fast["strings"]["static_strings"]) == len(full["strings"]["static_strings"])
