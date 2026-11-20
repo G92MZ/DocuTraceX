@@ -271,14 +271,17 @@ class TaskManager:
 
     def set_step_detail(self, task: Task, detail: str) -> None:
         with self._lock:
-            if task.steps and task.steps[-1].get("status") == "running":
+            if task.steps and task.steps[-1].get("status") in ("running", "queued"):
                 task.steps = [{**task.steps[-1], "detail": detail}]
 
     def set_background_state(self, task: Task, state: str) -> None:
-        """A background job waiting for a slot (``heavyjobs``) is queued, then running."""
+        """A background job waiting for a slot (``heavyjobs``) is queued, then running —
+        the task and its step alike."""
         with self._lock:
             if task.background and task.state in (QUEUED, RUNNING):
                 task.state = state
+                if task.steps and task.steps[-1].get("status") in ("running", "queued"):
+                    task.steps = [{**task.steps[-1], "status": state}]
 
     def cancel(self, tid: str) -> bool:
         with self._lock:

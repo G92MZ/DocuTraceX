@@ -4381,7 +4381,9 @@ let _tasksPoll = null;
 function taskProgress(t) {
   if (TASK_ACTIVE.has(t.state)) {
     // the step being run now (live), e.g. "● nested: recursive scan…"
-    const run = [...(t.steps || [])].reverse().find((s) => s.status === "running");
+    const run = [...(t.steps || [])].reverse().find((s) => s.status === "running" || s.status === "queued");
+    if (t.state === "queued" && t.background)          // waiting for a free FLOSS / capa slot
+      return `<span class="spin" aria-label="waiting">●</span> waiting${run && run.detail ? ` — ${escapeHtml(run.detail)}` : ""}`;
     const now = t.state === "running" && t.phase && !["analyzing", "network check", "queued"].includes(t.phase)
       ? escapeHtml(t.phase.split(" · ")[0].slice(0, 60)) + (run && run.detail ? ` — ${escapeHtml(run.detail)}` : "")
       : "working";
@@ -4394,6 +4396,7 @@ function taskProgress(t) {
 
 const STEP_STATE_CLS = {
   ok: "ok", ok_with_findings: "warn", error: "bad", unavailable: "muted", skipped: "muted", running: "warn",
+  queued: "muted", cancelled: "muted",
 };
 
 // Steps whose per-child / per-object rows the user expanded ("taskId|step"):
@@ -4440,13 +4443,13 @@ function stepsTable(steps, taskId) {
     const extra = [];
     if (s.findings != null) extra.push(`${s.findings} finding(s)`);
     if (s.iocs != null) extra.push(`${s.iocs} IOC(s)`);
-    if (s.status === "running" && s.detail) extra.push(`<b>${escapeHtml(s.detail)}</b>`);
+    if ((s.status === "running" || s.status === "queued") && s.detail) extra.push(`<b>${escapeHtml(s.detail)}</b>`);
     if (s.note) extra.push(escapeHtml(s.note));
     return `<tr>
       <td>${escapeHtml(s.step)}</td>
       <td><span class="badge badge-${cls}">${escapeHtml(s.status)}</span></td>
       <td class="mono">${s.duration_s != null ? fmtDuration(s.duration_s)
-        : (s.status === "running" && s.started_utc ? `<span data-elapsed-from="${escapeHtml(s.started_utc)}">${fmtDuration(elapsedSince(s.started_utc))}</span>` : "")}</td>
+        : ((s.status === "running" || s.status === "queued") && s.started_utc ? `<span data-elapsed-from="${escapeHtml(s.started_utc)}">${fmtDuration(elapsedSince(s.started_utc))}</span>` : "")}</td>
       <td class="hint-line">${extra.join(" · ")}</td>
     </tr>${substepRows(s, `${taskId || ""}|${i}|${s.step}`)}`;
   }).join("");

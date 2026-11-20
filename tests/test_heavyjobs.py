@@ -45,12 +45,14 @@ def test_heavy_jobs_run_one_at_a_time(one_slot: Path) -> None:
     _wait(lambda: ran == ["a"])
     b = _job(one_slot, g2, ran, "b")
     _wait(lambda: tasks.manager.get(b.id)["state"] == tasks.QUEUED)
-    assert "one runs at a time" in tasks.manager.get(b.id)["steps"][0]["detail"]
+    step = tasks.manager.get(b.id)["steps"][0]
+    assert step["status"] == "queued" and "one runs at a time" in step["detail"]   # the step says so too
     time.sleep(0.3)
     assert ran == ["a"]                                  # b waits for a's slot
     g1.set()
     _wait(lambda: ran == ["a", "b"])
     assert tasks.manager.get(b.id)["state"] == tasks.RUNNING
+    assert tasks.manager.get(b.id)["steps"][0]["status"] == "running"
     g2.set()
     _wait(lambda: tasks.manager.get(b.id)["state"] == tasks.COMPLETED)
     assert tasks.manager.get(a.id)["state"] == tasks.COMPLETED and heavyjobs.running() == 0
