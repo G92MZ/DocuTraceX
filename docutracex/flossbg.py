@@ -455,8 +455,21 @@ def _apply_complete(root: Path, floss: dict[str, Any] | None, capa: dict[str, An
         item["floss_strings"] = (list(item.get("floss_strings") or []) + extra)[:pe_mod._FLOSS_MAX_STRINGS]
         added["strings"] = len(extra)
     if floss.get("status") == "ok":
-        fl = item.setdefault("floss", {})
+        fl = item.get("floss") or {}
+        if fl.get("status") != "ok":            # the fast run failed: the complete one stands in for it
+            fl = {k: v for k, v in floss.items() if k not in ("located", "strings")}
+            fl["background"] = True
+            fl["tight_skipped"] = True
+            c = fl.get("counts") or {}
+            fnd = pe_mod._finding("pe_floss_strings", "info",
+                                  f"FLOSS extracted {len(new_strings)} string(s): {c.get('static', 0)} static, "
+                                  f"{c.get('decoded', 0)} decoded, {c.get('stack', 0)} stack, "
+                                  f"{c.get('tight', 0)} tight (complete analysis)", item.get("location") or loc)
+            for lst in (item.setdefault("findings", []), res.setdefault("findings", [])):
+                if not any(f.get("rule") == "pe_floss_strings" for f in lst):
+                    lst.append(fnd)
         fl["completed"] = {"strings_added": len(extra), "counts": floss.get("counts") or {}}
+        item["floss"] = fl
     if capa.get("status") == "ok":
         cur = item.get("capa") or {}
         names = {c.get("name") for c in cur.get("capabilities") or []}

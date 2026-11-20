@@ -3,6 +3,13 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.242.2 — 2026-11-20 (#320)
+
+**Fix: FLOSS on Windows no longer fails at the very end**
+
+- On Windows, FLOSS could finish its work and then fail while cleaning up a temporary copy of the binary (still open), losing all its strings. The cleanup can no longer fail a finished run; leftovers are removed later.
+- If the fast FLOSS run fails anyway, the complete analysis now takes its place in the Binary tab instead of only adding to it.
+
 ## 1.242.1 — 2026-11-20 (#319)
 
 **Tasks: a queued background job says so in its step too**
