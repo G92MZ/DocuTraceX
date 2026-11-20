@@ -199,3 +199,41 @@ def test_fast_analysis_saved_apart_and_superseded(tmp_path: Path) -> None:
     run("floss", ["--json", "-q", "--no", "tight", "--"], fast=True)               # uses the complete one
     assert [p.name.split(".", 1)[1] for p in cache.glob("*.viv")] == ["bin.viv"]
     assert len(fast["strings"]["static_strings"]) == len(full["strings"]["static_strings"])
+
+
+def test_cleanup_failure_never_fails_a_finished_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows: vivisect keeps the binary it analysed open in the same process, so its
+    private copy cannot be deleted at the end. That must not turn a finished FLOSS run
+    into an error (it did: exit 1, 13 minutes of strings lost); a later run cleans it up."""
+    import os
+    import re
+    import time
+
+    from docutracex import vivtools
+    sample = tmp_path / "s.exe"
+    sample.write_bytes(b"MZ" + b"\0" * 64)
+    cache = tmp_path / "viv"
+
+    def fake_run(tool, argv):  # noqa: ANN001, ANN202 — FLOSS ran and saved its analysis
+        Path(f"{argv[-1]}.viv").write_bytes(b"viv")
+        return 0
+    real_unlink = Path.unlink
+
+    def locked(self, missing_ok=False):  # noqa: ANN001, ANN202
+        if re.match(r"^[0-9a-f]{64}\.\d+\.", self.name):
+            raise PermissionError(32, "being used by another process")
+        return real_unlink(self, missing_ok=missing_ok)
+    monkeypatch.setattr(vivtools, "_run", fake_run)
+    monkeypatch.setattr(Path, "unlink", locked)
+    rc = vivtools.main(["floss", "--cache", str(cache), "--", "--json", "--", str(sample)])
+    assert rc == 0
+    assert len(list(cache.glob("*.bin.viv"))) == 1                         # the analysis was saved
+    left = [f for f in cache.iterdir() if re.match(r"^[0-9a-f]{64}\.\d+\.", f.name)]
+    assert left                                                             # the locked copy stayed
+    monkeypatch.setattr(Path, "unlink", real_unlink)
+    old = time.time() - 7200
+    for f in left:
+        os.utime(f, (old, old))
+    vivtools._prune(cache, 6)                                               # the next run's cleanup
+    assert not [f for f in cache.iterdir() if re.match(r"^[0-9a-f]{64}\.\d+\.", f.name)]
+    assert len(list(cache.glob("*.bin.viv"))) == 1

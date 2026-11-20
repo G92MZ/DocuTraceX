@@ -129,3 +129,26 @@ def test_fast_run_uses_its_own_cache_and_flag(tmp_path: Path, monkeypatch: pytes
     assert full["strings"] == ["full"] and "--fast" not in cmds[-1]
     assert pe_mod.floss_record(sample, fast=True)["strings"] == ["full"]   # complete cached: used instead
     assert len(cmds) == 2
+
+
+def test_complete_stands_in_for_a_failed_fast_floss(fast_env, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: ANN001
+    from docutracex import cases
+    from docutracex.storage import CasePaths, read_json
+    tmp, runs, gate = fast_env
+    real = pe_mod._run_floss
+
+    def floss(path, extra=None, timeout=-1, cancel=None):  # noqa: ANN001, ANN202
+        if pe_mod._vivfast.get():
+            runs.append("floss-fast")
+            return {"status": "error", "detail": "floss exited 1: PermissionError"}
+        return real(path, extra, timeout, cancel)
+    monkeypatch.setattr(pe_mod, "_run_floss", floss)
+    gate.set()
+    m = cases.create_case(io.BytesIO(_exe() + b"failed-fast"), "visor2.exe", cases_dir=tmp / "cases")
+    cid = m["analysis_id"]
+    tasks.manager.submit("analyze", cid, "visor2.exe", cases_dir=tmp / "cases")
+    _wait(lambda: any(t["type"] == "complete" and t["state"] == tasks.COMPLETED for t in tasks.manager.list(cid)))
+    msi = read_json(CasePaths(cid, cases_dir=tmp / "cases").subresult("msi"))
+    item = msi["items"][0]
+    assert item["floss"]["status"] == "ok" and item["floss_strings"] == FULL
+    assert any(f["rule"] == "pe_floss_strings" for f in item["findings"])
