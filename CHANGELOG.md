@@ -3,6 +3,13 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.245.0 — 2026-11-20 (#324)
+
+**Rust on Linux too**
+
+- Rust ELF binaries (Linux ransomware, bots…) get the same **Rust** tab: compiler, crates and what they are for, build machine user and project.
+- A new finding flags crates for **encryption plus walking the file system**, the shape of a locker, on Windows and Linux alike.
+
 ## 1.244.0 — 2026-11-20 (#323)
 
 **Rust binaries: compiler, crates and the build machine**
