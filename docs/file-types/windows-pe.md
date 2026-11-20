@@ -39,6 +39,13 @@ analysed.
       strings 1200/4800*, *decoded strings 3/20*, *matching rules*). If FLOSS hits its time
       limit, the strings it had found so far are **kept** (marked *PARTIAL* in the Binary tab)
       and reach Code → Strings, IOCs and Findings; a partial run is not cached.
+    - **Rust tab** (`docutracex/rustmeta.py`): the source paths rustc leaves in clear give
+      the compiler (`/rustc/<commit>/library/…` → version), the crates and their versions
+      (`.cargo/registry/src/<index>/<crate>-<version>/`, git checkouts) with a role each
+      (HTTP, TLS, encryption, string obfuscation, reconnaissance, capture, injection, chat
+      C2…), the build machine's user (`C:\Users\<user>\.cargo`, `/home/<user>/`) and the
+      project's own paths and name. Findings: `pe_rust_binary`, `pe_rust_crates_capabilities`,
+      `pe_rust_build_user`. Not mined for IOCs (the strings themselves are).
     - **Rust** (and Go) binaries keep their strings back to back without a NUL: FLOSS's
       *language strings* split them (Rust: also the rustc version), and those are what is
       mined — the static string that merely glues several of them is left out. FLOSS's

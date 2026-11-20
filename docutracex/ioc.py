@@ -989,7 +989,7 @@ _MODULE_SKIP_PATHS = {
     # the binary, they are not indicators. Strings, PDB paths, version info and
     # signatures are still mined.
     "msi": re.compile(
-        r"items\[\d+\]/(?:file|kind|machine|subsystem|imports_dll(?:\[\d+\])?|capa(?:[/\[].*)?"
+        r"items\[\d+\]/(?:file|kind|machine|subsystem|imports_dll(?:\[\d+\])?|capa(?:[/\[].*)?|rust(?:[/\[].*)?"
         r"|lief/(?:libraries|imports|delay_imports|export_name|exports|sections|format|resource_types|linker"
         r"|mitigations|dll_characteristics|overlay/head)(?:[/\[].*)?"
         # certificate bookkeeping (serials, thumbprints, CA issuer / policy OIDs)

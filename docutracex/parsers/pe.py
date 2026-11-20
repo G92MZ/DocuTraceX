@@ -396,6 +396,16 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
             continue
         f.append(x)
     item["lief"] = lf
+    try:                                     # a Rust binary: compiler, crates, the build machine's paths
+        from .. import rustmeta
+        rust = rustmeta.analyze(path)
+        if rust:
+            if not rust.get("rustc_version") and rust.get("rustc_commit"):
+                rust["rustc_version"] = rustmeta._rustc_version(rust["rustc_commit"])
+            item["rust"] = rust
+            f.extend(rustmeta.findings(rust, loc, _finding))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("rust metadata failed on %s: %s", rel, exc)
     try:
         from .. import fingerprints
         item["fingerprints"] = fingerprints.pe(lf)
