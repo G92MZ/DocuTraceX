@@ -942,8 +942,22 @@ def start_full_floss(root: Path, path: Path, sha256: str, mode: str) -> dict[str
     save()
 
     def run() -> None:
+        from .. import heavyjobs
+
+        def wait_note(msg: str) -> None:
+            job["waiting"], job["detail"] = True, msg
+            save()
         try:
-            rec = _pe.full_floss(path, cancel=cancel)
+            if not heavyjobs.acquire(cancel, wait_note):
+                rec = {"status": "cancelled"}
+            else:
+                job["waiting"], job["detail"] = False, ""
+                job["started"] = time.time()             # its time runs from here
+                save()
+                try:
+                    rec = _pe.full_floss(path, cancel=cancel)
+                finally:
+                    heavyjobs.release()
             if rec.get("status") == "cancelled":
                 job["state"], job["error"] = "cancelled", "cancelled by the analyst"
             elif rec.get("status") != "ok":
