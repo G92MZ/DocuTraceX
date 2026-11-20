@@ -1277,12 +1277,32 @@ def _run_floss(path: Path, extra: list[str] | None = None, timeout: int | None =
     block = data.get("strings") or {}
     # FIX: include static_strings — previously omitted, causing the bulk of
     # FLOSS output to be silently discarded. decoded/stack/tight are kept too.
-    for key in ("static_strings", "decoded_strings", "stack_strings", "tight_strings"):
-        vals = [s.get("string") if isinstance(s, dict) else s for s in (block.get(key) or [])]
+    # Rust / Go keep their strings back to back without a NUL: FLOSS's language strings are
+    # them split apart; the static strings that merely glue several of them together (the
+    # blob .rdata reads as) are left out, or their URLs would run into the next string
+    lang = [x for x in block.get("language_strings") or [] if isinstance(x, dict) and isinstance(x.get("string"), str)]
+    lang_offs = sorted(int(x["offset"]) for x in lang if isinstance(x.get("offset"), int))
+    import bisect
+
+    def glued(x: Any) -> bool:
+        if not lang_offs or not isinstance(x, dict) or not isinstance(x.get("offset"), int):
+            return False
+        a = int(x["offset"])
+        b = a + len(str(x.get("string") or "").encode("utf-8", "replace"))
+        return bisect.bisect_left(lang_offs, b) - bisect.bisect_left(lang_offs, a) >= 2
+    for key in ("static_strings", "language_strings", "decoded_strings", "stack_strings", "tight_strings"):
+        items = [x for x in (block.get(key) or []) if not (key == "static_strings" and glued(x))]
+        vals = [x.get("string") if isinstance(x, dict) else x for x in items]
         vals = [v for v in vals if isinstance(v, str) and v.strip()]
-        counts[key.split("_")[0]] = len(vals)
+        if key != "language_strings" or vals:
+            counts[key.split("_")[0]] = len(vals)
         strings.extend(vals)
     rec["counts"] = counts
+    meta = data.get("metadata") or {}
+    if lang or str(meta.get("language") or "") not in ("", "unknown"):
+        rec["language"] = str(meta.get("language") or "")
+        if meta.get("language_version") and meta.get("language_version") != "unknown":
+            rec["language_version"] = str(meta["language_version"])
     # decoded / stack / tight strings with the function that builds or decodes
     # them, so the code analysis can show them next to that function
     located = []
@@ -1298,7 +1318,8 @@ def _run_floss(path: Path, extra: list[str] | None = None, timeout: int | None =
     rec["version"] = str((data.get("metadata") or {}).get("version") or "")
     # FIX: detail now reflects all four categories including static
     rec["detail"] = (f"{len(strings)} string(s): {counts.get('static', 0)} static, "
-                     f"{counts.get('decoded', 0)} decoded, "
+                     + (f"{counts['language']} {rec.get('language') or 'language'} (split), " if counts.get("language") else "")
+                     + f"{counts.get('decoded', 0)} decoded, "
                      f"{counts.get('stack', 0)} stack, "
                      f"{counts.get('tight', 0)} tight")
     if retry_note:

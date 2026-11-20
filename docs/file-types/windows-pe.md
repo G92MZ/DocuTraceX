@@ -39,6 +39,11 @@ analysed.
       strings 1200/4800*, *decoded strings 3/20*, *matching rules*). If FLOSS hits its time
       limit, the strings it had found so far are **kept** (marked *PARTIAL* in the Binary tab)
       and reach Code → Strings, IOCs and Findings; a partial run is not cached.
+    - **Rust** (and Go) binaries keep their strings back to back without a NUL: FLOSS's
+      *language strings* split them (Rust: also the rustc version), and those are what is
+      mined — the static string that merely glues several of them is left out. FLOSS's
+      Rust support needs binary2strings (C++, no Windows wheel): `docutracex/b2s_compat.py`
+      is the same algorithm in Python (MIT, ported from binary2strings 0.1.13).
     - FLOSS and capa share **one analysis of the binary**: the first of them to run saves
       it, and capa, FLOSS tight and Deep FLOSS of the same binary load it instead of
       analysing the binary again (much less time and memory on a large one).
