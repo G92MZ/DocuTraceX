@@ -999,7 +999,9 @@ _MODULE_SKIP_PATHS = {
         # an unpacker's own messages ("consider filing a bug report at https://innoextract…")
         r"|unpack/attempts\[\d+\](?:/tried\[\d+\])?/(?:tool_output|detail|tool))$"),
     # the C2 extractors' own bookkeeping (step names, which tool ran)
+    # (and the family YARA run's own record: its rule sources' URLs, rule names, files)
     "c2": re.compile(r"^(?:timings(?:[/\[].*)?|registry(?:[/\[].*)?|extractor_status(?:/.*)?|runs(?:\[\d+\])?"
+                     r"|family_yara(?:[/\[].*)?"
                      r"|run_id|interpretations(?:[/\[].*)?"
                      r"|configs\[\d+\]/(?:tools/[^/]+/tool|indicators(?:\[\d+\])?"
                      r"|summary/(?:Indicators(?:\[\d+\])?|Vendor|LOLRMM|Note|Seen|Matched(?:\[\d+\])?)|public_key|sections/[^/]+/Note|note|status"
@@ -1094,9 +1096,36 @@ def sources_from_modules(
     out: list[dict[str, Any]] = []
     for s in sources:
         text = strip_header_blocks(s["text"])
+        if s.get("module") in ("pdf", "pdftools"):
+            text = _pdf_bookkeeping(text, s.get("location") or "")
         if text.strip():
             out.append({**s, "text": text} if text is not s["text"] else s)
     return out
+
+
+# A PDF's trailer /ID (two 16-byte identifiers, MD5-shaped) names the document; it is no
+# indicator. peepdf's JSON report also carries the file's own MD5 / SHA-1 / SHA-256 and
+# those /IDs ("basic": md5, sha1, sha256, ids) and its own project URL.
+_PDF_ID = re.compile(r"/ID\s*\[\s*(?:<\s*[0-9A-Fa-f\s]*>\s*|\(.*?\)\s*){1,2}\]", re.S)
+_PEEPDF_DROP = {"md5", "sha1", "sha256", "ids", "peepdf_info", "filename", "date"}
+
+
+def _pdf_bookkeeping(text: str, location: str) -> str:
+    text = _PDF_ID.sub(" ", text)
+    if location.endswith("tools/peepdf/output") and text.lstrip().startswith("{"):
+        import json as _json
+
+        def clean(node: Any) -> Any:
+            if isinstance(node, dict):
+                return {k: clean(v) for k, v in node.items() if str(k).lower() not in _PEEPDF_DROP}
+            if isinstance(node, list):
+                return [clean(v) for v in node]
+            return node
+        try:
+            text = _json.dumps(clean(_json.loads(text)), indent=1)
+        except ValueError:
+            pass
+    return text
 
 
 _HEADER_RULE = re.compile(r"^(?:ms_|dkim_|spf|dmarc|arc_|auth|compauth|received_|date_header|messageid_|missing_message_id"

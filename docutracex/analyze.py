@@ -1748,6 +1748,19 @@ def _drop_own_hashes(paths: CasePaths, ioc_result: dict[str, Any]) -> None:
     try:
         h = ((read_json(paths.manifest) or {}).get("original") or {}).get("hashes") or {}
         own = {str(v).lower() for v in h.values() if v}
+        # and the hashes of every file found inside it (a PDF in a ZIP in the email…): a
+        # tool reporting the file it analysed is no indicator either
+        def walk(node: Any) -> None:
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    if k in ("sha256", "sha1", "md5") and isinstance(v, str) and len(v) in (32, 40, 64):
+                        own.add(v.lower())
+                    elif isinstance(v, (dict, list)):
+                        walk(v)
+            elif isinstance(node, list):
+                for v in node:
+                    walk(v)
+        walk(read_json(paths.subresult("nested")) or {})
         if not own:
             return
         before = len(ioc_result.get("iocs") or [])
