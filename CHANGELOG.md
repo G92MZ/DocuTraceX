@@ -3,6 +3,13 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.242.3 — 2026-11-20 (#321)
+
+**Fix: tool bookkeeping no longer shows up as IOCs**
+
+- The C2 tab's family-YARA rule sources (the CAPE and ditekSHen GitHub URLs) are no longer listed as IOCs.
+- A PDF's trailer `/ID` and the PDF's own MD5 / SHA-1 / SHA-256 reported by peepdf are no longer hash IOCs; nor are the hashes of any file found inside the case (a PDF in a ZIP in the email). Real hashes and URLs in the same documents are still extracted.
+
 ## 1.242.2 — 2026-11-20 (#320)
 
 **Fix: FLOSS on Windows no longer fails at the very end**

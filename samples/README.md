@@ -390,7 +390,7 @@ table with what each one tells. All values below are invented.
 | --- | --- |
 | `word/sample_fingerprints.docm` | **Metadata**: Word document GUID `{3F2B7C1A-…}` (w15) and ID `5A1C3E7B` (w14), `rsidRoot` and 3 rsids; VBA project GUID, *compiled on 64-bit Windows*, locale `0x0409 (en-US)`, code page 1252, p-code version `0xFFFF` (*written by a tool, not saved by Office*). |
 | `excel/sample_fingerprints.xlsx` | Excel build (`rupBuild=27425`) and document GUID `8_{9C4E2A71-…}`. |
-| `pdf/sample_fingerprints.pdf` | **Metadata**: trailer `/ID`, XMP DocumentID / InstanceID / OriginalDocumentID, *derived from*, history of 2 saves and their software — the XMP is in a FlateDecode stream. |
+| `pdf/sample_fingerprints.pdf` | **Metadata**: trailer `/ID`, XMP DocumentID / InstanceID / OriginalDocumentID, *derived from*, history of 2 saves and their software — the XMP is in a FlateDecode stream. The `/ID` values are shown as fingerprints but are **not hash IOCs**, and neither are the PDF's own MD5 / SHA-1 / SHA-256 that peepdf reports. |
 | `shortcuts/sample_fingerprints.lnk` | **Shortcut**: MAC `00:0C:29:A1:B2:C3 — VMware virtual NIC` and the object-ID time `2026-10-28 08:15:00 UTC` from the tracker block (machine `fin-pc07`). |
 
 ## HTML and SVG pages (HTML tab)
