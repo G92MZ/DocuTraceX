@@ -242,7 +242,8 @@ def run_http(server, host: str = "127.0.0.1", port: int = 8001) -> None:
     print(f"DocuTraceX MCP over HTTP: http://{shown}:{port}/mcp\n"
           "Clients must send 'Authorization: Bearer <token>'. The token is in AI -> MCP (web app), in\n"
           "config/mcp_token.txt, or: python -m docutracex.users mcp-token", file=sys.stderr, flush=True)
-    uvicorn.run(http_app(server, host), host=host, port=port, log_level="info")
+    from .winloop import uvicorn_loop
+    uvicorn.run(http_app(server, host), host=host, port=port, log_level="info", loop=uvicorn_loop())
 
 
 def main(argv: list[str] | None = None) -> None:
