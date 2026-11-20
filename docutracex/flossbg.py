@@ -228,7 +228,8 @@ def _start_floss(root: Path, path: Path, name: str, sha256: str,
 
     def run(task: Any, cancel: Any) -> str:
         from . import heavyjobs
-        rec = heavyjobs.run(task, cancel, "FLOSS", lambda: pe_mod.floss_record(path, cancel=cancel))
+        rec = heavyjobs.run(task, cancel, "FLOSS", lambda: pe_mod.floss_record(path, cancel=cancel),
+                            progress=lambda: pe_mod.live_progress(path, "floss"))
         if rec.get("status") == "cancelled" or cancel.is_set():
             _apply(root, sha256, {"status": "cancelled", "detail": "FLOSS cancelled by the analyst"}, task, None)
             return "cancelled"
@@ -328,7 +329,8 @@ def _start_capa(root: Path, path: Path, name: str, sha256: str, loc: str,
 
     def run(task: Any, cancel: Any) -> str:
         from . import heavyjobs
-        rec = heavyjobs.run(task, cancel, "capa", lambda: pe_mod._capa_only(path, cancel=cancel))
+        rec = heavyjobs.run(task, cancel, "capa", lambda: pe_mod._capa_only(path, cancel=cancel),
+                            progress=lambda: pe_mod.live_progress(path, "capa"))
         if rec.get("status") == "cancelled" or cancel.is_set():
             _apply_capa(root, {"status": "cancelled", "detail": "capa cancelled by the analyst"}, task, loc, sha256)
             return "cancelled"
@@ -395,7 +397,8 @@ def _start_priority(root: Path, path: Path, name: str, sha256: str, mode: str, a
     def run(task: Any, cancel: Any) -> str:
         from . import heavyjobs
         rec = heavyjobs.run(task, cancel, f"FLOSS tight on {len(addrs)} function(s)",
-                            lambda: pe_mod.tight_on_functions(path, addrs, cancel=cancel))
+                            lambda: pe_mod.tight_on_functions(path, addrs, cancel=cancel),
+                            progress=lambda: pe_mod.live_progress(path, "floss"))
         status = "cancelled" if (cancel.is_set() or rec.get("status") == "cancelled") else rec.get("status")
         located = [dict(s, kind="tight") for s in rec.get("located") or [] if s.get("kind") == "tight"]
         if status != "cancelled":

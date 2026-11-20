@@ -27,6 +27,10 @@ analysed.
       with **no time limit**, in the background, cancellable. The tools' time and status are
       sub-steps of the PE triage step in Tasks. `DOCUTRACEX_FLOSS_LARGE_MB=N` keeps tight
       strings in the automatic run for files up to N MB.
+    - While they run, Tasks shows their phase and progress (*analysing the binary*, *stack
+      strings 1200/4800*, *decoded strings 3/20*, *matching rules*). If FLOSS hits its time
+      limit, the strings it had found so far are **kept** (marked *PARTIAL* in the Binary tab)
+      and reach Code → Strings, IOCs and Findings; a partial run is not cached.
     - FLOSS and capa share **one analysis of the binary**: the first of them to run saves
       it, and capa, FLOSS tight and Deep FLOSS of the same binary load it instead of
       analysing the binary again (much less time and memory on a large one).

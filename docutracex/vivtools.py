@@ -11,7 +11,12 @@ code): same versions, same JSON output, but
 
 Run as a script (no package import needed)::
 
-    python vivtools.py floss|capa --cache DIR [--rules DIR] -- <tool arguments> <sample>
+    python vivtools.py floss|capa --cache DIR [--rules DIR] [--progress FILE] [--partial FILE]
+                       -- <tool arguments> <sample>
+
+``--progress``: the phase and n / N functions, rewritten as the run goes (Tasks shows it);
+``--partial``: FLOSS's strings found so far, in its JSON format (every 15 s and at the end
+of each phase), so a run that hits its time limit keeps what it found.
 
 ``.viv`` files are pickles: they are only ever loaded from the tools cache, written by
 this script, for a copy of the sample named by its SHA-256 (never from next to a sample).
@@ -61,11 +66,129 @@ def _prune(cache: Path, keep: int) -> None:
             f.unlink(missing_ok=True)
 
 
+class _Live:
+    """Progress (``--progress``: the phase and n / N functions, read by the app while the run
+    lasts, for Tasks) and partial results (``--partial``: the strings FLOSS has so far, in
+    its own JSON format, so a run that hits its time limit is not lost)."""
+
+    PHASES = {"extracting stackstrings": "stack strings", "extracting tightstrings": "tight strings",
+              "decoding strings": "decoded strings"}
+
+    def __init__(self, progress: str | None, partial: str | None) -> None:
+        import threading
+        self.progress, self.partial = progress, partial
+        self.found: dict[str, list] = {"static_strings": [], "stack_strings": [], "tight_strings": [],
+                                       "decoded_strings": []}
+        self.meta: dict = {}
+        self._last_p = self._last_w = 0.0
+        self._lock = threading.Lock()
+
+    def _atomic(self, path: str, text: str) -> None:
+        tmp = f"{path}.tmp"
+        try:
+            Path(tmp).write_text(text, encoding="utf-8")
+            os.replace(tmp, path)
+        except OSError:
+            pass
+
+    def step(self, phase: str, done: int = 0, total: int = 0, force: bool = False) -> None:
+        import json
+        import time
+        now = time.monotonic()
+        if self.progress and (force or now - self._last_p >= 1):
+            self._last_p = now
+            self._atomic(self.progress, json.dumps({"phase": phase, "done": done, "total": total}))
+        if self.partial and (force or now - self._last_w >= 15):
+            self._last_w = now
+            self.write_partial()
+
+    def write_partial(self) -> None:
+        if not self.partial:
+            return
+        try:
+            import floss.render.json as fj
+            from floss.results import Analysis, Metadata, ResultDocument
+            with self._lock:
+                doc = ResultDocument(metadata=Metadata(**self.meta), analysis=Analysis())
+                for k, v in self.found.items():
+                    setattr(doc.strings, k, list(v))
+            self._atomic(self.partial, fj.render(doc))
+        except Exception as exc:  # noqa: BLE001  (progress must never break the run)
+            print(f"partial results not written: {exc}", file=sys.stderr)
+
+    def hook_floss(self) -> None:
+        import floss.main
+        import floss.results
+        import floss.utils
+        live = self
+        kinds = {"StackString": "stack_strings", "TightString": "tight_strings", "DecodedString": "decoded_strings"}
+        log_result, get_static, load_vw = floss.results.log_result, floss.main.get_static_strings, floss.main.load_vw
+
+        def logged(obj, *a, **k):  # noqa: ANN001, ANN002, ANN003, ANN202
+            key = kinds.get(type(obj).__name__)
+            if key:
+                with live._lock:
+                    live.found[key].append(obj)
+            return log_result(obj, *a, **k)
+
+        def statics(sample, min_length, *a, **k):  # noqa: ANN001, ANN002, ANN003, ANN202
+            got = get_static(sample, min_length, *a, **k)
+            live.meta = {"file_path": str(sample), "min_length": min_length}
+            with live._lock:
+                live.found["static_strings"] = list(got or [])
+            live.step("static strings", force=True)
+            return got
+
+        def loading(*a, **k):  # noqa: ANN002, ANN003, ANN202
+            live.step("loading the saved analysis" if os.environ.get("FLOSS_LOAD_VIV_WORKSPACE") == "1"
+                      else "analysing the binary (vivisect)", force=True)
+            return load_vw(*a, **k)
+
+        def bar(items, disable_progress, desc="", unit=""):  # noqa: ANN001, ANN202
+            items = list(items)
+            phase = live.PHASES.get(desc, desc or "working")
+
+            def gen():  # noqa: ANN202
+                for i, it in enumerate(items):
+                    live.step(phase, i, len(items))
+                    yield it
+                live.step(phase, len(items), len(items), force=True)
+            return gen()
+
+        floss.results.log_result = logged
+        floss.main.get_static_strings = statics
+        floss.main.load_vw = loading
+        floss.utils.get_progress_bar = bar
+
+    def hook_capa(self) -> None:
+        import capa.main
+        live = self
+        get_ex, find = capa.main.get_extractor_from_cli, capa.main.find_capabilities
+
+        def extractor(*a, **k):  # noqa: ANN002, ANN003, ANN202
+            live.step("loading the saved analysis" if os.environ.get("CAPA_LOAD_VIV_WORKSPACE") == "1"
+                      else "analysing the binary (vivisect)", force=True)
+            return get_ex(*a, **k)
+
+        def matching(*a, **k):  # noqa: ANN002, ANN003, ANN202
+            live.step("matching rules", force=True)
+            return find(*a, **k)
+        capa.main.get_extractor_from_cli = extractor
+        capa.main.find_capabilities = matching
+
+
+_live: _Live | None = None
+
+
 def _run(tool: str, argv: list[str]) -> int:
     if tool == "floss":
         import floss.main
+        if _live is not None:
+            _live.hook_floss()
         return int(floss.main.main(argv) or 0)
     import capa.main
+    if _live is not None:
+        _live.hook_capa()
     return int(capa.main.main(argv) or 0)
 
 
@@ -80,6 +203,8 @@ def main(argv: list[str] | None = None) -> int:
     sample = Path(tool_argv[-1])
     tool = argv[0]
     _stub_binary2strings()
+    global _live
+    _live = _Live(opts.get("--progress"), opts.get("--partial") if tool == "floss" else None)
     if tool == "capa":
         import floss.main                        # capa's pip package has no FLIRT signatures:
         sigs = floss.main.get_default_root() / "sigs"   # FLOSS ships the same ones

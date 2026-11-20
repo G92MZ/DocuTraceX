@@ -67,10 +67,15 @@ def test_command_and_cache_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     pe._run_tool("capa", script, ["-j", "-q"], sample, 10)
     floss, capa = calls
     cache = str(tmp_path / "cases" / ".tools_cache" / "viv")
-    assert floss == ["/portable/python", "-I", str(script), "floss", "--cache", cache, "--",
+
+    def own(cmd: list[str], flag: str) -> str:
+        return cmd[cmd.index(flag) + 1]
+    assert floss == ["/portable/python", "-I", str(script), "floss", "--cache", cache,
+                     "--progress", own(floss, "--progress"), "--partial", own(floss, "--partial"), "--",
                      "--json", "--no", "tight", "--", str(sample)]
     assert capa == ["/portable/python", "-I", str(script), "capa", "--cache", cache, "--rules",
-                    str(tmp_path / "rules"), "--", "-j", "-q", str(sample)]
+                    str(tmp_path / "rules"), "--progress", own(capa, "--progress"), "--", "-j", "-q", str(sample)]
+    assert "--partial" not in capa                                 # capa's result is all at the end
     assert pe._tool_id(script).startswith("lib:flare-floss==3.2.0:flare-capa==10.0.0")
 
 
@@ -102,3 +107,70 @@ def test_one_analysis_shared_by_floss_and_capa(tmp_path: Path) -> None:
     assert {k: len(v) for k, v in again["strings"].items()} == {k: len(v) for k, v in first["strings"].items()}
     assert isinstance(capa.get("rules"), dict)
     assert not list(cache.glob("*.[0-9]*.bin*"))                   # private copies cleaned up
+
+
+def _fake_partial_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, timed_out: bool) -> list[list[str]]:
+    """run_bounded stand-in: FLOSS (vivtools) wrote progress + partial strings, then its time ran out."""
+    calls: list[list[str]] = []
+    partial = {"metadata": {"file_path": "x", "min_length": 7}, "analysis": {},
+               "strings": {"static_strings": [{"string": "https://facturas-cdn.example/gate.php"}],
+                           "stack_strings": [{"string": "cmd.exe /c whoami", "function": 4096}],
+                           "decoded_strings": [], "tight_strings": []}}
+
+    def fake_run(cmd, timeout, cwd=None, env=None, cancel=None):  # noqa: ANN001, ANN202
+        calls.append(cmd)
+        prog = Path(cmd[cmd.index("--progress") + 1])
+        prog.write_text(json.dumps({"phase": "decoded strings", "done": 3, "total": 20}))
+        assert pe.live_progress(Path(cmd[-1]), "floss") == "decoded strings 3/20"   # while it runs
+        if "--partial" in cmd:
+            Path(cmd[cmd.index("--partial") + 1]).write_text(json.dumps(partial))
+        if timed_out:
+            return {"rc": None, "out": "", "err": "", "timed_out": True, "duration_s": timeout}
+        return {"rc": 0, "out": json.dumps({"metadata": {"version": "3.2.0"}, "strings": {}}), "err": "",
+                "timed_out": False, "duration_s": 1}
+    from docutracex import proctools
+    monkeypatch.setattr(proctools, "run_bounded", fake_run)
+    monkeypatch.setattr(settings, "portable_python", lambda: Path("/portable/python"))
+    monkeypatch.setattr(settings, "cases_dir", tmp_path / "cases")
+    monkeypatch.setattr(settings, "floss_executable", lambda: settings.vivtools_script())
+    return calls
+
+
+def test_floss_timeout_keeps_partial_strings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_partial_run(tmp_path, monkeypatch, timed_out=True)
+    monkeypatch.setattr(pe, "_cache_file", lambda sha, tool: tmp_path / "cache" / f"{sha}.{tool}.json")
+    sample = tmp_path / "s.exe"
+    sample.write_bytes(b"MZ" + b"\0" * 64)
+    rec = pe._cached(sample, "floss", settings.floss_executable(), [], lambda: pe._run_floss(sample, timeout=60))
+    assert rec["status"] == "ok" and rec["partial"] and rec["detail"].startswith("PARTIAL")
+    assert "https://facturas-cdn.example/gate.php" in rec["strings"] and rec["counts"]["stack"] == 1
+    assert rec["located"][0]["function"] == 4096
+    assert not list((tmp_path / "cache").glob("*.json"))          # a partial run is never cached
+    assert pe.live_progress(sample, "floss") == ""                  # not running any more
+    assert not list((tmp_path / "cases" / ".tools_cache" / "live").glob("*"))   # its files cleaned up
+
+
+def test_finished_floss_ignores_and_cleans_its_partial(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake_partial_run(tmp_path, monkeypatch, timed_out=False)
+    sample = tmp_path / "s.exe"
+    sample.write_bytes(b"MZ")
+    rec = pe._run_floss(sample, timeout=60)
+    assert rec["status"] == "ok" and not rec.get("partial")
+    assert not list((tmp_path / "cases" / ".tools_cache" / "live").glob("*"))
+
+
+@pytest.mark.skipif(not (VIVPY and RULES), reason="no interpreter with flare-floss / flare-capa (DOCUTRACEX_TEST_VIVPYTHON)")
+def test_progress_and_partial_written_by_vivtools(tmp_path: Path) -> None:
+    from test_js_techniques import _ms
+    sample = tmp_path / "sample_code_loader.exe"
+    sample.write_bytes(_ms().code_loader_exe())
+    prog, part = tmp_path / "p.json", tmp_path / "part.json"
+    r = subprocess.run([VIVPY, "-I", str(settings.vivtools_script()), "floss", "--cache", str(tmp_path / "viv"),
+                        "--progress", str(prog), "--partial", str(part), "--",
+                        "--json", "-q", "--no", "tight", "--", str(sample)],
+                       capture_output=True, text=True, timeout=900)
+    assert r.returncode == 0, r.stderr[-800:]
+    final = json.loads(r.stdout)
+    got = json.loads(part.read_text())                            # same FLOSS format, written as it went
+    assert len(got["strings"]["static_strings"]) == len(final["strings"]["static_strings"])
+    assert json.loads(prog.read_text())["phase"] in ("decoded strings", "stack strings")

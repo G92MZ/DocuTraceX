@@ -606,7 +606,10 @@ the next ones on the same binary — capa after FLOSS, FLOSS tight on the priori
 functions, Deep FLOSS, a re-analysis — **load it** instead of analysing again (on a
 large binary: minutes and GB saved). Try it with `windows-pe/sample_code_loader.exe`:
 after the first analysis its `.viv` is in the cache, and capa (*connect to URL*, *encode
-data using XOR*, *create HTTP request*) reuses it.
+data using XOR*, *create HTTP request*) reuses it. To see a **PARTIAL** FLOSS run (a timeout
+keeps the strings found so far instead of losing them), analyse the same sample with
+`DOCUTRACEX_FLOSS_TIMEOUT=2`: the Binary tab's FLOSS line starts with *PARTIAL* and its
+static strings (`facturas-cdn.example`…) still reach IOCs.
 
 On each PE, FLOSS and capa run **at the same time** (two processes), and the PEs
 of a nested batch (an MSI's kits, an archive's binaries, unpacked files…) are

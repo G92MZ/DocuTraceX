@@ -3,6 +3,13 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.241.0 — 2026-11-20 (#317)
+
+**FLOSS keeps what it found when it runs out of time, and shows its progress**
+
+- If FLOSS hits its time limit, the strings it had already found (static, stack, decoded so far) are kept: they reach the Binary tab, Code → Strings, IOCs and Findings, marked **PARTIAL**. Before, a timeout lost everything. A partial run is not cached, so a re-analysis runs FLOSS again.
+- Tasks and Deep FLOSS show what FLOSS and capa are doing: the phase and how many functions are done (e.g. *stack strings 1200/4800*, *matching rules*).
+
 ## 1.240.0 — 2026-11-20 (#316)
 
 **FLOSS and capa as Python libraries: one analysis per binary, shared**
