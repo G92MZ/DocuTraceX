@@ -510,6 +510,15 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
                     capa = clock.run("capa", lambda: _capa_only(path),
                                      lambda r: {"status": r.get("status", "ok"),
                                                 "detail": str(r.get("detail") or "")[:160]})
+                if complete_needed(path):
+                    # the fast analysis first; the complete one after it adds what it finds
+                    item["vivisect_full"] = flossbg.start_complete(
+                        _bg_root.get(), path, Path(rel).name, _sha(path) or "", loc,
+                        [floss.get("task_id") or "", capa.get("task_id") or "" if capa.get("background") else ""])
+                    clock.rows.append({"name": f"{clock.name} · complete analysis", "chain": "vivisect",
+                                       "depth": 1, "kind": "tool", "duration_s": 0, "status": "background",
+                                       "detail": "FLOSS and capa run first on a fast analysis; the complete one "
+                                                 "follows in the background and adds what it finds"})
             else:
                 floss, capa = clock.tools(lambda: tools_for(path))
             floss_strings = floss.pop("strings", [])
@@ -759,6 +768,8 @@ def _run_tool(name: str, exe: Path | None, args: list[str], path: Path,
         own = ["--cache", str(Path(settings.cases_dir) / ".tools_cache" / "viv")]
         if name == "capa" and settings.capa_rules_dir():
             own += ["--rules", str(settings.capa_rules_dir())]
+        if _vivfast.get():
+            own += ["--fast", "1"]
         live = _live_files(path, name)
         own += ["--progress", str(live["progress"])]
         if name == "floss":
@@ -946,13 +957,22 @@ def _floss_plan(path: Path) -> tuple[str, list[str]]:
     return ("floss", FLOSS_LARGE_ARGS) if large else ("floss", [])
 
 
-def floss_record(path: Path, cancel: Any = None) -> dict[str, Any]:
+def floss_record(path: Path, cancel: Any = None, fast: bool = False) -> dict[str, Any]:
     """The automatic FLOSS run of one file on its own (the background job), cached like
-    the one ``_both`` runs."""
+    the one ``_both`` runs. ``fast``: on the fast vivisect analysis (a complete result
+    already cached is used instead)."""
     from ..config import settings
     key, fextra = _floss_plan(path)
-    rec = dict(_cached(path, key, settings.floss_executable(), fextra,
-                       lambda: _run_floss(path, fextra, cancel=cancel)))
+    exe = settings.floss_executable()
+    if fast and fast_capable() and _cache_get(path, key, exe, fextra) is None:
+        tok = _vivfast.set(True)
+        try:
+            rec = dict(_cached(path, key, exe, [*fextra, FAST_KEY], lambda: _run_floss(path, fextra, cancel=cancel)))
+        finally:
+            _vivfast.reset(tok)
+        rec["fast"] = True
+    else:
+        rec = dict(_cached(path, key, exe, fextra, lambda: _run_floss(path, fextra, cancel=cancel)))
     if fextra and rec.get("status") == "ok":
         rec["tight_skipped"] = True
     return rec
@@ -988,15 +1008,48 @@ def _capa_cached(path: Path) -> bool:
     return _cache_get(path, "capa", settings.capa_executable(), []) is not None
 
 
-def _capa_only(path: Path, cancel: Any = None) -> dict[str, Any]:
+def _capa_only(path: Path, cancel: Any = None, fast: bool = False) -> dict[str, Any]:
     from ..config import settings
-    return dict(_cached(path, "capa", settings.capa_executable(), [], lambda: _run_capa(path, cancel) if cancel is not None else _run_capa(path)))
+    exe = settings.capa_executable()
+    run = lambda: _run_capa(path, cancel) if cancel is not None else _run_capa(path)  # noqa: E731
+    if fast and fast_capable() and _cache_get(path, "capa", exe, []) is None:
+        tok = _vivfast.set(True)
+        try:
+            rec = dict(_cached(path, "capa", exe, [FAST_KEY], run))
+        finally:
+            _vivfast.reset(tok)
+        rec["fast"] = True
+        return rec
+    return dict(_cached(path, "capa", exe, [], run))
 
 
 # The case's own binary above this size gets FLOSS as a background job (flossbg): the case
 # does not wait for it. 0 disables. Set by msi.analyze for the top-level file only.
 FLOSS_BACKGROUND_BYTES = int(float(_os.environ.get("DOCUTRACEX_FLOSS_BACKGROUND_MB", "2")) * 1024 * 1024)
 _bg_root: ContextVar[Path | None] = ContextVar("dtx_floss_bg_root", default=None)
+
+# Fast vivisect analysis for the background FLOSS / capa of a large binary: without the
+# per-function emulation pass (amd64.emulation / i386.calling), ~10x faster (34 min → 3 on
+# a 6 MB x64 binary) at the cost of a few results; the complete analysis then runs in the
+# background and adds what it finds (flossbg.start_complete). DOCUTRACEX_VIVISECT_FAST=0: off.
+VIVISECT_FAST = _os.environ.get("DOCUTRACEX_VIVISECT_FAST", "1") != "0"
+FAST_KEY = "vivisect-fast"
+_vivfast: ContextVar[bool] = ContextVar("dtx_vivfast", default=False)
+
+
+def fast_capable() -> bool:
+    """The fast analysis exists only for the libraries (vivtools.py), not a standalone .exe."""
+    from ..config import settings
+    exe = settings.floss_executable()
+    return VIVISECT_FAST and exe is not None and exe.suffix == ".py"
+
+
+def complete_needed(path: Path) -> bool:
+    """A fast result is (or will be) all the case has: the complete analysis must follow."""
+    from ..config import settings
+    key, fextra = _floss_plan(path)
+    return fast_capable() and (_cache_get(path, key, settings.floss_executable(), fextra) is None
+                               or _cache_get(path, "capa", settings.capa_executable(), []) is None)
 
 
 def tight_cached(path: Path, addrs: list[int]) -> bool:

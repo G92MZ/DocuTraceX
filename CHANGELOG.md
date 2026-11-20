@@ -3,6 +3,14 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.242.0 — 2026-11-20 (#318)
+
+**Large binaries: FLOSS and capa results in minutes, completed in the background**
+
+- On a large binary, FLOSS and capa first run on a **fast analysis** (about 10× faster: 3 minutes instead of 34 on a 6 MB 64-bit binary), so their strings and capabilities arrive much sooner.
+- The **complete analysis** then runs in the background (Tasks) and **adds** whatever the fast one missed — strings and capabilities are merged, nothing is replaced. The Binary tab says which results you are looking at.
+- `DOCUTRACEX_VIVISECT_FAST=0` turns it off (complete analysis only).
+
 ## 1.241.0 — 2026-11-20 (#317)
 
 **FLOSS keeps what it found when it runs out of time, and shows its progress**

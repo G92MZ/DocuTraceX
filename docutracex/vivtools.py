@@ -11,10 +11,12 @@ code): same versions, same JSON output, but
 
 Run as a script (no package import needed)::
 
-    python vivtools.py floss|capa --cache DIR [--rules DIR] [--progress FILE] [--partial FILE]
+    python vivtools.py floss|capa --cache DIR [--rules DIR] [--progress FILE] [--partial FILE] [--fast 1]
                        -- <tool arguments> <sample>
 
-``--progress``: the phase and n / N functions, rewritten as the run goes (Tasks shows it);
+``--fast 1``: the fast analysis (no per-function emulation pass; saved apart; the
+complete one is used instead when it is already saved). ``--progress``: the phase and
+n / N functions, rewritten as the run goes (Tasks shows it);
 ``--partial``: FLOSS's strings found so far, in its JSON format (every 15 s and at the end
 of each phase), so a run that hits its time limit keeps what it found.
 
@@ -48,6 +50,25 @@ def _stub_binary2strings() -> None:
         mod.extract_all_strings = missing
         mod.extract_string = missing
         sys.modules["binary2strings"] = mod
+
+
+# The per-function emulation pass: ~90 % of vivisect's analysis of a large binary (34 of
+# 38 min on a 6 MB x64 one). Without it the analysis is ~12x faster; FLOSS's stack strings
+# stay identical, a few decoded strings / capa matches differ (some lost, some gained), so
+# the app runs the fast analysis first and the complete one after, and merges both.
+EMULATION_PASSES = ("vivisect.analysis.amd64.emulation", "vivisect.analysis.i386.calling")
+
+
+def _fast_analysis() -> None:
+    import vivisect
+    orig = vivisect.VivWorkspace.analyze
+
+    def analyze(self):  # noqa: ANN001, ANN202
+        for m in EMULATION_PASSES:
+            if m in self.fmodlist:
+                self.delFuncAnalysisModule(m)
+        return orig(self)
+    vivisect.VivWorkspace.analyze = analyze
 
 
 def _sha256(p: Path) -> str:
@@ -214,12 +235,19 @@ def main(argv: list[str] | None = None) -> int:
             return 3
         tool_argv = ["-r", rules, "-s", str(sigs), *tool_argv]
     cache = Path(opts["--cache"]) if opts.get("--cache") else None
+    fast = opts.get("--fast") == "1"
+    if cache is not None and sample.is_file():
+        cache.mkdir(parents=True, exist_ok=True)
+        sha = _sha256(sample)
+        if fast and (cache / f"{sha}.bin.viv").is_file():
+            fast = False                         # the complete analysis is saved: better, and as fast to load
+    if fast:
+        _fast_analysis()
     if cache is None or not sample.is_file():
         return _run(tool, tool_argv)
-    cache.mkdir(parents=True, exist_ok=True)
-    sha = _sha256(sample)
-    base = cache / f"{sha}.bin"
-    viv = cache / f"{sha}.bin.viv"
+    kind = "fast.bin" if fast else "bin"
+    base = cache / f"{sha}.{kind}"
+    viv = cache / f"{sha}.{kind}.viv"
     for k in ("FLOSS_SAVE_WORKSPACE", "CAPA_SAVE_WORKSPACE", "FLOSS_LOAD_VIV_WORKSPACE", "CAPA_LOAD_VIV_WORKSPACE"):
         os.environ[k] = "0"
     if viv.is_file():
@@ -239,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["FLOSS_LOAD_VIV_WORKSPACE"] = os.environ["CAPA_LOAD_VIV_WORKSPACE"] = "0"
     # analyse, and save the analysis — on a private copy, renamed into place when complete,
     # so a run never loads a half-written one
-    work = cache / f"{sha}.{os.getpid()}.bin"
+    work = cache / f"{sha}.{os.getpid()}.{kind}"
     shutil.copyfile(sample, work)
     os.environ["FLOSS_SAVE_WORKSPACE" if tool == "floss" else "CAPA_SAVE_WORKSPACE"] = "1"
     try:
@@ -249,6 +277,9 @@ def main(argv: list[str] | None = None) -> int:
             if not base.is_file():
                 shutil.copyfile(sample, base)
             os.replace(saved, viv)
+            if kind == "bin":                    # the complete analysis supersedes the fast one
+                for f in (cache / f"{sha}.fast.bin.viv", cache / f"{sha}.fast.bin"):
+                    f.unlink(missing_ok=True)
             _prune(cache, VIV_KEEP)
         return rc
     finally:

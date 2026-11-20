@@ -2477,7 +2477,26 @@ function peToolLine(t) {
   return `${st}${t.detail ? ` — ${t.detail}` : ""}${ver}${dur}`;
 }
 
-function paneCapa(c) {
+// Large binaries: FLOSS / capa first on a fast analysis, then the complete one in the
+// background adds what it finds (it.vivisect_full). One line for both tool tabs.
+function completeHint(it) {
+  const v = it && it.vivisect_full;
+  if (!v) return "";
+  if (v.status === "running")
+    return `<p class="hint-line"><span class="spin">●</span> These results come from a <b>fast analysis</b> of the binary (about 10× faster). The <b>complete analysis</b> runs after it in the background (${escapeHtml(v.task_id || "")} in <b>Tasks</b>) and <b>adds</b> the strings and capabilities it finds — reopen the case then.</p>`;
+  if (v.status === "ok")
+    return `<p class="hint-line">Fast analysis, completed in the background by the complete one: <b>+${escapeHtml(String(v.strings_added || 0))}</b> FLOSS string(s), <b>+${escapeHtml(String(v.capabilities_added || 0))}</b> capa capabilit(ies) added.</p>`;
+  if (v.status === "cancelled" || v.status === "interrupted")
+    return `<p class="hint-line">These results come from a <b>fast analysis</b>; the complete one was ${escapeHtml(v.status)}${v.status === "interrupted" ? " (the app restarted)" : ""}, so a few strings or capabilities may be missing. Re-run the analysis to complete it.</p>`;
+  return `<p class="hint-line">The complete analysis failed (${escapeHtml(v.detail || v.status || "")}): these results come from the fast one.</p>`;
+}
+
+function paneCapa(c, it) {
+  const done = paneCapaBody(c);
+  return (c && c.status === "ok" ? completeHint(it) : "") + done;
+}
+
+function paneCapaBody(c) {
   if (c && c.background && c.status === "running")
     return `<p class="hint-line"><span class="spin">●</span> Large binary: capa is running in the <b>background</b> (${escapeHtml(c.task_id || "")} in <b>Tasks</b>, with its time and Cancel). The case did not wait for it: its capabilities and ATT&amp;CK techniques appear here and in Findings when it ends — reopen the case then.</p>`;
   if (c && c.background && c.status === "cancelled")
@@ -2509,9 +2528,9 @@ function paneFloss(it) {
   if (fl && fl.background && fl.status === "interrupted")
     return `<p class="hint-line">FLOSS (background) was interrupted: the app restarted while it ran. Re-run the analysis to run it again, or Deep FLOSS in the Code view.</p>`;
   if (!fl || fl.status !== "ok") return "";
-  const tight = fl.tight_skipped
+  const tight = completeHint(it) + (fl.tight_skipped
     ? `<p class="hint-line">Tight strings skipped in this automatic run (they emulate every tight loop: minutes to hours). The code analysis ran them on its priority functions; <b>Deep FLOSS</b> in the <b>Code</b> view runs them on every function, with no time limit.</p>`
-    : "";
+    : "");
   if (!ss.length) return `<p class="hint-line">FLOSS: no decoded / stack${fl.tight_skipped ? "" : " / tight"} strings.</p>${tight}`;
   return `${tight}<details class="disclose"><summary>FLOSS decoded / stack${fl.tight_skipped ? "" : " / tight"} strings — ${escapeHtml(String(ss.length))}</summary>
     <pre class="text-sample">${escapeHtml(ss.join("\n"))}</pre></details>`;
@@ -2724,7 +2743,7 @@ function panePeItem(it, n, fileRec) {
                           detail: it.unpack.detail || (it.unpack.status === "none" ? "no packer detected" : "") },
                         paneUnpack(it.unpack) + netFindingsList(byTool("unpack"))) : null,
     it.floss ? toolTab("floss", "FLOSS", it.floss, paneFloss(it)) : null,
-    it.capa ? toolTab("capa", "capa", it.capa, paneCapa(it.capa)) : null,
+    it.capa ? toolTab("capa", "capa", it.capa, paneCapa(it.capa, it)) : null,
   ]);
 }
 

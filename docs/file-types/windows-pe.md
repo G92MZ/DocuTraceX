@@ -27,6 +27,14 @@ analysed.
       with **no time limit**, in the background, cancellable. The tools' time and status are
       sub-steps of the PE triage step in Tasks. `DOCUTRACEX_FLOSS_LARGE_MB=N` keeps tight
       strings in the automatic run for files up to N MB.
+    - **Fast first, complete after.** Almost all of that analysis (34 of 38 min on a 6 MB
+      x64 binary) is one pass that emulates every function to learn its calling convention.
+      For the large binary's background FLOSS / capa it is left out (~10x faster: 3 min);
+      measured on that binary, the stack strings were identical, while 2 decoded strings and
+      1 capa match were missing and 1 decoded string was new. So a **complete analysis**
+      follows in the background (Tasks: *complete analysis*) and **adds** what it finds:
+      the result is the union of both. FLOSS tight on the priority functions uses the fast
+      analysis; Deep FLOSS the complete one. `DOCUTRACEX_VIVISECT_FAST=0` turns it off.
     - While they run, Tasks shows their phase and progress (*analysing the binary*, *stack
       strings 1200/4800*, *decoded strings 3/20*, *matching rules*). If FLOSS hits its time
       limit, the strings it had found so far are **kept** (marked *PARTIAL* in the Binary tab)

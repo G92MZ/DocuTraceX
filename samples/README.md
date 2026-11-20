@@ -609,7 +609,11 @@ after the first analysis its `.viv` is in the cache, and capa (*connect to URL*,
 data using XOR*, *create HTTP request*) reuses it. To see a **PARTIAL** FLOSS run (a timeout
 keeps the strings found so far instead of losing them), analyse the same sample with
 `DOCUTRACEX_FLOSS_TIMEOUT=2`: the Binary tab's FLOSS line starts with *PARTIAL* and its
-static strings (`facturas-cdn.example`…) still reach IOCs.
+static strings (`facturas-cdn.example`…) still reach IOCs. To see the **fast analysis first, complete after**
+flow (normally for binaries above 2 MB), analyse it with
+`DOCUTRACEX_FLOSS_BACKGROUND_MB=0.001`: FLOSS and capa run in the background on the fast
+analysis, then a *complete analysis* task follows, and the Binary tab's FLOSS / capa tabs
+say what it added.
 
 On each PE, FLOSS and capa run **at the same time** (two processes), and the PEs
 of a nested batch (an MSI's kits, an archive's binaries, unpacked files…) are

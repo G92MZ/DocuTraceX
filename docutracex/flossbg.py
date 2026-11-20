@@ -127,7 +127,7 @@ def recover_interrupted(cases_dir: Path) -> int:
                 res = read_json(paths.subresult("msi")) or {}
                 changed = False
                 for it in res.get("items") or []:
-                    for key in ("floss", "capa"):
+                    for key in ("floss", "capa", "vivisect_full"):
                         rec = it.get(key) or {}
                         if rec.get("task_id") in gone and rec.get("status") == "running":
                             it[key] = {"status": "interrupted", "background": True, "task_id": rec["task_id"],
@@ -166,7 +166,7 @@ def launch_deferred(root: Path) -> list[str]:
     from .storage import CasePaths, read_json, write_subresult
     root = Path(root)
     f = root / "results" / REQUESTS
-    reqs = [r for r in read_json(f) or [] if r.get("kind") in ("floss", "capa", "priority")]
+    reqs = [r for r in read_json(f) or [] if r.get("kind") in ("floss", "capa", "priority", "complete")]
     f.unlink(missing_ok=True)
     if not reqs:
         return []
@@ -176,7 +176,7 @@ def launch_deferred(root: Path) -> list[str]:
         res = read_json(paths.subresult("msi")) or {}
         changed = False
         for it in res.get("items") or []:
-            for key in ("floss", "capa"):
+            for key in ("floss", "capa", "vivisect_full"):
                 rec = it.get(key) or {}
                 if rec.get("task_id") in ids:
                     rec["task_id"], changed = ids[rec["task_id"]], True
@@ -202,6 +202,9 @@ def launch_deferred(root: Path) -> list[str]:
                 _start_floss(root, path, r["name"], r["sha256"], task_id=tid)
             elif r["kind"] == "capa":
                 _start_capa(root, path, r["name"], r["sha256"], r.get("loc") or r["name"], task_id=tid)
+            elif r["kind"] == "complete":
+                _start_complete(root, path, r["name"], r["sha256"], r.get("loc") or r["name"],
+                                [ids.get(x, x) for x in r.get("after") or []], task_id=tid)
             else:
                 _start_priority(root, path, r["name"], r["sha256"], r["mode"], list(r["addrs"]), task_id=tid)
             started.append(tid)
@@ -228,7 +231,7 @@ def _start_floss(root: Path, path: Path, name: str, sha256: str,
 
     def run(task: Any, cancel: Any) -> str:
         from . import heavyjobs
-        rec = heavyjobs.run(task, cancel, "FLOSS", lambda: pe_mod.floss_record(path, cancel=cancel),
+        rec = heavyjobs.run(task, cancel, "FLOSS", lambda: pe_mod.floss_record(path, cancel=cancel, fast=True),
                             progress=lambda: pe_mod.live_progress(path, "floss"))
         if rec.get("status") == "cancelled" or cancel.is_set():
             _apply(root, sha256, {"status": "cancelled", "detail": "FLOSS cancelled by the analyst"}, task, None)
@@ -329,7 +332,7 @@ def _start_capa(root: Path, path: Path, name: str, sha256: str, loc: str,
 
     def run(task: Any, cancel: Any) -> str:
         from . import heavyjobs
-        rec = heavyjobs.run(task, cancel, "capa", lambda: pe_mod._capa_only(path, cancel=cancel),
+        rec = heavyjobs.run(task, cancel, "capa", lambda: pe_mod._capa_only(path, cancel=cancel, fast=True),
                             progress=lambda: pe_mod.live_progress(path, "capa"))
         if rec.get("status") == "cancelled" or cancel.is_set():
             _apply_capa(root, {"status": "cancelled", "detail": "capa cancelled by the analyst"}, task, loc, sha256)
@@ -377,6 +380,131 @@ def _apply_capa(root: Path, rec: dict[str, Any], task: Any, loc: str, sha256: st
     return len(rec.get("capabilities") or [])
 
 
+def start_complete(root: Path, path: Path, name: str, sha256: str, loc: str, after: list[str]) -> dict[str, Any]:
+    """After the fast FLOSS / capa of a large binary (``after``: their task ids): the complete
+    vivisect analysis in the background, then FLOSS and capa on it, and what they find that
+    the fast runs missed is added to the case. Returns the placeholder (``vivisect_full``)."""
+    after = [a for a in after if a]
+    tid = _request(root, "complete", path=str(path), name=name, sha256=sha256, loc=loc, after=after) \
+        if _deferred() else _start_complete(root, path, name, sha256, loc, after)
+    return {"status": "running", "background": True, "task_id": tid,
+            "detail": "the fast analysis is shown first; the complete one runs after it in the background "
+                      "and adds what it finds"}
+
+
+def _start_complete(root: Path, path: Path, name: str, sha256: str, loc: str, after: list[str],
+                    task_id: str | None = None) -> str:
+    from . import heavyjobs, tasks
+    from .parsers import pe as pe_mod
+
+    def run(task: Any, cancel: Any) -> str:
+        # after the fast runs (the slots are not first come, first served)
+        tasks.manager.set_background_state(task, tasks.QUEUED)
+        tasks.manager.set_step_detail(task, "complete analysis · waiting for the fast FLOSS / capa to end")
+        while any((tasks.manager.get(a) or {}).get("state") in ("queued", "running", "cancelling") for a in after):
+            if cancel.wait(2):
+                _apply_complete(root, None, None, task, loc, sha256, cancelled=True)
+                return "cancelled"
+        floss = heavyjobs.run(task, cancel, "complete analysis · FLOSS",
+                              lambda: pe_mod.floss_record(path, cancel=cancel),
+                              progress=lambda: pe_mod.live_progress(path, "floss"))
+        capa = None
+        if not cancel.is_set():
+            capa = heavyjobs.run(task, cancel, "complete analysis · capa",
+                                 lambda: pe_mod._capa_only(path, cancel=cancel),
+                                 progress=lambda: pe_mod.live_progress(path, "capa"))
+        if cancel.is_set():
+            _apply_complete(root, None, None, task, loc, sha256, cancelled=True)
+            return "cancelled"
+        tasks.manager.set_step_detail(task, "complete analysis done · waiting to write its results")
+        if not _wait_for_placeholder(root, task.id, cancel, key="vivisect_full") \
+                or not tasks.manager.hold_case(task, cancel):
+            return "cancelled before writing its results"
+        added = _apply_complete(root, floss, capa, task, loc, sha256)
+        return f"+{added['strings']} string(s), +{added['capabilities']} capabilit(ies)"
+
+    return _launch(root, "complete", sha256, name, "complete analysis (background)",
+                   f"complete analysis · {name} (background)", run, task_id)
+
+
+def _apply_complete(root: Path, floss: dict[str, Any] | None, capa: dict[str, Any] | None, task: Any,
+                    loc: str, sha256: str, cancelled: bool = False) -> dict[str, int]:
+    """Add what the complete analysis found and the fast one missed: FLOSS strings (Binary
+    tab, Code → Strings with their function), capa capabilities (+ findings, Code →
+    Capabilities contrast); then the case's IOCs and findings recomputed."""
+    from .analyze import _recompute_derived
+    from .parsers import pe as pe_mod
+    from .storage import CasePaths, read_json, write_subresult
+    paths = CasePaths(root.name, cases_dir=root.parent)
+    res = read_json(paths.subresult("msi")) or {}
+    tid = getattr(task, "id", None)
+    item = next((it for it in res.get("items") or [] if (it.get("vivisect_full") or {}).get("task_id") == tid), None)
+    added = {"strings": 0, "capabilities": 0}
+    if item is None:
+        return added
+    if cancelled:
+        item["vivisect_full"] = {"status": "cancelled", "background": True, "task_id": tid,
+                                 "detail": "complete analysis cancelled: the results are the fast analysis'"}
+        write_subresult(paths, "msi", res)
+        return added
+    floss, capa = dict(floss or {}), dict(capa or {})
+    new_strings = [x for x in (floss.pop("strings", None) or []) if isinstance(x, str)]
+    have = set(item.get("floss_strings") or [])
+    extra = [x for x in new_strings if x not in have]
+    if extra:
+        item["floss_strings"] = (list(item.get("floss_strings") or []) + extra)[:pe_mod._FLOSS_MAX_STRINGS]
+        added["strings"] = len(extra)
+    if floss.get("status") == "ok":
+        fl = item.setdefault("floss", {})
+        fl["completed"] = {"strings_added": len(extra), "counts": floss.get("counts") or {}}
+    if capa.get("status") == "ok":
+        cur = item.get("capa") or {}
+        names = {c.get("name") for c in cur.get("capabilities") or []}
+        more = [c for c in capa.get("capabilities") or [] if c.get("name") not in names]
+        if cur.get("status") != "ok":
+            cur = {k: v for k, v in capa.items()}
+            more = list(capa.get("capabilities") or [])
+        else:
+            cur["capabilities"] = list(cur.get("capabilities") or []) + more
+        cur["completed"] = {"capabilities_added": len(more)}
+        item["capa"] = cur
+        added["capabilities"] = len(more)
+        fnd = pe_mod.capa_findings({"capabilities": more}, item.get("location") or loc)
+        if fnd:
+            for lst in (item.setdefault("findings", []), res.setdefault("findings", [])):
+                seen = {(f.get("rule"), f.get("detail")) for f in lst}
+                lst.extend(f for f in fnd if (f.get("rule"), f.get("detail")) not in seen)
+    item["vivisect_full"] = {
+        "status": "ok" if floss.get("status") == "ok" or capa.get("status") == "ok" else
+                  (floss.get("status") or capa.get("status") or "error"),
+        "background": True, "task_id": tid, "strings_added": added["strings"],
+        "capabilities_added": added["capabilities"],
+        "detail": "; ".join(x for x in (f"FLOSS: {floss.get('detail') or floss.get('status')}" if floss else "",
+                                        f"capa: {capa.get('detail') or capa.get('status')}" if capa else "") if x)[:400]}
+    write_subresult(paths, "msi", res)
+    if floss.get("status") == "ok":
+        try:                                   # Code → Strings, with their function
+            from .codeanalysis import case as code_case
+            for mode in ("native", "go"):
+                if code_case.load(paths.root, sha256, mode) is not None:
+                    code_case.merge_full_floss(paths.root, sha256, mode, {**floss, "located": floss.get("located") or []},
+                                               label="complete analysis", refresh=False)
+                    break
+        except Exception as exc:  # noqa: BLE001
+            log.warning("complete analysis: code strings not merged for %s: %s", sha256[:12], exc)
+    if capa.get("status") == "ok":
+        try:
+            from .codeanalysis import case as code_case
+            code_case.recontrast_capa(root, sha256, item["capa"])
+        except Exception as exc:  # noqa: BLE001
+            log.warning("complete analysis: code capabilities not contrasted for %s: %s", sha256[:12], exc)
+    try:
+        _recompute_derived(paths)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("complete analysis: IOCs / findings not recomputed for %s: %s", root.name, exc)
+    return added
+
+
 def start_priority(root: Path, path: Path, name: str, sha256: str, mode: str, addrs: list[int]) -> str:
     """FLOSS tight strings on the code analysis' priority functions of the case's own large
     binary, as a background task (or requested, in the analysis' child process): merged into
@@ -396,8 +524,13 @@ def _start_priority(root: Path, path: Path, name: str, sha256: str, mode: str, a
 
     def run(task: Any, cancel: Any) -> str:
         from . import heavyjobs
-        rec = heavyjobs.run(task, cancel, f"FLOSS tight on {len(addrs)} function(s)",
-                            lambda: pe_mod.tight_on_functions(path, addrs, cancel=cancel),
+        def tight() -> dict[str, Any]:          # a first look: on the fast analysis when there is one
+            tok = pe_mod._vivfast.set(pe_mod.fast_capable())
+            try:
+                return pe_mod.tight_on_functions(path, addrs, cancel=cancel)
+            finally:
+                pe_mod._vivfast.reset(tok)
+        rec = heavyjobs.run(task, cancel, f"FLOSS tight on {len(addrs)} function(s)", tight,
                             progress=lambda: pe_mod.live_progress(path, "floss"))
         status = "cancelled" if (cancel.is_set() or rec.get("status") == "cancelled") else rec.get("status")
         located = [dict(s, kind="tight") for s in rec.get("located") or [] if s.get("kind") == "tight"]
