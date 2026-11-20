@@ -177,31 +177,51 @@ class Settings:
                     return p
         return None
 
+    # FLOSS and capa run as Python libraries on the portable Python (``vivtools.py``: one
+    # vivisect analysis per binary, shared by both); these are the versions installed there.
+    FLOSS_LIB = "flare-floss==3.2.0"
+    CAPA_LIB = "flare-capa==10.0.0"
+    CAPA_RULES_VERSION = "10.0.0"
+
+    def _portable_has(self, package: str) -> bool:
+        """``package`` installed in the portable Python (looked up on disk: no process)."""
+        py = self.portable_python()
+        if py is None:
+            return False
+        for root in (py.parent, py.parent.parent):
+            for sp in ("Lib/site-packages", "lib/site-packages", "lib/python3*/site-packages"):
+                if any((d / package / "__init__.py").is_file() for d in root.glob(sp)):
+                    return True
+        return False
+
+    def vivtools_script(self) -> Path:
+        return Path(__file__).resolve().parent / "vivtools.py"
+
+    def capa_rules_dir(self) -> Path | None:
+        """capa's rules (Apache-2.0, downloaded at setup into ``tools/capa-rules/``);
+        ``DOCUTRACEX_CAPA_RULES`` overrides."""
+        env = os.environ.get("DOCUTRACEX_CAPA_RULES")
+        d = Path(env) if env else self.tools_dir / "capa-rules"
+        return d if d.is_dir() and next(d.rglob("*.yml"), None) is not None else None
+
     def floss_executable(self) -> Path | None:
-        """Mandiant FLOSS standalone binary under ``tools/floss/`` (Apache-2.0,
-        downloaded at setup; self-contained, no Python deps). ``DOCUTRACEX_FLOSS``
-        overrides (e.g. FLARE-VM's own floss.exe). Absent → PE triage skips it."""
+        """How FLOSS runs: ``vivtools.py`` (flare-floss in the portable Python), or a
+        standalone floss.exe given in ``DOCUTRACEX_FLOSS`` (e.g. FLARE-VM's). None:
+        not provisioned, the PE triage skips it."""
         env = os.environ.get("DOCUTRACEX_FLOSS")
         if env and Path(env).is_file():
             return Path(env)
-        base = self.tools_dir / "floss"
-        for c in (base / "floss.exe", base / "floss"):
-            if c.is_file():
-                return c
-        return None
+        return self.vivtools_script() if self._portable_has("floss") else None
 
     def capa_executable(self) -> Path | None:
-        """Mandiant capa standalone binary under ``tools/capa/`` (Apache-2.0,
-        rules and FLIRT signatures embedded). ``DOCUTRACEX_CAPA`` overrides (e.g.
-        FLARE-VM's own capa.exe). Absent → PE triage skips it."""
+        """How capa runs: ``vivtools.py`` (flare-capa in the portable Python, with the rules
+        in ``tools/capa-rules/``), or a standalone capa.exe given in ``DOCUTRACEX_CAPA``.
+        None: not provisioned, the PE triage skips it."""
         env = os.environ.get("DOCUTRACEX_CAPA")
         if env and Path(env).is_file():
             return Path(env)
-        base = self.tools_dir / "capa"
-        for c in (base / "capa.exe", base / "capa"):
-            if c.is_file():
-                return c
-        return None
+        ok = self._portable_has("capa") and self._portable_has("floss") and self.capa_rules_dir()
+        return self.vivtools_script() if ok else None
 
     def goresym_executable(self) -> Path | None:
         """Mandiant GoReSym (MIT) under ``tools/goresym/`` — Go symbol / metadata

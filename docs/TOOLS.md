@@ -59,6 +59,12 @@ only, or wherever Mono is installed) run only when you press **Decompile** in
 the .NET view, each in its own process with a time limit (120 s) and a memory
 cap (1 GB: a Job Object on Windows, the .NET GC heap limit for ILSpy).
 
+FLOSS and capa are Mandiant's Python libraries (flare-floss 3.2.0, flare-capa 10.0.0)
+installed into the portable Python, with capa's rules downloaded from their pinned tag into
+`tools/capa-rules/`; `docutracex/vivtools.py` runs them so that **one vivisect analysis per
+binary** is saved (`.tools_cache/viv/`, the last 6) and shared by FLOSS, capa, FLOSS tight
+and Deep FLOSS instead of each tool analysing the binary again.
+
 FLOSS, capa, pycdc, CFR, ILSpy, de4dot, webcrack, box-ps, the PE unpackers and
 the Machine Learning family model (459 MB, `DOCUTRACEX_EMBER_FAMILY=1` at
 install or the button in the Machine Learning tab) are optional: provisioned
@@ -75,7 +81,7 @@ when possible, skipped cleanly when absent.
 | `DOCUTRACEX_LOG_LEVEL` | log level (default `INFO`) |
 | `DOCUTRACEX_SKIP_SETUP` | `1` skips the start-up provisioning checks |
 | `DOCUTRACEX_PYTHON`, `DOCUTRACEX_PYPY`, `DOCUTRACEX_NODE`, `DOCUTRACEX_PWSH`, `DOCUTRACEX_JAVA`, `DOCUTRACEX_CHROMIUM` | explicit interpreters / runtimes |
-| `DOCUTRACEX_FLOSS`, `DOCUTRACEX_CAPA`, `DOCUTRACEX_PYCDC`, `DOCUTRACEX_CFR`, `DOCUTRACEX_WEBCRACK`, `DOCUTRACEX_BOXPS` | existing binaries / installs of those tools |
+| `DOCUTRACEX_FLOSS`, `DOCUTRACEX_CAPA` (a standalone floss.exe / capa.exe instead of the libraries), `DOCUTRACEX_CAPA_RULES`, `DOCUTRACEX_PYCDC`, `DOCUTRACEX_CFR`, `DOCUTRACEX_WEBCRACK`, `DOCUTRACEX_BOXPS` | existing binaries / installs of those tools |
 | `DOCUTRACEX_UPX`, `DOCUTRACEX_INNOEXTRACT`, `DOCUTRACEX_INNOUNP`, `DOCUTRACEX_7Z`, `DOCUTRACEX_NUITKA_EXTRACTOR`, `DOCUTRACEX_DIEC` | the PE unpackers |
 | `DOCUTRACEX_FLOSS_TIMEOUT`, `DOCUTRACEX_CAPA_TIMEOUT`, `DOCUTRACEX_UNPACK_TIMEOUT` | per-tool time limits (before the factor) |
 | `DOCUTRACEX_CA_BUNDLE` | extra CA bundle for network checks behind a TLS-inspecting proxy |

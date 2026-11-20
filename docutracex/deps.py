@@ -826,13 +826,13 @@ def run_checks() -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
 
-    # Mandiant FLOSS / capa (standalone binaries) — optional; PE triage reports
+    # Mandiant FLOSS / capa (Python libraries on the portable, vivtools.py) — optional; PE triage reports
     # them as not provisioned in the Binary tab when absent.
     for _name, _getter, _purpose, _retry in (
         ("FLOSS (PE obfuscated strings)", "floss_executable",
          "Decodes obfuscated / stack / tight strings of PE files (mined for IOCs)", "floss"),
         ("capa (PE capabilities)", "capa_executable",
-         "Identifies PE capabilities with ATT&CK / MBC mapping (embedded rules)", "capa"),
+         "Identifies PE capabilities with ATT&CK / MBC mapping (rules in tools/capa-rules)", "capa"),
     ):
         try:
             from .config import settings as _sm
@@ -841,11 +841,12 @@ def run_checks() -> dict[str, Any]:
                 category="External tools",
                 name=_name,
                 status="ok" if exe else "warn",
-                detail=f"at {exe}" if exe else "not provisioned (optional)",
+                detail=(("Python library on the portable (one analysis per binary, shared)"
+                         if exe.suffix == ".py" else f"at {exe}") if exe else "not provisioned (optional)"),
                 remedy="" if exe else
-                       "run scripts/setup_portable_python.py (Windows: downloads the pinned, "
-                       "SHA-256-verified release), or point DOCUTRACEX_FLOSS / DOCUTRACEX_CAPA "
-                       "at an existing floss.exe / capa.exe (e.g. FLARE-VM's)",
+                       "press Retry (installs flare-floss / flare-capa into the portable Python and "
+                       "downloads capa's rules), or point DOCUTRACEX_FLOSS / DOCUTRACEX_CAPA at an "
+                       "existing floss.exe / capa.exe (e.g. FLARE-VM's)",
                 purpose=_purpose,
                 retry=_retry,
             ))
