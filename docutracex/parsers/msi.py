@@ -495,7 +495,54 @@ def analyze_native(path: Path, rel: str) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         from ..logging_config import get_logger
         get_logger(__name__).warning("rust metadata failed on %s: %s", rel, exc)
+    _native_strings(path, item)
+    if item.get("format") == "ELF":               # capa reads ELF (not Mach-O)
+        _native_capa(path, rel, item)
     return item
+
+
+# Printable strings of an ELF / Mach-O (ASCII and UTF-16LE, 6+ characters): what the IOCs
+# are mined from when the code analysis (Rizin) does not run or fails — for PE, FLOSS's
+# static strings play this part.
+NATIVE_STRINGS_MAX = 50000
+_ASCII_STR = re.compile(rb"[\x20-\x7e\t]{6,}")
+_WIDE_STR = re.compile(rb"(?:[\x20-\x7e\t]\x00){6,}")
+
+
+def _native_strings(path: Path, item: dict[str, Any]) -> None:
+    try:
+        with path.open("rb") as f:
+            data = f.read(256 * 1024 * 1024)
+    except OSError:
+        return
+    found = [m.group(0).decode("ascii", "replace").strip() for m in _ASCII_STR.finditer(data)]
+    found += [m.group(0).decode("utf-16le", "replace").strip() for m in _WIDE_STR.finditer(data)]
+    seen: set[str] = set()
+    out = [x for x in found if x and not (x in seen or seen.add(x))]
+    item["strings"] = out[:NATIVE_STRINGS_MAX]
+    item["strings_info"] = {"count": len(out), "shown": len(item["strings"]),
+                            "kind": "printable ASCII / UTF-16LE, 6+ characters"}
+
+
+def _native_capa(path: Path, rel: str, item: dict[str, Any]) -> None:
+    """capa on an ELF: capabilities with ATT&CK, as for PE. The case's own large binary in
+    the background (like PE), the rest inline; an ELF that names no OS is taken as Linux."""
+    from ..config import settings
+    from . import pe as pe_mod
+    if settings.capa_executable() is None:
+        return
+    root = pe_mod._bg_root.get()
+    try:
+        big = bool(pe_mod.FLOSS_BACKGROUND_BYTES) and path.stat().st_size > pe_mod.FLOSS_BACKGROUND_BYTES
+    except OSError:
+        big = False
+    if root is not None and big and pe_mod.CAPA_BACKGROUND and not pe_mod._capa_cached(path):
+        from .. import flossbg
+        item["capa"] = flossbg.start_capa(root, path, Path(rel).name, pe_mod._sha(path) or "", rel, fast=False)
+        return
+    capa = pe_mod._capa_only(path)
+    item["capa"] = capa
+    item["findings"].extend({**f, "tool": "native"} for f in pe_mod.capa_findings(capa, rel))
 
 
 def is_msi_file(path: Path) -> bool:
