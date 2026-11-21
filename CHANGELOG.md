@@ -3,6 +3,13 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.246.0 — 2026-11-21 (#325)
+
+**ELF: capa and their strings**
+
+- ELF binaries now get **capa** too (capabilities with ATT&CK), as Windows binaries do — in the background when they are large. An ELF that does not say which OS it is for is analysed as Linux.
+- ELF and Mach-O binaries get a **Strings** tab, and their IOCs come from those strings even when the code analysis is not available (before, a Linux binary could end up with no IOCs at all).
+
 ## 1.245.0 — 2026-11-20 (#324)
 
 **Rust on Linux too**

@@ -2492,7 +2492,7 @@ function completeHint(it) {
 }
 
 function paneCapa(c, it) {
-  const done = paneCapaBody(c);
+  const done = (c && c.os_assumed ? `<p class="hint-line">The ELF does not say which OS it is for: capa ran on it as <b>${escapeHtml(c.os_assumed)}</b>.</p>` : "") + paneCapaBody(c);
   return (c && c.status === "ok" ? completeHint(it) : "") + done;
 }
 
@@ -2782,7 +2782,17 @@ function paneNativeItem(it, n, fileRec) {
     { id: "findings", label: `Findings (${(it.findings || []).length})`, html: netFindingsList(it.findings || []) },
     toolTab("lief", `LIEF (${lf.format || "?"})`, lf, paneLief(lf)),
     it.rust ? { id: "rust", label: "Rust", html: paneRust(it.rust, null) } : null,
+    it.capa ? toolTab("capa", "capa", it.capa, paneCapa(it.capa, it)) : null,
+    (it.strings || []).length ? { id: "strings", label: `Strings (${(it.strings_info || {}).count || it.strings.length})`, html: paneNativeStrings(it) } : null,
   ]);
+}
+
+// The printable strings of an ELF / Mach-O (the IOCs are mined from them; the code
+// analysis adds each string's function in Code → Strings).
+function paneNativeStrings(it) {
+  const info = it.strings_info || {};
+  const head = `<p class="hint-line">${escapeHtml(String(info.count || it.strings.length))} printable string(s) (${escapeHtml(info.kind || "ASCII / UTF-16LE")})${info.shown && info.count > info.shown ? `, the first ${escapeHtml(String(info.shown))} shown` : ""}. The IOCs are mined from them; Code → Strings adds the function each one is used in.</p>`;
+  return head + `<pre class="code-block strings-list">${escapeHtml(it.strings.slice(0, 5000).join("\n"))}${it.strings.length > 5000 ? "\n…" : ""}</pre>`;
 }
 
 function paneMsi(msim, fileRec) {

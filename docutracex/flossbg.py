@@ -201,7 +201,8 @@ def launch_deferred(root: Path) -> list[str]:
             if r["kind"] == "floss":
                 _start_floss(root, path, r["name"], r["sha256"], task_id=tid)
             elif r["kind"] == "capa":
-                _start_capa(root, path, r["name"], r["sha256"], r.get("loc") or r["name"], task_id=tid)
+                _start_capa(root, path, r["name"], r["sha256"], r.get("loc") or r["name"], task_id=tid,
+                            fast=r.get("fast", True))
             elif r["kind"] == "complete":
                 _start_complete(root, path, r["name"], r["sha256"], r.get("loc") or r["name"],
                                 [ids.get(x, x) for x in r.get("after") or []], task_id=tid)
@@ -314,25 +315,25 @@ def _apply(root: Path, sha256: str, rec: dict[str, Any], task: Any, path: Path |
     return len(strings) or added
 
 
-def start_capa(root: Path, path: Path, name: str, sha256: str, loc: str) -> dict[str, Any]:
+def start_capa(root: Path, path: Path, name: str, sha256: str, loc: str, fast: bool = True) -> dict[str, Any]:
     """Start capa on ``path`` (the case's own binary) as a background task (or request it,
     in the analysis' child process). Returns the placeholder record the Binary tab shows
     until it ends."""
-    tid = _request(root, "capa", path=str(path), name=name, sha256=sha256, loc=loc) if _deferred() \
-        else _start_capa(root, path, name, sha256, loc)
+    tid = _request(root, "capa", path=str(path), name=name, sha256=sha256, loc=loc, fast=fast) if _deferred() \
+        else _start_capa(root, path, name, sha256, loc, fast=fast)
     return {"status": "running", "background": True, "task_id": tid, "capabilities": [],
             "detail": "large binary: capa runs in the background (Tasks); its capabilities and ATT&CK "
                       "techniques are added to the case when it ends"}
 
 
 def _start_capa(root: Path, path: Path, name: str, sha256: str, loc: str,
-                task_id: str | None = None) -> str:
+                task_id: str | None = None, fast: bool = True) -> str:
     from . import tasks
     from .parsers import pe as pe_mod
 
     def run(task: Any, cancel: Any) -> str:
         from . import heavyjobs
-        rec = heavyjobs.run(task, cancel, "capa", lambda: pe_mod._capa_only(path, cancel=cancel, fast=True),
+        rec = heavyjobs.run(task, cancel, "capa", lambda: pe_mod._capa_only(path, cancel=cancel, fast=fast),
                             progress=lambda: pe_mod.live_progress(path, "capa"))
         if rec.get("status") == "cancelled" or cancel.is_set():
             _apply_capa(root, {"status": "cancelled", "detail": "capa cancelled by the analyst"}, task, loc, sha256)

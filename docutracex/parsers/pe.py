@@ -1350,6 +1350,14 @@ def _floss_language_crash(detail: str) -> bool:
     return any(m.lower() in d for m in _FLOSS_LANGUAGE_CRASH)
 
 
+def _is_elf(path: Path) -> bool:
+    try:
+        with path.open("rb") as f:
+            return f.read(4) == b"\x7fELF"
+    except OSError:
+        return False
+
+
 def _run_capa(path: Path, cancel: Any = None) -> dict[str, Any]:
     """capa (standalone binary, embedded rules): matched capabilities with their
     namespace, ATT&CK and MBC ids. Returns a status record plus
@@ -1359,6 +1367,13 @@ def _run_capa(path: Path, cancel: Any = None) -> dict[str, Any]:
     from ..config import settings
 
     rec, out = _run_tool("capa", settings.capa_executable(), ["-j", "-q"], path, CAPA_TIMEOUT, cancel)
+    if rec["status"] != "ok" and _is_elf(path) and any(x in str(rec.get("detail") or "")
+                                                       for x in ("--os linux", "exited 18")):
+        # an ELF that does not say which OS it is for (no ABI note / interpreter): Linux
+        rec, out = _run_tool("capa", settings.capa_executable(), ["-j", "-q", "--os", "linux"], path,
+                             CAPA_TIMEOUT, cancel)
+        if rec["status"] == "ok":
+            rec["os_assumed"] = "linux"
     if rec["status"] != "ok":
         return rec
     try:
