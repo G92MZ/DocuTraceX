@@ -85,4 +85,4 @@ harmless stubs). See [`samples/README.md`](samples/README.md).
 
 Licensed under the **Apache License 2.0** — see [`LICENSE`](LICENSE) and `NOTICE`.
 
-© 2026 Gregorio Moreno (**gmzpt**)
+© 2026 (**gmzpt**)
