@@ -470,8 +470,9 @@ def test_crypto_loader_sample_end_to_end(client) -> None:
     import json
     _, res = _analyze(client, "sample_crypto_loader.ps1", _ms().crypto_loader_ps1())
     recipes = {tuple(n.get("recipe") or []) for n in _tree(res)}
-    assert ("base64", "xor(0x5a)", "exe") in recipes
-    assert any(r[1].startswith("aes-256-cbc") and r[-2:] == ("gzip", "text") for r in recipes if len(r) >= 3)
+    # the evaluator names each step (base64 → xor(0x5a), the AES of Open-Cfg) in the recipe
+    assert any("base64" in r and "xor(0x5a)" in r and r[-1] == "exe" for r in recipes)
+    assert any(any(x.startswith("aes-256-cbc") for x in r) and r[-2:] == ("gzip", "text") for r in recipes if len(r) >= 3)
     ps = json.loads((res / "powershell.json").read_text())["scripts"][0]
     assert "securestring" in ps["deob_methods"]
     iocs = {i["value"] for i in json.loads((res / "iocs.json").read_text())["iocs"]}

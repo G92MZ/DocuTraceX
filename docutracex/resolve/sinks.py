@@ -39,6 +39,7 @@ class Stage:
     recipe: tuple[str, ...]
     target: str = ""              # write: the path; load: the entry point
     line: int | None = None
+    depth: int = 0                # 0: computed by the script itself; >0: by code it runs (a later stage)
 
     @property
     def sha256(self) -> str:
@@ -53,6 +54,7 @@ class Sinks:
     downloads: list[dict[str, Any]] = field(default_factory=list)
     unresolved: list[dict[str, Any]] = field(default_factory=list)
     steps: list[dict[str, Any]] = field(default_factory=list)       # the Resolution tab's trace
+    depth: int = 0                # set by the evaluator while it runs code the script hands to "execute"
     _seen: set[str] = field(default_factory=set)
 
     # -- reports from the evaluators --------------------------------------------------
@@ -60,32 +62,53 @@ class Sinks:
         if len(self.stages) >= MAX_STAGES or st.sha256 in self._seen:
             return
         self._seen.add(st.sha256)
+        st.depth = self.depth
         self.stages.append(st)
 
+    def _downloaded(self, v: Value, what: str) -> bool:
+        """An unknown value that is downloaded content: the download says what is done with it."""
+        if v.known or not v.why.startswith("the content downloaded from "):
+            return False
+        url = v.why[len("the content downloaded from "):]
+        for d in self.downloads:
+            if d["url"] == url and what not in d["use"]:
+                d["use"] = f"{d['use']}, then {what}" if d["use"] != "returns it to the script" else what
+        return True
+
     def exec_(self, code: Value, sink: str, line: int | None = None) -> None:
+        if self._downloaded(code, f"runs it as code ({sink})"):
+            return
         if not code.known:
             self.unresolved_(f"{sink}(…)", code.why, f"the code {sink} runs is computed from "
                              f"something not in the script", line)
             return
         text = code.as_str() if code.kind != "bytes" else transforms.as_text(code.v)
         if text and text.strip():
-            self._add(Stage("exec", sink, text[:MAX_TEXT], code.recipe + (f"→ {sink}",), line=line))
+            self._add(Stage("exec", sink, text[:MAX_TEXT], code.recipe + (sink,), line=line))
 
     def load(self, data: Value, sink: str, target: str = "", line: int | None = None) -> None:
+        if self._downloaded(data, f"loads it ({sink})"):
+            return
         if not data.known:
             self.unresolved_(f"{sink}(…)", data.why, "the bytes it loads are computed from something "
                              "not in the script", line)
             return
         raw = data.as_bytes()
         if raw:
-            self._add(Stage("load", sink, raw, data.recipe + (f"→ {sink}",), target, line))
+            self._add(Stage("load", sink, raw, data.recipe + (sink,), target, line))
+
+    def value_(self, text: Value, what: str, line: int | None = None) -> None:
+        """Text the script decoded and kept (a configuration with its C2): mined for IOCs as a stage."""
+        t = text.as_str() if text.known else None
+        if t and t.strip():
+            self._add(Stage("value", what, t[:MAX_TEXT], text.recipe + (what,), line=line))
 
     def write(self, data: Value, path: str, sink: str, line: int | None = None) -> None:
         if not data.known:
             return
         raw = data.v if data.kind == "bytes" else (data.as_str() or "").encode("utf-8", "replace")
         if raw:
-            self._add(Stage("write", sink, raw, data.recipe + (f"→ {sink} {path}",), path, line))
+            self._add(Stage("write", sink, raw, data.recipe + (f"{sink} {path}",), path, line))
 
     def download(self, url: Value, method: str, use: str, line: int | None = None,
                  dest: str = "", then: tuple[str, ...] = ()) -> None:
@@ -116,10 +139,13 @@ class Sinks:
     def decoded_stages(self) -> list[dict[str, Any]]:
         """The stages as the engines' ``decoded_stages`` (text or ``data_b64``)."""
         out = []
-        for st in self.stages:
+        # only what the script itself computes: what a later stage computes comes out when that
+        # stage (a child in Nested) is analysed, under it
+        for st in (s for s in self.stages if s.depth == 0):
             recipe = [r for r in st.recipe if r]
             if isinstance(st.data, str):
-                out.append({"recipe": recipe, "text": st.data, "sink": st.sink, "resolved": True})
+                out.append({"recipe": recipe, "text": st.data, "sink": st.sink, "resolved": True,
+                            **({"ext": ""} if st.kind == "value" else {})})
                 continue
             raw = st.data
             text = None

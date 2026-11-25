@@ -768,9 +768,10 @@ def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[s
                     out += payload_children(raw, f"{key}-stage", f"{key} {loc}: {' → '.join(recipe)}",
                                             recipe=recipe)
                     continue
-                if worth_text_child(text, ext if len(text.strip()) >= 8 else None):
+                sext = st.get("ext", ext)           # "": by its content (decoded text that is not code)
+                if worth_text_child(text, sext if len(text.strip()) >= 8 else None):
                     out.append({"how": f"{key}-stage", "origin": f"{key} {loc}: {' → '.join(recipe)}",
-                                "text": text, "ext": ext, "recipe": recipe})
+                                "text": text, "ext": sext or None, "recipe": recipe})
 
     # VBA macros carry shellcode as Array(-4, -24, …) / hex strings (Office
     # payloads of Cobalt Strike / Metasploit): each one becomes a binary child

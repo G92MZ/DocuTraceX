@@ -3,6 +3,14 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.250.0 — 2026-11-25 (#330)
+
+**PowerShell resolved statically, to the binaries it hides**
+
+- PowerShell scripts are now **evaluated statically** (never run): variables, here-strings, the script's own functions, loops and .NET calls (base64, AES, GZip, MemoryStream, Assembly.Load…) are followed to what the script runs, loads or writes — each stage in Nested with its recipe, a second layer's binaries under it.
+- Commands with computed names are resolved (`"Inv"+"oke-Expression"`, `$env:ComSpec[4,15,25]`, `gcm I*e-E*n`, aliases, backticks…).
+- New findings: **downloads** (URL, method and what the script would do with it — to fetch it yourself) and **dynamic calls not resolved** (they depend on the victim's machine, with why), plus reflective loaders, watch loops and multi-layer loaders with integrity checks.
+
 ## 1.249.0 — 2026-11-25 (#329)
 
 **Scripts in a .txt read by the right engine**

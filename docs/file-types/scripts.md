@@ -36,6 +36,33 @@ of a shortcut, a PDF, an archive entry — and on the stages those scripts decod
    engine that fits it — a JScript that drops a VBScript that runs PowerShell is followed to
    the end.
 
+## PowerShell resolved statically
+
+PowerShell is not only deobfuscated: it is **evaluated statically**, step by step, without running
+it. The evaluator follows variables and here-strings, the script's own functions with their
+parameters, loops (a XOR loop over a byte array), conditions, pipelines and the .NET calls
+loaders use: `[Convert]::FromBase64String`, `Text.Encoding`, `Aes` / `RijndaelManaged` +
+`CreateDecryptor` + `CryptoStream`, `GZipStream` / `DeflateStream`, `MemoryStream`, `SHA256`,
+`Reflection.Assembly::Load` + `GetMethod` + `Invoke`, `ConvertTo-SecureString -Key`… What reaches
+a call that **runs** code (`Invoke-Expression`, `ScriptBlock::Create`, `-EncodedCommand`),
+**loads** bytes (`Assembly.Load`, a PE handed to a loaded assembly's method) or **writes** a file is a
+stage in **Nested**, with its recipe (`here-string $P → base64 → aes-256-cbc(key $K, iv $V) → gzip`).
+Code it runs is evaluated too, so a second layer's binaries come out under it.
+
+- **Computed command names** are resolved like any value: `& ("Inv"+"oke-Expression")`, `-f`,
+  `$env:ComSpec[4,15,25] -join ''`, `$PSHome` / `$ShellId`, backticks and case, `gcm I*e-E*n`,
+  `Set-Alias` / `sal`, `$ExecutionContext.InvokeCommand.InvokeScript`, reversed strings, computed
+  types and methods (`New-Object ('Net.Web'+'Client')`, `.('Down'+'loadString')`). Conditions that
+  always give the same result are worked out; one that cannot be is followed both ways.
+- **Downloads** are not fetched: a finding gives the URL (resolved even when built in pieces), the
+  method and what the script would do with it (run it, load it, save it to a path and launch it)
+  — get it and analyse it as a new case.
+- **Dynamic call not resolved**: when a command's name, a type or the data a call gets depends on
+  something that only exists on the victim's machine (a file, the registry, the computer or user
+  name, the date) or the C2, it cannot be worked out from the script. A finding shows the
+  expression, what it depends on and why; the rest of the script is still resolved.
+- Bounded: steps, time and loop rounds (a `while ($true)` watch loop runs a few rounds).
+
 ## A script whose extension says nothing
 
 A `.txt`, `.dat`, `.log` or a file with no extension that holds a script — on its own or inside
