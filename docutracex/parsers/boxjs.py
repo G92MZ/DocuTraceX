@@ -1,6 +1,6 @@
-"""box-js: optional JScript / WSH emulator on the portable Node.
+"""box-js: JScript / WSH emulator on the portable Node.
 
-box-js (MIT, CapacitorSet; provisioned on demand under ``tools/boxjs/`` with the
+box-js (MIT, CapacitorSet; provisioned like the other emulators under ``tools/boxjs/`` with the
 portable Node under ``tools/node/``) runs a Windows Script Host script with
 emulated ActiveX objects — WScript.Shell, Scripting.FileSystemObject,
 ADODB.Stream, MSXML2.XMLHTTP, WMI… — and records what it would do: files it
@@ -8,11 +8,10 @@ writes, commands it runs, URLs it requests (never fetched: ``--download`` is not
 passed), code it evals. It complements the STPyV8 sandbox, whose WSH model is
 smaller.
 
-It **runs the sample's code** (inside Node's ``vm2``), so it is never
-provisioned by default, it obeys the ``analysis.sandbox`` setting like every
-emulator here, and it runs top-level only on scripts that use WSH objects.
-``vm2`` is unmaintained and has known escapes: run it only on an analysis
-machine you can throw away.
+It **runs the sample's code** (inside Node's ``vm2``), so it obeys the
+``analysis.sandbox`` setting like every emulator here (``off``: it never runs),
+and it runs top-level only on scripts that use WSH objects. ``vm2`` is
+unmaintained and has known escapes.
 
 ``run`` returns ``{tool, events, stages, error}``: ``events`` for the Resolution
 block (*Seen in the sandbox*), ``stages`` (files written, code eval'd) for
@@ -69,8 +68,7 @@ def status() -> dict[str, Any]:
     if _node() is None:
         return {"available": False, "detail": "portable Node not provisioned under tools/node/"}
     if not available():
-        return {"available": False, "detail": "box-js not installed under tools/boxjs/ (optional: it runs the "
-                                              "script's code in Node's vm2)"}
+        return {"available": False, "detail": "box-js not installed under tools/boxjs/"}
     return {"available": True, "detail": f"box-js ready on {_node()}"}
 
 

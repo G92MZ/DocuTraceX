@@ -704,9 +704,9 @@ def _boxjs_ok() -> bool:
 
 
 def install_boxjs() -> bool:
-    """npm-install box-js into tools/boxjs/ on the portable Node. **Optional and never part of the
-    full setup**: it runs the analysed script's code (in Node's vm2), so it is installed only on
-    request (Diagnostics → Retry, or ``--component boxjs``). Pure JS: no build tools needed."""
+    """npm-install box-js into tools/boxjs/ on the portable Node, like the other emulators (full
+    setup and on start, marker-guarded). Pure JS: no build tools needed. Whether it runs is the
+    *Emulation (sandbox)* setting."""
     if _boxjs_ok():
         return True
     node = node_executable()
@@ -2156,6 +2156,7 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
     install_chromium()
     _clear_mark("webcrack")   # an explicit full setup always retries these
     _clear_mark("boxps")
+    _clear_mark("boxjs")
     _clear_mark("pycdc")
     _clear_mark("cfr")
     _clear_mark("floss")
@@ -2166,6 +2167,7 @@ def provision(version: str = DEFAULT_VERSION, force: bool = False) -> None:
     _clear_mark("de4dot")
     install_webcrack()   # portable Node + webcrack (JS deobfuscation)
     install_boxps()      # PowerShell Core + box-ps (PowerShell sandbox)
+    install_boxjs()      # box-js on the portable Node (JScript / WSH emulator)
     install_pycdc()      # pycdc (.pyc decompiler, built from source)
     install_cfr()        # CFR (.class decompiler jar; run with the host JVM)
     install_floss()      # Mandiant FLOSS, Python library (PE obfuscated strings)
@@ -2437,6 +2439,7 @@ def _ensure_optional() -> None:
     hammering a failing download or build on every start."""
     for name, ok, install in (("webcrack", _webcrack_ok, install_webcrack),
                               ("boxps", _boxps_ok, install_boxps),
+                              ("boxjs", _boxjs_ok, install_boxjs),
                               ("pycdc", _pycdc_ok, install_pycdc),
                               ("cfr", _cfr_ok, install_cfr),
                               ("floss", _floss_ok, install_floss),
@@ -2488,7 +2491,7 @@ def ensure(version: str = DEFAULT_VERSION) -> bool:
             vm_ok = _vipermonkey_ok()
             ipdb_ok = _ipdb_ok()
             chromium_ok = _chromium_ok()
-            _ensure_optional()   # webcrack + box-ps (optional; marker-guarded)
+            _ensure_optional()   # webcrack + box-ps + box-js (optional; marker-guarded)
             install_tlds()       # no-op while the cached IANA list is fresh
             install_lolrmm()     # no-op while the cached LOLRMM catalogue is fresh
             install_recmd_batches()  # no-op while the RECmd batch files are fresh
@@ -2568,7 +2571,7 @@ COMPONENTS: dict = {
     "vipermonkey": lambda: bool(install_vipermonkey()) and _vipermonkey_ok(),
     "webcrack": lambda: bool(install_webcrack()) and _webcrack_ok(),
     "boxps": lambda: bool(install_boxps()) and _boxps_ok(),
-    "boxjs": lambda: bool(install_boxjs()) and _boxjs_ok(),   # optional: only on request
+    "boxjs": lambda: bool(install_boxjs()) and _boxjs_ok(),
     "pycdc": lambda: bool(install_pycdc()) and _pycdc_ok(),
     "cfr": lambda: bool(install_cfr()) and _cfr_ok(),
     "floss": lambda: bool(install_floss()) and _floss_ok(),
