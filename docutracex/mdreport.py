@@ -497,13 +497,15 @@ def _modules(cid: str) -> str:
     files = [p for p in sorted(paths.results_dir.rglob("*.json"))
              if not (p.parent == paths.results_dir and p.stem in ("summary", "findings"))
              and "c2_runs" not in p.parts]                            # (C2 raw: in the C2 section)
-    files += sorted((paths.root / "code").glob("*.json")) if (paths.root / "code").is_dir() else []
+    root = getattr(paths, "root", paths.results_dir.parent)
+    files += sorted((root / "code").glob("*.json")) if (root / "code").is_dir() else []
     for p in files:
         try:
             text = json.dumps(json.loads(p.read_text(encoding="utf-8")), ensure_ascii=False, indent=1, default=str)
         except (OSError, ValueError):
             continue
-        out += [f"## {p.relative_to(paths.root).as_posix()}", "", _fence(text, "json")]
+        name = p.stem if p.parent == paths.results_dir else p.relative_to(root).as_posix()
+        out += [f"## {name}", "", _fence(text, "json")]
     return "\n".join(out)
 
 
