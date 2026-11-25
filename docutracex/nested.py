@@ -28,6 +28,7 @@ from .storage import CasePaths
 log = get_logger(__name__)
 
 import os as _os
+import sys
 
 
 def _env_int(name: str, default: int) -> int:
@@ -37,17 +38,27 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-MAX_DEPTH = 12
-# Children analysed in depth per file (an archive, an installer…). The rest, up
-# to MAX_LISTED, are still LISTED in the tree (name, type, size, SHA-256, file
-# actions) so nothing an installer carries is invisible — they can be opened
-# from Nested; only their deep analysis is skipped.
-MAX_CHILDREN = _env_int("DOCUTRACEX_NESTED_MAX_CHILDREN", 60)
-MAX_LISTED = _env_int("DOCUTRACEX_NESTED_MAX_LISTED", 1000)
-# Total analysed nodes per scan: 12 levels x 60 children could explode on a
-# crafted archive-in-archive, so deep analysis is capped for the whole tree
-# (children past it are listed, not analysed).
-MAX_NODES = _env_int("DOCUTRACEX_NESTED_MAX_NODES", 600)
+def _env_limit(name: str) -> int:
+    """An optional cap from the environment: unset or 0 = no limit."""
+    try:
+        v = int(_os.environ.get(name, "") or 0)
+    except ValueError:
+        v = 0
+    return v if v > 0 else sys.maxsize
+
+
+# Every child is analysed in depth, however many there are and however deep they sit
+# (an installer with hundreds of files, ten layers of archives / stages). The only bound
+# is a guard against a file that contains itself (a ZIP quine, a stage that decodes to
+# its own loader): a file equal to one of its ancestors is not opened again, and the
+# depth stops at MAX_DEPTH (64 levels, far beyond any real chain).
+MAX_DEPTH = _env_int("DOCUTRACEX_NESTED_MAX_DEPTH", 64)
+# Optional caps (off by default) for a slow machine: children analysed in depth per file,
+# children listed per file, analysed nodes per scan. Over a cap, children are LISTED
+# (name, type, size, SHA-256, Open analysis, file actions) instead of analysed.
+MAX_CHILDREN = _env_limit("DOCUTRACEX_NESTED_MAX_CHILDREN")
+MAX_LISTED = _env_limit("DOCUTRACEX_NESTED_MAX_LISTED")
+MAX_NODES = _env_limit("DOCUTRACEX_NESTED_MAX_NODES")
 MAX_HTML_SHOTS = _env_int("DOCUTRACEX_NESTED_MAX_HTML_SHOTS", 12)   # HTML pages rendered per case
 MAX_QR_IMAGES = _env_int("DOCUTRACEX_NESTED_MAX_QR_IMAGES", 120)   # images read for QR codes per case
 
@@ -351,6 +362,8 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
         "findings": [], "children": [],
     }
     tracer = ctx.get("_tracer") or _NoTracer()
+    ancestors = ctx.setdefault("_ancestors", [])
+    n_anc = len(ancestors)
     trec = tracer.enter(f"{chain} › {name}" if chain else name, node["kind"], depth)
     try:
         out = _scan_node(abs_path, name, paths, depth, chain, ctx, sources_out, node,
@@ -362,6 +375,7 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
                 pass
         return out
     finally:
+        del ancestors[n_anc:]                 # this file's branch is done
         tracer.leave(trec, node)
 
 
@@ -376,6 +390,13 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
         # AeWckx3pKh
         node["size_bytes"] = len(data)
         node["sha256"] = hashlib.sha256(data).hexdigest()
+        ancestors = ctx.setdefault("_ancestors", [])
+        if node["sha256"] in ancestors:
+            # a file that contains itself (a ZIP quine, a stage decoding to its own loader)
+            node["recursive"] = True
+            node["note"] = "the same file as one of the files it is inside: not opened again"
+            return node
+        ancestors.append(node["sha256"])
         if node["kind"] == "binary":
             node["format"] = binary_format(data, name)
         printable = sum(1 for b in data[:65536] if 32 <= b < 127 or b in (9, 10, 13))

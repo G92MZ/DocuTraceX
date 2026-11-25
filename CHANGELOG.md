@@ -3,6 +3,15 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.247.0 — 2026-11-25 (#327)
+
+**Nested: every child analysed in depth, however many and however deep**
+
+- No more *listed · not analysed in depth*: every file inside a case is analysed — an installer with hundreds of files, a PE's resources, ten or fifteen archives one inside another.
+- Archives are bounded by size only (500 MB in all, 100 MB per file), not by how many files they hold.
+- A file that contains itself is shown once and not opened again.
+- For a slow machine, the old caps can still be set (`DOCUTRACEX_NESTED_MAX_CHILDREN`, `DOCUTRACEX_NESTED_MAX_NODES`, `DOCUTRACEX_ARCHIVE_MAX_ENTRIES`).
+
 ## 1.246.1 — 2026-11-25 (#326)
 
 **Nested: every file opens, in the tree too**

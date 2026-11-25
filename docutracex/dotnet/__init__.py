@@ -315,7 +315,7 @@ def _findings(item: dict[str, Any]) -> list[dict[str, Any]]:
 
 RES_DIR = "dotnet_resources"
 MIN_RESOURCE = 16
-MAX_CHILDREN = 60
+MAX_CHILDREN = 10**9   # every resource carved becomes a nested child (no cap)
 
 
 def _resource_child(root: Path, sha: str, label: str, x: dict[str, Any], raw: bytes) -> dict[str, Any] | None:

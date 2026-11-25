@@ -145,6 +145,7 @@ def test_rar_unknown_password(tmp_path: Path, fake_7z: Path) -> None:
 
 
 def test_rar_bounds(tmp_path: Path, fake_7z: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(unlock, "MAX_ENTRIES", 50)          # a cap set with DOCUTRACEX_ARCHIVE_MAX_ENTRIES
     many = {f"f{i}.txt": "x" for i in range(unlock.MAX_ENTRIES + 1)}
     rec = unlock.extract_archive(_rar(tmp_path, many), tmp_path / "o1", [])
     assert "too many" in rec["error"] and rec["findings"][0]["rule"] == "archive_bomb"

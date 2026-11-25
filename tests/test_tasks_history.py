@@ -52,7 +52,7 @@ def test_history_not_listed_twice_in_the_same_session(client: TestClient) -> Non
 
 def test_nested_limits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from docutracex.storage import CasePaths
-    assert nested.MAX_DEPTH == 12
+    assert nested.MAX_DEPTH == 64
     monkeypatch.setattr(nested, "MAX_NODES", 3)
     root = tmp_path / "cases" / "c1"
     (root / "extracted").mkdir(parents=True)
