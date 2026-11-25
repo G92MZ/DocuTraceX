@@ -202,6 +202,74 @@ def collect(original: Path, extracted_dir: Path, modules: dict[str, Any],
     return uniq[:_MAX_ITEMS]
 
 
+_HOSTS = (r"aspnet_compiler|RegAsm|RegSvcs|MSBuild|InstallUtil|vbc|csc|jsc|AppLaunch|CasPol|aspnet_regbrowsers|"
+          r"aspnet_regiis|aspnet_wp|AddInProcess(?:32)?|Microsoft\.Workflow\.Compiler|ilasm|dfsvc|svchost|explorer")
+_SHAPES = (
+    # (rule, severity, label, [regex that must ALL be found in the script])
+    ("ps_process_watch_loop", "high",
+     "waits in a loop until a process is not running, then acts (re-injects when the host dies) · T1055",
+     [r"(?i)while\s*\(\s*\$true\s*\)|for\s*\(\s*;\s*;\s*\)|do\s*\{", r"(?i)Get-Process|\bgps\b|Win32_Process",
+      r"(?i)Start-Sleep|Thread\]::Sleep"]),
+    ("ps_reflective_invoke", "high",
+     "loads an assembly from bytes and calls one of its methods by name (reflective loader) · T1620",
+     [r"(?i)(?:Reflection\.Assembly\]::Load|\.Load\s*\(\s*\$)", r"(?i)\.GetMethod\s*\(|\.GetType\s*\(|EntryPoint",
+      r"(?i)\.Invoke\s*\("]),
+    ("ps_reflective_host_injection", "high",
+     "hands a payload to a loaded assembly together with a .NET / Windows host binary (process hollowing) · T1055.012",
+     [r"(?i)\.Invoke\s*\(", r"(?i)(?:" + _HOSTS + r")\.exe", r"(?i)Reflection\.Assembly\]::Load|\[byte\[\]\]"]),
+    ("ps_layered_loader_integrity", "medium",
+     "multi-layer loader: decrypts, checks the integrity of the result (hash) and runs it · T1027",
+     [r"(?i)SHA256|ComputeHash", r"(?i)CreateDecryptor|TransformFinalBlock|CryptoStream",
+      r"(?i)ScriptBlock\]::Create|Invoke-Expression|\biex\b|Reflection\.Assembly\]::Load"]),
+)
+
+
+def _loader_shapes(code: str) -> list[tuple[str, str, str, str]]:
+    """Loader behaviours that only show across the script (several constructs together)."""
+    head = code[:4_000_000]
+    out = []
+    for rule, sev, label, rxs in _SHAPES:
+        ms = [re.search(rx, head) for rx in rxs]
+        if all(ms):
+            ev = "\n".join(head[max(0, m.start() - 40):m.end() + 60].replace("\r", "").replace("\n", " ")[:200] for m in ms)
+            out.append((rule, sev, label, ev))
+    return out
+
+
+def _resolve(code: str, deob: str | None, loc: str) -> dict[str, Any] | None:
+    """The static evaluator's result for one script: its stages (decoded_stages shape), findings
+    (the chain resolved, downloads, dynamic calls not resolved) and the Resolution summary."""
+    from ..resolve import ps_eval, transforms
+    try:
+        sinks = ps_eval.resolve(code, loc)
+        if deob and not sinks.stages and not sinks.downloads:
+            sinks = ps_eval.resolve(deob, loc)
+    except Exception as exc:  # noqa: BLE001  (an extra: the rest of the analysis stands)
+        return {"stages": [], "findings": [], "summary": {"error": str(exc)[:300]}}
+    stages = sinks.decoded_stages()
+    findings = sinks.findings(loc)
+    rows = []
+    for st in sinks.stages:
+        raw = st.data if isinstance(st.data, bytes) else st.data.encode("utf-8", "replace")
+        rows.append({"kind": st.kind, "sink": st.sink, "recipe": list(st.recipe), "size": len(raw),
+                     "sha256": st.sha256, "type": transforms.magic(raw) or ("text" if isinstance(st.data, str) or transforms.is_text(raw) else "data"),
+                     "line": st.line, "depth": st.depth, **({"target": st.target} if st.target else {})})
+    if rows:
+        binaries = [r for r in rows if r["type"] in ("pe", "elf", "zip", "macho") or r["kind"] == "load"]
+        codes = [r for r in rows if r["kind"] == "exec"]
+        detail = (f"resolved statically: {len(codes)} code stage(s) and {len(binaries)} binary stage(s) "
+                  "(→ Nested, each with its recipe)")
+        ev = "\n".join(f"{r['sink']}: {r['size']} bytes {r['type']} · {' → '.join(r['recipe'])}" for r in rows[:10])
+        findings.insert(0, {"rule": "ps_resolved_stages", "severity": "high" if binaries else "medium",
+                            "detail": detail, "evidence": ev})
+    summary = {"stages": rows, "downloads": sinks.downloads, "unresolved": sinks.unresolved,
+               "steps": sinks.steps[:600], "errors": getattr(sinks, "errors", [])[:40],
+               "stats": getattr(sinks, "stats", {})}
+    if not rows and not sinks.downloads and not sinks.unresolved:
+        return {"stages": [], "findings": [], "summary": summary}
+    return {"stages": stages, "findings": findings, "summary": summary}
+
+
 def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
             fallback: bool = False, fallback_text: str | None = None) -> dict[str, Any]:
     res: dict[str, Any] = {"module": "powershell", "status": "ok", "scripts": [], "findings": []}
@@ -233,6 +301,26 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
         if deob["changed"]:
             script["_full_deob"] = deob_full
 
+        # static resolution: the script's values and operations followed to what it runs, loads
+        # or writes (here-strings → base64 → AES → GZip → ScriptBlock, a PE handed to a loader…)
+        resolved = _resolve(full, deob_full if deob["changed"] else None, loc)
+        if resolved:
+            seen = set()
+            mine = []
+            for st in resolved["stages"]:
+                key = st.get("text") or st.get("data_b64")
+                if key and key not in seen:
+                    seen.add(key)
+                    mine.append(st)
+            # the same stage found by the layer deobfuscator keeps its recipe (it names each layer)
+            old = {(st.get("text") or st.get("data_b64")): st for st in script["decoded_stages"]}
+            script["decoded_stages"] = [old.get(st.get("text") or st.get("data_b64"), st) for st in mine] + \
+                [st for st in script["decoded_stages"] if (st.get("text") or st.get("data_b64")) not in seen]
+            script["resolution"] = resolved["summary"]
+            for f in resolved["findings"]:
+                res["findings"].append(_finding(f["rule"], f["severity"], f"[{it['origin']}] {f['detail']}", loc,
+                                                f.get("evidence", "")))
+
         # box-ps behavioural sandbox: emulate the (deobfuscated) command and
         # record what it would do. Capped per case; each run is slow.
         if sandbox_on and sandbox_runs < _MAX_SANDBOX_RUNS and code.strip():
@@ -253,6 +341,8 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
         for rule, hs in by_rule.items():
             res["findings"].append(_finding(rule, hs[0]["severity"], f"[{it['origin']}] {hs[0]['label']}", loc,
                                             "\n".join(f"line {h['line_no']}: {h['line']}" for h in hs[:5])))
+        for rule, sev, label, ev in _loader_shapes(full if len(full) < 8_000_000 else code):
+            res["findings"].append(_finding(rule, sev, f"[{it['origin']}] {label}", loc, ev))
         chain = script_rules.risk_escalation(hits)
         if chain:
             res["findings"].append(_finding(chain["rule"], chain["severity"],

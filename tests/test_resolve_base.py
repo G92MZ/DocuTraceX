@@ -90,7 +90,7 @@ def test_values_and_stages() -> None:
     s.download(Value.of("https://billing-portal.example/s.ps1", "literal"), "DownloadString",
                "executes it as code", line=40)
     st = s.decoded_stages()
-    assert st[0]["recipe"][-1] == "→ Assembly.Load" and base64.b64decode(st[0]["data_b64"]) == PE
+    assert st[0]["recipe"][-1] == "Assembly.Load" and base64.b64decode(st[0]["data_b64"]) == PE
     assert st[1]["text"] == "Write-Host 'stage 2'"
     f = {x["rule"]: x for x in s.findings("file:x.ps1")}
     assert "billing-portal.example/s.ps1" in f["powershell_resolved_download"]["detail"]
