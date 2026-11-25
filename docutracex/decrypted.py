@@ -346,7 +346,10 @@ def _sources(sc: dict[str, Any], root: Path | None) -> tuple[str, str]:
     code dumps when available (stored previews are cut at 60 KB)."""
     orig = _read(root, sc.get("code_file")) or sc.get("_full_code") or sc.get("original_code") or ""
     if sc.get("code_is_deobfuscated"):
-        deob = _read(root, sc.get("code_file_deob")) or sc.get("_full_deob") or sc.get("code") or ""
+        # a stored preview cut short is no source: a literal running past the cut would be
+        # decoded half (a PE cut at 400,000 characters carves into "ghost" PEs)
+        deob = (_read(root, sc.get("code_file_deob")) or sc.get("_full_deob")
+                or ("" if sc.get("code_truncated") else sc.get("code")) or "")
         return deob or orig, orig
     return orig or sc.get("code") or "", ""
 
@@ -360,7 +363,8 @@ def _full_source(sc: dict[str, Any], root: Path | None) -> str:
         deob = _read(root, sc.get("code_file_deob")) or sc.get("_full_deob") or ""
         if deob:
             return deob
-    return (_read(root, sc.get("code_file")) or sc.get("_full_code") or sc.get("code") or "")
+    return (_read(root, sc.get("code_file")) or sc.get("_full_code")
+            or ("" if sc.get("code_truncated") else sc.get("code")) or "")
 
 
 def _already_in(text: str, analysed: str) -> bool:

@@ -36,6 +36,17 @@ of a shortcut, a PDF, an archive entry — and on the stages those scripts decod
    engine that fits it — a JScript that drops a VBScript that runs PowerShell is followed to
    the end.
 
+## A script whose extension says nothing
+
+A `.txt`, `.dat`, `.log` or a file with no extension that holds a script — on its own or inside
+an archive, an attachment, an installer — is recognised **by its content**: PowerShell,
+JavaScript, VBScript, batch, Python, Perl, PHP, Ruby, Lua, Tcl, shell, AutoIt or AutoHotkey, by
+the constructs that belong to each (`[Convert]::` and `-bxor` are PowerShell; `Dim` and
+`End Sub` VBScript; `@echo off` batch…). Long encoded blobs are left out of the judgement. Only
+the engines of that language read it, so no VBScript or batch rule fires on PowerShell code, and
+the stages it decodes are named after it (`decrypted_powershell-…`). A text whose language is
+not clear goes through every engine, as before. Scripts are read whole up to 64 MB.
+
 ## Polyglots: a page that is also a program
 
 An HTML page can be a program at the same time: the page sits where the language ignores it — a

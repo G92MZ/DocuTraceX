@@ -187,9 +187,12 @@ def dll_calls(code: str) -> list[dict[str, str]]:
 
 
 def analyze(original: Path, extracted_dir: Path | None = None,
-            modules: dict[str, Any] | None = None) -> dict[str, Any]:
+            modules: dict[str, Any] | None = None, lang: str | None = None) -> dict[str, Any]:
+    """``lang``: the language when the caller recognised it by the content (a .txt)."""
     res: dict[str, Any] = {"module": "script", "status": "ok", "scripts": [], "findings": []}
-    lang = _lang(original)
+    lang = _lang(original) or lang
+    if lang and not _lang(original):
+        res["sniffed"] = lang
     if not original.is_file():
         return res
     if not lang:

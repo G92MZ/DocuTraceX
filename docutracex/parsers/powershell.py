@@ -30,7 +30,7 @@ _MAX_SANDBOX_RUNS = 12          # cap box-ps invocations per case (each is slow)
 
 _MAX_ITEMS = 5000              # scripts analysed per file (every one, in practice)
 _MAX_FILES = 300
-_MAX_FILE_BYTES = 2 * 1024 * 1024
+_MAX_FILE_BYTES = 64 * 1024 * 1024    # a loader carrying a whole PE in a literal (tens of MB seen)
 _MAX_CODE = 300_000
 _KEEP_CODE = 60_000
 _PS_FILE_EXT = {".ps1", ".psm1", ".psd1"}

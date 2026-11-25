@@ -287,6 +287,10 @@ _COMPILED: dict[str, tuple[set[str], str, str, str, re.Pattern]] = {
 }
 
 
+_ENCODED_MIN = 96
+_ENCODED_RUN = re.compile(r"[A-Za-z0-9+/]{96,}={0,2}|[0-9A-Fa-f]{96,}")
+
+
 def rules_for(lang: str) -> list[str]:
     """Rule ids that apply to a language (for docs / tests)."""
     return [rid for rid, (langs, *_rest) in _COMPILED.items() if lang in langs]
@@ -301,12 +305,16 @@ def scan(code: str, lang: str) -> list[dict[str, Any]]:
     """
     hits: list[dict[str, Any]] = []
     lines = code.splitlines() or [""]
+    # long base64 / hex runs are data, not code: a rule word inside one ("vbox" in a
+    # base64 blob) is no behaviour — matched on the line with those runs blanked out
+    masked = [_ENCODED_RUN.sub(lambda m: " " * len(m.group(0)), ln) if len(ln) >= _ENCODED_MIN else ln
+              for ln in lines]
     for rid, (langs, sev, attack, label, rx) in _COMPILED.items():
         if lang not in langs:
             continue
         count = 0
         for no, ln in enumerate(lines, 1):
-            if rx.search(ln):
+            if rx.search(masked[no - 1]):
                 hits.append({"rule": rid, "severity": sev, "attack": attack,
                              "label": f"{label} · {attack}" if attack else label,
                              "line_no": no, "line": ln.strip()[:300]})
