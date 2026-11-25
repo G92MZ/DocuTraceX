@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SETUP = ROOT / "scripts" / "setup_portable_python.py"
 # Must match COMPONENTS in scripts/setup_portable_python.py.
 COMPONENTS = ("portable", "tool-deps", "didier", "officemalscanner", "ipdb", "chromium",
-              "vipermonkey", "webcrack", "boxps", "pycdc", "cfr", "floss", "capa",
+              "vipermonkey", "webcrack", "boxjs", "boxps", "pycdc", "cfr", "floss", "capa",
               "upx", "7zip", "die", "innoextract", "innounp", "nuitka-extractor",
               "autoit-ripper", "evbunpack", "ember", "goresym", "rizin", "ilspy", "de4dot")
 APP_DEP_PREFIX = "app-dep:"

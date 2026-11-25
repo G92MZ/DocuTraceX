@@ -711,6 +711,24 @@ def run_checks() -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
 
+    # box-js (optional JScript / WSH emulator) on the portable Node: not provisioned by default.
+    try:
+        from .parsers.boxjs import status as boxjs_status
+        bj = boxjs_status()
+        checks.append(Check(
+            category="External tools",
+            name="box-js (Node, optional)",
+            status="ok" if bj["available"] else "warn",
+            detail=bj["detail"],
+            remedy="" if bj["available"] else
+                   "optional — Retry installs it (npm, ~60 MB); it runs the script's code in Node's vm2, so use it on "
+                   "a throw-away analysis machine",
+            purpose="WSH emulation: files written, commands, URLs and eval'd code of JScript droppers",
+            retry="boxjs",
+        ))
+    except Exception:  # noqa: BLE001
+        pass
+
     # box-ps (PowerShell sandbox) on portable PowerShell Core.
     try:
         from .parsers.boxps import boxps_status

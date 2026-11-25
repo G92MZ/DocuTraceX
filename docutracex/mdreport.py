@@ -327,7 +327,8 @@ def _resolution(cid: str) -> str:
             if sbx.get("events"):
                 out += [f"### Seen in the sandbox ({sbx.get('tool', 'emulator')})", "",
                         "_The code ran in a hooked engine (no network, no real disk) — next to the static result._", "",
-                        _table(["What", "Call", "Detail"], [[e.get("kind"), e.get("what"), e.get("detail")]
+                        _table(["What", "Call", "Detail"], [[e.get("kind"), e.get("what") + (f" ({e['by']})" if e.get("by") and "+" in sbx.get("tool", "") else ""),
+                                                              e.get("detail")]
                                                             for e in sbx["events"]])]
     if not n:
         out.append("_(no script was followed to a stage, a download or a dynamic call)_")

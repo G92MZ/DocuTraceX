@@ -694,6 +694,43 @@ def install_webcrack() -> bool:
     return False
 
 
+# --- box-js (optional JScript / WSH emulator) --------------------------------
+BOXJS_DIR = TOOLS / "boxjs"
+BOXJS_VERSION = "1.9.29"                        # MIT (CapacitorSet/box-js)
+
+
+def _boxjs_ok() -> bool:
+    return (BOXJS_DIR / "node_modules" / "box-js" / "run.js").is_file()
+
+
+def install_boxjs() -> bool:
+    """npm-install box-js into tools/boxjs/ on the portable Node. **Optional and never part of the
+    full setup**: it runs the analysed script's code (in Node's vm2), so it is installed only on
+    request (Diagnostics → Retry, or ``--component boxjs``). Pure JS: no build tools needed."""
+    if _boxjs_ok():
+        return True
+    node = node_executable()
+    if node is None and not install_node():
+        return False
+    node = node_executable()
+    BOXJS_DIR.mkdir(parents=True, exist_ok=True)
+    (BOXJS_DIR / "package.json").write_text('{"private":true}\n', encoding="utf-8")
+    print("[>] Installing box-js into tools/boxjs/ (npm)")
+    try:
+        r = subprocess.run(_npm_cmd(node) + ["install", "--no-audit", "--no-fund", "--ignore-scripts",
+                                             "--prefix", str(BOXJS_DIR), f"box-js@{BOXJS_VERSION}"],
+                           capture_output=True, text=True, timeout=900)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[!] box-js install failed ({exc}); JScript stays with the V8 sandbox.")
+        return False
+    if r.returncode == 0 and _boxjs_ok():
+        print("[+] box-js installed")
+        return True
+    tail = ((r.stdout or "")[-800:] + "\n" + (r.stderr or "")[-800:]).strip()
+    print(f"[!] box-js install failed. Last output:\n{tail}")
+    return False
+
+
 # --- PowerShell Core + box-ps (PowerShell sandbox) --------------------------
 PWSH_DIR = TOOLS / "pwsh"
 PWSH_VERSION = "7.4.6"                          # LTS; MIT
@@ -2531,6 +2568,7 @@ COMPONENTS: dict = {
     "vipermonkey": lambda: bool(install_vipermonkey()) and _vipermonkey_ok(),
     "webcrack": lambda: bool(install_webcrack()) and _webcrack_ok(),
     "boxps": lambda: bool(install_boxps()) and _boxps_ok(),
+    "boxjs": lambda: bool(install_boxjs()) and _boxjs_ok(),   # optional: only on request
     "pycdc": lambda: bool(install_pycdc()) and _pycdc_ok(),
     "cfr": lambda: bool(install_cfr()) and _cfr_ok(),
     "floss": lambda: bool(install_floss()) and _floss_ok(),
