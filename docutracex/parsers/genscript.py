@@ -272,5 +272,44 @@ def analyze(original: Path, extracted_dir: Path | None = None,
                    "original_truncated": len(orig) > _KEEP,
                    "deob_methods": [f"{len(deob['decoded'])} string(s) decrypted with the script's decoders "
                                     f"({', '.join(sorted(deob['functions']))[:200]})"]})
+    # static resolution: the script's values and operations followed (never run) to what it runs,
+    # writes, loads or downloads — the hidden stages go to Nested with their recipe
+    resolved = _resolve_script(lang, orig, f"file:{original.name}", code if code != orig else None)
+    if resolved:
+        ext = _LANG_EXT.get(lang, "")
+        for st in resolved["stages"]:
+            if "ext" not in st and "text" in st:
+                st["ext"] = ext
+        sc["decoded_stages"] = resolved["stages"]
+        sc["resolution"] = resolved["summary"]
+        res["findings"].extend({"tool": "script", **f} for f in resolved["findings"])
     res["scripts"].append(sc)
     return res
+
+
+_LANG_EXT = {"PHP": ".php", "Perl": ".pl", "Ruby": ".rb", "Lua": ".lua", "AutoHotkey": ".ahk", "shell": ".sh",
+             "Tcl": ".tcl", "AutoIt": ".au3"}
+_PREFIX = {"PHP": "php", "Perl": "perl", "Ruby": "ruby", "Lua": "lua", "AutoHotkey": "ahk", "shell": "sh",
+           "Tcl": "tcl", "AutoIt": "au3"}
+
+
+def _resolve_script(lang: str, code: str, loc: str, alt: str | None) -> dict[str, Any] | None:
+    """The language's static evaluator (``resolve/``), when it has one."""
+    from ..resolve import report
+    if lang in ("PHP", "Perl", "Ruby", "Lua", "AutoHotkey"):
+        from ..resolve import dyn_eval
+        fn = dyn_eval.resolver(lang)
+    elif lang == "shell":
+        from ..resolve import sh_eval
+        fn = sh_eval.resolve
+    elif lang == "Tcl":
+        from ..resolve import tcl_eval
+        fn = tcl_eval.resolve
+    elif lang == "AutoIt":
+        from ..resolve import au3_eval
+        fn = au3_eval.resolve
+    else:
+        return None
+    if not code.strip():
+        return None
+    return report.run(fn, code, loc, _PREFIX[lang], alt)

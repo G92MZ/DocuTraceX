@@ -130,6 +130,35 @@ code). What it writes is a stage with its recipe (`the script's own file → bas
 `echo … | powershell -`, `mshta`, `certutil -urlcache`, `bitsadmin`, `curl`), and a command read
 from the machine (`for /f` over `reg query`) is a dynamic call not resolved.
 
+## PHP, Perl, Ruby, Lua, Tcl, shell, AutoIt and AutoHotkey resolved statically
+
+The languages without an engine of their own are evaluated too (nothing runs):
+
+- **PHP, Perl, Ruby, Lua, AutoHotkey** share one interpreter with a profile per language (strings,
+  comments, variables, blocks, operators) and its library: PHP webshells (`eval(gzinflate(base64_decode(…)))`,
+  decoder names built at run time like `$f = 'base'.'64_decode'`, `str_rot13`, `strrev`, `assert`,
+  `create_function`, `preg_replace('/…/e')`, `openssl_decrypt`, `$_POST` / `$_GET` as what the request
+  carries), Perl (`decode_base64`, `pack` / `unpack`, `s///`, `tr///`, backticks, `open` + `print`,
+  `IO::Socket::INET`), Ruby (`Base64.decode64`, `Zlib::Inflate`, `pack`, `map { … }.join`,
+  `instance_eval`, `File.binwrite`, `Net::HTTP`), Lua (`load` / `loadstring`, `string.char`,
+  `:reverse()`, `~` XOR loops, `os.execute`, `io.open`) and AutoHotkey (`UrlDownloadToFile`, `Run`,
+  `ComObjCreate("WScript.Shell")`, `FileAppend`, `DllCall` + `NumPut`).
+- **Shell (sh / bash)** is read like a shell: quotes, `$var` / `${…}` expansions, `$(…)`, here-documents,
+  pipes — `echo … | base64 -d | gunzip | sh`, `printf '\x…'`, `xxd -r -p`, `openssl enc -d`, `rev`,
+  `tr`; `curl` / `wget` downloads (saved, made executable, run), `python -c` / `perl -e` stages and
+  `/dev/tcp` reverse shells. The commands the other languages run (`system`, `os.execute`,
+  backticks, `exec`) go through the same reading.
+- **Tcl**: `[…]` / `$var` substitution, `eval` / `uplevel`, `binary decode`, `zlib`, `string reverse`
+  / `map`, `format %c`, `exec`, `open` + `puts`, `http::geturl`.
+- **AutoIt** runs the script's top level on the same evaluator that decrypts its strings: `Execute`,
+  `Run` / `ShellExecute`, `InetGet`, `FileWrite`, `_Crypt_DecryptData` (key from `CryptDeriveKey`),
+  and shellcode copied with `DllStructSetData` into `VirtualAlloc` memory and run with
+  `CallWindowProc`.
+
+Each stage goes to Nested with its recipe (`base64 → inflate → eval`, `number array d → sub(9) →
+eval`, `Binary → decrypt (CryptDeriveKey) → DllStructSetData`); a value read from the machine or the
+request (`RegRead`, `$_POST`, `$env(…)`, a file) makes the call a dynamic call not resolved.
+
 ## A script whose extension says nothing
 
 A `.txt`, `.dat`, `.log` or a file with no extension that holds a script — on its own or inside
