@@ -579,6 +579,11 @@ class Interp:
              ast.BitXor: lambda: a ^ b, ast.BitAnd: lambda: a & b}[type(op)]
         if isinstance(op, ast.Mult) and isinstance(a, (str, bytes, list)) and isinstance(b, int) and len(a) * b > T.MAX_OUT:
             raise Limit("repeat")
+        if isinstance(op, ast.Mult) and isinstance(b, (str, bytes, list)) and isinstance(a, int) and len(b) * a > T.MAX_OUT:
+            raise Limit("repeat")
+        if isinstance(op, ast.Add) and isinstance(a, (str, bytes, bytearray, list)) and hasattr(b, "__len__") \
+                and len(a) + len(b) > T.MAX_OUT:
+            raise Limit("value too large")
         if isinstance(op, ast.Pow) and isinstance(b, int) and b > 4096:
             raise Limit("pow")
         out = f()

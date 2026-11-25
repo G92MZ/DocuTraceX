@@ -3336,7 +3336,7 @@ def _library(it: Interp) -> dict[str, Any]:  # noqa: C901, PLR0915
         reg("string.reverse", rev)
         reg("string.sub", guard(lambda args, e, sc: _lua_sub(s_(args[0]), args[1:])))
         reg("string.len", guard(lambda args, e, sc: len(s_(args[0]))))
-        reg("string.rep", guard(lambda args, e, sc: s_(args[0]) * int(n_(args[1]))))
+        reg("string.rep", guard(lambda args, e, sc: _rep(s_(args[0]), int(n_(args[1])))))
         reg("string.gsub", lambda args, e, sc: _lua_gsub(it, args, sc))
         reg("string.format", guard(lambda args, e, sc: _sprintf(s_(args[0]), args[1:])))
         reg("string.upper", guard(lambda args, e, sc: s_(args[0]).upper()))
@@ -3375,6 +3375,12 @@ def _library(it: Interp) -> dict[str, Any]:  # noqa: C901, PLR0915
         reg("envget", lambda args, e, sc: Unk(f"the environment variable {s_(a(args, 0, ''))}"))
         reg("regread", lambda args, e, sc: Unk(f"the registry value {s_(a(args, 0, ''))}"))
     return L
+
+
+def _rep(s: str, n: int) -> str:
+    if len(s) * max(0, n) > MAX_STR:
+        raise Limit("string size")
+    return s * max(0, n)
 
 
 def it_keep(src: Any, out: str) -> str:
@@ -4078,7 +4084,7 @@ def _methods(it: Interp, obj: Any, name: str, args: list, block: Func | None) ->
         if nm == "byte":
             return _lua_byte([s] + args)
         if nm == "rep":
-            return s * int(n_(args[0]))
+            return _rep(s, int(n_(args[0])))
         if nm in ("gsub",) and p == "lua":
             return _lua_gsub(it, [s] + args, it.g)
         if nm == "format" and p == "lua":

@@ -938,6 +938,8 @@ class Interp:
             u = a if isinstance(a, Unk) else b
             return Unk(u.why, rec(a) or rec(b))
         if op == "+":
+            if isinstance(a, (str, bytes, bytearray, list)) and hasattr(b, "__len__") and len(a) + len(b) > T.MAX_OUT:
+                raise Limit("value too large")
             if isinstance(a, str):
                 return tag(a + self.text(b), rec(a) or rec(b)) if (rec(a) or rec(b)) else a + self.text(b)
             if isinstance(a, (RBytes, bytearray)):
@@ -957,6 +959,8 @@ class Interp:
             if isinstance(a, str):
                 return T.repeat(a, self.num(b))
             if isinstance(a, list):
+                if len(a) * max(0, self.num(b)) > T.MAX_OUT:
+                    raise Limit("array too large")
                 return PSList(list(a) * self.num(b))
             return self.arith(a, b, lambda x, y: x * y)
         if op == "/":
@@ -1596,10 +1600,11 @@ class Interp:
             return Obj("stringbuilder", parts=[self.text(args[0])] if args else [])
         if k == "arraylist":
             return PSList()
-        if k == "byte[]":
-            return RBytes(self.num(args[0]) if args else 0)
-        if k in ("char[]", "object[]", "string[]", "int[]"):
-            return PSList([None] * (self.num(args[0]) if args else 0))
+        if k in ("byte[]", "char[]", "object[]", "string[]", "int[]"):
+            size = self.num(args[0]) if args else 0
+            if not isinstance(size, int) or size > T.MAX_OUT:
+                raise Limit("array too large")
+            return RBytes(size) if k == "byte[]" else PSList([None] * size)
         if k == "pscredential":
             pw = args[1] if len(args) > 1 else None
             return Obj("pscredential", props={"user": args[0] if args else "", "password": pw})

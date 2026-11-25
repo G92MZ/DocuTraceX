@@ -159,6 +159,32 @@ Each stage goes to Nested with its recipe (`base64 → inflate → eval`, `numbe
 eval`, `Binary → decrypt (CryptDeriveKey) → DllStructSetData`); a value read from the machine or the
 request (`RegRead`, `$_POST`, `$env(…)`, a file) makes the call a dynamic call not resolved.
 
+## What each language resolves (and where it stops)
+
+| Language | Follows to a stage | Decoders | Stops at |
+|---|---|---|---|
+| PowerShell | `iex` / `ScriptBlock::Create` / `-enc`, `Assembly.Load`, `WriteAllBytes`, `Start-Process` | base64, AES / 3DES (`CreateDecryptor`), GZip / Deflate, `-bxor` loops, `SecureString -Key`, here-strings | values from the machine (registry, files, `$env:` that is not standard), the network, `Add-Type` C# it does not compile |
+| Python | `exec` / `eval` / `compile`, `ctypes` memory, `subprocess`, `open().write` | base64 / b85 / hex, zlib / gzip / lzma / bz2, `marshal`, PyCryptodome / `cryptography` (AES, Fernet…), XOR comprehensions | C extensions, `pickle`, network data, imported modules not in the file |
+| JavaScript / JScript | `eval` / `Function` / `setTimeout("…")` / `document.write`, `ADODB.Stream` / FSO / `fs` writes, WSH and WMI commands | `atob`, `unescape`, `fromCharCode`, MSXML `bin.base64`, CryptoJS, pako, Node `zlib` / `crypto`, obfuscator.io | DOM events and timers that need a page, anti-analysis that needs a real engine (the V8 sandbox covers part of it) |
+| VBScript | `Execute` / `ExecuteGlobal` / `Eval`, the same COM objects as JScript, `Declare`d memory APIs | `Chr` / `Asc` / `Mid` loops, `StrReverse`, `Replace`, `Split` / `Join`, MSXML `bin.base64` | `GetObject` of live objects, classes with behaviour |
+| Batch | `cmd /c`, files written with `echo` / `certutil -decode` / `copy /b` / `more`, `echo … \| powershell -` | `%var:~s,l%`, `%var:a=b%`, `set /a`, `!var!`, `certutil -decode` / `-decodehex` | `for /f` over a command's output, `reg query`, `set /p` (what the user types); lines over 8191 characters (cmd's own limit) |
+| PHP / Perl / Ruby / Lua / AutoHotkey | `eval` / `assert` / `create_function` / `preg_replace /e`, `load`, `instance_eval`; commands; written files | base64, gz*, `str_rot13`, `strrev`, `pack` / `unpack`, `openssl_decrypt`, `s///`, `tr`, `string.char`, XOR loops | the web request (`$_POST`, `$_GET`), extensions / gems / rocks not in the file, object-oriented frameworks |
+| Shell | `\| sh`, `eval`, `sh -c`, `python -c` / `perl -e`, written files, `curl` / `wget` | `base64 -d`, `gunzip` / `xz` / `bzip2`, `xxd -r`, `openssl enc -d`, `printf`, `rev`, `tr`, `sed s///` | commands whose output only the machine knows (`uname`, `cat /etc/…`) |
+| Tcl | `eval` / `uplevel`, `exec`, `open \|…`, `puts` | `binary decode`, `zlib`, `string reverse` / `map`, `format %c` | Tk widgets, packages not in the file |
+| AutoIt | `Execute`, `Run` / `ShellExecute`, `InetGet`, `FileWrite`, shellcode in `VirtualAlloc` memory | the script's own decoder functions, `_Crypt_DecryptData`, `BinaryToString`, `StringReverse` | `Exit` at the top, UDFs from `#include`s not in the file |
+
+**Blind trials.** A blob no evaluator reached (the script decrypts it with a module it imports, a
+native helper, a function the evaluator stops at) is tried with the script's own key material:
+XOR with one byte or with its arrays and strings, RC4, AES and 3DES with its keys as written and
+as their MD5 / SHA-1 / SHA-256, IVs zero, in front of the data or from the script. A trial counts
+only when it turns into a file, text or compressed data that inflates; the recipe says which key
+(`aes-256-cbc(key sha256('…'), iv zero)`). Base64 written backwards is read the other way. Each
+blob has a fixed budget of trials.
+
+**Limits.** Every evaluator stops at a budget of steps and seconds, and every value at the output
+limit (64 MB): an endless loop, endless recursion, a string that doubles, a huge array or a
+decompression bomb ends the evaluation in seconds — the rest of the analysis stands.
+
 ## A script whose extension says nothing
 
 A `.txt`, `.dat`, `.log` or a file with no extension that holds a script — on its own or inside

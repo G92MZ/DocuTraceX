@@ -3,6 +3,15 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.255.0 — 2026-11-25 (#335)
+
+**Hidden payloads found with the script's own keys, and evaluators that never hang**
+
+- A payload the script decrypts with code it does not carry (an imported module, a native helper) is now tried with the script's own passwords and arrays: RC4, AES and 3DES, keys as written or hashed (MD5 / SHA-1 / SHA-256), compressed results included. The recipe says which key opened it.
+- Base64 written backwards is read the other way.
+- Endless loops, recursion, strings that double, huge arrays and decompression bombs stop every language's evaluator in seconds.
+- The scripts documentation has a table of what each language resolves and where it stops.
+
 ## 1.254.0 — 2026-11-25 (#334)
 
 **PHP, Perl, Ruby, Lua, Tcl, shell, AutoIt and AutoHotkey evaluated statically**
