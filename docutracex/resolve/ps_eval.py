@@ -189,6 +189,10 @@ _ACCEL = {
     "security.cryptography.sha256cryptoserviceprovider": "sha256", "security.cryptography.md5": "md5",
     "security.cryptography.md5cryptoserviceprovider": "md5", "security.cryptography.sha1": "sha1",
     "security.cryptography.sha1managed": "sha1", "security.cryptography.hmacsha256": "hmacsha256",
+    "security.cryptography.hmacsha1": "hmacsha1", "security.cryptography.hmacsha384": "hmacsha384",
+    "security.cryptography.hmacsha512": "hmacsha512", "security.cryptography.hmacmd5": "hmacmd5",
+    "security.cryptography.sha384": "sha384", "security.cryptography.sha512": "sha512",
+    "security.cryptography.sha512managed": "sha512",
     "net.webclient": "webclient", "net.http.httpclient": "httpclient", "net.webrequest": "webrequest",
     "net.httpwebrequest": "webrequest", "net.servicepointmanager": "servicepointmanager",
     "runtime.interopservices.marshal": "marshal", "management.automation.pscredential": "pscredential",
@@ -1538,7 +1542,7 @@ class Interp:
                 return PSList(objs) if n == "matches" else (objs[0] if objs else Obj("match", props={"value": "", "success": False}))
         if k in ("aes", "des", "3des") and n == "create":
             return self.new_object(t.name, [], node)
-        if k in ("sha256", "md5", "sha1") and n == "create":
+        if k in ("sha256", "md5", "sha1", "sha384", "sha512") and n == "create":
             return Obj("hash", alg=k)
         if k == "webrequest" and n == "create":
             return Obj("webrequest", url=args[0] if args else "")
@@ -1590,8 +1594,10 @@ class Interp:
         if k == "pbkdf2":
             return Obj("pbkdf2", pw=args[0] if args else "", salt=args[1] if len(args) > 1 else b"",
                        it=self.num(args[2]) if len(args) > 2 and not isinstance(args[2], str) else 1000)
-        if k in ("sha256", "md5", "sha1"):
-            return Obj("hash", alg=k)
+        if k in ("sha256", "md5", "sha1", "sha384", "sha512"):
+            return Obj("hash", alg=k, props={})
+        if k in ("hmacsha256", "hmacsha1", "hmacsha384", "hmacsha512", "hmacmd5"):    # HMAC, its key set or given
+            return Obj("hash", alg=k[4:], hmac=True, props={"key": args[0]} if args else {})
         if k == "webclient":
             return Obj("webclient")
         if k == "httpclient":
@@ -1951,6 +1957,13 @@ class Interp:
                 d = args[0]
                 if isinstance(d, Unk):
                     return d
+                if getattr(o, "hmac", False):
+                    key = o.props.get("key")
+                    if key is None or isinstance(key, Unk):
+                        return Unk("an HMAC whose key is not in the script")
+                    import hmac as _hmac
+                    kb = bytes(self.as_bytes(key)) if not isinstance(key, str) else key.encode()
+                    return tag(RBytes(_hmac.new(kb, bytes(self.as_bytes(d)), o.alg).digest()), ())
                 return tag(RBytes(T.digest(o.alg, bytes(self.as_bytes(d)))), ())
             if n in ("dispose", "clear"):
                 return None

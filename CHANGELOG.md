@@ -3,6 +3,15 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.261.0 — 2026-11-25 (#341)
+
+**Loaders of 2025 followed to their payload (Lumma, Formbook chains)**
+
+- A loader dropped next to an encrypted "MSAP" data file: the key is read from the loader and the payload it injects shows up in Nested.
+- .NET packers that keep the payload as a static array are unpacked (CIL emulation), and string decoders that take a key are run.
+- PowerShell loaders that check an HMAC before decrypting, and WSH droppers that use VBScript.RegExp, now give their next stage.
+- The CIL emulation runs about a third faster.
+
 ## 1.260.0 — 2026-11-25 (#340)
 
 **Stealers and RATs of 2025: Vidar, StealC v2, Quasar forks, resource string tables**

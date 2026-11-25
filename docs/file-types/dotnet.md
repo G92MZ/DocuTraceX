@@ -37,6 +37,11 @@ code is CIL: it is disassembled and read, never run.
       calls are caught as they return (*string decoder (CIL emulation)*), with `List` /
       `Dictionary`, `BinaryReader`, the manifest resources and the framework's AES / DES /
       3DES, MD5 / SHA and PBKDF2 modelled.
+    - **Packers with the payload compiled in**: a large static array that reads as encrypted
+      makes the emulation run the methods that pass static fields to the assembly's own code
+      (`Main`, a `Decrypt(payload, key)`) with a large budget; an array that comes out as a PE
+      becomes a Nested child (`packed_payload_N.exe`). String decoders that take a string and a
+      key (`Decode("…", 0x15)`) are run on each call site too.
     - **Resources**: `.resources` files opened entry by entry; encrypted entries decrypted with
       the keys the assembly holds (in the method, its class or the whole assembly), and images
       read pixel by pixel.

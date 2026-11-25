@@ -1345,6 +1345,11 @@ def _analyze_case(case_root: Path) -> dict[str, Any]:
         _shas([nd for nd in prev_tree if not nd.get("decrypted_from")])
         ditems = decrypted.write(decrypted.payloads_from({k: v for k, v in dmods.items() if v}, paths.root),
                                  paths.extracted_dir / decrypted.DIRNAME, known)
+        try:                                  # a loader dropped with its encrypted data file (MSAP container)
+            from . import msap
+            ditems += msap.open_pairs(ditems, paths.extracted_dir / decrypted.DIRNAME / "msap")
+        except Exception:  # noqa: BLE001
+            pass
         for it in ditems:
             it.setdefault("source", "decrypted")
         if ditems:

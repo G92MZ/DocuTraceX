@@ -324,6 +324,9 @@ class Emu:
     def __init__(self, pe: Any) -> None:
         from .cil import _name, _owners, _reader_class, static_fields
         self.pe = pe
+        self._pre: dict[int, list[tuple[int, Any]]] = {}
+        self._targets: dict[tuple[int, int], tuple[str, Any]] = {}
+        self.max_seconds = MAX_SECONDS
         self.t = pe.net.mdtables
         self.us = pe.net.user_strings
         self.owners = _owners(self.t)
@@ -369,6 +372,13 @@ class Emu:
     def method_target(self, tok: Any) -> tuple[str, Any]:
         """('def', rid) for the assembly's own code, ('ref', (name, has_this, nparams, void))."""
         table, rid = getattr(tok, "table", None), getattr(tok, "rid", 0)
+        key = (table, rid)
+        got = self._targets.get(key)
+        if got is None:
+            got = self._targets[key] = self._method_target(table, rid)
+        return got
+
+    def _method_target(self, table: Any, rid: int) -> tuple[str, Any]:
         if table == 0x06:
             return "def", rid
         if table == 0x2B:
@@ -428,7 +438,7 @@ class Emu:
         self.steps += 1
         if self.steps > self.limit:
             raise EmuError("step budget")
-        if not self.steps & 0xFFFF and time.monotonic() - self.t0 > MAX_SECONDS:
+        if not self.steps & 0xFFFF and time.monotonic() - self.t0 > self.max_seconds:
             raise EmuError("time budget")
 
     def call_def(self, rid: int, args: list[Any], depth: int) -> Any:
@@ -494,13 +504,83 @@ class Emu:
         pc = 0
         n = len(insns)
         push, pop = st.append, st.pop
+        pre = self._pre.get(id(insns))
+        if pre is None:
+            pre = self._pre[id(insns)] = _predecode(insns, idx)
         while pc < n:
-            self.tick()
+            self.steps += 1
+            if self.steps > self.limit:
+                raise EmuError("step budget")
+            if not self.steps & 0xFFFF and time.monotonic() - self.t0 > self.max_seconds:
+                raise EmuError("time budget")
             ins = insns[pc]
+            k, x = pre[pc]
+            self.last_off = ins.offset
+            pc += 1
+            # the hot opcodes, decoded once per method
+            if k == _K_NOP:
+                continue
+            if k == _K_LDC:
+                push(x)
+                continue
+            if k == _K_LDLOC:
+                push(loc.get(x, 0))
+                continue
+            if k == _K_STLOC:
+                loc[x] = pop()
+                continue
+            if k == _K_LDARG:
+                push(args[x] if x < len(args) else 0)
+                continue
+            if k == _K_BR:
+                pc = x
+                continue
+            if k == _K_BRBOOL:
+                if _truthy(pop()) == x[1]:
+                    pc = x[0]
+                continue
+            if k == _K_BCMP:
+                b, a = pop(), pop()
+                if _cmp(x[1], a, b):
+                    pc = x[0]
+                continue
+            if k == _K_ARITH:
+                b, a = pop(), pop()
+                push(_arith(x, a, b))
+                continue
+            if k == _K_CONV:
+                push(_conv(x, pop()))
+                continue
+            if k == _K_DUP:
+                push(st[-1])
+                continue
+            if k == _K_POP:
+                pop()
+                continue
+            if k == _K_LDELEM:
+                i, a = pop(), pop()
+                if not isinstance(a, Arr):
+                    self.last_off = ins.offset
+                    raise EmuError("ldelem")
+                push(_elem_get(a, i, x))
+                continue
+            if k == _K_STELEM:
+                v, i, a = pop(), pop(), pop()
+                if not isinstance(a, Arr):
+                    self.last_off = ins.offset
+                    raise EmuError("stelem")
+                _elem_set(a, i, v)
+                continue
+            if k == _K_LDLEN:
+                a = pop()
+                if not isinstance(a, Arr):
+                    self.last_off = ins.offset
+                    raise EmuError("ldlen")
+                push(len(a.data))
+                continue
             self.last_off = ins.offset
             op = ins.opcode.name
             arg = ins.operand
-            pc += 1
             if op == "nop" or op.startswith(("volatile.", "unaligned.", "readonly.", "constrained.", "tail.")):
                 continue
             if op.startswith("ldc."):
@@ -510,6 +590,9 @@ class Emu:
                     push(float(arg))
                 else:
                     push(_i4(ins.get_ldc()))
+                continue
+            if op.startswith("ldloca"):
+                push(Ref(loc, arg.index))
                 continue
             if op.startswith("ldloc"):
                 i = arg.index if hasattr(arg, "index") else int(op.rsplit(".", 1)[1])
@@ -627,6 +710,18 @@ class Emu:
                     raise EmuError("ldind")
                 push(_load_as(r.get(), _IND[op]))
                 continue
+            if op == "ldobj":                            # a value type through its address (byte, int…)
+                r = pop()
+                if not isinstance(r, Ref):
+                    raise EmuError("ldobj")
+                push(r.get())
+                continue
+            if op == "stobj":
+                v, r = pop(), pop()
+                if not isinstance(r, Ref):
+                    raise EmuError("stobj")
+                r.set(v)
+                continue
             if op.startswith("stind."):
                 v, r = pop(), pop()
                 if not isinstance(r, Ref):
@@ -703,7 +798,7 @@ class Emu:
                 push(4)
                 continue
             if op in ("localloc", "cpblk", "initblk", "jmp", "calli", "mkrefany", "refanyval", "refanytype",
-                      "arglist", "ckfinite", "break", "ldobj", "stobj", "cpobj", "ldelem.any"):
+                      "arglist", "ckfinite", "break", "cpobj", "ldelem.any"):
                 raise EmuError(f"unsupported {op}")
             raise EmuError(f"unsupported {op}")
         return None if void else OPQ
@@ -769,6 +864,8 @@ class Emu:
     def extern(self, name: str, a: list[Any], new: bool) -> Any:  # noqa: C901, PLR0911, PLR0912
         short = name.split("::")[-1]
         typ = name.split("::")[0]
+        if a and isinstance(a[0], Ref) and short != ".ctor" and typ in _VALUE_TYPES:
+            a = [a[0].get()] + list(a[1:])              # an instance call on a value type, through its address
         if new and short == ".ctor" and len(a) == 2 and isinstance(a[1], Obj) and a[1].type == "fn":
             return Obj("delegate", target=a[1].st.get("target"), bound=a[0])     # Func<…> / Action<…>
         if name.endswith("RuntimeHelpers::InitializeArray"):
@@ -888,6 +985,29 @@ class Emu:
                 v = struct.unpack_from(fmt, arr_bytes(a[0]), _num(a[1]))[0]
                 return _i8(v) if fmt[-1] in "qQ" else _i4(v)
             return OPQ
+        if typ == "System.Convert" and short in _CONVERT_INT and len(a) == 1:
+            v, bits, signed = a[0], *_CONVERT_INT[short]
+            if isinstance(v, str):
+                try:
+                    v = int(v.strip(), 10)
+                except ValueError:
+                    return OPQ
+            v = _num(v)
+            if isinstance(v, float):
+                v = int(round(v))
+            if not isinstance(v, int):
+                return OPQ
+            lo, hi = (-(1 << (bits - 1)), (1 << (bits - 1)) - 1) if signed else (0, (1 << bits) - 1)
+            if not lo <= v <= hi:
+                raise EmuError(f"Convert.{short}: overflow")
+            return v
+        if typ == "System.Math" and short == "Sign" and len(a) == 1 and isinstance(_num(a[0]), (int, float)):
+            v = _num(a[0])
+            return (v > 0) - (v < 0)
+        if typ == "System.DateTime" or typ == "System.TimeSpan":
+            got = self.time_call(typ, short, a, new)
+            if got is not _NOPE:
+                return got
         if typ == "System.Math" and short in ("Min", "Max", "Abs"):
             vs = [_num(x) for x in a]
             if any(not isinstance(v, (int, float)) for v in vs):
@@ -1005,6 +1125,37 @@ class Emu:
         self.unknown_calls[name] = self.unknown_calls.get(name, 0) + 1
         return Obj(typ) if new else OPQ
 
+    def time_call(self, typ: str, short: str, a: list[Any], new: bool) -> Any:
+        """DateTime / TimeSpan as days since 0001-01-01 (a kill date compares the clock with a fixed day:
+        the clock answers the analysis time)."""
+        import datetime as _dt
+        if typ == "System.DateTime":
+            if short in ("get_Now", "get_UtcNow", "get_Today"):
+                return Obj("DateTime", t=_dt.datetime.now())
+            if new and len(a) >= 3 and all(isinstance(_num(x), int) for x in a[:3]):
+                try:
+                    return Obj("DateTime", t=_dt.datetime(*[_num(x) for x in a[:6]]))
+                except (ValueError, TypeError):
+                    return OPQ
+            if short == "op_Subtraction" and all(isinstance(x, Obj) and x.type == "DateTime" for x in a):
+                return Obj("TimeSpan", d=a[0].st["t"] - a[1].st["t"])
+            if short in ("op_GreaterThan", "op_LessThan", "op_GreaterThanOrEqual", "op_LessThanOrEqual") and all(
+                    isinstance(x, Obj) and x.type == "DateTime" for x in a):
+                x, y = a[0].st["t"], a[1].st["t"]
+                return int({"op_GreaterThan": x > y, "op_LessThan": x < y,
+                            "op_GreaterThanOrEqual": x >= y, "op_LessThanOrEqual": x <= y}[short])
+            if short in ("get_Year", "get_Month", "get_Day") and a and isinstance(a[0], Obj) and a[0].type == "DateTime":
+                return getattr(a[0].st["t"], short[4:].lower())
+        if typ == "System.TimeSpan" and a and isinstance(a[0], Obj) and a[0].type == "TimeSpan":
+            d = a[0].st["d"]
+            if short == "get_Days":
+                return d.days
+            if short == "get_TotalDays":
+                return d.total_seconds() / 86400
+            if short == "get_TotalSeconds":
+                return d.total_seconds()
+        return _NOPE
+
     def string_call(self, short: str, a: list[Any]) -> Any:
         s = a[0] if a else None
         if short == "Intern" or short == "IsInterned":
@@ -1025,6 +1176,21 @@ class Emu:
         if short == "Substring" and isinstance(s, str):
             i = _num(a[1])
             return s[i:i + _num(a[2])] if len(a) > 2 else s[i:]
+        if short == "Replace" and isinstance(s, str) and len(a) == 3:
+            x, y = a[1], a[2]
+            if isinstance(x, int) and isinstance(y, int):                  # Replace(char, char)
+                return s.replace(chr(x & 0xFFFF), chr(y & 0xFFFF))
+            if isinstance(x, str) and (isinstance(y, str) or y is None):
+                return s.replace(x, y or "") if x else s
+            return OPQ
+        if short in ("ToUpper", "ToLower", "ToUpperInvariant", "ToLowerInvariant", "Trim") and isinstance(s, str):
+            return s.upper() if "Upper" in short else s.lower() if "Lower" in short else s.strip()
+        if short in ("Contains", "StartsWith", "EndsWith", "IndexOf") and isinstance(s, str) and isinstance(a[1], str):
+            if short == "IndexOf":
+                return s.find(a[1])
+            return int({"Contains": a[1] in s, "StartsWith": s.startswith(a[1]), "EndsWith": s.endswith(a[1])}[short])
+        if short == "IsNullOrEmpty":
+            return int(not s)
         if short == "ToCharArray" and isinstance(s, str):
             out = Arr("u2", len(s))
             out.data = [ord(c) for c in s]
@@ -1429,7 +1595,70 @@ def _texty(v: str) -> bool:
     return ok >= 0.9 * len(v)
 
 
+_VALUE_TYPES = {"System.TimeSpan", "System.DateTime", "System.Int32", "System.UInt32", "System.Int64",
+                "System.UInt64", "System.Int16", "System.UInt16", "System.Byte", "System.SByte", "System.Char",
+                "System.Boolean", "System.Double", "System.Single", "System.Guid", "System.Decimal"}
+_CONVERT_INT = {"ToByte": (8, False), "ToSByte": (8, True), "ToInt16": (16, True), "ToUInt16": (16, False),
+                "ToChar": (16, False), "ToInt32": (32, True), "ToUInt32": (32, False), "ToInt64": (64, True),
+                "ToUInt64": (64, False)}
+
+
+(_K_OTHER, _K_NOP, _K_LDC, _K_LDLOC, _K_STLOC, _K_LDARG, _K_BR, _K_BRBOOL, _K_BCMP, _K_ARITH, _K_CONV, _K_DUP,
+ _K_POP, _K_LDELEM, _K_STELEM, _K_LDLEN) = range(16)
+_ARITH = ("add", "sub", "mul", "div", "div.un", "rem", "rem.un", "and", "or", "xor", "shl", "shr", "shr.un",
+          "add.ovf", "add.ovf.un", "sub.ovf", "sub.ovf.un", "mul.ovf", "mul.ovf.un")
+
+
+def _predecode(insns: list[Any], idx: dict[int, int]) -> list[tuple[int, Any]]:
+    """(kind, operand) per instruction for the opcodes the interpreter runs most (constants, locals,
+    arguments, branches, arithmetic); _K_OTHER for the rest, handled by name."""
+    out: list[tuple[int, Any]] = []
+    for ins in insns:
+        op, arg = ins.opcode.name, ins.operand
+        try:
+            if op == "nop":
+                out.append((_K_NOP, None))
+            elif op.startswith("ldc.i4"):
+                out.append((_K_LDC, _i4(ins.get_ldc())))
+            elif op.startswith("ldloc") and not op.startswith("ldloca"):
+                out.append((_K_LDLOC, arg.index if hasattr(arg, "index") else int(op.rsplit(".", 1)[1])))
+            elif op.startswith("stloc"):
+                out.append((_K_STLOC, arg.index if hasattr(arg, "index") else int(op.rsplit(".", 1)[1])))
+            elif op.startswith("ldarg") and not op.startswith("ldarga"):
+                out.append((_K_LDARG, arg.index if hasattr(arg, "index") else int(op.rsplit(".", 1)[1])))
+            elif op in ("br", "br.s", "leave", "leave.s") and arg in idx:
+                out.append((_K_BR, idx[arg]))
+            elif op in ("brtrue", "brtrue.s", "brfalse", "brfalse.s") and arg in idx:
+                out.append((_K_BRBOOL, (idx[arg], op.startswith("brtrue"))))
+            elif op.startswith(("beq", "bne", "bge", "bgt", "ble", "blt")) and arg in idx:
+                kind = op.split(".")[0][1:]
+                if ".un" in op and kind not in ("eq", "ne"):
+                    kind += "_un"
+                out.append((_K_BCMP, (idx[arg], kind)))
+            elif op in _ARITH:
+                out.append((_K_ARITH, op.replace(".ovf.un", "").replace(".ovf", "")))
+            elif op.startswith("conv."):
+                out.append((_K_CONV, op))
+            elif op == "dup":
+                out.append((_K_DUP, None))
+            elif op == "pop":
+                out.append((_K_POP, None))
+            elif op in _LD:
+                out.append((_K_LDELEM, _LD[op]))
+            elif op in _ST:
+                out.append((_K_STELEM, None))
+            elif op == "ldlen":
+                out.append((_K_LDLEN, None))
+            else:
+                out.append((_K_OTHER, None))
+        except (AttributeError, ValueError, TypeError):
+            out.append((_K_OTHER, None))
+    return out
+
+
 def _ident(x: Any) -> str:
+    if isinstance(x, tuple):
+        return ", ".join(_ident(v) for v in x)
     if isinstance(x, int):
         return f"0x{x & 0xFFFFFFFF:08x}"
     if isinstance(x, str):
@@ -1439,9 +1668,24 @@ def _ident(x: Any) -> str:
     return "?"
 
 
-def _sites(emu: Emu) -> dict[int, list[tuple[int, int]]]:
-    """getter rid → [(caller rid, id)]: ``ldc.i4 id`` (``br.s`` / ``nop`` between) ``call <one-arg static>``."""
-    out: dict[int, list[tuple[int, int]]] = {}
+def _const_arg(emu: Emu, ins: Any) -> tuple[bool, Any]:
+    """(True, value) for an instruction that pushes a constant (``ldc.i4*``, ``ldstr``)."""
+    name = ins.opcode.name
+    if name.startswith("ldc.i4"):
+        return True, _i4(ins.get_ldc())
+    if name == "ldstr":
+        try:
+            return True, emu.ustring(ins.operand)
+        except Exception:  # noqa: BLE001
+            return False, None
+    return False, None
+
+
+def _sites(emu: Emu) -> dict[int, list[tuple[int, Any]]]:
+    """getter rid → [(caller rid, id)]: ``ldc.i4 id`` (``br.s`` / ``nop`` between) ``call <one-arg static>``;
+    or up to three constants (``ldstr "…"; ldc.i4 k``) right before a call of a static method that takes
+    as many (an XOR decoder ``Decode(string, int)``) — the id is then the tuple of them."""
+    out: dict[int, list[tuple[int, Any]]] = {}
     for rid in range(1, len(emu.t.MethodDef or []) + 1):
         try:
             b = emu.body(rid)
@@ -1451,23 +1695,34 @@ def _sites(emu: Emu) -> dict[int, list[tuple[int, int]]]:
             continue
         insns, idx = b[0], b[1]
         for n, ins in enumerate(insns):
-            if not ins.opcode.name.startswith("ldc.i4"):
-                continue
-            j = n + 1
-            while j < len(insns) and (insns[j].opcode.name == "nop" or (
-                    insns[j].opcode.name in ("br", "br.s") and idx.get(insns[j].operand) == j + 1)):
-                j += 1
-            if j >= len(insns) or insns[j].opcode.name != "call":
+            if ins.opcode.name != "call":
                 continue
             try:
-                kind, tgt = emu.method_target(insns[j].operand)
+                kind, tgt = emu.method_target(ins.operand)
             except Exception:  # noqa: BLE001
                 continue
             if kind != "def" or tgt == rid:
                 continue
             tb = emu.body(tgt)
-            if tb and tb[2] == 1 and not tb[3]:
-                out.setdefault(tgt, []).append((rid, _i4(ins.get_ldc())))
+            if not tb or tb[3] or not 1 <= tb[2] <= 3:
+                continue
+            args, j = [], n - 1
+            while j >= 0 and len(args) < tb[2]:
+                op = insns[j].opcode.name
+                if op == "nop" or (op in ("br", "br.s") and idx.get(insns[j].operand) == j + 1):
+                    j -= 1
+                    continue
+                ok, v = _const_arg(emu, insns[j])
+                if not ok:
+                    break
+                args.insert(0, v)
+                j -= 1
+            if len(args) != tb[2]:
+                continue
+            if tb[2] == 1 and isinstance(args[0], int):
+                out.setdefault(tgt, []).append((rid, args[0]))
+            elif tb[2] > 1 or isinstance(args[0], str):
+                out.setdefault(tgt, []).append((rid, tuple(args)))
     return out
 
 
@@ -1546,6 +1801,115 @@ def _payloads(strings: list[str]) -> list[tuple[bytes, list[str]]]:
     return out
 
 
+MAX_PAYLOAD_STEPS = 80_000_000
+MAX_PAYLOAD_SECONDS = 120.0
+MIN_PACKED_ARRAY = 16 * 1024
+
+
+def packed_array(pe: Any) -> int:
+    """Size of the largest static array (FieldRVA) that reads as encrypted (entropy ≥ 7.2): a packer's
+    payload compiled into the assembly. 0 when there is none."""
+    import math
+    from .cil import static_fields
+    best = 0
+    for raw in static_fields(pe).values():
+        if len(raw) < MIN_PACKED_ARRAY or len(raw) <= best:
+            continue
+        counts = [0] * 256
+        for b in raw[:1 << 20]:
+            counts[b] += 1
+        n = min(len(raw), 1 << 20)
+        if -sum(c / n * math.log2(c / n) for c in counts if c) >= 7.2:
+            best = len(raw)
+    return best
+
+
+def _unpacker_candidates(emu: Emu) -> list[int]:
+    """Static methods without parameters that read static fields and call code of the assembly with them
+    (``Decrypt(payload, key)``): where a packer opens its compiled-in payload."""
+    out = []
+    for rid in range(1, len(emu.t.MethodDef or []) + 1):
+        m = emu.t.MethodDef[rid - 1]
+        if not m.Flags.mdStatic or emu.owners.get(rid, "").endswith((".cctor", ".ctor")):
+            continue
+        try:
+            b = emu.body(rid)
+        except Exception:  # noqa: BLE001
+            continue
+        if not b or b[0] is None or b[2] > 1:            # no parameters, or Main(string[] args)
+            continue
+        names = [i.opcode.name for i in b[0]]
+        calls = 0
+        for i in b[0]:
+            if i.opcode.name == "call":
+                try:
+                    kind, tgt = emu.method_target(i.operand)
+                except Exception:  # noqa: BLE001
+                    continue
+                tb = emu.body(tgt) if kind == "def" else None
+                calls += bool(tb and tb[2] >= 2)
+        if calls and names.count("ldsfld") >= 2:
+            out.append(rid)
+    return out
+
+
+def unpack_payloads(data: bytes, max_seconds: float = MAX_PAYLOAD_SECONDS) -> list[tuple[bytes, list[str]]]:
+    """A packer whose payload is a static array of the assembly, decrypted in place by its own code (RC4 and
+    variants, XOR…): each candidate method runs on a fresh emulator with a large budget, and a static
+    byte array that comes out as a PE (it was not one before) is the payload. ``[(bytes, recipe)]``."""
+    import dnfile
+    try:
+        pe = dnfile.dnPE(data=data)
+    except Exception:  # noqa: BLE001
+        return []
+    out: list[tuple[bytes, list[str]]] = []
+    try:
+        if not packed_array(pe):
+            return []
+        t_all = time.monotonic()
+        for rid in _unpacker_candidates(Emu(pe))[:4]:
+            left = max_seconds - (time.monotonic() - t_all)
+            if left <= 5:
+                break
+            emu = Emu(pe)
+            emu.max_seconds = left
+            try:
+                emu.ensure_type_init(-1)
+            except Exception:  # noqa: BLE001
+                pass
+            emu.frames = [rid]
+            emu.steps, emu.limit, emu.t0 = 0, MAX_PAYLOAD_STEPS, time.monotonic()
+            try:
+                emu.call_def(rid, [None] * emu.body(rid)[2], 0)
+            except (EmuError, _Stop, Exception):  # noqa: BLE001
+                pass
+            name = emu.owners.get(rid, f"#{rid}")
+            for blob in emu.assemblies:
+                if blob[:2] == b"MZ" and all(blob != b for b, _ in out):
+                    out.append((blob, [f"{name} (CIL emulation)", "Assembly.Load"]))
+            raw_init = {bytes(v[:64]) for v in emu.fields.values()}
+            for key, v in list(emu.statics.items()):
+                if not isinstance(v, Arr) or v.kind not in ("u1", "i1") or len(v.data) < 1024:
+                    continue
+                blob = bytes(x & 0xFF for x in v.data)
+                if blob[:2] != b"MZ" or blob[:64] in raw_init or any(blob == b for b, _ in out):
+                    continue
+                fname = ""
+                try:
+                    fname = str(emu.t.Field[key - 1].Name) if isinstance(key, int) else str(key)
+                except (IndexError, AttributeError):
+                    pass
+                out.append((blob, [f"{name} decrypts the static array {fname or key} in place (CIL emulation)"]))
+            if out:
+                break
+    finally:
+        try:
+            pe.close()
+        except Exception:  # noqa: BLE001
+            pass
+    return out
+
+
 def confuser_strings(data: bytes) -> dict[str, Any] | None:
     """Run ``<Module>.cctor``, every constants getter on its call sites, and then each method of the
     assembly, keeping what decoders return on the way (getters reached through proxy methods or
@@ -1580,7 +1944,7 @@ def confuser_strings(data: bytes) -> dict[str, Any] | None:
         seen: set[tuple[int, str, str]] = set()
 
         def keep(caller: int, g: int, ident: Any, v: str) -> None:
-            k = (g, _ident(ident), v)
+            k = (g, v)                      # the same text from the same decoder is one string
             if k in seen:
                 return
             seen.add(k)
@@ -1594,7 +1958,7 @@ def confuser_strings(data: bytes) -> dict[str, Any] | None:
                 tried.add((g, ident))
                 emu.steps, emu.limit = 0, MAX_GETTER_STEPS
                 try:
-                    v = emu.call_def(g, [ident], 0)
+                    v = emu.call_def(g, list(ident) if isinstance(ident, tuple) else [ident], 0)
                 except (EmuError, _Stop, Exception):  # noqa: BLE001
                     continue
                 if isinstance(v, str) and v:

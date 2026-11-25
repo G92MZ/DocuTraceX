@@ -1669,8 +1669,11 @@ class Interp:  # noqa: PLR0904
         return m(f)
 
     def string_method(self, name: str) -> Callable[..., Any] | None:  # noqa: C901
-        def char_at(s: str, a: list, n: Any) -> str:
-            i = int(to_num(a[0])) if a else 0
+        def char_at(s: str, a: list, n: Any) -> Any:
+            if a and isinstance(a[0], Unk):
+                return Unk("a character picked at run time", quiet=True)
+            i = to_num(a[0]) if a else 0
+            i = 0 if i != i or i in (math.inf, -math.inf) else int(i)          # ToIntegerOrInfinity(NaN) = 0
             return s[i] if 0 <= i < len(s) else ""
 
         def code_at(s: str, a: list, n: Any) -> Any:
@@ -2447,6 +2450,8 @@ class Interp:  # noqa: PLR0904
             return Host("ShellApp")
         if p in ("scripting.dictionary",):
             return Host("Dictionary", d={})
+        if p == "vbscript.regexp":
+            return Host("VBRegExp")
         if p.startswith("winmgmts") or p.startswith("wbemscripting"):
             return Host("WMI")
         return Host("COM", progid=to_str(progid))
@@ -2568,6 +2573,36 @@ class Interp:  # noqa: PLR0904
                 return mth(se)
             if kl == "namespace":
                 return mth(lambda a, n: Host("COM", progid="Folder"))
+            return mth(lambda a, n: UNDEF)
+        if kind == "VBRegExp":                       # VBScript.RegExp: Pattern / Global / IgnoreCase, Replace / Test
+            def prop(name: str, default: Any) -> Any:
+                return next((v for pk, v in h.props.items() if pk.lower() == name), default)
+
+            def compiled() -> Any:
+                pat = prop("pattern", "")
+                if isinstance(pat, Unk):
+                    return pat
+                flags = re.I if truthy(prop("ignorecase", False)) else 0
+                try:
+                    return re.compile(to_str(pat), flags | (re.M if truthy(prop("multiline", False)) else 0))
+                except re.error:
+                    return Unk("a VBScript regular expression this engine does not read")
+            if kl == "replace":
+                def rep(a: list, n: Any) -> Any:
+                    rx = compiled()
+                    text, by = (a + [UNDEF, UNDEF])[:2]
+                    if isinstance(rx, Unk) or isinstance(text, Unk) or isinstance(by, Unk):
+                        return next(x for x in (rx, text, by) if isinstance(x, Unk))
+                    repl = re.sub(r"\$(\d)", r"\\\1", to_str(by)).replace("$&", "\\g<0>")
+                    return rx.sub(repl, to_str(text), count=0 if truthy(prop("global", False)) else 1)
+                return mth(rep)
+            if kl == "test":
+                def test(a: list, n: Any) -> Any:
+                    rx = compiled()
+                    if isinstance(rx, Unk) or (a and isinstance(a[0], Unk)):
+                        return rx if isinstance(rx, Unk) else a[0]
+                    return bool(rx.search(to_str(a[0]) if a else ""))
+                return mth(test)
             return mth(lambda a, n: UNDEF)
         if kind == "Dictionary":
             if kl in ("add", "item"):
