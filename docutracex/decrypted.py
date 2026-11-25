@@ -36,7 +36,7 @@ MAX_BYTES = 8 * 1024 * 1024
 
 _B64 = re.compile(r"""["']([A-Za-z0-9+/\r\n]{200,}={0,2})["']""")
 # any quoted base64 / hex literal worth decoding (shorter, but strict alphabet)
-_B64_LIT = re.compile(r"""(?:["']|-e(?:nc|ncodedcommand)?\s+)([A-Za-z0-9+/]{100,}={0,2})(?:["']|\s|$)""")
+_B64_LIT = re.compile(r"""(?:["']|-e(?:nc|ncodedcommand)?\s+)(={0,2}[A-Za-z0-9+/]{100,}={0,2})(?:["']|\s|$)""")
 _HEX_LIT = re.compile(r"""["'](?:0x)?((?:[0-9A-Fa-f]{2}){48,})["']""")   # AutoIt binary strings: "0x4D5A…"
 # PowerShell here-strings (@'…'@ / @"…"@) holding hex split over lines: a payload
 # when long, key material when short (``$k = @'<32 hex bytes>'@`` + a -bxor loop)
@@ -270,15 +270,124 @@ def try_keys(raw: bytes, keys: dict[str, list[bytes]] | None) -> tuple[bytes, li
             try:
                 c = Cipher(algorithms.AES(key), modes.CBC(iv) if iv is not None else modes.ECB())
                 first = c.decryptor().update(body[:512])
-                if not _good(first):
+                if not _accept(first):
                     continue
                 full = c.decryptor().update(body)
             except Exception:  # noqa: BLE001
                 continue
             plain = _unpad(full) or full
-            if _good(plain):
+            if _accept(plain):
                 step = f"aes-{len(key) * 8}-{mode.split('-')[0]}(key {key[:8].hex()}…" + (f", iv {iv[:4].hex()}…)" if iv is not None else ")")
                 return plain, [step]
+    return _blind_ciphers(raw, keys)
+
+
+# --- T16: blind trials with what the script carries ------------------------------------------------
+BLIND_BUDGET = 600            # cipher trials per blob (each on its first 512 bytes)
+
+
+def _accept(raw: bytes) -> bool:
+    """A decryption that looks right: a file, text, or compressed data that inflates."""
+    if _good(raw):
+        return True
+    if raw[:3] == b"\x1f\x8b\x08" or raw[:2] in (b"\x78\x9c", b"\x78\xda", b"\x78\x01", b"\x78\x5e"):
+        try:
+            d = zlib.decompressobj(31 if raw[:2] == b"\x1f\x8b" else 15)
+            out = d.decompress(raw, 512)
+        except zlib.error:
+            return False
+        return bool(out) and (_good(out) or _strong_magic(out) or out[:2] == b"MZ")
+    return False
+
+
+def _blind_keys(keys: dict[str, list[bytes]]) -> list[tuple[bytes, str]]:
+    """The script's key material and what loaders derive from it (MD5 / SHA-1 / SHA-256 of a password)."""
+    out: list[tuple[bytes, str]] = []
+    seen: set[bytes] = set()
+
+    def add(k: bytes, label: str) -> None:
+        if k and k not in seen:
+            seen.add(k)
+            out.append((k, label))
+    for a in keys.get("arrays") or []:
+        add(a, f"key {a[:8].hex()}{'…' if len(a) > 8 else ''}")
+    strs = [s for s in keys.get("strings") or [] if b"\x00" not in s][:30]
+    for s in strs:
+        shown = s[:32].decode("latin-1") + ("…" if len(s) > 32 else "")
+        add(s, f"key '{shown}'")
+        add(hashlib.md5(s).digest(), f"key md5('{shown}')")  # noqa: S324  (what loaders derive)
+        add(hashlib.sha256(s).digest(), f"key sha256('{shown}')")
+        add(hashlib.sha1(s).digest()[:16], f"key sha1('{shown}')[:16]")  # noqa: S324
+    return out
+
+
+def _blind_ciphers(raw: bytes, keys: dict[str, list[bytes]] | None) -> tuple[bytes, list[str]] | None:
+    """RC4, AES and 3DES with the script's keys and their hashes (IV: zero, the blob's first block,
+    the script's arrays); a trial counts when its first bytes are a file, text or compressed data."""
+    if not keys or len(raw) < 32:
+        return None
+    try:
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        try:
+            from cryptography.hazmat.decrepit.ciphers.algorithms import TripleDES
+        except ImportError:                       # older cryptography
+            TripleDES = algorithms.TripleDES  # noqa: N806
+        from .resolve.transforms import rc4 as _rc4
+    except Exception:  # noqa: BLE001
+        return None
+    cands = _blind_keys(keys)
+    ivs16 = [(b"\x00" * 16, "iv zero")] + [(k, f"iv {k[:4].hex()}…") for k in keys.get("arrays") or [] if len(k) == 16][:4]
+    ivs8 = [(b"\x00" * 8, "iv zero")] + [(k, f"iv {k.hex()}") for k in keys.get("arrays") or [] if len(k) == 8][:4]
+    budget = BLIND_BUDGET
+    head = raw[:512]
+
+    def done(plain: bytes, step: str) -> tuple[bytes, list[str]] | None:
+        plain = _unpad(plain) or plain
+        return (plain, [step]) if _accept(plain) else None
+    # RC4: any key length 5–256
+    for k, label in cands:
+        if budget <= 0:
+            return None
+        if not 5 <= len(k) <= 256:
+            continue
+        budget -= 1
+        try:
+            if not _accept(_rc4(head, k)):
+                continue
+            got = done(_rc4(raw, k), f"rc4({label})")
+        except Exception:  # noqa: BLE001
+            continue
+        if got:
+            return got
+    # AES (16 / 24 / 32-byte keys) and 3DES (16 / 24): ECB, CBC with each IV, CBC with the IV in front
+    for k, label in cands:
+        if budget <= 0:
+            return None
+        if len(k) in (16, 24, 32):
+            algos = [("aes", algorithms.AES, 16, ivs16)]
+        else:
+            algos = []
+        if len(k) in (16, 24):
+            algos.append(("3des", TripleDES, 8, ivs8))
+        for name, algo, block, ivs in algos:
+            trials = [("ecb", None, raw, "")] + [("cbc", iv, raw, lab) for iv, lab in ivs] + \
+                     [("cbc", raw[:block], raw[block:], "iv in front")]
+            for mode, iv, body, ivlab in trials:
+                if budget <= 0:
+                    return None
+                if len(body) < block or len(body) % block:
+                    continue
+                budget -= 1
+                try:
+                    c = Cipher(algo(k), modes.ECB() if iv is None else modes.CBC(iv))
+                    if not _accept(c.decryptor().update(body[:512])):
+                        continue
+                    bits = f"-{len(k) * 8}" if name == "aes" else ""
+                    got = done(c.decryptor().update(body) , f"{name}{bits}-{mode}({label}{', ' + ivlab if ivlab else ''})")
+                except Exception:  # noqa: BLE001
+                    continue
+                if got:
+                    return got
     return None
 
 
@@ -664,9 +773,20 @@ def _decode_literals(code: str) -> list[tuple[str, bytes]]:
         if lit.lower().startswith("76492d1116743f0423413b16050a5345"):
             continue                           # an exported SecureString (PowerShell decrypts it)
         try:
-            found.append(("base64", base64.b64decode(lit + "=" * (-len(lit) % 4))))
+            dec = base64.b64decode(lit + "=" * (-len(lit) % 4)) if not lit.startswith("=") else b""
         except (binascii.Error, ValueError):
-            continue
+            dec = b""
+        if not dec or not (_magic_ext(dec) or _inflate(dec) or _text_of(dec[:2048]) is not None):
+            # written backwards (``'…=='[::-1]``, ``StrReverse``): read the other way
+            try:
+                back = base64.b64decode(lit[::-1].lstrip("=") + "=" * (-len(lit.lstrip("=")) % 4))
+            except (binascii.Error, ValueError):
+                back = b""
+            if back and (_magic_ext(back) or _inflate(back) or _text_of(back[:2048]) is not None):
+                found.append(("reversed base64", back))
+                continue
+        if dec:
+            found.append(("base64", dec))
     for m in _HEX_LIT.finditer(code):
         try:
             found.append(("hex", bytes.fromhex(m.group(1))))

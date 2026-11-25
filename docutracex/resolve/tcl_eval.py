@@ -28,6 +28,7 @@ MAX_STEPS = 400_000
 MAX_SECONDS = 20.0
 MAX_LOOP = 200_000
 MAX_DEPTH = 12
+MAX_STR = 64 * 1024 * 1024
 
 
 class Unk(str):
@@ -287,6 +288,8 @@ class Interp:
                 continue
             out.append(c)
             i += 1
+        if sum(len(x) for x in out) > MAX_STR:
+            raise Limit("string size")
         res = "".join(out)
         u = next((x for x in out if isinstance(x, Unk)), None)
         if u is not None and len(out) == 1:
@@ -385,6 +388,8 @@ class Interp:
             return self.get(a[0]) if a else ""
         if name == "append":
             cur = self.get(a[0]) if a else ""
+            if len(cur) + sum(len(x) for x in a[1:]) > MAX_STR:
+                raise Limit("string size")
             v = cur + "".join(a[1:])
             v = tag(v, rec(cur) or next((rec(x) for x in a[1:] if rec(x)), ())) if (rec(cur) or any(rec(x) for x in a[1:])) else v
             self.vars[a[0]] = v
@@ -704,7 +709,10 @@ class Interp:
             s = a[1] if len(a) > 1 else ""
             return s.upper() if op == "toupper" else s.lower() if op == "tolower" else s.strip()
         if op == "repeat" and len(a) >= 3:
-            return a[1] * int(a[2])
+            n = int(a[2]) if a[2].lstrip("-").isdigit() else 0
+            if len(a[1]) * max(0, n) > MAX_STR:
+                raise Limit("string size")
+            return a[1] * max(0, n)
         return ""
 
     def format(self, fmt: str, vals: list[str]) -> str:

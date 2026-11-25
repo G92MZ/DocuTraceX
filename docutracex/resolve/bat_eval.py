@@ -34,6 +34,7 @@ MAX_SECONDS = 20.0
 MAX_LOOP = 100_000
 MAX_CALL_DEPTH = 40
 MAX_FILE = 64 * 1024 * 1024
+MAX_VAR = 8191                  # cmd.exe's line limit: no variable / expanded line is longer
 SCRIPT_PATH = "C:\\Users\\Public\\script.bat"
 
 ENV = {"comspec": "C:\\WINDOWS\\system32\\cmd.exe", "windir": "C:\\WINDOWS", "systemroot": "C:\\WINDOWS",
@@ -256,7 +257,10 @@ class Interp:
                 continue
             out.append(self._var(s[i + 1:j], s[i:j + 1], keep_unknown=False))
             i = j + 1
-        return "".join(out)
+        res = "".join(out)
+        if len(res) > 4 * MAX_VAR and len(res) > len(s) * 4:
+            raise Limit("expanded line too long")
+        return res
 
     def _arg(self, mods: str, d: str, args: list[str]) -> str:
         if d == "*":
@@ -579,6 +583,11 @@ class Interp:
         name, _, val = r.partition("=")
         name = name.strip().lower()
         if not name:
+            return
+        if len(val) > MAX_VAR:
+            # cmd refuses a line over 8191 characters: the variable is not set
+            if not any("cmd's limit" in e for e in self.errors):
+                self.errors.append(f"line {ln}: a value over {MAX_VAR} characters (cmd's limit) is not set")
             return
         if val:
             self.env[name] = val
