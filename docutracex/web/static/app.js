@@ -8324,9 +8324,9 @@ function paneC2(c2, findings, caseId) {
     Mark it here; the report lists the configurations you mark.
     ${caseId && (c2.configs || []).length ? ` <a class="btn btn-ghost btn-sm" href="/api/cases/${encodeURIComponent(caseId)}/c2.csv">Export CSV</a>` : ""}</p>`;
   const prot = (c2.protected || []).length
-    ? `<div class="chain-banner"><b>Protected — configuration not readable statically:</b><ul>${c2.protected.map((p) =>
+    ? `<div class="chain-banner"><b>Protected:</b><ul>${c2.protected.map((p) =>
         `<li><span class="mono">${escapeHtml(p.object)}</span>: ${p.protectors.map((x) => `<span class="badge badge-warn" title="${escapeHtml(x.evidence)}">${escapeHtml(x.name)}</span>`).join(" ")}
-          <span class="muted">${escapeHtml(p.note)}</span></li>`).join("")}</ul></div>` : "";
+          <span class="muted">${escapeHtml(p.note)}</span>${(p.strings || []).length ? `<details class="disclose"><summary>${p.decrypted} decrypted string(s)</summary><div class="mono">${p.strings.map((x) => escapeHtml(String(x).slice(0, 200))).join("<br>")}</div></details>` : ""}</li>`).join("")}</ul></div>` : "";
   const cards = cfgs.map((c, i) => {
     const f = byId[c.finding_id];
     const s = c.summary || {};

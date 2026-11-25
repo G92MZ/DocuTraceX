@@ -70,6 +70,13 @@ def detect(data: bytes, die_detects: list[dict[str, Any]] | None = None) -> list
     return out
 
 
+def note_decrypted(found: list[dict[str, str]], n: int) -> str:
+    names = ", ".join(p["name"] for p in found)
+    return (f"protected with {names}, but its constants were decrypted statically ({n} string(s): .NET tab, "
+            "IOCs): no configuration of a known family in them — what it does is in those strings (an injector, "
+            "a downloader…) and in its next stage.")
+
+
 def note(found: list[dict[str, str]]) -> str:
     names = ", ".join(p["name"] for p in found)
     why = SAYS.get(found[0]["kind"], SAYS["protector"]) if found else ""

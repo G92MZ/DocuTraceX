@@ -15,6 +15,15 @@ code is CIL: it is disassembled and read, never run.
     - **Strings decrypted statically**: the assembly's own decryptors (XOR, AES, DES, RC4,
       Base64 chains) are recognised and applied to its literals and static arrays, with the
       routine and key that did it.
+    - **ConfuserEx constants**: the literals ConfuserEx moves into its encrypted array come
+      back. The usual (Normal mode) layout is read by its pattern; **mutated builds** —
+      control flow flattened into a `switch`, the key derivation inlined in `<Module>.cctor`,
+      jumps between the id and the getter call — are handled by **emulating the CIL**: the
+      module initializer and the getters run on a model of the runtime (stack, arrays,
+      static fields, `Buffer.BlockCopy`, `Encoding.GetString`, `MemoryStream`…; LZMA answered
+      natively), never on the machine — reflection, `AppDomain` and P/Invoke answer *unknown*,
+      and step / time budgets bound it. An assembly the module `Assembly.Load`s at start
+      (ConfuserEx's embedded resources / compressor) becomes a Nested child.
     - **Resources**: `.resources` files opened entry by entry; encrypted entries decrypted with
       the keys the assembly holds (in the method, its class or the whole assembly), and images
       read pixel by pixel.
@@ -32,5 +41,5 @@ implant's configuration from the last one.
 
 !!! note "When a stage cannot be decrypted statically"
     Virtualised or heavily protected code (KoiVM, .NET Reactor with string encryption,
-    ConfuserEx constants) keeps its secrets until it runs. Dump the process in your lab VM and
+    ConfuserEx's Dynamic / x86 constants modes, its anti-tamper) keeps its secrets until it runs. Dump the process in your lab VM and
     analyse the [memory dump](memdump.md): the stage is there in clear.

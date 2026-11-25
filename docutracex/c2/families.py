@@ -225,6 +225,23 @@ FAMILIES: list[dict[str, Any]] = [
         "limits": "Usually not unpacked statically (MSI / AutoIt): read the AutoIt script or a memory dump.",
     },
     {
+        "id": "darkcloud",
+        "name": "DarkCloud",
+        "match": ("DarkCloud",),
+        "what": "Visual Basic 6 stealer sold as a builder: browser passwords and cards, mail and FTP clients, "
+                "keystrokes, clipboard and screenshots, sent out by Telegram, SMTP, FTP or a web panel.",
+        "arrives": "Invoice phishing with a script (JS / VBS / PowerShell) that runs a .NET injector, often "
+                   "protected with ConfuserEx, which hollows a process with the VB6 stealer.",
+        "reads": ["the exfiltration channels from the VB6 string constants: Telegram bot token and chat id, SMTP "
+                  "server / port / SSL / account / recipient, FTP, the panel URL",
+                  "which channels the buyer left off (the builder's placeholders)",
+                  "strings encrypted with RC4 and a key per string", "version, build ID, install path, the VB "
+                  "project path of the author, what it steals"],
+        "next": "Report the Telegram bot / mailbox to its provider; hunt the token, the SMTP account and the install "
+                "path (…\\Templates\\<name>.exe + RunOnce) on the endpoints.",
+        "limits": "The stealer must be reached (the injector's payload decoded); another string scheme: memory dump.",
+    },
+    {
         "id": "metasploit",
         "name": "Metasploit / Meterpreter",
         "match": ("Metasploit / Meterpreter", "Metasploit-style stager", "Metasploit payload (exec)"),

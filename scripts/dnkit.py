@@ -146,12 +146,14 @@ def build(va: int, spec: dict[str, Any]) -> tuple[bytes, int, int, int, int, int
     for scope, ns, name in spec.get("typerefs") or []:
         rs = ((scope + 1) << 2 | 2) if scope is not None else 0       # ResolutionScope → AssemblyRef
         rows[0x01].append(struct.pack("<HHH", rs, st.str(name), st.str(ns)))
-    for tr, name in spec.get("memberrefs") or []:
-        rows[0x0A].append(struct.pack("<HHH", (tr + 1) << 3 | 1, st.str(name), sig_ctor))   # MemberRefParent → TypeRef
+    for tr, name, *sig in spec.get("memberrefs") or []:                # optional signature blob (default: instance void())
+        rows[0x0A].append(struct.pack("<HHH", (tr + 1) << 3 | 1, st.str(name),
+                                      bl.blob(sig[0]) if sig else sig_ctor))   # MemberRefParent → TypeRef
     # TypeDefs: <Module> first, then the program's types; methods numbered in order
     il_blobs: list[bytes] = []
     meth_rows: list[tuple[int, int, int, int, int]] = []              # (il index or -1, implflags, flags, name, sig)
-    types = [{"ns": "", "name": "<Module>", "methods": []}] + list(spec.get("types") or [])
+    types = [{"ns": "", "name": "<Module>", "methods": list(spec.get("module_methods") or []),
+              "fields": list(spec.get("module_fields") or [])}] + list(spec.get("types") or [])
     # static byte[] initialisers: fields of <PrivateImplementationDetails> typed
     # __StaticArrayInitTypeSize=N (ClassLayout gives N), data at a FieldRVA
     arrays = list(spec.get("static_arrays") or [])           # [(field name, bytes)]
@@ -188,8 +190,11 @@ def build(va: int, spec: dict[str, Any]) -> tuple[bytes, int, int, int, int, int
                 mi = [r[0] for r in spec["_modrefs"]].index(dll)
                 rows[0x1C].append(struct.pack("<HHHH", 0x0100, len(meth_rows) << 1 | 1, st.str(ep), mi + 1))
             else:
-                il_blobs.append(_ops(m["ops"], us, rids) if m.get("ops") else (m.get("il") or b"\x2a"))
-                meth_rows.append((len(il_blobs) - 1, 0, 0x0096, st.str(m["name"]), sig_void))
+                il = m["il"](rids, us) if callable(m.get("il")) else m.get("il")
+                il_blobs.append(_ops(m["ops"], us, rids) if m.get("ops") else (il or b"\x2a"))
+                flags = m.get("flags", 0x0096) | (0x1800 if m["name"] == ".cctor" else 0)   # .cctor: special name
+                meth_rows.append((len(il_blobs) - 1, 0, flags, st.str(m["name"]),
+                                  bl.blob(m["sig"]) if m.get("sig") else sig_void))
                 if m.get("entry"):
                     entry = 0x06000000 | len(meth_rows)
         flags = 0x00100001 if t["name"] != "<Module>" else 0
@@ -252,7 +257,7 @@ def build(va: int, spec: dict[str, Any]) -> tuple[bytes, int, int, int, int, int
     for k, (name, data) in enumerate(arrays, 1):
         sig = bl.blob(bytes([0x06, 0x11, (size_index[len(data)] << 2) & 0x7F if size_index[len(data)] < 32 else 0]))
         rows[0x04].append(struct.pack("<HHH", 0x0133, st.str(name), sig))   # static assembly initonly HasFieldRVA
-        rows[0x1D].append(struct.pack("<IH", field_rva[k - 1], k))
+        rows[0x1D].append(struct.pack("<IH", field_rva[k - 1], len(own_fields) + k))   # Field rid after the own fields
     rows[0x02] = tdefs
     valid = sum(1 << t for t, r in rows.items() if r)
     tables = struct.pack("<IBBBBQQ", 0, 2, 0, 0, 1, valid, 0x16003301FA00)
