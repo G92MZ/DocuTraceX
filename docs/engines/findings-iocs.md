@@ -29,6 +29,8 @@ Everything a file carries — attachments, archive entries, embedded objects, un
 decrypted stages, files hidden in images, objects carved from memory — is analysed **in turn**,
 **every one in depth**, however many there are and however deep they sit (fifteen archives one
 inside another are opened all the way down), each with the **recipe** that produced it (`base64 → xor(0x23) → gzip`…).
+Files dropped together are read together: a loader written next to its encrypted data file (an
+**MSAP container**) gives the key from its own code, and the payload it would inject becomes a child.
 **Open analysis ↗** opens any child like a case of its own, with all its tabs — every child,
 in the tree and in the list alike, even one with nothing more than the file (a file only listed,
 plain text, an opaque blob): its **File** tab then shows the type, size, hash, folder and Hex.

@@ -697,6 +697,13 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
                 got = decrypted.write(pays, work / decrypted.DIRNAME / node["sha256"][:12],
                                       {node["sha256"]} | lineage)
                 lineage.update(p["sha256"] for p in pays)
+            # a loader dropped with its encrypted data file (an MSAP container): the payload it injects
+            try:
+                from . import msap
+                with timed("loader containers"):
+                    got = got + msap.open_pairs(got, work / "msap" / node["sha256"][:12])
+            except Exception as exc:  # noqa: BLE001
+                node.setdefault("code_error", f"msap: {exc}")
             for it in got:
                 kids.append((Path(it["path"]), it["filename"]))
                 origins[it["path"]] = it["origin"]

@@ -265,6 +265,19 @@ def parse(data: bytes) -> dict[str, Any]:
                         c["confuser_error"] = f"ConfuserEx constants (CIL emulation): {em['error']}"[:200]
                 except Exception as exc:  # noqa: BLE001
                     c["confuser_error"] = f"ConfuserEx constants (CIL emulation): {exc}"[:200]
+            # a packer's payload compiled in as a static array and decrypted in place by its own code
+            if not out.get("_confuser_payloads"):
+                try:
+                    from .cilemu import packed_array, unpack_payloads
+                    size = packed_array(pe)
+                    if size:
+                        pls = unpack_payloads(data)
+                        c["packed_array"] = {"size": size, "payloads": len(pls),
+                                             **({"how": pls[0][1][0]} if pls else {})}
+                        if pls:
+                            out["_packed_payloads"] = pls
+                except Exception as exc:  # noqa: BLE001
+                    c["packed_error"] = f"packed array (CIL emulation): {exc}"[:200]
             out["cil"] = c
         except Exception as exc:  # noqa: BLE001  (CIL is best effort)
             out["cil"] = {"error": f"CIL disassembly: {exc}"[:200]}
@@ -359,6 +372,15 @@ def _findings(item: dict[str, Any]) -> list[dict[str, Any]]:
                     "detail": (f"ConfuserEx constants protection decrypted {how}: {cx['strings']} literal(s) recovered{extra}"
                                if ok else f"ConfuserEx constants protection ({cx['mode']})"),
                     "evidence": f"{cx['how']} — initializer {cx['initializer']}"})
+    pa = cil.get("packed_array")
+    if pa:
+        out.append({"rule": "dotnet:packed_payload", "severity": "high" if pa["payloads"] else "medium",
+                    "tool": "dotnet", "location": loc, "attack": "T1027.002",
+                    "detail": (f"packer: a {pa['size']}-byte encrypted static array, decrypted by the assembly's own "
+                               f"code (CIL emulation) into {pa['payloads']} PE payload(s) — Nested child"
+                               if pa["payloads"] else f"packer: a {pa['size']}-byte encrypted static array (its "
+                               "payload, not opened)"),
+                    "evidence": pa.get("how", "")})
     em = cil.get("emulated_strings")
     if em:
         out.append({"rule": "dotnet:strings_emulated", "severity": "medium", "tool": "dotnet", "location": loc,
@@ -494,6 +516,12 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
             if child:
                 child["origin"] = f"payload kept in the ConfuserEx constants of {t['label']}"
                 child["recipe"] = ["ConfuserEx constants (CIL emulation)", *recipe]
+                res.setdefault("_children", []).append(child)
+        for n_pl, (blob, recipe) in enumerate(r.pop("_packed_payloads", None) or [], 1):
+            child = _resource_child(root, sha, t["label"], {"name": f"packed_payload_{n_pl}.exe"}, blob)
+            if child:
+                child["origin"] = f"payload {t['label']} keeps as a static array and decrypts in place"
+                child["recipe"] = recipe
                 res.setdefault("_children", []).append(child)
         for x in r.get("resources") or []:
             raw = x.pop("_data", b"")
