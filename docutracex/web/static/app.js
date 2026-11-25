@@ -2142,7 +2142,7 @@ function paneResolution(mods) {
     const r = sc.resolution;
     const bins = (r.stages || []).filter((x) => ["pe", "elf", "macho", "zip"].includes(x.type) || x.kind === "load").length;
     html += `<details class="disclose js-card res-card" open><summary><span class="badge badge-${bins ? "bad" : "warn"}">${(r.stages || []).length} stage(s)</span>
-      <span class="badge badge-muted">${escapeHtml(lang)}</span> <span class="mono">${escapeHtml(sc.origin || sc.location || "")}</span>
+      <span class="badge badge-muted">${escapeHtml(lang === "script" ? String(sc.kind || "script").replace(" (by content)", "") : lang)}</span> <span class="mono">${escapeHtml(sc.origin || sc.location || "")}</span>
       ${(r.downloads || []).length ? `<span class="badge badge-warn">${r.downloads.length} download(s)</span>` : ""}
       ${(r.unresolved || []).length ? `<span class="badge badge-muted">${r.unresolved.length} not resolved</span>` : ""}</summary>
       <div style="padding:8px 10px">${resolutionBlock(r)}</div></details>`;

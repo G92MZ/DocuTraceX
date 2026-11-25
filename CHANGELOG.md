@@ -3,6 +3,14 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.254.0 — 2026-11-25 (#334)
+
+**PHP, Perl, Ruby, Lua, Tcl, shell, AutoIt and AutoHotkey evaluated statically**
+
+- Webshells and droppers in these languages are followed without running them: `eval(gzinflate(base64_decode(…)))`, `pack` / `unpack`, `load(string.char(…))`, `echo … | base64 -d | gunzip | sh`, `openssl enc -d`, `_Crypt_DecryptData`, XOR loops…
+- What they write or load (an `.exe`, shellcode, a script) goes to **Nested** with its recipe; the commands they run are read like a shell (`curl … | sh`, `wget` + `chmod +x` + run, `/dev/tcp` reverse shells).
+- What depends on the victim's machine or the web request (`RegRead`, `$_POST`, environment variables) is reported as a dynamic call not resolved, with why.
+
 ## 1.253.0 — 2026-11-25 (#333)
 
 **JavaScript, VBScript and batch evaluated statically to what they drop**

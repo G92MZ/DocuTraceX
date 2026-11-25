@@ -762,7 +762,7 @@ def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[s
     # there, one level down).
     carved_raw: list[bytes] = []          # binary stages carved whole (shellcode, PE)
     for key, ext in (("powershell", ".ps1"), ("vbscript", ".vbs"), ("python", ".py"), ("batch", ".bat"),
-                     ("javascript", ".js")):
+                     ("javascript", ".js"), ("script", "")):
         for sc in (mods.get(key) or {}).get("scripts") or []:
             if not isinstance(sc, dict) or sc.get("from_nested"):
                 continue
