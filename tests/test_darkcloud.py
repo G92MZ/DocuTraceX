@@ -72,3 +72,31 @@ def test_sample_end_to_end(client) -> None:  # noqa: ANN001,F811
     cfg = next(c for c in c2["configs"] if c["family"] == "DarkCloud")
     assert "smtp.billing-portal.example" in cfg["c2"]
     assert any(f["rule"] == "c2:darkcloud" and f["severity"] == "high" for f in c2["findings"])
+
+
+def test_unknown_build_by_structure_and_shape() -> None:
+    """No version, no placeholders, another order: recognised by its structure, values by their shape."""
+    got = darkcloud.extract(_ms().darkcloud_variant_exe())
+    s = got["summary"]
+    assert got["family"] == "DarkCloud" and got["confidence"] == "medium"
+    assert s["Recognised by"].startswith("structure") and "shape" in s["Configuration read"]
+    assert s["SMTP server"] == "smtp.billing-portal.example:587" and s["SMTP password"] == "Factura0187!"
+    assert s["SMTP user"] == "facturas@billing-portal.example" and s["Mail recipient"] == "cuentas@billing-portal.example"
+    assert s["FTP server"] == "ftp://files.billing-portal.example/up/"
+    assert set(got["c2"]) == {"smtp.billing-portal.example", "files.billing-portal.example"}
+
+
+def test_reordered_block_does_not_mislabel() -> None:
+    """Placeholders present but the values in other slots: a slot that does not fit its field makes the
+    reader name the values by their shape instead of by position."""
+    ph = [p for p, _ in darkcloud.FIELDS]
+    pool = ["Agent: DARKCLOUD V5.0", ph[0], ph[1], ph[2], "smtp.billing-portal.example", "587",
+            "facturas@billing-portal.example", "Factura0187!", "cuentas@billing-portal.example", "True", ph[9]]
+    s = darkcloud.extract(_vb6(pool))["summary"]
+    assert s["SMTP server"] == "smtp.billing-portal.example:587" and s["SMTP user"] == "facturas@billing-portal.example"
+    assert "shape" in s["Configuration read"]
+
+
+def test_other_vb6_stealer_is_not_darkcloud() -> None:
+    pool = ["https://api.telegram.org/bot", "/sendDocument?chat_id=", "[CLIPBOARD]<<", "\\Login Data"]
+    assert darkcloud.extract(_vb6(pool)) is None

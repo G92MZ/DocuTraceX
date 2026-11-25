@@ -251,6 +251,9 @@ def parse(data: bytes) -> dict[str, Any]:
                             {"decryptor": "ConfuserEx constants (CIL emulation)", "caller": x["caller"],
                              "input": x["id"], "output": x["output"][:4000], "how": em["how"]} for x in em["strings"])
                         out["_confuser_assemblies"] = em["assemblies"]
+                        out["_confuser_payloads"] = em.get("payloads") or []
+                        if em.get("payloads"):
+                            c["confuser_constants"]["payloads"] = len(em["payloads"])
                     elif em and em.get("error"):
                         c["confuser_error"] = f"ConfuserEx constants (CIL emulation): {em['error']}"[:200]
                 except Exception as exc:  # noqa: BLE001
@@ -314,7 +317,8 @@ def _findings(item: dict[str, Any]) -> list[dict[str, Any]]:
     if cx:
         ok = cx.get("mode") in ("Normal", "emulated")
         how = "by CIL emulation" if cx.get("mode") == "emulated" else "statically"
-        extra = f", {cx['assemblies']} embedded assembly(ies) out" if cx.get("assemblies") else ""
+        extra = (f", {cx['assemblies']} embedded assembly(ies) out" if cx.get("assemblies") else "") + (
+            f", {cx['payloads']} payload(s) decrypted from them" if cx.get("payloads") else "")
         out.append({"rule": "dotnet:confuser_constants", "severity": "medium" if ok else "low", "tool": "dotnet",
                     "location": loc, "attack": "T1027",
                     "detail": (f"ConfuserEx constants protection decrypted {how}: {cx['strings']} literal(s) recovered{extra}"
@@ -443,6 +447,12 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
             if child:
                 child["origin"] = f"assembly ConfuserEx loads at start (Assembly.Load) in {t['label']}"
                 child["recipe"] = ["ConfuserEx module initializer (CIL emulation)", "LZMA", "Assembly.Load"]
+                res.setdefault("_children", []).append(child)
+        for n_pl, (blob, recipe) in enumerate(r.pop("_confuser_payloads", None) or [], 1):
+            child = _resource_child(root, sha, t["label"], {"name": f"confuser_payload_{n_pl}.bin"}, blob)
+            if child:
+                child["origin"] = f"payload kept in the ConfuserEx constants of {t['label']}"
+                child["recipe"] = ["ConfuserEx constants (CIL emulation)", *recipe]
                 res.setdefault("_children", []).append(child)
         for x in r.get("resources") or []:
             raw = x.pop("_data", b"")

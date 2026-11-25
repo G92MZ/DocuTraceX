@@ -24,12 +24,13 @@ stops. Budgets on steps, time, call depth and array sizes bound every run.
 from __future__ import annotations
 
 import lzma
+import re
 import struct
 import time
 from typing import Any
 
-MAX_STEPS = 4_000_000
-MAX_SECONDS = 25.0
+MAX_STEPS = 30_000_000
+MAX_SECONDS = 45.0
 MAX_DEPTH = 48
 MAX_ARRAY = 32 * 1024 * 1024
 MAX_GETTER_STEPS = 300_000
@@ -340,6 +341,8 @@ class Emu:
         self.unknown_calls: dict[str, int] = {}
         self.last_off = 0
         self.this_assembly = Obj("Assembly", name="(this module)")
+        self.capture: list[tuple[int, int, Any, str]] | None = None
+        self.frames: list[int] = []
 
     # -- metadata ---------------------------------------------------------------------------
     def body(self, rid: int) -> Any:
@@ -347,17 +350,20 @@ class Emu:
             return self.bodies[rid]
         from dncil.cil.body import CilMethodBody
         m = self.t.MethodDef[rid - 1]
-        if not m.Rva:
-            self.bodies[rid] = None
-            return None
-        b = CilMethodBody(self._reader(m.Rva))
-        insns = list(b.instructions)
-        idx = {ins.offset: n for n, ins in enumerate(insns)}
         _this, n, void = sig_shape(bytes(m.Signature.value or b""))
         static = bool(m.Flags.mdStatic)
         nargs = n + (0 if static else 1)
+        if not m.Rva:                         # runtime-implemented (a delegate's .ctor / Invoke) or extern
+            self.bodies[rid] = (None, None, nargs, void)
+            return self.bodies[rid]
+        b = CilMethodBody(self._reader(m.Rva))
+        insns = list(b.instructions)
+        idx = {ins.offset: n for n, ins in enumerate(insns)}
         self.bodies[rid] = (insns, idx, nargs, void)
         return self.bodies[rid]
+
+    def method_name(self, rid: int) -> str:
+        return self.owners.get(rid, f"#{rid}").split("::")[-1]
 
     def method_target(self, tok: Any) -> tuple[str, Any]:
         """('def', rid) for the assembly's own code, ('ref', (name, has_this, nparams, void))."""
@@ -411,6 +417,8 @@ class Emu:
         if b is None:
             return OPQ
         insns, idx, nargs, void = b
+        if insns is None:
+            return self.runtime_method(rid, args, depth)
         # ConfuserEx's own LZMA decoder: answered natively when the argument is an LZMA stream
         if nargs == 1 and isinstance(args[0], Arr) and args[0].kind == "u1" and not void:
             out = _lzma(bytes(args[0].data))
@@ -420,11 +428,42 @@ class Emu:
                 a.data = bytearray(out)
                 return a
         try:
-            return self.run(insns, idx, args, void, depth)
+            r = self.run(insns, idx, args, void, depth)
+            # a decoder: integer arguments in, text out (a constants getter, reached directly, through a
+            # proxy method or a delegate) — kept with the method that asked for it
+            if self.capture is not None and isinstance(r, str) and r and args and all(
+                    isinstance(x, int) and not isinstance(x, bool) for x in args):
+                self.capture.append((self.frames[0] if self.frames else rid, rid, args[0], r))
+            return r
         except EmuError as exc:
             if " @ " not in str(exc):
                 raise EmuError(f"{exc} @ method #{rid} IL_{self.last_off - insns[0].offset:04x}") from None
             raise
+
+    def runtime_method(self, rid: int, args: list[Any], depth: int) -> Any:
+        """A delegate's runtime methods: ``.ctor(object, native int)`` keeps the target ``ldftn`` gave,
+        ``Invoke`` calls it (ConfuserEx's reference proxies through delegates)."""
+        name = self.method_name(rid)
+        if name == ".ctor" and len(args) == 3 and isinstance(args[0], Obj):
+            fn = args[2]
+            args[0].st["target"] = fn.st.get("target") if isinstance(fn, Obj) else None
+            args[0].st["bound"] = args[1]
+            return None
+        if name == "Invoke" and args and isinstance(args[0], Obj):
+            return self.invoke(args[0].st.get("target"), args[0].st.get("bound"), list(args[1:]), depth)
+        return OPQ
+
+    def invoke(self, target: Any, bound: Any, args: list[Any], depth: int) -> Any:
+        if not target:
+            return OPQ
+        kind, t = target
+        if kind == "def":
+            b = self.body(t)
+            if b and b[2] == len(args) + 1 and bound is not None:
+                args = [bound] + args
+            return self.call_def(t, args, depth + 1)
+        name, has_this, _n, _void = t
+        return self.extern(name, ([bound] if has_this and bound is not None else []) + args, False)
 
     def run(self, insns: list[Any], idx: dict[int, int], args: list[Any], void: bool, depth: int) -> Any:  # noqa: C901, PLR0912, PLR0915
         st: list[Any] = []
@@ -671,6 +710,8 @@ class Emu:
     def extern(self, name: str, a: list[Any], new: bool) -> Any:  # noqa: C901, PLR0911, PLR0912
         short = name.split("::")[-1]
         typ = name.split("::")[0]
+        if new and short == ".ctor" and len(a) == 2 and isinstance(a[1], Obj) and a[1].type == "fn":
+            return Obj("delegate", target=a[1].st.get("target"), bound=a[0])     # Func<…> / Action<…>
         if name.endswith("RuntimeHelpers::InitializeArray"):
             arr, fld = a
             if isinstance(arr, Arr) and isinstance(fld, tuple) and fld[0] == "field" and fld[1] in self.fields:
@@ -742,7 +783,8 @@ class Emu:
         if typ in ("System.IO.MemoryStream", "System.IO.Stream", "System.IO.BinaryReader"):
             return self.stream_call(short, a, new)
         if name == "System.Reflection.Assembly::Load" and a and isinstance(a[0], Arr) and a[0].kind == "u1":
-            self.assemblies.append(bytes(a[0].data))
+            if bytes(a[0].data) not in self.assemblies:
+                self.assemblies.append(bytes(a[0].data))
             return Obj("Assembly")
         if name in ("System.Reflection.Assembly::GetCallingAssembly", "System.Reflection.Assembly::GetExecutingAssembly",
                     "System.Reflection.Assembly::GetEntryAssembly"):
@@ -751,6 +793,49 @@ class Emu:
                 "System.Object", "System.Reflection.Assembly", "System.Type", "System.Reflection.Module"):
             same = a[0] is a[1] or (isinstance(a[0], (int, str)) and a[0] == a[1])
             return int(same) if short != "op_Inequality" else int(not same)
+        if short in ("ResolveMethod", "ResolveField", "ResolveMember") and typ == "System.Reflection.Module":
+            tok = _num(a[1]) if len(a) > 1 else 0
+            if isinstance(tok, int):
+                tb, r = (tok >> 24) & 0xFF, tok & 0xFFFFFF
+                if tb == 0x06:
+                    return Obj("MethodInfo", target=("def", r))
+                if tb == 0x0A:
+                    return Obj("MethodInfo", target=self.method_target(type("T", (), {"table": 0x0A, "rid": r})()))
+                if tb == 0x04:
+                    return Obj("FieldInfo", rid=r)
+            return OPQ
+        if name == "System.Reflection.FieldInfo::GetFieldFromHandle" and isinstance(a[0], tuple):
+            return Obj("FieldInfo", rid=a[0][1])
+        if short == "get_Name" and a and isinstance(a[0], Obj) and a[0].type == "FieldInfo":
+            try:
+                return str(self.t.Field[a[0].st["rid"] - 1].Name)
+            except (IndexError, AttributeError):
+                return OPQ
+        if short == "SetValue" and a and isinstance(a[0], Obj) and a[0].type == "FieldInfo" and len(a) >= 3:
+            self.statics[a[0].st["rid"]] = a[2]
+            return None
+        if short == "GetValue" and a and isinstance(a[0], Obj) and a[0].type == "FieldInfo":
+            return self.statics.get(a[0].st["rid"], OPQ)
+        if name == "System.Delegate::CreateDelegate":
+            mi = next((x for x in a if isinstance(x, Obj) and x.type == "MethodInfo"), None)
+            return Obj("delegate", target=mi.st["target"], bound=None) if mi else OPQ
+        if short in ("Invoke", "DynamicInvoke") and a and isinstance(a[0], Obj) and a[0].type in ("MethodInfo", "delegate"):
+            rest = a[1:]
+            if a[0].type == "MethodInfo" and len(rest) == 2:          # MethodBase.Invoke(obj, object[])
+                bound, arr = rest
+                params = list(arr.data) if isinstance(arr, Arr) else []
+                return self.invoke(a[0].st["target"], bound, params, 1)
+            params = list(rest[0].data) if len(rest) == 1 and isinstance(rest[0], Arr) else list(rest)
+            return self.invoke(a[0].st["target"], a[0].st.get("bound"), params, 1)
+        if name == "System.Convert::FromBase64String" and a and isinstance(a[0], str):
+            import base64 as _b64
+            try:
+                raw = _b64.b64decode(a[0] + "=" * (-len(a[0]) % 4))
+            except ValueError:
+                return OPQ
+            out = Arr("u1", 0)
+            out.data = bytearray(raw)
+            return out
         if name == "System.Environment::FailFast":
             raise _Stop("FailFast")
         if name == "System.Object::.ctor":
@@ -862,7 +947,7 @@ def _sites(emu: Emu) -> dict[int, list[tuple[int, int]]]:
             b = emu.body(rid)
         except Exception:  # noqa: BLE001
             continue
-        if not b:
+        if not b or b[0] is None:
             continue
         insns, idx = b[0], b[1]
         for n, ins in enumerate(insns):
@@ -886,11 +971,87 @@ def _sites(emu: Emu) -> dict[int, list[tuple[int, int]]]:
     return out
 
 
-def confuser_strings(data: bytes) -> dict[str, Any] | None:
-    """Run ``<Module>.cctor`` and then every constants getter on its call sites.
+MAX_DYN_STEPS = 200_000
+MAX_DYN_SECONDS = 20.0
 
-    ``{strings: [{caller, getter, id, output}], assemblies: [bytes], steps, how, error}`` or None
-    when there is nothing to run (no module initializer, no getter)."""
+
+def _file_trials(blob: bytes, material: list[bytes]) -> tuple[bytes, list[str]] | None:
+    """3DES / AES, CBC with each IV of the constants (or ECB), every key of the constants: the one whose
+    plaintext starts with a file signature."""
+    from .. import decrypted as dec
+    try:
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        try:
+            from cryptography.hazmat.decrepit.ciphers.algorithms import TripleDES
+        except ImportError:
+            TripleDES = algorithms.TripleDES  # noqa: N806
+    except Exception:  # noqa: BLE001
+        return None
+    keys = [k for k in material if len(k) in (16, 24, 32)][:8]
+    ivs = [k for k in material if len(k) in (8, 16)][:8]
+    for k in keys:
+        algos = ([("3des", TripleDES, 8)] if len(k) in (16, 24) else []) + [("aes", algorithms.AES, 16)]
+        for nm, algo, block in algos:
+            if nm == "aes" and len(k) not in (16, 24, 32):
+                continue
+            for iv in [x for x in ivs if len(x) == block] + [None]:
+                if len(blob) % block:
+                    continue
+                try:
+                    c = Cipher(algo(k), modes.CBC(iv) if iv else modes.ECB())
+                    head = c.decryptor().update(blob[:64])
+                except Exception:  # noqa: BLE001
+                    continue
+                if head[:2] == b"MZ" or dec._strong_magic(head):
+                    plain = Cipher(algo(k), modes.CBC(iv) if iv else modes.ECB()).decryptor().update(blob)
+                    plain = dec._unpad(plain) or plain
+                    bits = f"-{len(k) * 8}" if nm == "aes" else ""
+                    mode = f"cbc, iv {iv.hex()}" if iv else "ecb"
+                    return plain, [f"{nm}{bits}-{mode.split(',')[0]}(key {k[:8].hex()}…{', ' + mode.split(', ')[1] if iv else ''})"]
+    return None
+
+
+def _payloads(strings: list[str]) -> list[tuple[bytes, list[str]]]:
+    """Files hidden in the recovered constants: a large base64 string that is itself a file, or one
+    the other constants decrypt — base64 keys / IVs (8 / 16 / 24 / 32 bytes) and plain strings, tried
+    with 3DES / AES / RC4 by the blind trials (the DarkCloud chain keeps its payload as base64 3DES
+    with the key and IV next to it)."""
+    import base64 as _b64
+
+    from .. import decrypted as dec
+
+    def b64(v: str) -> bytes | None:
+        v = v.strip()
+        if len(v) < 8 or len(v) % 4 or not re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", v):
+            return None
+        try:
+            return _b64.b64decode(v)
+        except ValueError:
+            return None
+    decoded = [(v, b64(v)) for v in strings]
+    keys = {"arrays": [b for _v, b in decoded if b and len(b) in (8, 16, 24, 32)],
+            "strings": [v.encode() for v, b in decoded if not b and 4 <= len(v) <= 64][:30]}
+    out: list[tuple[bytes, list[str]]] = []
+    for _v, b in decoded:
+        if not b or len(b) < 256:
+            continue
+        if b[:2] == b"MZ" or dec._strong_magic(b[:64]):
+            out.append((b, ["base64"]))
+            continue
+        got = _file_trials(b, keys["arrays"]) or dec._blind_ciphers(b, keys)
+        if got:
+            plain, steps = got
+            out.append((plain, ["base64", *steps]))
+    return out
+
+
+def confuser_strings(data: bytes) -> dict[str, Any] | None:
+    """Run ``<Module>.cctor``, every constants getter on its call sites, and then each method of the
+    assembly, keeping what decoders return on the way (getters reached through proxy methods or
+    delegates).
+
+    ``{strings: [{caller, getter, id, output}], assemblies: [bytes], payloads: [(bytes, recipe)], how,
+    error}`` or None when there is no module initializer."""
     import dnfile
 
     try:
@@ -902,10 +1063,10 @@ def confuser_strings(data: bytes) -> dict[str, Any] | None:
             return None
         emu = Emu(pe)
         cctor = next((rid for rid, nm in emu.owners.items() if nm == "<Module>::.cctor"), None)
+        if cctor is None:
+            return None
         sites = _sites(emu)
         getters = {g: s for g, s in sites.items() if len(s) >= 2}
-        if not getters or cctor is None:
-            return None
         err = ""
         try:
             emu.call_def(cctor, [], 0)
@@ -915,24 +1076,61 @@ def confuser_strings(data: bytes) -> dict[str, Any] | None:
             err = f"module initializer: {exc}"[:200]
         found: list[dict[str, Any]] = []
         seen: set[tuple[int, int]] = set()
+
+        def keep(caller: int, g: int, ident: int, v: str) -> None:
+            if (g, ident) in seen:
+                return
+            seen.add((g, ident))
+            found.append({"caller": emu.owners.get(caller, f"#{caller}"), "getter": emu.owners.get(g, f"#{g}"),
+                          "id": f"0x{ident & 0xFFFFFFFF:08x}", "output": v})
         for g, ss in getters.items():
             for caller, ident in ss[:MAX_SITES]:
                 if (g, ident) in seen:
                     continue
-                seen.add((g, ident))
                 emu.steps, emu.limit = 0, MAX_GETTER_STEPS
                 try:
                     v = emu.call_def(g, [ident], 0)
                 except (EmuError, _Stop, Exception):  # noqa: BLE001
                     continue
                 if isinstance(v, str) and v:
-                    found.append({"caller": emu.owners.get(caller, f"#{caller}"), "getter": emu.owners.get(g, f"#{g}"),
-                                  "id": f"0x{ident & 0xFFFFFFFF:08x}", "output": v})
+                    keep(caller, g, ident, v)
+        # every method once, its arguments zero: decoders called on the way are caught as they return
+        n_static = len(found)
+        t0 = time.monotonic()
+        emu.capture = []
+        for rid in range(1, len(emu.t.MethodDef or []) + 1):
+            if rid == cctor or rid in getters or time.monotonic() - t0 > MAX_DYN_SECONDS:
+                continue
+            try:
+                b = emu.body(rid)
+            except Exception:  # noqa: BLE001
+                continue
+            if not b or b[0] is None:
+                continue
+            emu.frames = [rid]
+            emu.steps, emu.limit = 0, MAX_DYN_STEPS
+            m = emu.t.MethodDef[rid - 1]
+            args = [0] * b[2]
+            if not m.Flags.mdStatic and args:
+                args[0] = Obj(emu.owners.get(rid, "?").split("::")[0])
+            try:
+                emu.call_def(rid, args, 0)
+            except (EmuError, _Stop, Exception):  # noqa: BLE001
+                pass
+            for caller, g, ident, v in emu.capture:
+                if caller != g:
+                    keep(caller, g, ident, v)
+            emu.capture = []
+        emu.capture = None
+        n_dyn = len(found) - n_static
+        payloads = _payloads([x["output"] for x in found])
         if not found and not emu.assemblies:
-            return {"strings": [], "assemblies": [], "how": "", "error": err or "no getter returned a string"}
+            return {"strings": [], "assemblies": [], "payloads": [], "how": "",
+                    "error": err or "no getter returned a string"}
         how = ("CIL emulation of <Module>.cctor and the constants getters (control flow followed as the "
-               "program runs it" + (", LZMA answered natively" if emu.lzma_calls else "") + ")")
-        return {"strings": found, "assemblies": emu.assemblies, "how": how, "error": err,
+               "program runs it" + (", LZMA answered natively" if emu.lzma_calls else "")
+               + (f", {n_dyn} reached through proxies / delegates" if n_dyn else "") + ")")
+        return {"strings": found, "assemblies": emu.assemblies, "payloads": payloads, "how": how, "error": err,
                 "unknown_calls": sorted(emu.unknown_calls)[:40]}
     finally:
         try:

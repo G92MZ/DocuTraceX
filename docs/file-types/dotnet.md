@@ -22,8 +22,14 @@ code is CIL: it is disassembled and read, never run.
       module initializer and the getters run on a model of the runtime (stack, arrays,
       static fields, `Buffer.BlockCopy`, `Encoding.GetString`, `MemoryStream`…; LZMA answered
       natively), never on the machine — reflection, `AppDomain` and P/Invoke answer *unknown*,
-      and step / time budgets bound it. An assembly the module `Assembly.Load`s at start
-      (ConfuserEx's embedded resources / compressor) becomes a Nested child.
+      and step / time budgets bound it. Getters with no call site of their own — reached
+      through a **reference proxy** (a proxy method, a delegate made with `ldftn`,
+      `Module.ResolveMethod` / `Delegate.CreateDelegate`) — are caught as they return: every
+      method is run once and what a decoder hands back on the way is kept. An assembly the
+      module `Assembly.Load`s at start (ConfuserEx's embedded resources / compressor) becomes a
+      Nested child, and so does a **payload kept in the constants**: a base64 file, or one the
+      other constants open (3DES / AES with a base64 key and IV, as the DarkCloud chain's
+      injector keeps the stealer).
     - **Resources**: `.resources` files opened entry by entry; encrypted entries decrypted with
       the keys the assembly holds (in the method, its class or the whole assembly), and images
       read pixel by pixel.

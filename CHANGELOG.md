@@ -3,6 +3,14 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.259.0 — 2026-11-25 (#339)
+
+**DarkCloud and ConfuserEx: variants of the samples seen so far**
+
+- DarkCloud builds in another order or without a version string are still read: their settings are named by what they look like (account, password, SMTP host, port, FTP), at medium confidence.
+- ConfuserEx strings reached only through proxies or delegates now come out too.
+- A payload kept inside the ConfuserEx constants (base64, or 3DES / AES with a key and IV stored next to it) becomes a Nested child, ready for the next stage.
+
 ## 1.258.0 — 2026-11-25 (#338)
 
 **DarkCloud's configuration and mutated ConfuserEx strings, read statically**
