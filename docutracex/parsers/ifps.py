@@ -21,7 +21,7 @@ import re
 from typing import Any
 
 MAGIC = b"IFPS"
-MAX_STRINGS = 4000
+MAX_STRINGS = 1_000_000      # every string of the [Code] section
 
 _ASCII = re.compile(rb"[\x20-\x7e]{4,}")
 _UTF16 = re.compile(rb"(?:[\x20-\x7e]\x00){4,}")

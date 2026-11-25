@@ -94,10 +94,16 @@ def _detect_vba(zf: zipfile.ZipFile) -> dict[str, Any]:
     return {"present": bool(paths), "paths": paths}
 
 
-def _bounded(text: str) -> tuple[str, int, bool]:
+def _bounded(text: str, label: str = "office text") -> tuple[str, int, bool, str | None]:
+    """The sample the tab shows, the length, whether it is cut, and the whole text kept in the
+    case (the Markdown report's Complete content) when it is."""
     full = len(text)
     truncated = full > _TEXT_SAMPLE_CHARS
-    return (text[:_TEXT_SAMPLE_CHARS], full, truncated)
+    kept = None
+    if truncated:
+        from .. import toolrun
+        kept = toolrun.keep_full(text, label)
+    return (text[:_TEXT_SAMPLE_CHARS], full, truncated, kept)
 
 
 # --- Word --------------------------------------------------------------------
@@ -152,12 +158,13 @@ def _analyze_word(zf: zipfile.ZipFile) -> dict[str, Any]:
             findings.append(_finding(rule, sev, f"Field code contains {kw}",
                                      "word/document.xml", evidence=hit.strip()))
 
-    sample, full, trunc = _bounded("".join(texts))
+    sample, full, trunc, kept = _bounded("".join(texts))
     return {
         "format": "word",
         "text_sample": sample,
         "text_length": full,
         "text_truncated": trunc,
+        **({"text_sample_full": kept} if kept else {}),
         "field_codes": field_instrs[:200],
         "findings": findings,
     }
@@ -282,7 +289,7 @@ def _analyze_powerpoint(zf: zipfile.ZipFile) -> dict[str, Any]:
             if t.text:
                 texts.append(t.text)
     notes = [n for n in zf.namelist() if re.match(r"ppt/notesSlides/notesSlide\d+\.xml$", n)]
-    sample, full, trunc = _bounded("\n".join(texts))
+    sample, full, trunc, kept = _bounded("\n".join(texts))
     return {
         "format": "powerpoint",
         "slide_count": len(slides),
@@ -290,6 +297,7 @@ def _analyze_powerpoint(zf: zipfile.ZipFile) -> dict[str, Any]:
         "text_sample": sample,
         "text_length": full,
         "text_truncated": trunc,
+        **({"text_sample_full": kept} if kept else {}),
         "findings": findings,
     }
 

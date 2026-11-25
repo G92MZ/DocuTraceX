@@ -104,3 +104,33 @@ def test_email_section_has_every_header_and_whole_bodies(tmp_path: Path, monkeyp
     md = next(s["markdown"] for s in mdreport.build(cp.root.name) if s["id"] == "email")
     assert "X-Custom-Trace: abc123" in md and "Received: from relay.example" in md
     assert "LATE_BODY_MARKER" in md                              # past the 20,000 characters kept for the tab
+
+
+def test_document_text_and_pdf_objects_whole(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A document's text past the 20,000 characters the tab shows, and every PDF object's
+    dictionary, are kept and land in the report's Complete content."""
+    sys.path.insert(0, str(Path(__file__).parents[1] / "scripts"))
+    import officekit as ok
+
+    from docutracex import mdreport
+    from docutracex.config import settings
+    from docutracex.parsers import office, pdf
+    monkeypatch.setattr(settings, "cases_dir", tmp_path / "cases")
+    cp = CasePaths("20261125-040000-abcdef12")
+    (cp.root / "original").mkdir(parents=True)
+    write_json(cp.manifest, {"analysis_id": cp.root.name, "original": {"filename": "f.docx", "stored_path": "original/f.docx"}})
+    doc = cp.root / "original" / "f.docx"
+    doc.write_bytes(ok.docm([f"linea {i} de la factura 2026-0187 pendiente" for i in range(1500)]
+                           + ["LATE_TEXT_MARKER https://billing-portal.example/doc"], macro=False))
+    objs = b"%PDF-1.7\n" + b"".join(f"{i} 0 obj\n<< /Type /Annot /Contents (pdf object {i}) >>\nendobj\n".encode()
+                                     for i in range(1, 700)) + b"%%EOF\n"
+    with toolrun.case_scope(cp.root):
+        word = office.analyze(doc, ".docx")
+        pres: dict = {}
+        pdf._extract_objects(objs, pres)
+    assert word["text_truncated"] and "LATE_TEXT_MARKER" not in word["text_sample"] and word.get("text_sample_full")
+    assert pres["object_count"] == 500 and pres.get("objects_full")
+    write_json(cp.subresult("word"), word)
+    write_json(cp.subresult("pdf"), pres)
+    md = next(s["markdown"] for s in mdreport.build(cp.root.name) if s["id"] == "content")
+    assert "LATE_TEXT_MARKER" in md and "pdf object 699" in md

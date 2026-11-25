@@ -79,6 +79,18 @@ def keep_full(text: str | None, label: str, case_root: Path | None = None) -> st
     return rel.as_posix()
 
 
+def keep_field(rec: dict[str, Any], key: str, text: str | None, bound: int, label: str) -> dict[str, Any]:
+    """``rec[key]`` = the first ``bound`` characters of ``text`` (what the tab shows); the whole text
+    kept in the case as ``rec[key + "_full"]`` when longer — the Markdown report's Complete content."""
+    t = text or ""
+    rec[key] = t[:bound]
+    if len(t) > bound:
+        full = keep_full(t, label)
+        if full:
+            rec[f"{key}_full"] = full
+    return rec
+
+
 def bounded(rec: dict[str, Any], out: str | None, label: str, bound: int = OUTPUT_BOUND,
             err: str | None = None, err_bound: int = STDERR_BOUND, err_tail: bool = True) -> dict[str, Any]:
     """Store a tool's stdout / stderr in ``rec``: bounded for the UI, and whole in the case

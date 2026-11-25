@@ -22,8 +22,8 @@ from ..logging_config import get_logger
 log = get_logger(__name__)
 
 MAX_SIZE = 128 * 1024 * 1024
-MAX_STRINGS = 5000
-MAX_TYPES = 3000
+MAX_STRINGS = 1_000_000      # every #US string
+MAX_TYPES = 1_000_000        # every type
 
 # framework APIs worth pointing out: (TypeRef namespace.name or member, category, label)
 APIS: list[tuple[str, str, str]] = [

@@ -22,6 +22,8 @@ what a tool showed and no rule detected:
   injection / network / crypto, credentials, long base64).
 - **Email**: every message (the case file and each attached one) read from its own bytes — the
   header block verbatim, in order, every text and HTML body whole, every link and attachment.
+- **Complete content**: what a tab shows in part, whole — a Word / Excel / PowerPoint, PDF or
+  RTF document's text (a PDF's every page), every PDF object's dictionary, a page's visible text.
 - **Code files**: every recovered script, original and deobfuscated, whole.
 - **Raw modules**: every result file, the nested children's own analyses and the code analysis.
 

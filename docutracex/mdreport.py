@@ -287,6 +287,46 @@ def _floss(cid: str) -> str:
     return "\n".join(out)
 
 
+def _full_fields(obj: Any, path: str) -> list[tuple[str, str]]:
+    """(where, case-relative file) of every ``*_full`` text kept whole (document text, PDF objects,
+    page text…) — the tool outputs and FLOSS have their own sections."""
+    out: list[tuple[str, str]] = []
+    if isinstance(obj, dict):
+        tool = isinstance(obj.get("output"), str) or "returncode" in obj
+        for k, v in obj.items():
+            ks = str(k)
+            if ks.endswith("_full") and isinstance(v, str) and v.startswith("results/"):
+                if not (tool and ks in ("output_full", "stderr_full")) and not v.rsplit("/", 1)[-1].startswith("floss"):
+                    out.append((f"{path} › {ks[:-5]}", v))
+            elif not ks.startswith("_"):
+                out += _full_fields(v, f"{path} › {ks}")
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            out += _full_fields(v, f"{path}[{i}]")
+    return out
+
+
+def _content(cid: str) -> str:
+    """What a module read from a file and keeps only in part in its result (the text of a document
+    or a PDF, the dictionary of every PDF object, a page's visible text…), whole."""
+    paths = ai_tools._paths(cid)
+    out = ["# Complete content", "",
+           "_Text the tabs show in part — a document's or PDF's text, every PDF object's dictionary, "
+           "a page's visible text — whole._", ""]
+    seen: set[str] = set()
+    for label, res in _module_results(paths):
+        for where, rel in _full_fields(res, label):
+            if rel in seen:
+                continue
+            seen.add(rel)
+            text = _read_rel(paths, rel)
+            if text is not None:
+                out += [f"## {where}", "", f"{len(text)} characters", "", _fence(text)]
+    if not seen:
+        out.append("_(nothing longer than what the tabs show)_")
+    return "\n".join(out)
+
+
 def _email_source(data: bytes) -> list[str]:
     """One message read straight from its bytes: the header block verbatim, every text / HTML
     body whole, every link, every attachment (name, type, size, SHA-256)."""
@@ -567,7 +607,8 @@ SECTIONS: list[tuple[str, str, Callable[[str], str]]] = [
     ("dotnet", ".NET", _dotnet), ("ml", "Machine Learning", _ml), ("yara", "YARA", _yara), ("c2", "C2", _c2),
     ("rmm", "RMM / remote access", _rmm),
     ("network", "Network checks", _network), ("floss", "FLOSS strings", _floss),
-    ("tools", "Tool outputs", _tools), ("codefiles", "Code files", _code_files),
+    ("tools", "Tool outputs", _tools), ("content", "Complete content", _content),
+    ("codefiles", "Code files", _code_files),
     ("modules", "Raw modules", _modules),
 ]
 

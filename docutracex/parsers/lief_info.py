@@ -35,7 +35,7 @@ from ..logging_config import get_logger
 log = get_logger(__name__)
 
 TIMEOUT = tmo(120)
-_MAX_LIST = 300
+_MAX_LIST = 1_000_000           # every import, export, library and symbol
 
 
 def _entropy(data: bytes) -> float:

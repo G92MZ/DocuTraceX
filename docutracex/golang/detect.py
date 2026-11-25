@@ -56,7 +56,7 @@ NOT_USER = tuple(p for p in STD_PREFIXES if p not in ("main", "github.com", "gol
     "memeqbody", "indexbytebody", "cmpbody", "countbody", "debugCall", "gogo", "gosave")
 WEIGHTS = {"buildinfo": 40, "pclntab": 40, "go_build_id": 15, "runtime": 15, "moduledata": 10, "other": 5,
            "runtime_messages": 35}
-MAX_NAMES = 4000
+MAX_NAMES = 1_000_000        # every function name of the pclntab
 
 
 def _ev(kind: str, detail: str, offset: int | None = None, points: int = 0, **extra: Any) -> dict[str, Any]:

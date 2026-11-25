@@ -33,7 +33,7 @@ from ..config import tmo
 
 log = get_logger(__name__)
 
-_MAX_SCRIPTS = 60
+_MAX_SCRIPTS = 5000            # scripts analysed per file (every one, in practice)
 _MAX_FILES = 300
 _MAX_FILE_BYTES = 5 * 1024 * 1024
 # tag: AeWckx3pKh
