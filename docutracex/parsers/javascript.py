@@ -35,7 +35,7 @@ log = get_logger(__name__)
 
 _MAX_SCRIPTS = 5000            # scripts analysed per file (every one, in practice)
 _MAX_FILES = 300
-_MAX_FILE_BYTES = 5 * 1024 * 1024
+_MAX_FILE_BYTES = 64 * 1024 * 1024    # a loader carrying a whole PE in a literal
 # tag: AeWckx3pKh
 _MAX_CODE = 300_000
 _MAX_TECH = 8_000_000      # technique detectors are linear; bound only pathological inputs

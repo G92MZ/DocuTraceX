@@ -3,6 +3,14 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.249.0 — 2026-11-25 (#329)
+
+**Scripts in a .txt read by the right engine**
+
+- A script with an extension that says nothing (`.txt`, `.dat`, none) is now recognised **by its content** — PowerShell, JavaScript, VBScript, batch, Python, Perl, PHP, Ruby, Lua, Tcl, shell, AutoIt, AutoHotkey — also inside archives and other files, and only that language's engine reads it: no VBScript or batch findings on PowerShell code.
+- Scripts up to 64 MB are analysed whole (was 2 MB), and stages are named after the engine that found them.
+- Fixed: a word inside a base64 blob ("vbox") no longer raises VM-detection findings, and a long Python preview no longer carves "ghost" PEs out of a cut array.
+
 ## 1.248.0 — 2026-11-25 (#328)
 
 **Markdown report: the whole analysis, every tool's output in full**

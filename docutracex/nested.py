@@ -952,6 +952,26 @@ def _save_view(paths: CasePaths, node: dict[str, Any], chain: str, mods: dict[st
     node["view_modules"] = sorted(k for k in mods if not k.startswith("_"))
 
 
+_TEXTY_EXT = {"", ".txt", ".dat", ".log", ".tmp", ".bin", ".cfg", ".ini", ".conf", ".text", ".data", ".out"}
+
+
+def _content_languages(abs_path: Path, node: dict[str, Any]) -> tuple[list[str], str] | None:
+    """(languages, text) of a text child named so its language is not said (``.txt``, no extension)
+    whose content is a script; None otherwise."""
+    if node.get("kind") != "other" or abs_path.suffix.lower() not in _TEXTY_EXT:
+        return None
+    try:
+        from .analyze import _read_reasonable_text
+        text = _read_reasonable_text(abs_path)
+    except Exception:  # noqa: BLE001
+        return None
+    if not text:
+        return None
+    from .resolve import langdetect
+    langs = langdetect.languages(text)
+    return (langs, text) if langs else None
+
+
 def _scan_code_languages(abs_path: Path, paths: CasePaths, node: dict[str, Any],
                          this_chain: str, mods: dict[str, Any], add_findings,  # noqa: ANN001
                          timed=None) -> None:  # noqa: ANN001
@@ -985,6 +1005,23 @@ def _scan_code_languages(abs_path: Path, paths: CasePaths, node: dict[str, Any],
         ("script", lambda: genscript.analyze(abs_path), "script", "txt"),
     )
     timed = timed or (lambda _tool: contextlib.nullcontext())
+    # a text child whose name says nothing (a .txt, no extension, a .dat…): its language by its
+    # content, and only the engines of that language read it whole (as the case file's fallback)
+    fb = _content_languages(abs_path, node)
+    if fb:
+        langs, text = fb
+        from .resolve import langdetect
+        node["read_as_language"] = langs
+        kw = {"fallback": True, "fallback_text": text}
+        by_key = {"javascript": lambda: javascript.analyze(abs_path, empty, mods, run_sandbox=decrypted.is_decrypted(abs_path), **kw),
+                  "vbscript": lambda: vbscript.analyze(abs_path, empty, mods, **kw),
+                  "batch": lambda: batch.analyze(abs_path, empty, mods, **kw),
+                  "powershell": lambda: powershell.analyze(abs_path, empty, mods, **kw),
+                  "python": lambda: python.analyze(abs_path, empty, mods, **kw)}
+        gs = next((langdetect.GENSCRIPT[x] for x in langs if x in langdetect.GENSCRIPT), None)
+        specs = tuple((key, (by_key[key] if key in by_key and key in langs else
+                             (lambda: genscript.analyze(abs_path, lang=gs)) if key == "script" and gs else fn), sub, ext)
+                      for key, fn, sub, ext in specs)
     for key, fn, sub, ext in specs:
         try:
             with timed(key):

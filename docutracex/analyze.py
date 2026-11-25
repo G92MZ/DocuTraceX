@@ -37,7 +37,7 @@ _SCRIPTING_EXT = {
 }
 
 
-_SCRIPT_FALLBACK_MAX_BYTES = 2 * 1024 * 1024
+_SCRIPT_FALLBACK_MAX_BYTES = 64 * 1024 * 1024   # a .txt loader carrying a whole PE
 
 
 def _read_reasonable_text(path: Path) -> str | None:
@@ -1251,6 +1251,16 @@ def _analyze_case(case_root: Path) -> dict[str, Any]:
                      if family is None and not pe_binary and not scripting_file and not disguised_top else None)
     scripting_fallback = fallback_text is not None
     run_scripting = bool(other_ran or scripting_file or scripting_fallback) and not disguised_top
+    # the language of an unknown text by its content: only the engines that fit it read it (a
+    # PowerShell loader in a .txt is not also read as VBScript / batch, whose rules would see
+    # PowerShell as theirs); no clear language: every engine, as before
+    from .resolve import langdetect
+    fb_langs = langdetect.languages(fallback_text) if scripting_fallback else []
+    if fb_langs:
+        log.info("unknown text read as %s (by its content)", ", ".join(fb_langs))
+
+    def _fb(lang: str) -> bool:
+        return scripting_fallback and (not fb_langs or lang in fb_langs)
 
     # JavaScript / JScript (PDF /JS, HTML body, attachments, OLE, nested, VBA).
     if run_scripting:
@@ -1258,7 +1268,7 @@ def _analyze_case(case_root: Path) -> dict[str, Any]:
         js_res = run("javascript: extraction · static analysis · STPyV8 sandbox",
                      lambda: javascript.analyze(original, paths.extracted_dir,
                                                 {k: v for k, v in js_mods.items() if v},
-                                                fallback=scripting_fallback, fallback_text=fallback_text))
+                                                fallback=_fb("javascript"), fallback_text=fallback_text))
         if js_res.get("scripts"):
             write_subresult(paths, "javascript", js_res)
             ran.append("javascript")
@@ -1275,14 +1285,14 @@ def _analyze_case(case_root: Path) -> dict[str, Any]:
         code_mods = {k: v for k, v in code_mods.items() if v}
         vbs_res = run("vbscript: extraction · .vbe decode · deobfuscation (XOR loops, Execute) · ViperMonkey emulation",
                       lambda: vbscript.analyze(original, paths.extracted_dir, code_mods,
-                                                   fallback=scripting_fallback, fallback_text=fallback_text))
+                                                   fallback=_fb("vbscript"), fallback_text=fallback_text))
         if vbs_res.get("scripts"):
             write_subresult(paths, "vbscript", vbs_res)
             ran.append("vbscript")
             findings_total += vbs_res.get("counts", {}).get("findings", 0)
         bat_res = run("batch: extraction · caret/set deobfuscation",
                       lambda: batch.analyze(original, paths.extracted_dir, code_mods,
-                                                 fallback=scripting_fallback, fallback_text=fallback_text))
+                                                 fallback=_fb("batch"), fallback_text=fallback_text))
         if bat_res.get("scripts"):
             write_subresult(paths, "batch", bat_res)
             ran.append("batch")
@@ -1291,7 +1301,7 @@ def _analyze_case(case_root: Path) -> dict[str, Any]:
         code_mods.update({k: v for k, v in (("vbscript", vbs_res), ("batch", bat_res)) if v.get("scripts")})
         ps_res = run("powershell: extraction · layered deobfuscation",
                      lambda: powershell.analyze(original, paths.extracted_dir, code_mods,
-                                                      fallback=scripting_fallback, fallback_text=fallback_text))
+                                                      fallback=_fb("powershell"), fallback_text=fallback_text))
         if ps_res.get("scripts"):
             write_subresult(paths, "powershell", ps_res)
             ran.append("powershell")
@@ -1299,16 +1309,18 @@ def _analyze_case(case_root: Path) -> dict[str, Any]:
         from .parsers import python as python_parser
         py_res = run("python: .py/.pyc · decompile (pycdc) / disassemble · behaviour rules",
                      lambda: python_parser.analyze(original, paths.extracted_dir, code_mods,
-                                                          fallback=scripting_fallback, fallback_text=fallback_text))
+                                                          fallback=_fb("python"), fallback_text=fallback_text))
         if py_res.get("scripts"):
             write_subresult(paths, "python", py_res)
             ran.append("python")
             findings_total += py_res.get("counts", {}).get("findings", 0)
         # AutoIt, AutoHotkey, Lua, Ruby, Perl, Tcl, shell, PHP… uploaded on their own
         from .parsers import genscript
-        if (original.suffix.lower() in genscript.LANGS and not disguised_top) or (scripting_fallback and genscript.sniff(fallback_text or "")):
+        gs_lang = next((langdetect.GENSCRIPT[x] for x in fb_langs if x in langdetect.GENSCRIPT), None)
+        if (original.suffix.lower() in genscript.LANGS and not disguised_top) or (scripting_fallback and (
+                gs_lang or (not fb_langs and genscript.sniff(fallback_text or "")))):
             gs_res = run("script: AutoIt / Lua / Ruby / Perl / Tcl / shell / PHP · behaviour rules · literals",
-                         lambda: genscript.analyze(original))
+                         lambda: genscript.analyze(original, lang=gs_lang))
             if gs_res.get("scripts"):
                 gs_res["counts"] = {"findings": len(gs_res.get("findings") or []), "scripts": len(gs_res["scripts"])}
                 write_subresult(paths, "script", gs_res)
