@@ -62,6 +62,9 @@ Code it runs is evaluated too, so a second layer's binaries come out under it.
   name, the date) or the C2, it cannot be worked out from the script. A finding shows the
   expression, what it depends on and why; the rest of the script is still resolved.
 - Bounded: steps, time and loop rounds (a `while ($true)` watch loop runs a few rounds).
+- The **Resolution** tab (and a block in each script card) shows it: what the script runs, loads
+  or writes, each stage's recipe step by step, the downloads, the calls not resolved and the trace.
+  The Markdown report has the same in its Resolution section.
 
 ## A script whose extension says nothing
 

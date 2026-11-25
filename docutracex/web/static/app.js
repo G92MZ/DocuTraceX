@@ -2070,6 +2070,82 @@ function jsTechniquesHtml(techs) {
   return `<div class="js-techs"><p class="hint-line"><strong>Confirmed obfuscation techniques</strong> — ${nS} static · ${nB} resolved in the sandbox</p><ol class="js-tech-list">${items}</ol></div>`;
 }
 
+// Static resolution of one script: what the evaluator followed it to (stages with their
+// recipe, downloads, calls it could not resolve) and the step-by-step trace.
+const RES_KIND = { exec: "runs it", load: "loads it", write: "writes it", value: "computes it" };
+const RES_LANG = ["powershell", "python", "javascript", "vbscript", "batch", "script"];
+
+function recipeHtml(r) {
+  return (r || []).map((x) => `<span class="recipe-step">${escapeHtml(x)}</span>`).join('<span class="recipe-arrow">→</span>');
+}
+
+function resolutionCount(r) {
+  return r ? (r.stages || []).length + (r.downloads || []).length + (r.unresolved || []).length : 0;
+}
+
+function resolutionBlock(r, opts) {
+  opts = opts || {};
+  if (!r) return "";
+  const stages = r.stages || [], dls = r.downloads || [], un = r.unresolved || [], steps = r.steps || [];
+  let html = "";
+  if (r.error) html += `<p class="hint-line">Resolution failed: ${escapeHtml(r.error)}</p>`;
+  if (stages.length) {
+    html += table(["#", "What the script does", "Call", "Result", "Recipe", "SHA-256"], stages.map((st, i) => `<tr>
+      <td>${i + 1}${st.depth ? ' <span class="badge badge-muted" title="computed by code the script runs: in Nested under that stage">later stage</span>' : ""}</td>
+      <td>${escapeHtml(RES_KIND[st.kind] || st.kind)}${st.target ? `<br><span class="mono hint-line">${escapeHtml(st.target)}</span>` : ""}</td>
+      <td class="mono">${escapeHtml(st.sink || "")}${st.line ? `<br><span class="hint-line">line ${st.line}</span>` : ""}</td>
+      <td><span class="badge badge-${["pe", "elf", "macho"].includes(st.type) ? "bad" : (st.type === "text" ? "ok" : "warn")}">${escapeHtml(st.type || "")}</span> ${fmtSize(st.size || 0)}</td>
+      <td class="recipe">${recipeHtml(st.recipe)}</td>
+      <td class="mono" title="${escapeHtml(st.sha256 || "")}">${escapeHtml((st.sha256 || "").slice(0, 12))}…</td></tr>`).join(""));
+  }
+  if (dls.length) {
+    html += `<p class="hint-line"><strong>Downloads</strong> — not fetched: get them and analyse them as a new case.</p>`;
+    html += table(["Line", "URL", "Method", "What the script would do with it"], dls.map((d) => `<tr>
+      <td>${d.line || ""}</td><td class="mono ${d.resolved ? "bad-text" : ""}">${escapeHtml(d.url)}</td>
+      <td class="mono">${escapeHtml(d.method || "")}</td>
+      <td>${escapeHtml(d.use || "")}${d.saved_to ? `<br><span class="mono hint-line">saved to ${escapeHtml(d.saved_to)}</span>` : ""}${(d.then || []).length ? `<br><span class="hint-line">then ${escapeHtml(d.then.join(" → "))}</span>` : ""}</td></tr>`).join(""));
+  }
+  if (un.length) {
+    html += `<p class="hint-line"><strong>Dynamic calls not resolved</strong> — the name or the data depends on something that only exists on the victim's machine (a file, the registry, the computer / user name, the date) or the C2, so it cannot be worked out from the script; the rest of it was resolved.</p>`;
+    html += table(["Line", "Expression", "Depends on", "Why"], un.map((u) => `<tr>
+      <td>${u.line || ""}</td><td class="mono">${escapeHtml(u.expression || "")}</td>
+      <td>${escapeHtml(u.depends_on || "")}</td><td class="hint-line">${escapeHtml(u.why || "")}</td></tr>`).join(""));
+  }
+  if (steps.length) {
+    html += `<details class="disclose"${opts.openTrace ? " open" : ""}><summary>Trace — ${steps.length} step(s) followed</summary>`
+      + table(["Line", "Step", "Value", "Recipe so far"], steps.map((t) => `<tr><td>${t.line || ""}</td>
+        <td class="mono">${escapeHtml(t.what || "")}</td><td class="mono">${escapeHtml(t.value || "")}</td>
+        <td class="recipe">${recipeHtml(t.recipe)}</td></tr>`).join("")) + "</details>";
+  }
+  if ((r.errors || []).length) {
+    html += `<details class="disclose"><summary>${r.errors.length} statement(s) not followed</summary><pre class="text-sample">${escapeHtml(r.errors.join("\n"))}</pre></details>`;
+  }
+  if (r.stats && (r.stats.steps || r.stats.seconds)) {
+    html += `<p class="hint-line">${r.stats.steps || 0} evaluation steps · ${r.stats.seconds || 0} s · static (nothing executed)</p>`;
+  }
+  return html || `<p class="hint-line">Nothing reached a call that runs, loads or writes.</p>`;
+}
+
+// The Resolution tab: every script the evaluators followed, in every language.
+function paneResolution(mods) {
+  const rows = [];
+  RES_LANG.forEach((k) => ((mods[k] || {}).scripts || []).forEach((sc) => {
+    if (resolutionCount(sc.resolution)) rows.push({ lang: k, sc });
+  }));
+  if (!rows.length) return `<p class="hint-line">No script was followed to a stage, a download or a dynamic call.</p>`;
+  let html = `<p class="hint-line">Each script evaluated statically — its values and operations followed, nothing executed — to what it <strong>runs</strong>, <strong>loads</strong> or <strong>writes</strong>. Each stage is in <strong>Nested</strong> with the same recipe; a stage computed by code the script runs ("later stage") is under that code there.</p>`;
+  rows.forEach(({ lang, sc }) => {
+    const r = sc.resolution;
+    const bins = (r.stages || []).filter((x) => ["pe", "elf", "macho", "zip"].includes(x.type) || x.kind === "load").length;
+    html += `<details class="disclose js-card res-card" open><summary><span class="badge badge-${bins ? "bad" : "warn"}">${(r.stages || []).length} stage(s)</span>
+      <span class="badge badge-muted">${escapeHtml(lang)}</span> <span class="mono">${escapeHtml(sc.origin || sc.location || "")}</span>
+      ${(r.downloads || []).length ? `<span class="badge badge-warn">${r.downloads.length} download(s)</span>` : ""}
+      ${(r.unresolved || []).length ? `<span class="badge badge-muted">${r.unresolved.length} not resolved</span>` : ""}</summary>
+      <div style="padding:8px 10px">${resolutionBlock(r)}</div></details>`;
+  });
+  return html;
+}
+
 // Generic code-language pane (PowerShell, VBScript, …): same pattern as the
 // JavaScript tab — suspicious lines, a Deobfuscated view (hits highlighted) and
 // an Original view, each with Folder/Download of the complete file. No V8
@@ -2098,6 +2174,10 @@ function paneCodeLanguage(mod, opts) {
     if (sc.code_is_deobfuscated) {
       const methods = (sc.deob_methods || []).join(", ");
       body += `<p class="hint-line"><span class="badge badge-warn">deobfuscated</span> Recovered ${escapeHtml(noun)} analysed below (${escapeHtml(methods || "static decoding")}).</p>`;
+    }
+    if (resolutionCount(sc.resolution)) {
+      const rr = sc.resolution;
+      body += `<details class="disclose" open><summary><strong>Resolution</strong> — ${(rr.stages || []).length} stage(s) · ${(rr.downloads || []).length} download(s) · ${(rr.unresolved || []).length} not resolved</summary>${resolutionBlock(rr)}</details>`;
     }
     if (hits.length) {
       body += table(["Line", "Why", "Code", "Mark"], hits.map((h) => `<tr><td>${h.line_no}</td>
@@ -4257,6 +4337,10 @@ async function openComponents(analysisId, keepTab, viewId) {
     const yara = mods.yara;
     if (yara && yara.rule_count) {
       sections.push({ id: "yara", label: `YARA (${yara.match_count || 0})`, render: () => paneYara(yara, d.yara_findings || findings, analysisId) });
+    }
+    const nRes = RES_LANG.reduce((a, k) => a + ((mods[k] || {}).scripts || []).filter((sc) => resolutionCount(sc.resolution)).length, 0);
+    if (nRes) {
+      sections.push({ id: "resolution", label: `Resolution (${nRes})`, html: paneResolution(mods) });
     }
     const jsm = mods.javascript;
     if (jsm && (jsm.scripts || []).length) {

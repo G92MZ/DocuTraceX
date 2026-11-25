@@ -2242,6 +2242,13 @@ class Interp:
     def invoke_command(self, name: str, args: list, line: int | None, node: Any, piped: Any = None) -> Any:  # noqa: C901
         raw = name
         resolved = self.resolve_name(name)
+        # how the name was written, when it is not the command's own name (computed, alias, backticks)
+        named_as = ""
+        if resolved and node is not None and node[0] == "command":
+            if node[4] is not None:                                   # & (…) / . (…)
+                named_as = f"{resolved} (called as {node[4]} {_unparse(node[2])[:100]})"
+            elif raw.strip().lower() != resolved.lower() and raw.strip().lower() not in ALIASES:
+                named_as = f"{resolved} (called as {raw.strip()[:60]})"   # a script's alias, backticks
         low = (resolved or raw).lower()
         base = raw.replace("`", "").strip().lower().rsplit("\\", 1)[-1]
         self.call_depth += 1
@@ -2268,7 +2275,7 @@ class Interp:
                                            "PropertyType", "Verb", "Credential", "Argument", "RunAs32"])
             if low == "invoke-expression":
                 code = named.get("command", pos[0] if pos else piped)
-                return self.run_code(code, "Invoke-Expression", line)
+                return self.run_code(code, named_as or "Invoke-Expression", line)
             if low == "start-job":
                 sb = named.get("scriptblock", pos[0] if pos else None)
                 al = named.get("argumentlist", named.get("argument"))
@@ -2547,6 +2554,50 @@ class Interp:
             if c:
                 code = c.group(1).strip().strip('"')
                 self.run_code(tag(code, recipe), "powershell -Command", line)
+
+
+def _unparse(n: Any) -> str:
+    """A short readable form of an expression (how a computed command name was written)."""
+    if not isinstance(n, tuple) or not n:
+        return "…"
+    k = n[0]
+    try:
+        if k == "str":
+            return str(n[2]) if re.fullmatch(r"[A-Za-z][\w*?.-]*", str(n[2])) else repr(str(n[2]))
+        if k == "xstr":
+            return '"' + n[2] + '"'
+        if k == "num":
+            return str(n[2])
+        if k == "var":
+            return "$" + n[2]
+        if k == "type":
+            return f"[{n[2]}]"
+        if k == "paren":
+            return "(" + _unparse(n[2]) + ")"
+        if k == "bin":
+            return f"{_unparse(n[3])} {'-' + n[2] if n[2].isalpha() else n[2]} {_unparse(n[4])}"
+        if k == "array":
+            return ",".join(_unparse(x) for x in n[2])
+        if k == "index":
+            return f"{_unparse(n[2])}[{_unparse(n[3])}]"
+        if k == "range":
+            return f"{_unparse(n[2])}..{_unparse(n[3])}"
+        if k == "member":
+            return f"{_unparse(n[2])}{'::' if n[4] else '.'}{_unparse(n[3]) if n[3][0] != 'str' else n[3][2]}"
+        if k == "call":
+            return f"{_unparse(n[2])}{'::' if n[5] else '.'}{_unparse(n[3]) if n[3][0] != 'str' else n[3][2]}({', '.join(_unparse(a) for a in n[4])})"
+        if k == "cast":
+            return f"[{n[2]}]{_unparse(n[3])}"
+        if k == "unary":
+            return f"-{n[2]} {_unparse(n[3])}"
+        if k == "command":
+            return " ".join([_unparse(n[2]) if n[2][0] != "str" else n[2][2]]
+                            + [(("-" + a[2]) if a[0] == "param" else _unparse(a)) for a in n[3]])
+        if k == "subexpr":
+            return "$(…)"
+    except (IndexError, TypeError):
+        pass
+    return "…"
 
 
 _IOCISH = re.compile(r"(?i)\b(?:https?|ftp|tcp)://|\b\d{1,3}(?:\.\d{1,3}){3}\b|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|info|biz|io|ru|cn|top|xyz|example|onion)\b")

@@ -1224,3 +1224,8 @@ body.ntree-max-open { overflow: hidden; }
 }
 .ntree-member { display: flex; align-items: center; gap: 4px; }
 .ntree-member .btn { padding: 0 4px; line-height: 1.4; }
+
+/* Resolution: recipes as chips */
+td.recipe { font-size: 12px; line-height: 1.9; }
+.recipe-step { display: inline-block; padding: 0 6px; border-radius: 4px; background: var(--surface-2, rgba(127,127,127,.12)); font-family: var(--mono, ui-monospace, monospace); white-space: nowrap; }
+.recipe-arrow { margin: 0 4px; color: var(--text-dim); }
