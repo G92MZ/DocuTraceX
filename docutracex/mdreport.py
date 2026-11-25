@@ -11,6 +11,7 @@ bounded so a huge case still opens in the browser.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, Callable
 
 from . import ai_tools
@@ -286,6 +287,79 @@ def _floss(cid: str) -> str:
     return "\n".join(out)
 
 
+def _email_source(data: bytes) -> list[str]:
+    """One message read straight from its bytes: the header block verbatim, every text / HTML
+    body whole, every link, every attachment (name, type, size, SHA-256)."""
+    import email
+    import email.policy
+    import hashlib
+    import re
+    m = re.search(rb"\r?\n\r?\n", data)
+    head = data[:m.start()] if m else data
+    out = ["### Headers (verbatim, in order)", "", _fence(head.decode("utf-8", "replace"))]
+    msg = email.message_from_bytes(data, policy=email.policy.default)
+    links: list[str] = []
+    atts = []
+    for i, part in enumerate(msg.walk()):
+        if part.is_multipart():
+            continue
+        ctype = part.get_content_type()
+        fname = part.get_filename()
+        disp = part.get_content_disposition()
+        if fname or disp == "attachment" or not ctype.startswith("text/"):
+            raw = part.get_payload(decode=True) or b""
+            atts.append([fname or "(no name)", ctype, disp or "", len(raw), hashlib.sha256(raw).hexdigest()])
+            continue
+        try:
+            body = part.get_content()
+        except Exception:  # noqa: BLE001  (a broken charset: the bytes as UTF-8)
+            body = (part.get_payload(decode=True) or b"").decode("utf-8", "replace")
+        part_head = "\n".join(f"{k}: {v}" for k, v in part.items())
+        out += [f"### Part {i}: {ctype} ({len(body)} characters)", "", _fence(part_head) if part_head else "",
+                _fence(str(body), "html" if ctype == "text/html" else "")]
+        if ctype == "text/html":
+            links += re.findall(r"""(?i)(?:href|src|action)\s*=\s*["']?([^"'\s>]+)""", str(body))
+    links = list(dict.fromkeys(links))
+    out += [f"### Links in the HTML ({len(links)})", "", _fence("\n".join(links)) if links else "_(none)_\n",
+            f"### Attachments ({len(atts)})", "", _table(["Name", "Type", "Disposition", "Size", "SHA-256"], atts)]
+    return out
+
+
+def _email(cid: str) -> str:
+    """Every message of the case (the original and each attached / nested one), read from its
+    own bytes: headers verbatim, bodies whole, links and attachments — what the email tabs show
+    in part (the module result keeps 20,000 characters of each body)."""
+    paths = ai_tools._paths(cid)
+    manifest = read_json(paths.manifest) or {}
+    targets: list[tuple[str, str]] = []
+    if (paths.subresult("email")).is_file():
+        targets.append(("the case file", (manifest.get("original") or {}).get("stored_path") or ""))
+    vdir = paths.results_dir / "nested_views"
+    for p in sorted(vdir.glob("*.json")) if vdir.is_dir() else []:
+        v = read_json(p) or {}
+        if "email" in (v.get("modules") or {}) and v.get("stored_path"):
+            targets.append((f"Nested › {v.get('chain') or v.get('filename')}", v["stored_path"]))
+    out = [f"# Email messages ({len(targets)})", ""]
+    for label, rel in targets:
+        f = (paths.root / rel) if rel else None
+        out += [f"## {label}: `{Path(rel).name if rel else ''}`", ""]
+        try:
+            data = f.read_bytes() if f else b""
+        except OSError:
+            data = b""
+        if data[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":       # Outlook .msg: its transport headers, as parsed
+            em = read_json(paths.subresult("email")) or {}
+            out += ["_(Outlook .msg: headers as read from its transport headers; bodies in Raw modules › email)_", "",
+                    _fence("\n".join(f"{h.get('name')}: {h.get('value')}" for h in em.get("headers") or []))]
+        elif data:
+            out += _email_source(data)
+        else:
+            out.append("_(file not available)_")
+    if not targets:
+        out.append("_(no email in this case)_")
+    return "\n".join(out)
+
+
 def _code_files(cid: str) -> str:
     """The complete source of every script (original and deobfuscated) as dumped under
     extracted/code/ — the module results keep 60–80k characters of each."""
@@ -486,6 +560,7 @@ def _rmm(cid: str) -> str:
 
 SECTIONS: list[tuple[str, str, Callable[[str], str]]] = [
     ("summary", "Summary", _summary), ("findings", "Findings", _findings), ("iocs", "IOCs", _iocs),
+    ("email", "Email", _email),
     ("nested", "Nested / stages", _nested), ("decrypted", "Decrypted", _decrypted), ("code", "Code", _code),
     ("dotnet", ".NET", _dotnet), ("ml", "Machine Learning", _ml), ("yara", "YARA", _yara), ("c2", "C2", _c2),
     ("rmm", "RMM / remote access", _rmm),

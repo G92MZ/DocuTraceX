@@ -20,6 +20,8 @@ what a tool showed and no rule detected:
 - **FLOSS**: every decoded, stack and tight string with the function that builds it, and of the
   static strings those worth reading (URLs, domains, IPs, paths, registry keys, commands, APIs of
   injection / network / crypto, credentials, long base64).
+- **Email**: every message (the case file and each attached one) read from its own bytes — the
+  header block verbatim, in order, every text and HTML body whole, every link and attachment.
 - **Code files**: every recovered script, original and deobfuscated, whole.
 - **Raw modules**: every result file, the nested children's own analyses and the code analysis.
 

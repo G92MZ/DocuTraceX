@@ -8,7 +8,7 @@ the entries between the version you had and the new one.
 **Markdown report: the whole analysis, every tool's output in full**
 
 - The Markdown export now has every tool's **complete** output (also of each nested child), with command, exit code and stderr: an agent can point at what a tool showed and no rule caught.
-- New sections: **FLOSS** (decoded, stack and tight strings, plus the static ones worth reading), **Tool outputs**, **Code files** (every recovered script, whole), and the C2 extractors' raw output.
+- New sections: **Email** (every header verbatim, bodies whole, also of attached messages), **FLOSS** (decoded, stack and tight strings, plus the static ones worth reading), **Tool outputs**, **Code files**, and the C2 extractors' raw output.
 - **Download with every output (.zip)**: the report plus each complete output as its own file, FLOSS's every string included.
 - PE results keep every capa capability, section, import and export (they were capped).
 

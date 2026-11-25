@@ -86,3 +86,21 @@ def test_sections_cover_children_scripts_floss_and_c2(tmp_path: Path, monkeypatc
     assert "harmless words" in full and "function 0x401000" in full
     assert "C2_RAW_OUTPUT" in secs["c2"]
     assert "results/nested_views/0123456789abcdef-a1b2c3.json" in secs["modules"]
+
+
+def test_email_section_has_every_header_and_whole_bodies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from docutracex import mdreport
+    from docutracex.config import settings
+    monkeypatch.setattr(settings, "cases_dir", tmp_path / "cases")
+    cp = CasePaths("20261125-030000-abcdef12")
+    body = "pago pendiente " * 3000 + "LATE_BODY_MARKER https://billing-portal.example/late"
+    eml = ("Received: from relay.example (relay.example [203.0.113.9]) by mx.example; Wed, 25 Nov 2026 10:00:00 +0000\r\n"
+           "X-Custom-Trace: abc123\r\nFrom: Facturas <facturas@proveedor.example>\r\nTo: pagos@cliente.example\r\n"
+           "Subject: Factura 2026-0187\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n" + body).encode()
+    (cp.root / "original").mkdir(parents=True)
+    (cp.root / "original" / "f.eml").write_bytes(eml)
+    write_json(cp.manifest, {"analysis_id": cp.root.name, "original": {"filename": "f.eml", "stored_path": "original/f.eml"}})
+    write_json(cp.subresult("email"), {"module": "email", "body_sample": body[:20000]})
+    md = next(s["markdown"] for s in mdreport.build(cp.root.name) if s["id"] == "email")
+    assert "X-Custom-Trace: abc123" in md and "Received: from relay.example" in md
+    assert "LATE_BODY_MARKER" in md                              # past the 20,000 characters kept for the tab
