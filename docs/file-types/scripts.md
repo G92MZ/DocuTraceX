@@ -66,6 +66,23 @@ Code it runs is evaluated too, so a second layer's binaries come out under it.
   or writes, each stage's recipe step by step, the downloads, the calls not resolved and the trace.
   The Markdown report has the same in its Resolution section.
 
+## Python resolved statically
+
+Python is evaluated the same way: the source is parsed (never run) and the evaluator follows
+assignments, functions and lambdas, comprehensions, loops (an in-place XOR over a `bytearray`),
+conditions and the library calls droppers use: `base64` / `binascii` / `codecs` (rot13, hex),
+`zlib` / `gzip` / `lzma` / `bz2`, `marshal`, PyCryptodome (`AES.new(key, AES.MODE_CBC, iv)`,
+`unpad`), `cryptography` (Fernet, `Cipher`), `hashlib`, `bytes.fromhex`. What reaches `exec` /
+`eval` / `compile`, `ctypes` (a buffer, `RtlMoveMemory`, `VirtualAlloc`), `subprocess` / `os.system`
+(a `powershell -enc` becomes a `.ps1` stage) or `open(…, 'wb').write` is a stage in Nested with its
+recipe; code it runs is evaluated too.
+
+- **Computed names**: `getattr(__builtins__, 'ex'+'ec')`, `__import__('ba'+'se64')`,
+  `getattr(module, name)` with a computed name.
+- **Downloads** (`urllib`, `requests`) are reported with what the script does with them; a call
+  whose name or data comes from the environment, a file or the network is a **dynamic call not
+  resolved**, with why.
+
 ## A script whose extension says nothing
 
 A `.txt`, `.dat`, `.log` or a file with no extension that holds a script — on its own or inside

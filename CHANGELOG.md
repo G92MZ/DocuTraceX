@@ -3,6 +3,14 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.252.0 — 2026-11-25 (#332)
+
+**Python scripts evaluated statically to the binary they hide**
+
+- Python droppers are followed without running them: exec layers, `getattr(__builtins__, 'ex'+'ec')`, base64 / zlib / lzma / marshal, AES and Fernet, XOR loops, down to what they run or load with `ctypes`.
+- Hidden binaries go to **Nested** with their recipe; the Resolution tab shows Python scripts too.
+- Downloads (`urllib`, `requests`) are reported, and calls that depend on the victim's machine are flagged with why.
+
 ## 1.251.0 — 2026-11-25 (#331)
 
 **Resolution tab: how each hidden stage was reached**

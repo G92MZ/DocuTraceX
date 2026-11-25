@@ -353,6 +353,11 @@ def _binary_stages(lay: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+def _resolve(code: str, loc: str) -> dict[str, Any] | None:
+    from ..resolve import py_eval, report
+    return report.run(py_eval.resolve, code, loc, "py")
+
+
 def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any] | None = None,
             fallback: bool = False, fallback_text: str | None = None) -> dict[str, Any]:
     res: dict[str, Any] = {"module": "python", "status": "ok", "scripts": [], "findings": []}
@@ -411,6 +416,16 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any] | None 
             "source": source_kind, "python_version": pyver,
             "hits": hits, "metrics": mets, "_full_code": code,
         }
+        # static resolution: the script's values and operations followed (never run) to what it
+        # execs, loads into memory (ctypes) or writes — each layer, with its recipe
+        resolved = _resolve(src if not is_pyc else display, loc)
+        if resolved:
+            from ..resolve import report
+            script["decoded_stages"] = report.merge(resolved["stages"], script["decoded_stages"])
+            script["resolution"] = resolved["summary"]
+            for f in resolved["findings"]:
+                res["findings"].append(_finding(f["rule"], f["severity"], f"[{origin}] {f['detail']}", loc,
+                                                f.get("evidence", "")))
         res["scripts"].append(script)
 
         by_rule: dict[str, list[dict[str, Any]]] = {}
