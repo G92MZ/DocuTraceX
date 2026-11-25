@@ -30,6 +30,13 @@ code is CIL: it is disassembled and read, never run.
       Nested child, and so does a **payload kept in the constants**: a base64 file, or one the
       other constants open (3DES / AES with a base64 key and IV, as the DarkCloud chain's
       injector keeps the stealer).
+    - **Obfuscators of their own**: the same emulation runs when the literals read as encoded
+      text (no spaces, many symbols, long runs of capitals) or when an assembly with almost no
+      literals reads a resource, decrypts it and turns bytes into text (a .NET Reactor-like
+      **string table**): the class initializers run on first use, the decoders the assembly
+      calls are caught as they return (*string decoder (CIL emulation)*), with `List` /
+      `Dictionary`, `BinaryReader`, the manifest resources and the framework's AES / DES /
+      3DES, MD5 / SHA and PBKDF2 modelled.
     - **Resources**: `.resources` files opened entry by entry; encrypted entries decrypted with
       the keys the assembly holds (in the method, its class or the whole assembly), and images
       read pixel by pixel.

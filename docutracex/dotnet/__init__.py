@@ -237,22 +237,29 @@ def parse(data: bytes) -> dict[str, Any]:
                 c["confuser_error"] = f"ConfuserEx constants: {exc}"[:200]
             # mutated ConfuserEx (flattened control flow, the key derivation inlined in the module
             # initializer): the constants come out by interpreting the CIL, not by its patterns
-            if (any(o["name"] == "ConfuserEx" for o in out["obfuscators"])
-                    and (c.get("confuser_constants") or {}).get("mode") != "Normal"):
+            confuser = any(o["name"] == "ConfuserEx" for o in out["obfuscators"])
+            encoded = _encoded_literals(out["strings"])
+            if ((confuser and (c.get("confuser_constants") or {}).get("mode") != "Normal")
+                    or encoded >= 5 or _resource_table(t, out["strings"])):
                 try:
                     from .cilemu import confuser_strings
                     em = confuser_strings(data)
                     if em and (em["strings"] or em["assemblies"]):
-                        c["confuser_constants"] = {
-                            "initializer": "<Module>::.cctor", "mode": "emulated", "how": em["how"], "records_bytes": 0,
-                            "strings": len(em["strings"]), "assemblies": len(em["assemblies"]),
-                            **({"stopped": em["error"]} if em["error"] else {})}
+                        if confuser:
+                            c["confuser_constants"] = {
+                                "initializer": "<Module>::.cctor", "mode": "emulated", "how": em["how"],
+                                "records_bytes": 0, "strings": len(em["strings"]), "assemblies": len(em["assemblies"]),
+                                **({"stopped": em["error"]} if em["error"] else {})}
+                        else:                     # an obfuscator of its own: encoded literals and their decoder
+                            c["emulated_strings"] = {"how": em["how"], "strings": len(em["strings"]),
+                                                     "encoded_literals": encoded}
+                        label = "ConfuserEx constants (CIL emulation)" if confuser else "string decoder (CIL emulation)"
                         c.setdefault("decrypted", []).extend(
-                            {"decryptor": "ConfuserEx constants (CIL emulation)", "caller": x["caller"],
+                            {"decryptor": label, "caller": x["caller"],
                              "input": x["id"], "output": x["output"][:4000], "how": em["how"]} for x in em["strings"])
                         out["_confuser_assemblies"] = em["assemblies"]
                         out["_confuser_payloads"] = em.get("payloads") or []
-                        if em.get("payloads"):
+                        if em.get("payloads") and confuser:
                             c["confuser_constants"]["payloads"] = len(em["payloads"])
                     elif em and em.get("error"):
                         c["confuser_error"] = f"ConfuserEx constants (CIL emulation): {em['error']}"[:200]
@@ -266,6 +273,34 @@ def parse(data: bytes) -> dict[str, Any]:
         return out
     finally:
         pe.close()
+
+
+_JUNKY = re.compile(r"^[^\s]{16,}$")
+
+
+_TABLE_CALLS = {"GetManifestResourceStream", "CreateDecryptor", "GetString"}
+
+
+def _resource_table(t, strings: list[str]) -> bool:  # noqa: ANN001
+    """Its strings kept as a table in an encrypted resource (as .NET Reactor and crypters do): almost no
+    literal in #US, and the calls that read a resource, decrypt it and turn bytes into text."""
+    if len(strings) > 40:
+        return False
+    names = {str(m.Name) for m in t.MemberRef or []}
+    return _TABLE_CALLS <= names
+
+
+def _encoded_literals(strings: list[str]) -> int:
+    """User strings that read as encoded text rather than words: 16+ characters, no space, and a fifth
+    of them symbols — or one long run of capital letters (hex written with other letters)."""
+    n = 0
+    for v in strings[:3000]:
+        if not _JUNKY.match(v) or v.startswith(("http", "\\", "C:\\")):
+            continue
+        sym = sum(1 for ch in v if not ch.isalnum())
+        if sym >= len(v) * 0.2 and not re.fullmatch(r"[A-Za-z0-9+/=]+", v) or re.fullmatch(r"[A-P]{24,}", v):
+            n += 1
+    return n
 
 
 def _findings(item: dict[str, Any]) -> list[dict[str, Any]]:
@@ -324,6 +359,12 @@ def _findings(item: dict[str, Any]) -> list[dict[str, Any]]:
                     "detail": (f"ConfuserEx constants protection decrypted {how}: {cx['strings']} literal(s) recovered{extra}"
                                if ok else f"ConfuserEx constants protection ({cx['mode']})"),
                     "evidence": f"{cx['how']} — initializer {cx['initializer']}"})
+    em = cil.get("emulated_strings")
+    if em:
+        out.append({"rule": "dotnet:strings_emulated", "severity": "medium", "tool": "dotnet", "location": loc,
+                    "attack": "T1027",
+                    "detail": f"{em['encoded_literals']} encoded literal(s) and the assembly's own decoder: "
+                              f"{em['strings']} string(s) recovered by CIL emulation", "evidence": em["how"]})
     dec = cil.get("decrypted") or []
     if dec:
         out.append({"rule": "dotnet:strings_decrypted", "severity": "medium", "tool": "dotnet", "location": loc,

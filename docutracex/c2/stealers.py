@@ -344,56 +344,199 @@ def _stealc_vidar(key: str, values: list[str], urls: list[str], strings: list[st
     return None
 
 
+# Vidar builds that keep their strings in clear: the dead drops next to the build's own markers
+_VIDAR_MARKS = (b"information.txt", b"Work Dir: In memory", b"build_id", b"file_data", b"passwords.txt",
+                b"Soft: WinSCP", b"Soft: FileZilla", b"\\Autofill\\", b"\\CC\\", b"[Hardware]", b"[Processes]")
+_VIDAR_UA = re.compile(r"^Mozilla/5\.0 \(Windows NT [^)]+\) AppleWebKit/[\d.]+ \(KHTML, like Gecko\) .{10,120}$")
+
+
+def vidar_plain(data: bytes) -> dict[str, Any] | None:
+    """Vidar with its strings in clear (unpacked builds): its dead drops — a Telegram channel and a Steam
+    profile whose name / description holds the C2 — beside at least three of the build's own markers
+    (``information.txt``, ``Work Dir: In memory``, ``build_id``, ``file_data``, ``Soft: WinSCP``…). The
+    32-hex profile / build key and the user agent it sends are kept too."""
+    if data[:2] != b"MZ":
+        return None
+    marks = [m.decode() for m in _VIDAR_MARKS if m in data]
+    if len(marks) < 3:
+        return None
+    strings = native_strings(data)
+    drops = list(dict.fromkeys(s.rstrip("/") for s in strings if _DEAD_DROP.match(s)))
+    if not drops:
+        return None
+    idx = {s: i for i, s in enumerate(strings)}
+    near = {j for d in drops for i in [idx.get(d, idx.get(d + "/", -99))] for j in range(i - 3, i + 4)}
+    keys = [strings[j] for j in sorted(near) if 0 <= j < len(strings) and re.fullmatch(r"[0-9a-f]{32}", strings[j])]
+    ua = next((s for s in strings if _VIDAR_UA.match(s)), "")
+    summary: dict[str, Any] = {"Dead drop": drops}
+    if keys:
+        summary["Profile / build key"] = keys[0]
+    if ua:
+        summary["User agent"] = ua
+    summary["Markers"] = marks
+    summary["Note"] = ("Vidar reads its C2 from the dead drop (the Telegram channel's description or the Steam "
+                       "profile's name): open it with a network check to see the current C2")
+    return {"family": "Vidar", "kind": "stealer", "method": "strings in clear: dead drops + the build's markers",
+            "confidence": "high" if len(marks) >= 4 else "medium", "summary": summary,
+            "c2": [], "dead_drop": drops,
+            "fields": {**{f"dead drop {i + 1}": d for i, d in enumerate(drops)},
+                       **({"key": keys[0]} if keys else {}), **({"user agent": ua} if ua else {})}}
+
+
+_STEALC2_KEYS = ("opcode", "access_token", "self_delete", "take_screenshot", "steal_steam", "steal_discord",
+                  "steal_outlook", "loader_id", "upload_file", "parse_cookies", "use_v20")
+
+
+def _stealc_v2(key: str, values: list[str], urls: list[str]) -> dict[str, Any] | None:
+    """StealC v2 (2025): the same base64 + RC4 strings, but a JSON protocol instead of the ``.php`` gate —
+    its request / task keys (``opcode``, ``access_token``, ``steal_steam``, ``loader_id``…) among them."""
+    keys = [v for v in values if v in _STEALC2_KEYS]
+    if len(keys) < 4:
+        return None
+    build = next((v for v in values if re.fullmatch(r"[A-Za-z0-9]{14,32}", v) and v != key
+                  and any(c.isdigit() for c in v) and any(c.isupper() for c in v)), "")
+    tasks = [v for v in values if v.startswith(("steal_", "take_", "self_delete", "loader", "run_as_admin"))]
+    summary: dict[str, Any] = {"C2": list(dict.fromkeys(urls)), "RC4 key": key}
+    if build:
+        summary["Build ID (probably)"] = build
+    if tasks:
+        summary["Tasks it accepts"] = tasks
+    summary["Protocol"] = "JSON (StealC v2): " + ", ".join(keys[:8])
+    summary["Note"] = ("the C2 sends what to steal (browsers, wallets, plugins, files) and what to load next when the "
+                       "stealer checks in: it is not in the file")
+    return {"family": "StealC", "kind": "stealer", "method": "base64 + RC4 with a key string from the binary (v2)",
+            "confidence": "high", "summary": summary,
+            "c2": list(dict.fromkeys(h for u in urls for h in [_url_host(u)] if h)),
+            "fields": {f"value {i + 1}": v for i, v in enumerate(values[:60])}}
+
+
+def _decimal_ip(url: str) -> str:
+    """``http://3405803823:80/`` (an IPv4 written as one number) → the dotted address beside it."""
+    m = re.match(r"^(https?://)(\d{8,10})((?::\d+)?(?:/.*)?)$", url)
+    if not m or int(m.group(2)) > 0xFFFFFFFF:
+        return url
+    n = int(m.group(2))
+    return f"{m.group(1)}{n >> 24}.{(n >> 16) & 255}.{(n >> 8) & 255}.{n & 255}{m.group(3)}"
+
+
+# strings every build of these stealers encrypts: known plaintext to recover a fixed RC4 keystream
+_KNOWN = (b"kernel32.dll", b"advapi32.dll", b"GetProcAddress", b"LoadLibraryA", b"ExitProcess", b"ntdll.dll",
+          b"user32.dll", b"crypt32.dll", b"shell32.dll", b"wininet.dll", b"sqlite3.dll", b"nss3.dll")
+_LONG = (b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+         b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+         b"C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe",
+         b"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+         b"HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0",
+         b"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/")
+
+
+def _keystream(enc: list[tuple[str, bytes]]) -> bytes | None:
+    """RC4 with one key gives one keystream for every string: when the key itself is not a readable string
+    of the binary, guess a string the stealer always carries (``kernel32.dll``…), keep the keystream that
+    turns most of the others into text, and lengthen it with a longer one (the base64 alphabet…)."""
+    blobs = [b for _, b in enc]
+    best: tuple[int, bytes] = (0, b"")
+    for c in blobs[:300]:
+        for guess in _KNOWN:
+            if len(c) != len(guess):
+                continue
+            ks = bytes(x ^ y for x, y in zip(c, guess))
+            ok = sum(1 for d in blobs if len(d) >= 4 and all(32 <= (d[i] ^ ks[i]) < 127 for i in range(min(len(d), len(ks)))))
+            if ok > best[0]:
+                best = (ok, ks)
+    if best[0] < max(10, len(blobs) // 4):
+        return None
+    ks = best[1]
+    for _ in range(3):
+        grown = False
+        for c in blobs:
+            if len(c) <= len(ks):
+                continue
+            head = bytes(x ^ y for x, y in zip(c, ks))
+            for long in _LONG:
+                if len(long) == len(c) and long.startswith(head):
+                    ks = bytes(x ^ y for x, y in zip(c, long))
+                    grown = True
+                    break
+        if not grown:
+            break
+    return ks
+
+
+def _values_with(enc: list[tuple[str, bytes]], dec: Any) -> list[str]:
+    values = []
+    for _, b in enc:
+        pt = dec(b)
+        if pt is None:
+            continue
+        try:
+            v = pt.decode("ascii")
+        except UnicodeDecodeError:
+            continue
+        if _printable(v):
+            values.append(v)
+    return values
+
+
 def raccoon(data: bytes) -> dict[str, Any] | None:
     if data[:2] != b"MZ":
         return None
     strings = [s for s in native_strings(data) if len(s) <= 256]
-    enc = [(s, b) for s in strings for b in [_b64(s)] if b and 4 <= len(b) <= 512][:300]
+    enc = [(s, b) for s in strings for b in [_b64(s)] if b and 4 <= len(b) <= 512][:600]
     if not enc:
         return raccoon_traces(data)
     # the key is a plain string of the binary — often alphanumeric, so it may also look like base64
-    keys = sorted((s for s in strings if 6 <= len(s) <= 64), key=lambda k: bool(_b64(k)))[:250]
+    keys = sorted((s for s in strings if 6 <= len(s) <= 64), key=lambda k: bool(_b64(k)))[:4000]
     for key in keys:
         kb = key.encode("latin-1")
         ksa = _ksa(kb)
         if not any(_rc4_prefix(ksa, b, 4) in (b"http", b"HTTP") for _, b in enc):
             continue                                    # cheap probe: no URL with this key
-        values = []
-        for _, b in enc:
-            pt = rc4(kb, b)
-            try:
-                v = pt.decode("ascii")
-            except UnicodeDecodeError:
-                continue
-            if _printable(v):
-                values.append(v)
-        urls = [v for v in values if _url_host(v)]
-        if not urls:
-            continue
-        markers = [v for v in values if v.startswith(("machineId=", "configId=", "&configId="))]
-        other = _stealc_vidar(key, values, urls, strings, data)
-        if other and not markers:
-            return other
-        fam = "Raccoon Stealer v2" if markers else "RC4-encrypted C2 (Raccoon-like)"
-        summary: dict[str, Any] = {"C2": list(dict.fromkeys(urls)), "RC4 key": key}
-        build = [s for s in strings if _HEX32.match(s)]
-        if build and markers:
-            summary["Config ID (probably)"] = build[0]
-        if markers:
-            summary["Request fields"] = markers
-        ua = next((v for v in values if v.startswith("Mozilla/") or v.lower().startswith("user-agent")), "")
-        if ua:
-            summary["User agent"] = ua
-        hits = list(dict.fromkeys(what for needle, what in RACCOON.traces if needle in data))
-        if hits:
-            summary["Traces"] = hits
-        summary["Note"] = ("the C2 sends the real configuration when the stealer checks in (what to steal, the DLLs "
-                           "to download, file grabbers): it is not in the file")
-        return {"family": fam, "kind": "stealer", "method": "base64 + RC4 with a key string from the binary",
-                "confidence": "high" if markers else "medium", "summary": summary,
-                "c2": list(dict.fromkeys(h for u in urls for h in [_url_host(u)] if h)),
-                "fields": {f"value {i + 1}": v for i, v in enumerate(values[:60])}}
+        got = _from_values(key, f"key '{key}'", _values_with(enc, lambda b, kb=kb: rc4(kb, b)), strings, data)
+        if got:
+            return got
+    ks = _keystream(enc)
+    if ks:
+        got = _from_values("", "keystream recovered from known strings (the key is not stored as text)",
+                           _values_with(enc, lambda b: bytes(x ^ y for x, y in zip(b, ks)) if len(b) <= len(ks) else None),
+                           strings, data)
+        if got:
+            got["method"] = "base64 + RC4 (fixed keystream recovered from strings every build carries)"
+            return got
     return raccoon_traces(data)
+
+
+def _from_values(key: str, key_label: str, values: list[str], strings: list[str], data: bytes) -> dict[str, Any] | None:
+    values = [_decimal_ip(v) for v in values]
+    urls = [v for v in values if _url_host(v)]
+    if not urls:
+        return None
+    markers = [v for v in values if v.startswith(("machineId=", "configId=", "&configId="))]
+    other = _stealc_vidar(key or key_label, values, urls, strings, data)
+    if other and not markers:
+        return other
+    v2 = _stealc_v2(key or key_label, values, urls)
+    if v2 and not markers:
+        return v2
+    fam = "Raccoon Stealer v2" if markers else "RC4-encrypted C2 (Raccoon-like)"
+    summary: dict[str, Any] = {"C2": list(dict.fromkeys(urls)), "RC4 key": key or key_label}
+    build = [s for s in strings if _HEX32.match(s)]
+    if build and markers:
+        summary["Config ID (probably)"] = build[0]
+    if markers:
+        summary["Request fields"] = markers
+    ua = next((v for v in values if v.startswith("Mozilla/") or v.lower().startswith("user-agent")), "")
+    if ua:
+        summary["User agent"] = ua
+    hits = list(dict.fromkeys(what for needle, what in RACCOON.traces if needle in data))
+    if hits:
+        summary["Traces"] = hits
+    summary["Note"] = ("the C2 sends the real configuration when the stealer checks in (what to steal, the DLLs "
+                       "to download, file grabbers): it is not in the file")
+    return {"family": fam, "kind": "stealer", "method": "base64 + RC4 with a key string from the binary",
+            "confidence": "high" if markers else "medium", "summary": summary,
+            "c2": list(dict.fromkeys(h for u in urls for h in [_url_host(u)] if h)),
+            "fields": {f"value {i + 1}": v for i, v in enumerate(values[:60])}}
 
 
 def raccoon_traces(data: bytes) -> dict[str, Any] | None:
@@ -575,7 +718,7 @@ def extract_all(data: bytes) -> list[dict[str, Any]]:
         if best:
             out.append(best)
     else:
-        found = [r for fn in (warzone, raccoon) for r in [fn(data)] if r]
+        found = [r for fn in (warzone, raccoon, vidar_plain) for r in [fn(data)] if r]
         best = next((r for r in found if r.get("kind") != "indicators"), found[0] if found else None)
         if best:
             out.append(best)

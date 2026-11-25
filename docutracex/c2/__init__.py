@@ -247,12 +247,13 @@ def _scan_detailed(path: Path, data: bytes) -> tuple[list[dict[str, Any]], list[
 def _finding(cfg: dict[str, Any]) -> dict[str, Any]:
     s = cfg.get("summary") or {}
     c2 = s.get("C2") or s.get("Hosts") or cfg.get("c2") or []
-    detail = f"{cfg['family']} configuration ({cfg['kind']})" + (f": C2 {', '.join(c2[:4])}" if c2 else "")
+    detail = f"{cfg['family']} configuration ({cfg['kind']})" + (f": C2 {', '.join(c2[:4])}" if c2 else "") + (
+        f": dead drop {', '.join(cfg['dead_drop'][:3])}" if not c2 and cfg.get("dead_drop") else "")
     evidence = "; ".join(f"{k}: {', '.join(map(str, v)) if isinstance(v, list) else v}"
                          for k, v in s.items())[:1500]
     if cfg.get("provenance"):                   # evidence, not detail: the finding id stays the same
         evidence = (f"from: {cfg['provenance']}; " + evidence)[:1800]
-    sev = "high" if c2 and cfg.get("confidence") != "low" else "medium"
+    sev = "high" if (c2 or cfg.get("dead_drop")) and cfg.get("confidence") != "low" else "medium"
     if cfg.get("method") == "family YARA":          # identified by the family rules, no configuration
         detail = f"{cfg['family']} identified by YARA ({s.get('Sources', '')})"
         sev = "high" if cfg.get("confidence") == "medium" else "medium"

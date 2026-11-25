@@ -28,7 +28,7 @@ SALTS = (
     ("DcRAT", b"DcRatByqwqdanchun"),
 )
 ITERATIONS = 50000
-MAX_KEYS = 40
+MAX_KEYS = 60
 MARKERS = (("DcRAT", (b"DcRat", b"D\x00c\x00R\x00a\x00t")),
            ("AsyncRAT", (b"AsyncClient", b"AsyncRAT", b"A\x00s\x00y\x00n\x00c\x00R\x00A\x00T", b"Pastebin")),
            ("QuasarRAT", (b"Quasar", b"Q\x00u\x00a\x00s\x00a\x00r", b"xClient")))
@@ -149,9 +149,22 @@ def settings_fields(data: bytes) -> tuple[dict[str, list[str]], str]:
                 if 0 < rid_f <= len(fields):
                     out.setdefault(pending, []).append(fields[rid_f - 1])
             pending = None
-        if sum(map(len, out.values())) > sum(map(len, best[0].values())):
-            best = (out, owners.get(rid, "").split("::", 1)[0])
+        cls = owners.get(rid, "").split("::", 1)[0]
+        if _settings_score(out, cls) > _settings_score(best[0], best[1]):
+            best = (out, cls)
     return best
+
+
+def _settings_score(out: dict[str, list[str]], cls: str) -> int:
+    """How much a ``.cctor`` looks like a RAT's settings: encrypted base64 values weigh most, a class
+    named ``Settings`` helps (a big library's constant tables — BouncyCastle — do not win)."""
+    if not out:
+        return -1
+    enc = sum(1 for lit in out if (b := _b64(lit)) is not None and len(b) >= 32)
+    name = cls.rsplit(".", 1)[-1]
+    lib = cls.startswith(("Org.BouncyCastle", "System.", "Microsoft.", "Newtonsoft.", "Google.Protobuf"))
+    return enc * 10 + sum(map(len, out.values())) + (40 if name in ("Settings", "Config", "Configuration") else 0) \
+        - (1000 if lib else 0)
 
 
 def prefilter(data: bytes) -> bool:
@@ -271,7 +284,14 @@ def extract(data: bytes) -> dict[str, Any] | None:
     blobs = {s: b for s in strings for b in [_b64(s)] if b and len(b) >= 32}
     enc14 = [s for s, b in blobs.items() if len(b) >= 64 and (len(b) - 48) % 16 == 0]
     keys: list[bytes] = []
-    for s in strings:
+    # the settings' own literals first (the master key sits with them), then the strings around the
+    # encrypted values in the heap — a big assembly's libraries would push it past the limit
+    names, _cls = settings_fields(data) if enc14 or blobs else ({}, "")
+    enc14.sort(key=lambda s: s not in names)        # the probe from the settings, not a library's hex table
+    pos = {s: i for i, s in enumerate(strings)}
+    near = sorted({j for e in enc14[:20] for j in range(pos[e] - 40, pos[e] + 41) if 0 <= j < len(strings)})
+    ordered = list(dict.fromkeys([lit for lit in names if lit not in enc14] + [strings[j] for j in near] + strings))
+    for s in ordered:
         if 8 <= len(s) <= 128:
             b = blobs.get(s) or _b64(s)
             if b and 8 <= len(b) <= 96 and all(32 <= c < 127 for c in b):
@@ -298,7 +318,41 @@ def extract(data: bytes) -> dict[str, Any] | None:
         values = {s: v for s in enc13 for v in [_dec_v13(blobs[s], master)] if v is not None}
         if len(values) >= 2:
             return _result(data, values, "", "AES-128-CBC, MD5(key) (Quasar 1.3)", master)
-    return traces(data)
+    return quasar_fork(data) or traces(data)
+
+
+def quasar_fork(data: bytes) -> dict[str, Any] | None:
+    """A Quasar fork whose settings are not AES strings but literals hidden by an obfuscator of its own,
+    decoded by the .NET analysis (CIL emulation): Quasar's message layer (``*.Common.Messages`` with
+    its ``TypeRegistry``) even when every name is changed, and a ``host:port`` among the decoded
+    strings. The rest is named by its shape (mutex, install folder / name, version | tag)."""
+    if b"Common.Messages" not in data or b"TypeRegistry" not in data:
+        return None
+    try:
+        from ..dotnet import static_strings
+        dec = [v for v in static_strings(data) if v]
+    except Exception:  # noqa: BLE001
+        return None
+    cls = _classify(dec)
+    if not cls["hosts"]:
+        return None
+    summary = dict(cls["summary"])
+    for v in dec:
+        if v.startswith(("Global\\", "Local\\", "QSR_MUTEX_")) and "Mutex" not in summary:
+            summary["Mutex"] = v
+        elif re.fullmatch(r"[\w .-]{1,64}\.exe", v, re.IGNORECASE) and "Install name" not in summary:
+            summary["Install name"] = v
+        elif "|" in v and len(v) <= 40 and "Version | tag" not in summary and not v.startswith(("<", "$")):
+            summary["Version | tag"] = v
+        elif re.fullmatch(r"[0-9A-F]{32,64}", v) and "Key" not in summary:
+            summary["Key"] = v
+    named = any(m in data for m in (b"Quasar", b"Q\x00u\x00a\x00s\x00a\x00r"))
+    summary["Note"] = ("Quasar's message layer with its names changed (a fork): the settings were hidden by the "
+                       "assembly's own string obfuscation and decoded by emulating its decoder")
+    return {"family": "QuasarRAT", "kind": "RAT",
+            "method": "Quasar fork: settings decoded by the assembly's own string decoder (CIL emulation)",
+            "confidence": "high" if named else "medium", "summary": summary, "c2": cls["hosts"],
+            "fields": {f"value {i + 1}": v[:300] for i, v in enumerate(dec[:60])}}
 
 
 # Values the public builders write unless the operator changes them: no
