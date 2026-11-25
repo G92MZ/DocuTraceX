@@ -237,37 +237,9 @@ def _loader_shapes(code: str) -> list[tuple[str, str, str, str]]:
 
 
 def _resolve(code: str, deob: str | None, loc: str) -> dict[str, Any] | None:
-    """The static evaluator's result for one script: its stages (decoded_stages shape), findings
-    (the chain resolved, downloads, dynamic calls not resolved) and the Resolution summary."""
-    from ..resolve import ps_eval, transforms
-    try:
-        sinks = ps_eval.resolve(code, loc)
-        if deob and not sinks.stages and not sinks.downloads:
-            sinks = ps_eval.resolve(deob, loc)
-    except Exception as exc:  # noqa: BLE001  (an extra: the rest of the analysis stands)
-        return {"stages": [], "findings": [], "summary": {"error": str(exc)[:300]}}
-    stages = sinks.decoded_stages()
-    findings = sinks.findings(loc)
-    rows = []
-    for st in sinks.stages:
-        raw = st.data if isinstance(st.data, bytes) else st.data.encode("utf-8", "replace")
-        rows.append({"kind": st.kind, "sink": st.sink, "recipe": list(st.recipe), "size": len(raw),
-                     "sha256": st.sha256, "type": transforms.magic(raw) or ("text" if isinstance(st.data, str) or transforms.is_text(raw) else "data"),
-                     "line": st.line, "depth": st.depth, **({"target": st.target} if st.target else {})})
-    if rows:
-        binaries = [r for r in rows if r["type"] in ("pe", "elf", "zip", "macho") or r["kind"] == "load"]
-        codes = [r for r in rows if r["kind"] == "exec"]
-        detail = (f"resolved statically: {len(codes)} code stage(s) and {len(binaries)} binary stage(s) "
-                  "(→ Nested, each with its recipe)")
-        ev = "\n".join(f"{r['sink']}: {r['size']} bytes {r['type']} · {' → '.join(r['recipe'])}" for r in rows[:10])
-        findings.insert(0, {"rule": "ps_resolved_stages", "severity": "high" if binaries else "medium",
-                            "detail": detail, "evidence": ev})
-    summary = {"stages": rows, "downloads": sinks.downloads, "unresolved": sinks.unresolved,
-               "steps": sinks.steps[:600], "errors": getattr(sinks, "errors", [])[:40],
-               "stats": getattr(sinks, "stats", {})}
-    if not rows and not sinks.downloads and not sinks.unresolved:
-        return {"stages": [], "findings": [], "summary": summary}
-    return {"stages": stages, "findings": findings, "summary": summary}
+    """The static evaluator's result for one script (resolve.report.run)."""
+    from ..resolve import ps_eval, report
+    return report.run(ps_eval.resolve, code, loc, "ps", deob)
 
 
 def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
@@ -305,17 +277,8 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
         # or writes (here-strings → base64 → AES → GZip → ScriptBlock, a PE handed to a loader…)
         resolved = _resolve(full, deob_full if deob["changed"] else None, loc)
         if resolved:
-            seen = set()
-            mine = []
-            for st in resolved["stages"]:
-                key = st.get("text") or st.get("data_b64")
-                if key and key not in seen:
-                    seen.add(key)
-                    mine.append(st)
-            # the same stage found by the layer deobfuscator keeps its recipe (it names each layer)
-            old = {(st.get("text") or st.get("data_b64")): st for st in script["decoded_stages"]}
-            script["decoded_stages"] = [old.get(st.get("text") or st.get("data_b64"), st) for st in mine] + \
-                [st for st in script["decoded_stages"] if (st.get("text") or st.get("data_b64")) not in seen]
+            from ..resolve import report
+            script["decoded_stages"] = report.merge(resolved["stages"], script["decoded_stages"])
             script["resolution"] = resolved["summary"]
             for f in resolved["findings"]:
                 res["findings"].append(_finding(f["rule"], f["severity"], f"[{it['origin']}] {f['detail']}", loc,

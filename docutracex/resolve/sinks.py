@@ -40,6 +40,7 @@ class Stage:
     target: str = ""              # write: the path; load: the entry point
     line: int | None = None
     depth: int = 0                # 0: computed by the script itself; >0: by code it runs (a later stage)
+    ext: str = ""                 # the stage's language when not the script's (a PowerShell -enc in Python)
 
     @property
     def sha256(self) -> str:
@@ -145,7 +146,7 @@ class Sinks:
             recipe = [r for r in st.recipe if r]
             if isinstance(st.data, str):
                 out.append({"recipe": recipe, "text": st.data, "sink": st.sink, "resolved": True,
-                            **({"ext": ""} if st.kind == "value" else {})})
+                            **({"ext": ""} if st.kind == "value" else ({"ext": st.ext} if st.ext else {}))})
                 continue
             raw = st.data
             text = None
