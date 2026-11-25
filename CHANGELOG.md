@@ -3,6 +3,15 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.260.0 — 2026-11-25 (#340)
+
+**Stealers and RATs of 2025: Vidar, StealC v2, Quasar forks, resource string tables**
+
+- Vidar builds with their strings in clear now give their Telegram / Steam dead drops (finding marked high).
+- StealC v2 is read: C2 (also written as one number), build ID and the tasks it accepts — even when its RC4 key is not stored as text.
+- QuasarRAT is found when a merged library comes before its settings, and in forks that rename everything and hide the settings behind their own decoder.
+- .NET assemblies that keep their strings in an encrypted resource table (.NET Reactor-like crypters) show them in the .NET tab.
+
 ## 1.259.0 — 2026-11-25 (#339)
 
 **DarkCloud and ConfuserEx: variants of the samples seen so far**

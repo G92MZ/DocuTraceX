@@ -34,6 +34,7 @@ MAX_SECONDS = 45.0
 MAX_DEPTH = 48
 MAX_ARRAY = 32 * 1024 * 1024
 MAX_GETTER_STEPS = 300_000
+MAX_INIT_STEPS = 3_000_000      # a class initializer (it may decode a resource table the first time)
 MAX_SITES = 3000
 
 
@@ -382,8 +383,28 @@ class Emu:
         if table == 0x0A:
             row = self.t.MemberRef[rid - 1]
             has_this, n, void = sig_shape(bytes(row.Signature.value or b""))
-            return "ref", (self._name(0x0A, row), has_this, n, void)
+            name = self._name(0x0A, row)
+            if name.startswith("?::"):
+                name = self.typespec_name(row) + name[1:]
+            return "ref", (name, has_this, n, void)
         return "ref", ("?", False, 0, True)
+
+    def typespec_name(self, memberref: Any) -> str:
+        """The generic type a MemberRef's TypeSpec parent instantiates (``List`1``…)."""
+        try:
+            c = memberref.Class
+            if c.table is None or c.table.name != "TypeSpec":
+                return "?"
+            sig = bytes(c.row.Signature.value if hasattr(c.row.Signature, "value") else c.row.Signature)
+            i = 0
+            if sig[i] == 0x15:                    # GENERICINST
+                i += 2                           # CLASS / VALUETYPE
+            coded, i = _cint(sig, i)
+            tag, r = coded & 3, coded >> 2
+            row = (self.t.TypeDef if tag == 0 else self.t.TypeRef)[r - 1]
+            return f"{row.TypeNamespace}.{row.TypeName}".strip(".")
+        except Exception:  # noqa: BLE001
+            return "?"
 
     def type_name(self, tok: Any) -> str:
         table, rid = getattr(tok, "table", None), getattr(tok, "rid", 0)
@@ -431,8 +452,9 @@ class Emu:
             r = self.run(insns, idx, args, void, depth)
             # a decoder: integer arguments in, text out (a constants getter, reached directly, through a
             # proxy method or a delegate) — kept with the method that asked for it
-            if self.capture is not None and isinstance(r, str) and r and args and all(
-                    isinstance(x, int) and not isinstance(x, bool) for x in args):
+            if self.capture is not None and isinstance(r, str) and r and args and r not in args and (
+                    all(isinstance(x, int) and not isinstance(x, bool) for x in args)
+                    or any(isinstance(x, str) or (isinstance(x, Arr) and x.kind == "u1") for x in args)):
                 self.capture.append((self.frames[0] if self.frames else rid, rid, args[0], r))
             return r
         except EmuError as exc:
@@ -635,7 +657,8 @@ class Emu:
                 continue
             if op == "ldtoken":
                 tb = getattr(arg, "table", None)
-                push(("field", arg.rid) if tb == 0x04 else ("type", self.type_name(arg)) if tb in (0x01, 0x02)
+                push(("field", arg.rid) if tb == 0x04 else ("type", self.type_name(arg), tb, arg.rid)
+                     if tb in (0x01, 0x02) else ("method", self.method_target(arg)) if tb in (0x06, 0x0A, 0x2B)
                      else OPQ)
                 continue
             if op in ("ldftn", "ldvirtftn"):
@@ -650,7 +673,7 @@ class Emu:
                 if kind == "def":
                     b = self.body(tgt)
                     nargs = b[2] if b else 0
-                    void = b[3] if b else True
+                    cvoid = b[3] if b else True
                     if op == "newobj":
                         o = Obj(self.owners.get(tgt, "?"))
                         cargs = [pop() for _ in range(max(0, nargs - 1))][::-1]
@@ -659,14 +682,14 @@ class Emu:
                         continue
                     cargs = [pop() for _ in range(nargs)][::-1]
                     r = self.call_def(tgt, cargs, depth + 1)
-                    if not void:
+                    if not cvoid:
                         push(r)
                     continue
-                name, has_this, nparams, void = tgt
+                name, has_this, nparams, cvoid = tgt
                 cnt = nparams + (1 if has_this and op != "newobj" else 0)
                 cargs = [pop() for _ in range(cnt)][::-1]
                 r = self.extern(name, cargs, op == "newobj")
-                if op == "newobj" or not void:
+                if op == "newobj" or not cvoid:
                     push(r)
                 continue
             if op in ("throw", "rethrow"):
@@ -696,12 +719,48 @@ class Emu:
                 return "ref:?"
         return f"?{tb}:{getattr(tok, 'rid', 0)}"
 
+    def _type_maps(self) -> None:
+        """Field rid → its type's ``.cctor`` (a class initializer runs before its statics are read)."""
+        self._field_cctor: dict[int, int] = {}
+        frid = {id(f): i for i, f in enumerate(self.t.Field or [], 1)}
+        mrid = {id(m): i for i, m in enumerate(self.t.MethodDef or [], 1)}
+        for td in self.t.TypeDef or []:
+            cctor = next((mrid.get(id(mr.row)) for mr in td.MethodList or [] if str(mr.row.Name) == ".cctor"), None)
+            if not cctor:
+                continue
+            for fr in td.FieldList or []:
+                r = frid.get(id(fr.row))
+                if r:
+                    self._field_cctor[r] = cctor
+        self._cctor_done: set[int] = set()
+
+    def ensure_type_init(self, field_rid: int) -> None:
+        if not hasattr(self, "_field_cctor"):
+            try:
+                self._type_maps()
+            except Exception:  # noqa: BLE001
+                self._field_cctor, self._cctor_done = {}, set()
+        c = self._field_cctor.get(field_rid)
+        if c and c not in self._cctor_done:
+            self._cctor_done.add(c)
+            saved = self.steps, self.limit, self.t0
+            self.steps, self.limit, self.t0 = 0, MAX_INIT_STEPS, time.monotonic()
+            try:
+                self.call_def(c, [], 1)
+            except (EmuError, _Stop, Exception):  # noqa: BLE001
+                pass
+            self.steps, self.limit, self.t0 = saved
+
     def load_static(self, tok: Any) -> Any:
         k = self.field_key(tok)
+        if isinstance(k, int) and k not in self.statics:
+            self.ensure_type_init(k)
         if k in self.statics:
             return self.statics[k]
         if isinstance(k, str) and k.endswith("BitConverter::IsLittleEndian"):
             return 1
+        if isinstance(k, str) and k.endswith("System.String::Empty"):
+            return ""
         if isinstance(k, str):
             return OPQ
         return 0 if isinstance(k, int) else OPQ
@@ -722,7 +781,61 @@ class Emu:
                     arr_set_bytes(arr, 0, raw[:len(arr.data) * _SIZE.get(arr.kind, 4)])
             return None
         if name == "System.Type::GetTypeFromHandle":
-            return Obj("Type", name=a[0][1] if isinstance(a[0], tuple) else "?")
+            if isinstance(a[0], tuple) and a[0][0] == "type":
+                return Obj("Type", name=a[0][1], table=a[0][2], rid=a[0][3])
+            return Obj("Type", name="?")
+        if typ in ("System.Type", "System.Reflection.TypeInfo") and a and isinstance(a[0], Obj) and a[0].type == "Type":
+            got = self.type_call(short, a)
+            if got is not _NOPE:
+                return got
+        if typ == "System.Resources.ResourceManager":
+            if new:
+                return Obj("ResMgr", base=a[0] if a and isinstance(a[0], str) else "")
+            rm = a[0] if a else None
+            if isinstance(rm, Obj) and rm.type == "ResMgr" and short in ("GetObject", "GetString", "GetStream"):
+                from .resources import is_resources
+                from .resources import parse as parse_res
+                raw = self.resources().get(f"{rm.st['base']}.resources", b"")
+                if not is_resources(raw):
+                    return None
+                for e in parse_res(raw).get("entries") or []:
+                    if e.get("name") != a[1]:
+                        continue
+                    if e.get("type") == "string":
+                        return e.get("value")
+                    blob = e.get("_data")
+                    if blob is None:
+                        return None
+                    if short == "GetStream":
+                        return Obj("Stream", data=bytearray(blob), pos=0)
+                    out = Arr("u1", 0)
+                    out.data = bytearray(blob)
+                    return out
+                return None
+            return OPQ
+        if typ == "System.Diagnostics.StackFrame":            # who called: the module itself
+            return Obj("StackFrame") if new else Obj("MethodInfo", target=None) if short == "GetMethod" else OPQ
+        if typ == "System.Diagnostics.StackTrace":
+            return Obj("StackTrace") if new else OPQ
+        if typ == "System.Reflection.ParameterInfo" and short == "get_ParameterType":
+            return Obj("Type", name="?")
+        if typ.startswith("System.Reflection.") and a and isinstance(a[0], Obj) and a[0].type in ("FieldInfo", "MethodInfo"):
+            got = self.member_call(short, a)
+            if got is not _NOPE:
+                return got
+        if typ == "System.Reflection.Emit.DynamicMethod" and new:
+            return Obj("DynMethod", target=None)
+        if typ == "System.Reflection.Emit.DynamicMethod" and a and isinstance(a[0], Obj) and a[0].type == "DynMethod":
+            if short == "GetILGenerator":
+                return Obj("ILGen", dm=a[0])
+            if short == "CreateDelegate":
+                return Obj("delegate", target=a[0].st["target"], bound=None)
+            return None
+        if typ == "System.Reflection.Emit.ILGenerator" and a and isinstance(a[0], Obj) and a[0].type == "ILGen":
+            mi = next((x for x in a[1:] if isinstance(x, Obj) and x.type == "MethodInfo"), None)
+            if short == "Emit" and mi is not None:
+                a[0].st["dm"].st["target"] = mi.st["target"]          # the call the stub makes
+            return None
         if typ == "System.Text.Encoding" and short in ("get_UTF8", "get_ASCII", "get_Unicode", "get_Default",
                                                        "get_BigEndianUnicode", "get_UTF32"):
             return Obj("Encoding", codec={"get_UTF8": "utf-8", "get_ASCII": "ascii", "get_Unicode": "utf-16-le",
@@ -780,6 +893,55 @@ class Emu:
             if any(not isinstance(v, (int, float)) for v in vs):
                 return OPQ
             return {"Min": min, "Max": max}.get(short, lambda v: abs(v))(*vs)
+        if typ in ("System.Collections.Generic.List`1", "System.Collections.ArrayList"):
+            return self.list_call(short, a, new)
+        if typ in ("System.Collections.Generic.Dictionary`2", "System.Collections.Hashtable",
+                   "System.Collections.SortedList", "System.Collections.Concurrent.ConcurrentDictionary`2"):
+            return self.dict_call(short, a, new)
+        if typ == "System.Threading.Monitor":
+            return None
+        if typ == "System.Reflection.Assembly" and short in ("GetManifestResourceStream", "GetManifestResourceNames"):
+            res = self.resources()
+            if short == "GetManifestResourceNames":
+                out = Arr("ref", 0)
+                out.data = list(res)
+                return out
+            name = a[-1] if a and isinstance(a[-1], str) else None
+            if name is None or name not in res:
+                return None
+            return Obj("Stream", data=bytearray(res[name]), pos=0)
+        crypto = self.crypto_call(typ, short, a, new)
+        if crypto is not _NOPE:
+            return crypto
+        if typ in ("System.IO.BinaryReader", "System.IO.BinaryWriter", "System.IO.StreamReader") and a:
+            if new:                               # a reader over a stream: the stream itself
+                return a[0] if isinstance(a[0], Obj) and a[0].type in ("Stream", "CryptoStream") else OPQ
+            s0 = a[0]
+            if short == "get_BaseStream":
+                return s0
+            if short == "ReadBytes" and isinstance(s0, Obj) and s0.type == "Stream":
+                d, pos = s0.st["data"], s0.st["pos"]
+                chunk = bytes(d[pos:pos + max(0, _num(a[1]))])
+                s0.st["pos"] = pos + len(chunk)
+                out = Arr("u1", 0)
+                out.data = bytearray(chunk)
+                return out
+            fmt = {"ReadInt32": "<i", "ReadUInt32": "<I", "ReadInt16": "<h", "ReadUInt16": "<H", "ReadInt64": "<q",
+                   "ReadUInt64": "<Q", "ReadByte": "<B", "ReadBoolean": "<?", "ReadChar": "<B"}.get(short)
+            if fmt and isinstance(s0, Obj) and s0.type == "Stream":
+                d, pos = s0.st["data"], s0.st["pos"]
+                n = struct.calcsize(fmt)
+                if pos + n > len(d):
+                    raise EmuError("end of stream")
+                v = struct.unpack_from(fmt, bytes(d[pos:pos + n]))[0]
+                s0.st["pos"] = pos + n
+                return _i8(v) if fmt[-1] in "qQ" else int(v) if fmt[-1] == "?" else _i4(v)
+            if short == "ReadToEnd" and isinstance(s0, Obj) and s0.type == "Stream":
+                d, pos = s0.st["data"], s0.st["pos"]
+                s0.st["pos"] = len(d)
+                return bytes(d[pos:]).decode("utf-8", "replace")
+            if short in ("Close", "Dispose"):
+                return None
         if typ in ("System.IO.MemoryStream", "System.IO.Stream", "System.IO.BinaryReader"):
             return self.stream_call(short, a, new)
         if name == "System.Reflection.Assembly::Load" and a and isinstance(a[0], Arr) and a[0].kind == "u1":
@@ -867,8 +1029,288 @@ class Emu:
             out = Arr("u2", len(s))
             out.data = [ord(c) for c in s]
             return out
-        if short == ".ctor" and a and isinstance(a[0], Arr) and a[0].kind == "u2":
-            return "".join(chr(c) for c in a[0].data)
+        if short == ".ctor" and a and isinstance(a[0], Arr) and a[0].kind in ("u2", "i2"):
+            chars = a[0].data[_num(a[1]):_num(a[1]) + _num(a[2])] if len(a) == 3 else a[0].data
+            return "".join(chr(c & 0xFFFF) for c in chars)
+        if short == ".ctor" and len(a) == 2 and isinstance(_num(a[0]), int) and isinstance(_num(a[1]), int):
+            return chr(_num(a[0]) & 0xFFFF) * min(_num(a[1]), MAX_ARRAY)          # new string(char, count)
+        return OPQ
+
+    def type_call(self, short: str, a: list[Any]) -> Any:
+        ty = a[0].st
+        if short in ("GetFields", "GetMethods") and ty.get("table") == 0x02:
+            td = self.t.TypeDef[ty["rid"] - 1]
+            out = Arr("ref", 0)
+            if short == "GetFields":
+                frid = getattr(self, "_frid", None) or {id(f): i for i, f in enumerate(self.t.Field or [], 1)}
+                self._frid = frid
+                out.data = [Obj("FieldInfo", rid=frid[id(fr.row)]) for fr in td.FieldList or [] if id(fr.row) in frid]
+            else:
+                mrid = {id(m): i for i, m in enumerate(self.t.MethodDef or [], 1)}
+                out.data = [Obj("MethodInfo", target=("def", mrid[id(mr.row)])) for mr in td.MethodList or []
+                            if id(mr.row) in mrid]
+            return out
+        if short == "get_Module":
+            return Obj("Module")
+        if short == "get_Assembly":
+            return self.this_assembly
+        if short == "get_Name":
+            return str(ty.get("name", "?")).rsplit(".", 1)[-1]
+        if short == "get_FullName":
+            return str(ty.get("name", "?"))
+        if short in ("GetGenericArguments", "GetInterfaces"):
+            return Arr("ref", 0)
+        if short == "get_IsValueType":
+            return 0
+        return _NOPE
+
+    def member_call(self, short: str, a: list[Any]) -> Any:
+        m = a[0]
+        if m.type == "FieldInfo":
+            rid = m.st["rid"]
+            if short == "get_MetadataToken":
+                return _i4(0x04000000 | rid)
+            if short == "get_FieldType":
+                return Obj("Type", name="?")
+            if short == "get_Name":
+                try:
+                    return str(self.t.Field[rid - 1].Name)
+                except (IndexError, AttributeError):
+                    return OPQ
+            if short == "SetValue" and len(a) >= 3:
+                self.statics[rid] = a[2]
+                return None
+            if short == "GetValue":
+                return self.statics.get(rid, OPQ)
+            return _NOPE
+        kind, t = m.st.get("target") or (None, None)
+        if short == "get_IsStatic":
+            if kind == "def":
+                return int(bool(self.t.MethodDef[t - 1].Flags.mdStatic))
+            return int(not (kind == "ref" and t[1]))
+        if short == "get_MetadataToken" and kind == "def":
+            return _i4(0x06000000 | t)
+        if short == "GetParameters" and kind in ("def", "ref"):
+            if kind == "def":
+                b = self.body(t)
+                n = (b[2] - (0 if self.t.MethodDef[t - 1].Flags.mdStatic else 1)) if b else 0
+            else:
+                n = t[2]
+            out = Arr("ref", 0)
+            out.data = [Obj("Param") for _ in range(max(0, n))]
+            return out
+        if short in ("get_DeclaringType", "get_ReturnType"):
+            return Obj("Type", name="?")
+        return _NOPE
+
+    def resources(self) -> dict[str, bytes]:
+        """The assembly's embedded managed resources by name (``GetManifestResourceStream``)."""
+        if getattr(self, "_res", None) is not None:
+            return self._res
+        self._res = {}
+        try:
+            n = self.pe.net
+            rva = int(getattr(n.struct, "ResourcesRva", 0) or 0)
+            for m in self.t.ManifestResource or []:
+                if m.Implementation or not rva:
+                    continue
+                at = rva + int(m.Offset or 0)
+                ln = int.from_bytes(self.pe.get_data(at, 4), "little")
+                if 0 < ln <= MAX_ARRAY:
+                    self._res[str(m.Name)] = bytes(self.pe.get_data(at + 4, ln))
+        except Exception:  # noqa: BLE001
+            pass
+        return self._res
+
+    def dict_call(self, short: str, a: list[Any], new: bool) -> Any:
+        if new:
+            return Obj("Dict", items={})
+        d = a[0] if a else None
+        if not isinstance(d, Obj) or d.type != "Dict":
+            return OPQ
+        items = d.st["items"]
+
+        def key(k: Any) -> Any:
+            return k if isinstance(k, (int, str, float)) or k is None else id(k)
+        if short in ("Add", "set_Item", "TryAdd"):
+            items[key(a[1])] = a[2]
+            return 1 if short == "TryAdd" else None
+        if short == "get_Item":
+            return items.get(key(a[1]), None)
+        if short in ("ContainsKey", "Contains"):
+            return int(key(a[1]) in items)
+        if short == "TryGetValue":
+            k = key(a[1])
+            if isinstance(a[2], Ref):
+                a[2].set(items.get(k))
+            return int(k in items)
+        if short == "Remove":
+            return int(items.pop(key(a[1]), _NOPE) is not _NOPE)
+        if short == "get_Count":
+            return len(items)
+        if short == "Clear":
+            items.clear()
+            return None
+        return OPQ
+
+    def crypto_call(self, typ: str, short: str, a: list[Any], new: bool) -> Any:  # noqa: C901, PLR0911, PLR0912
+        """The framework's symmetric ciphers, hashes and key derivation, done with Python's own: AES /
+        Rijndael / DES / TripleDES / RC2 (key, IV, mode, padding, ``TransformFinalBlock``,
+        ``CryptoStream``), MD5 / SHA-1 / SHA-256 / SHA-512, ``Rfc2898DeriveBytes``, ``PasswordDeriveBytes``."""
+        import hashlib as _hl
+        algos = {"Aes": "aes", "AesManaged": "aes", "AesCryptoServiceProvider": "aes", "AesCng": "aes",
+                 "Rijndael": "aes", "RijndaelManaged": "aes", "DES": "des", "DESCryptoServiceProvider": "des",
+                 "TripleDES": "3des", "TripleDESCryptoServiceProvider": "3des", "TripleDESCng": "3des"}
+        hashes = {"MD5": "md5", "MD5CryptoServiceProvider": "md5", "SHA1": "sha1", "SHA1Managed": "sha1",
+                  "SHA1CryptoServiceProvider": "sha1", "SHA256": "sha256", "SHA256Managed": "sha256",
+                  "SHA256CryptoServiceProvider": "sha256", "SHA512": "sha512", "SHA512Managed": "sha512"}
+        cls = typ.rsplit(".", 1)[-1]
+        if not typ.startswith("System.Security.Cryptography"):
+            return _NOPE
+        if cls in algos and (new or short == "Create"):
+            alg = algos[cls]
+            return Obj("Cipher", alg=alg, key=b"", iv=b"\x00" * (8 if alg in ("des", "3des") else 16), mode=1, pad=2)
+        if cls in hashes and (new or short == "Create"):
+            return Obj("Hash", alg=hashes[cls])
+        obj = a[0] if a else None
+        if isinstance(obj, Obj) and obj.type == "Hash" and short == "ComputeHash":
+            data = a[1]
+            if not isinstance(data, Arr):
+                return OPQ
+            raw = arr_bytes(data)
+            if len(a) == 4:
+                raw = raw[_num(a[2]):_num(a[2]) + _num(a[3])]
+            out = Arr("u1", 0)
+            out.data = bytearray(_hl.new(obj.st["alg"], raw).digest())
+            return out
+        if cls in ("Rfc2898DeriveBytes", "PasswordDeriveBytes") and new:
+            pwd = a[0]
+            pw = pwd.encode() if isinstance(pwd, str) else arr_bytes(pwd) if isinstance(pwd, Arr) else b""
+            salt = arr_bytes(a[1]) if len(a) > 1 and isinstance(a[1], Arr) else b""
+            it = _num(a[2]) if len(a) > 2 and isinstance(_num(a[2]), int) else (1000 if cls.startswith("Rfc") else 100)
+            return Obj("Derive", kind=cls, pw=pw, salt=salt, it=max(1, min(it, 1_000_000)), taken=0)
+        if isinstance(obj, Obj) and obj.type == "Derive" and short == "GetBytes":
+            n = _num(a[1])
+            st = obj.st
+            if st["kind"] == "Rfc2898DeriveBytes":
+                full = _hl.pbkdf2_hmac("sha1", st["pw"], st["salt"], st["it"], st["taken"] + n)
+            else:                                 # PasswordDeriveBytes (PBKDF1-like, SHA-1; the first 20 bytes)
+                h = st["pw"] + st["salt"]
+                for _ in range(st["it"]):
+                    h = _hl.sha1(h).digest()
+                full = h * ((st["taken"] + n) // len(h) + 1)
+            out = Arr("u1", 0)
+            out.data = bytearray(full[st["taken"]:st["taken"] + n])
+            st["taken"] += n
+            return out
+        if isinstance(obj, Obj) and obj.type == "Cipher":
+            st = obj.st
+            if short == "set_Key":
+                st["key"] = arr_bytes(a[1]) if isinstance(a[1], Arr) else b""
+                return None
+            if short == "set_IV":
+                st["iv"] = arr_bytes(a[1]) if isinstance(a[1], Arr) else b""
+                return None
+            if short == "set_Mode":
+                st["mode"] = _num(a[1])
+                return None
+            if short == "set_Padding":
+                st["pad"] = _num(a[1])
+                return None
+            if short in ("get_Key", "get_IV"):
+                out = Arr("u1", 0)
+                out.data = bytearray(st["key" if short == "get_Key" else "iv"])
+                return out
+            if short in ("set_KeySize", "set_BlockSize", "set_FeedbackSize", "Clear", "Dispose"):
+                return None
+            if short in ("CreateDecryptor", "CreateEncryptor"):
+                key = arr_bytes(a[1]) if len(a) > 2 and isinstance(a[1], Arr) else st["key"]
+                iv = arr_bytes(a[2]) if len(a) > 2 and isinstance(a[2], Arr) else st["iv"]
+                return Obj("Transform", alg=st["alg"], key=key, iv=iv, mode=st["mode"], pad=st["pad"],
+                           dec=short == "CreateDecryptor")
+        if isinstance(obj, Obj) and obj.type == "Transform" and short == "TransformFinalBlock":
+            raw = arr_bytes(a[1])[_num(a[2]):_num(a[2]) + _num(a[3])]
+            out = Arr("u1", 0)
+            out.data = bytearray(_cipher(obj.st, raw))
+            return out
+        if cls == "CryptoStream" and new:
+            return Obj("CryptoStream", inner=a[0], tf=a[1], mode=_num(a[2]), buf=bytearray(), out=None, pos=0)
+        if isinstance(obj, Obj) and obj.type == "CryptoStream":
+            st = obj.st
+            tf = st["tf"].st if isinstance(st["tf"], Obj) else None
+            if short == "Write" and tf is not None:
+                st["buf"] += arr_bytes(a[1])[_num(a[2]):_num(a[2]) + _num(a[3])]
+                return None
+            if short in ("FlushFinalBlock", "Close", "Dispose", "Flush") and tf is not None and st["mode"] == 1:
+                if st["out"] is None:
+                    st["out"] = _cipher(tf, bytes(st["buf"]))
+                    inner = st["inner"]
+                    if isinstance(inner, Obj) and inner.type == "Stream":
+                        d, pos = inner.st["data"], inner.st["pos"]
+                        d[pos:pos + len(st["out"])] = st["out"]
+                        inner.st["pos"] = pos + len(st["out"])
+                return None
+            if short in ("Read", "ReadByte") and tf is not None and st["mode"] == 0:
+                if st["out"] is None:
+                    inner = st["inner"]
+                    src = bytes(inner.st["data"][inner.st["pos"]:]) if isinstance(inner, Obj) and inner.type == "Stream" else b""
+                    st["out"] = _cipher(tf, src)
+                    st["pos"] = 0
+                if short == "ReadByte":
+                    if st["pos"] >= len(st["out"]):
+                        return -1
+                    st["pos"] += 1
+                    return st["out"][st["pos"] - 1]
+                buf, off, cnt = a[1], _num(a[2]), _num(a[3])
+                chunk = st["out"][st["pos"]:st["pos"] + cnt]
+                if isinstance(buf, Arr):
+                    arr_set_bytes(buf, off, chunk)
+                st["pos"] += len(chunk)
+                return len(chunk)
+            if short == "CopyTo" and len(a) > 1 and isinstance(a[1], Obj) and a[1].type == "Stream":
+                self.crypto_call(typ, "Read", [obj, Arr("u1", 0), 0, 0], False)
+                rest = st["out"][st["pos"]:]
+                d = a[1].st["data"]
+                p0 = a[1].st["pos"]
+                d[p0:p0 + len(rest)] = rest
+                a[1].st["pos"] = p0 + len(rest)
+                return None
+            return None
+        return _NOPE
+
+    def list_call(self, short: str, a: list[Any], new: bool) -> Any:
+        if new:
+            return Obj("List", items=[])
+        lst = a[0] if a else None
+        if not isinstance(lst, Obj) or lst.type != "List":
+            return OPQ
+        items = lst.st["items"]
+        if short == "Add":
+            if len(items) >= MAX_ARRAY:
+                raise EmuError("list size")
+            items.append(a[1])
+            return None
+        if short == "AddRange" and isinstance(a[1], Arr):
+            items.extend(a[1].data)
+            return None
+        if short == "get_Count":
+            return len(items)
+        if short == "get_Item":
+            return items[_num(a[1])]
+        if short == "set_Item":
+            items[_num(a[1])] = a[2]
+            return None
+        if short == "Clear":
+            items.clear()
+            return None
+        if short == "ToArray":
+            if all(isinstance(x, int) and 0 <= x < 256 for x in items):
+                out = Arr("u1", 0)
+                out.data = bytearray(items)
+            else:
+                out = Arr("ref", 0)
+                out.data = list(items)
+            return out
         return OPQ
 
     def stream_call(self, short: str, a: list[Any], new: bool) -> Any:
@@ -876,6 +1318,8 @@ class Emu:
             data = bytearray(bytes(a[0].data)) if a and isinstance(a[0], Arr) else bytearray()
             return Obj("Stream", data=data, pos=0)
         s = a[0] if a else None
+        if isinstance(s, Obj) and s.type == "CryptoStream":
+            return self.crypto_call("System.Security.Cryptography.CryptoStream", short, a, False)
         if not isinstance(s, Obj) or s.type != "Stream":
             return OPQ
         d, pos = s.st["data"], s.st["pos"]
@@ -920,6 +1364,47 @@ class Emu:
         return None
 
 
+_NOPE = object()
+
+
+def _cipher(st: dict[str, Any], raw: bytes) -> bytes:
+    """One ICryptoTransform: CipherMode 1 CBC / 2 ECB / 4 CFB; PaddingMode 1 None / 2 PKCS7 / 3 Zeros."""
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    try:
+        from cryptography.hazmat.decrepit.ciphers.algorithms import TripleDES
+    except ImportError:
+        TripleDES = algorithms.TripleDES  # noqa: N806
+    alg, key, iv = st["alg"], st["key"], st["iv"]
+    if alg == "aes":
+        algo, block = algorithms.AES(key), 16
+    elif alg == "3des":
+        algo, block = TripleDES(key), 8
+    else:
+        algo, block = TripleDES(key * 3 if len(key) == 8 else key), 8         # single DES = 3DES with K1=K2=K3
+    iv = (iv or b"\x00" * block)[:block].ljust(block, b"\x00")
+    if st["mode"] == 4:
+        try:
+            from cryptography.hazmat.decrepit.ciphers.modes import CFB
+        except ImportError:
+            CFB = modes.CFB  # noqa: N806
+        mode = CFB(iv)
+    else:
+        mode = modes.ECB() if st["mode"] == 2 else modes.CBC(iv)
+    if not st.get("dec", True):
+        if st["pad"] == 2:
+            k = block - len(raw) % block
+            raw += bytes([k]) * k
+        c = Cipher(algo, mode).encryptor()
+        return c.update(raw) + c.finalize()
+    if len(raw) % block and st["mode"] != 4:
+        raise EmuError("ciphertext size")
+    c = Cipher(algo, mode).decryptor()
+    out = c.update(raw) + c.finalize()
+    if st["pad"] == 2 and out and 0 < out[-1] <= block and out.endswith(bytes([out[-1]]) * out[-1]):
+        out = out[:-out[-1]]
+    return out
+
+
 def _lzma(b: bytes) -> bytes | None:
     """An LZMA stream: the standard header (5 bytes of properties + a 64-bit size) or ConfuserEx's
     (properties + a 32-bit size)."""
@@ -937,6 +1422,21 @@ def _lzma(b: bytes) -> bytes | None:
         if out and (size == 0xFFFFFFFFFFFFFFFF or len(out) == size):
             return out
     return None
+
+
+def _texty(v: str) -> bool:
+    ok = sum(1 for c in v if 32 <= ord(c) < 127 or c in "\r\n\t")
+    return ok >= 0.9 * len(v)
+
+
+def _ident(x: Any) -> str:
+    if isinstance(x, int):
+        return f"0x{x & 0xFFFFFFFF:08x}"
+    if isinstance(x, str):
+        return repr(x[:40])
+    if isinstance(x, Arr) and x.kind == "u1":
+        return bytes(x.data[:16]).hex() + ("…" if len(x.data) > 16 else "")
+    return "?"
 
 
 def _sites(emu: Emu) -> dict[int, list[tuple[int, int]]]:
@@ -972,6 +1472,7 @@ def _sites(emu: Emu) -> dict[int, list[tuple[int, int]]]:
 
 
 MAX_DYN_STEPS = 200_000
+MAX_WARMUP_STEPS = 10_000_000
 MAX_DYN_SECONDS = 20.0
 
 
@@ -1063,30 +1564,34 @@ def confuser_strings(data: bytes) -> dict[str, Any] | None:
             return None
         emu = Emu(pe)
         cctor = next((rid for rid, nm in emu.owners.items() if nm == "<Module>::.cctor"), None)
-        if cctor is None:
-            return None
         sites = _sites(emu)
         getters = {g: s for g, s in sites.items() if len(s) >= 2}
         err = ""
-        try:
-            emu.call_def(cctor, [], 0)
-        except _Stop as exc:
-            err = f"module initializer stopped at {exc}"
-        except (EmuError, Exception) as exc:  # noqa: BLE001
-            err = f"module initializer: {exc}"[:200]
+        if cctor is not None:
+            try:
+                emu.ensure_type_init(-1)                 # builds the maps
+                emu._cctor_done.add(cctor)
+                emu.call_def(cctor, [], 0)
+            except _Stop as exc:
+                err = f"module initializer stopped at {exc}"
+            except (EmuError, Exception) as exc:  # noqa: BLE001
+                err = f"module initializer: {exc}"[:200]
         found: list[dict[str, Any]] = []
-        seen: set[tuple[int, int]] = set()
+        seen: set[tuple[int, str, str]] = set()
 
-        def keep(caller: int, g: int, ident: int, v: str) -> None:
-            if (g, ident) in seen:
+        def keep(caller: int, g: int, ident: Any, v: str) -> None:
+            k = (g, _ident(ident), v)
+            if k in seen:
                 return
-            seen.add((g, ident))
+            seen.add(k)
             found.append({"caller": emu.owners.get(caller, f"#{caller}"), "getter": emu.owners.get(g, f"#{g}"),
-                          "id": f"0x{ident & 0xFFFFFFFF:08x}", "output": v})
+                          "id": _ident(ident), "output": v})
+        tried: set[tuple[int, int]] = set()
         for g, ss in getters.items():
             for caller, ident in ss[:MAX_SITES]:
-                if (g, ident) in seen:
+                if (g, ident) in tried:
                     continue
+                tried.add((g, ident))
                 emu.steps, emu.limit = 0, MAX_GETTER_STEPS
                 try:
                     v = emu.call_def(g, [ident], 0)
@@ -1094,6 +1599,16 @@ def confuser_strings(data: bytes) -> dict[str, Any] | None:
                     continue
                 if isinstance(v, str) and v:
                     keep(caller, g, ident, v)
+        # decoders that build their table on first use (a resource decrypted once): one warm-up call each with
+        # a large budget, so the calls that follow find it ready
+        for rid, m in enumerate(emu.t.MethodDef or [], 1):
+            sig = bytes(m.Signature.value or b"") if getattr(m, "Signature", None) is not None else b""
+            if m.Flags.mdStatic and sig[:2] == b"\x00\x01" and sig[2:4] in (b"\x0e\x08", b"\x0e\x09") and rid not in getters:
+                emu.steps, emu.limit, emu.t0 = 0, MAX_WARMUP_STEPS, time.monotonic()
+                try:
+                    emu.call_def(rid, [0], 0)
+                except (EmuError, _Stop, Exception):  # noqa: BLE001
+                    pass
         # every method once, its arguments zero: decoders called on the way are caught as they return
         n_static = len(found)
         t0 = time.monotonic()
@@ -1108,7 +1623,7 @@ def confuser_strings(data: bytes) -> dict[str, Any] | None:
             if not b or b[0] is None:
                 continue
             emu.frames = [rid]
-            emu.steps, emu.limit = 0, MAX_DYN_STEPS
+            emu.steps, emu.limit, emu.t0 = 0, MAX_DYN_STEPS, time.monotonic()
             m = emu.t.MethodDef[rid - 1]
             args = [0] * b[2]
             if not m.Flags.mdStatic and args:
@@ -1122,7 +1637,11 @@ def confuser_strings(data: bytes) -> dict[str, Any] | None:
                     keep(caller, g, ident, v)
             emu.capture = []
         emu.capture = None
-        n_dyn = len(found) - n_static
+        # a decoder's intermediate result that the next one takes as input is not a string of the program;
+        # nor is text that does not read as text
+        inputs = {x["id"] for x in found}
+        found = [x for x in found if repr(x["output"][:40]) not in inputs and _texty(x["output"])]
+        n_dyn = max(0, len(found) - n_static)
         payloads = _payloads([x["output"] for x in found])
         if not found and not emu.assemblies:
             return {"strings": [], "assemblies": [], "payloads": [], "how": "",
