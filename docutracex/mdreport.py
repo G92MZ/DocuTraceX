@@ -300,7 +300,8 @@ def _resolution(cid: str) -> str:
     for label, res in _module_results(paths):
         for sc in res.get("scripts") or [] if isinstance(res.get("scripts"), list) else []:
             r = sc.get("resolution") if isinstance(sc, dict) else None
-            if not r or not (r.get("stages") or r.get("downloads") or r.get("unresolved")):
+            if not r or not (r.get("stages") or r.get("downloads") or r.get("unresolved")
+                             or (r.get("sandbox") or {}).get("events")):
                 continue
             n += 1
             out += [f"## {label} › {sc.get('origin') or sc.get('location') or ''}", ""]
@@ -322,6 +323,12 @@ def _resolution(cid: str) -> str:
                     [t.get("line"), t.get("what"), t.get("value"), " → ".join(t.get("recipe") or [])] for t in r["steps"]])]
             if r.get("errors"):
                 out += ["### Statements not followed", "", _fence("\n".join(r["errors"]))]
+            sbx = r.get("sandbox") or {}
+            if sbx.get("events"):
+                out += [f"### Seen in the sandbox ({sbx.get('tool', 'emulator')})", "",
+                        "_The code ran in a hooked engine (no network, no real disk) — next to the static result._", "",
+                        _table(["What", "Call", "Detail"], [[e.get("kind"), e.get("what"), e.get("detail")]
+                                                            for e in sbx["events"]])]
     if not n:
         out.append("_(no script was followed to a stage, a download or a dynamic call)_")
     return "\n".join(out)

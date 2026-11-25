@@ -14,11 +14,19 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 @router.get("/analysis")
 async def get_analysis() -> dict:
     return {"concurrency": appsettings.analysis_concurrency(),
-            "min": appsettings.MIN_CONCURRENCY, "max": appsettings.MAX_CONCURRENCY}
+            "min": appsettings.MIN_CONCURRENCY, "max": appsettings.MAX_CONCURRENCY,
+            "sandbox": appsettings.sandbox_mode(), "sandbox_modes": list(appsettings.SANDBOX_MODES)}
 
 
 @router.put("/analysis")
 async def put_analysis(payload: dict = Body(...)) -> dict:
+    if "sandbox" in payload:
+        try:
+            appsettings.set_sandbox_mode(payload["sandbox"])
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if "concurrency" not in payload:
+            return await get_analysis()
     if "concurrency" not in payload:
         raise HTTPException(status_code=400, detail="concurrency is required")
     try:
@@ -28,7 +36,8 @@ async def put_analysis(payload: dict = Body(...)) -> dict:
     n = appsettings.set_concurrency(n)
     from ..tasks import manager
     manager.reconcile()
-    return {"concurrency": n, "min": appsettings.MIN_CONCURRENCY, "max": appsettings.MAX_CONCURRENCY}
+    return {"concurrency": n, "min": appsettings.MIN_CONCURRENCY, "max": appsettings.MAX_CONCURRENCY,
+            "sandbox": appsettings.sandbox_mode(), "sandbox_modes": list(appsettings.SANDBOX_MODES)}
 
 
 @router.get("/network")

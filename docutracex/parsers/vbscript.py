@@ -493,7 +493,10 @@ def _emulate(res: dict[str, Any], extracted_dir: Path) -> None:
         return
     import tempfile
     emul = []
+    from .. import appsettings
     for sc in res["scripts"][:_MAX_EMULATED]:
+        if not appsettings.sandbox_wanted(sc.get("resolution"), bool(sc.get("code_is_deobfuscated"))):
+            continue
         with tempfile.TemporaryDirectory(prefix="dtx_vbs_") as tmp:
             src = Path(tmp) / f"script{sc['id']}.vbs"
             src.write_text(sc.get("_full_code") or sc["code"], encoding="utf-8", errors="replace")
@@ -508,6 +511,12 @@ def _emulate(res: dict[str, Any], extracted_dir: Path) -> None:
                      "actions": vm.get("actions", [])[:200], "potential_iocs": vm.get("potential_iocs", []),
                      "artifacts": vm.get("artifacts", [])})
         sc["emulation"] = {"actions": len(vm.get("actions") or []), "artifacts": vm.get("artifacts") or []}
+        ev = [{"kind": "behaviour", "what": str(a.get("action") if isinstance(a, dict) else a)[:120],
+               "detail": str(a.get("parameters") if isinstance(a, dict) else "")[:300]} for a in (vm.get("actions") or [])[:40]]
+        ev += [{"kind": "network", "what": "indicator", "detail": str(i)[:300]} for i in vm.get("potential_iocs") or []]
+        if ev:
+            sc.setdefault("resolution", {"stages": [], "downloads": [], "unresolved": [], "steps": []})[
+                "sandbox"] = {"tool": "ViperMonkey", "events": ev[:60]}
         for f in vm.get("findings") or []:
             res["findings"].append({**f, "detail": f"[{sc['origin']}] " + f["detail"].replace("macro", "VBScript"),
                                     "location": sc["location"]})

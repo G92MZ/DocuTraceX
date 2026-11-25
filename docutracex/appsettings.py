@@ -38,6 +38,10 @@ DEFAULTS: dict[str, Any] = {
         # How many files are analysed at once (the rest queue). Editable from the
         # UI; env ``DOCUTRACEX_MAX_CONCURRENCY`` sets the initial default.
         "concurrency": max(1, min(8, int(os.environ.get("DOCUTRACEX_MAX_CONCURRENCY", "1")))),
+        # Emulators that run a script's code inside a hooked engine (V8 for JavaScript,
+        # box-ps for PowerShell, ViperMonkey for VBA / VBScript): "always", "fallback" (only
+        # when the static evaluation reached no stage) or "off" (static analysis only).
+        "sandbox": os.environ.get("DOCUTRACEX_SANDBOX", "always"),
     },
     # Email rules: the organisation's own domains (spoofing / look-alikes of
     # them weigh most) and extra brands to protect, besides the built-in ones.
@@ -61,6 +65,35 @@ def set_concurrency(n: int) -> int:
     data.setdefault("analysis", {})["concurrency"] = n
     save(data)
     return n
+
+
+SANDBOX_MODES = ("always", "fallback", "off")
+
+
+def sandbox_mode() -> str:
+    m = str(load().get("analysis", {}).get("sandbox", "always")).lower()
+    return m if m in SANDBOX_MODES else "always"
+
+
+def set_sandbox_mode(mode: str) -> str:
+    m = str(mode).lower()
+    if m not in SANDBOX_MODES:
+        raise ValueError(f"sandbox must be one of {', '.join(SANDBOX_MODES)}")
+    data = load()
+    data.setdefault("analysis", {})["sandbox"] = m
+    save(data)
+    return m
+
+
+def sandbox_wanted(resolution: dict | None, obfuscated: bool = True) -> bool:
+    """Should an emulator run on a script, given what the static evaluation found?"""
+    m = sandbox_mode()
+    if m == "off":
+        return False
+    if m == "always":
+        return True
+    r = resolution or {}
+    return not (r.get("stages") or r.get("downloads")) and (obfuscated or bool(r.get("unresolved")))
 
 
 def config_dir() -> Path:

@@ -185,6 +185,22 @@ blob has a fixed budget of trials.
 limit (64 MB): an endless loop, endless recursion, a string that doubles, a huge array or a
 decompression bomb ends the evaluation in seconds — the rest of the analysis stands.
 
+## Emulation (sandbox): always, only where static stops, or off
+
+Static evaluation never runs a script. Three **emulators** do run its code, inside a hooked engine
+with no network and no real disk: the **V8 sandbox** for JavaScript, **box-ps** for PowerShell (when
+provisioned) and **ViperMonkey** for VBA / VBScript (when PyPy is provisioned). One setting, next to
+*Analyze at a time*, decides when they run:
+
+- **always** — on every script (the default);
+- **only when static stops** — only on a script whose static evaluation reached no stage and no
+  download (and is obfuscated or has calls not resolved);
+- **off (static only)** — never: no script code runs on the machine.
+
+What an emulator saw is shown in the script's **Resolution**, under *Seen in the sandbox*, next to the
+static result (and in the Markdown report); the layers box-ps deobfuscates go to **Nested** as a
+stage (recipe `sandbox (box-ps) → layers`), like the V8 sandbox's decoded and dropped stages.
+
 ## A script whose extension says nothing
 
 A `.txt`, `.dat`, `.log` or a file with no extension that holds a script — on its own or inside

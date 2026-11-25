@@ -387,6 +387,29 @@ _RESOLVE_WORTH = re.compile(
     r"\\u[0-9a-f]{4}|constructor|Uint8Array|Buffer\.from|location\s*[.=]|GetObject|_0x[0-9a-f]{4}", re.I)
 
 
+def _sandbox_seen(sb: dict[str, Any]) -> dict[str, Any] | None:
+    """What the V8 sandbox saw the script do, for the Resolution tab (next to the static result)."""
+    ev = []
+    for e in sb.get("log") or []:
+        k = e.get("kind")
+        arg = (e.get("args") or [""])[0] if e.get("args") else ""
+        if k == "layer":
+            ev.append({"kind": "runs code", "what": e.get("name", ""), "detail": str(arg)[:300], "size": len(str(arg))})
+        elif k in ("drop", "drop_b64"):
+            ev.append({"kind": "writes", "what": e.get("name", ""), "detail": "", "size": len(str(arg))})
+        elif k == "url" or (k == "call" and re.search(r"\.(Open|launchURL|getURL)$", e.get("name", ""))):
+            ev.append({"kind": "network", "what": e.get("name", ""), "detail": " ".join(map(str, e.get("args") or []))[:300]})
+        elif k in ("xor", "fromcharcode") and len(str(arg)) >= 24:
+            ev.append({"kind": "decodes", "what": f"{e.get('name', '')}() ({k})", "detail": str(arg)[:300], "size": len(str(arg))})
+        elif k == "call" and re.search(r"\.(CreateTextFile|OpenTextFile|SaveToFile|Write|WriteLine)$", e.get("name", "")):
+            ev.append({"kind": "writes", "what": e.get("name", ""), "detail": ", ".join(map(str, e.get("args") or []))[:300]})
+        elif k == "call" and re.search(r"\.(Run|Exec|ShellExecute|Create)$", e.get("name", "")):
+            ev.append({"kind": "command", "what": e.get("name", ""), "detail": ", ".join(map(str, e.get("args") or []))[:300]})
+    if not ev:
+        return None
+    return {"tool": "V8 (STPyV8)", "events": ev[:60]}
+
+
 def _resolve(code: str, loc: str, alt: str | None) -> dict[str, Any] | None:
     from ..resolve import js_eval, report
     if not code or not _RESOLVE_WORTH.search(code[:2_000_000]):
@@ -436,8 +459,12 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
         # The sandbox runs the WHOLE (deobfuscated) script: a copy cut at the
         # display/metrics limit ends mid-statement and V8 rejects it with a
         # SyntaxError before running anything.
-        sb = (sandbox(js_techniques.instrument(deob_full if changed else full)) if run_sandbox
-              else {"log": [], "error": None, "available": None, "timed_out": False})
+        from .. import appsettings
+        wanted = run_sandbox and appsettings.sandbox_wanted(
+            (resolved or {}).get("summary"), metrics(orig_code)["obfuscation_score"] >= 3 or bool(deob["schemes"]))
+        sb = (sandbox(js_techniques.instrument(deob_full if changed else full)) if wanted
+              else {"log": [], "error": None, "available": None, "timed_out": False,
+                    **({"skipped": f"emulation {appsettings.sandbox_mode()}"} if run_sandbox else {})})
         # Techniques read the whole original too (a cut string literal would
         # also hide an escape block or a payload array).
         techniques = (js_techniques.static_techniques(full[:_MAX_TECH], mets["obfuscation_score"])
@@ -459,6 +486,9 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
             script["decoded_stages"] = resolved["stages"]
             script["resolution"] = resolved["summary"]
             out_findings.extend(resolved["findings"])
+        seen = _sandbox_seen(sb)
+        if seen:
+            script.setdefault("resolution", {"stages": [], "downloads": [], "unresolved": [], "steps": []})["sandbox"] = seen
         out_scripts.append(script)
         by_rule: dict[str, list[dict[str, Any]]] = {}
         for h in hits:
