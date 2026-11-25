@@ -988,7 +988,7 @@ def start_full_floss(root: Path, path: Path, sha256: str, mode: str) -> dict[str
 
 
 RES_DIR = "code_resources"
-MAX_CHILDREN = 60
+MAX_CHILDREN = 10**9   # every resource carved becomes a nested child (no cap)
 
 
 def enrich(root: Path, path: Path, data: bytes, sha256: str, mode: str, item: dict[str, Any], *,

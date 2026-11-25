@@ -81,6 +81,7 @@ def test_probe_not_an_archive_and_missing_7zip(tmp_path: Path, monkeypatch: pyte
 def test_extract_with_7z_bounds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     f = tmp_path / "blob"
     f.write_bytes(b"x")
+    monkeypatch.setattr(unlock, "MAX_ENTRIES", 50)          # a cap set with DOCUTRACEX_ARCHIVE_MAX_ENTRIES
     files = {f"e{i}.txt": b"x" for i in range(unlock.MAX_ENTRIES + 1)}
     monkeypatch.setattr(unlock, "_7z_run", _fake_7z("Lzh", files))
     probe = {"archive": True, "type": "lzh", "detail": "lzh archive", "encrypted": False}

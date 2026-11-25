@@ -27,7 +27,8 @@ carry a badge.
 
 Everything a file carries — attachments, archive entries, embedded objects, unpacked binaries,
 decrypted stages, files hidden in images, objects carved from memory — is analysed **in turn**,
-many levels deep, each with the **recipe** that produced it (`base64 → xor(0x23) → gzip`…).
+**every one in depth**, however many there are and however deep they sit (fifteen archives one
+inside another are opened all the way down), each with the **recipe** that produced it (`base64 → xor(0x23) → gzip`…).
 **Open analysis ↗** opens any child like a case of its own, with all its tabs — every child,
 in the tree and in the list alike, even one with nothing more than the file (a file only listed,
 plain text, an opaque blob): its **File** tab then shows the type, size, hash, folder and Hex.

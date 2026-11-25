@@ -43,10 +43,11 @@ ARCHIVE_DEFAULTS = ["infected", "malware", "virus"]
 
 import os as _os
 
-# Bounds for archives / installers (zip bombs, crafted archives). Raised from
-# 50 entries: an installer kit easily carries hundreds of files and every one
-# must show in Nested (the first ones are analysed in depth, the rest listed).
-MAX_ENTRIES = int(_os.environ.get("DOCUTRACEX_ARCHIVE_MAX_ENTRIES", "1000") or 1000)
+# Bounds for archives / installers (zip bombs, crafted archives): by size, not by
+# count — an installer kit carries hundreds or thousands of files and every one is
+# extracted and analysed in Nested. DOCUTRACEX_ARCHIVE_MAX_ENTRIES caps the count
+# (unset or 0 = no cap).
+MAX_ENTRIES = int(_os.environ.get("DOCUTRACEX_ARCHIVE_MAX_ENTRIES", "0") or 0) or 10**9
 MAX_FILE = 100 * 1024 * 1024
 MAX_TOTAL = int(_os.environ.get("DOCUTRACEX_ARCHIVE_MAX_MB", "500") or 500) * 1024 * 1024
 # Binary padding (T1027.001): an installer that expands far beyond its own size holds a
