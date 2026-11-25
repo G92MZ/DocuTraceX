@@ -296,6 +296,35 @@ def md_report_file(analysis_id: str, section: str | None = None):
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
+@router.get("/{analysis_id}/mdreport.zip")
+def md_report_zip(analysis_id: str):
+    """The whole Markdown export plus every complete output on its own: each tool's whole output
+    (results/tool_output: FLOSS's every string included) and every script recovered (extracted/code)."""
+    import io
+    import zipfile
+    from pathlib import Path as _P
+
+    from fastapi.responses import Response
+
+    from .. import mdreport
+    from ..storage import CasePaths
+    try:
+        manifest = case_service.get_case(analysis_id)
+    except CaseError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    paths = CasePaths(analysis_id)
+    stem = _P(manifest["original"]["filename"]).stem or analysis_id
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr(f"{analysis_id}_{stem}.md", mdreport.full(analysis_id))
+        for sub, arc in ((paths.results_dir / "tool_output", "tool_output"), (paths.extracted_dir / "code", "code")):
+            if sub.is_dir():
+                for f in sorted(p for p in sub.rglob("*") if p.is_file()):
+                    z.write(f, f"{arc}/{f.relative_to(sub).as_posix()}")
+    return Response(buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{analysis_id}_{stem}_report.zip"'})
+
+
 @router.get("/{analysis_id}/report")
 async def case_report(analysis_id: str, iocs: str = "marked"):
     """Render a self-contained HTML report for the case (printable to PDF)."""

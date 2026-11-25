@@ -277,6 +277,7 @@ def _apply(root: Path, sha256: str, rec: dict[str, Any], task: Any, path: Path |
     item = next((it for it in res.get("items") or [] if (it.get("floss") or {}).get("task_id") == tid), None) \
         or ((res.get("items") or [None])[0])
     if item is not None:
+        located_all = rec.get("located") or []
         rec = {k: v for k, v in rec.items() if k != "located"}
         rec["background"] = True
         if rec.get("status") == "ok":
@@ -284,6 +285,9 @@ def _apply(root: Path, sha256: str, rec: dict[str, Any], task: Any, path: Path |
             rec["note"] = ("ran in the background (large binary); tight strings skipped — Deep FLOSS (Code view) "
                            "runs them on every function")
         item["floss"] = rec
+        full = {**rec, "located": located_all}
+        pe_mod.keep_floss_full(full, strings, Path(str(item.get("stored_path") or root.name)).name, root)
+        rec.update({k: full[k] for k in ("output_full", "strings_total") if k in full})
         if strings:
             item["floss_strings"] = strings[:pe_mod._FLOSS_MAX_STRINGS]
             c = rec.get("counts") or {}
@@ -455,6 +459,21 @@ def _apply_complete(root: Path, floss: dict[str, Any] | None, capa: dict[str, An
     if extra:
         item["floss_strings"] = (list(item.get("floss_strings") or []) + extra)[:pe_mod._FLOSS_MAX_STRINGS]
         added["strings"] = len(extra)
+    if floss.get("status") == "ok":
+        # FLOSS's complete output: the union of the fast and the complete runs
+        try:
+            prev = (item.get("floss") or {}).get("output_full")
+            old_all = []
+            if prev and (paths.root / prev).is_file():
+                txt = (paths.root / prev).read_text(encoding="utf-8", errors="replace")
+                old_all = txt.split("\n## all strings", 1)[-1].split("\n", 2)[-1].splitlines() if "## all strings" in txt else []
+            union = list(dict.fromkeys([*old_all, *new_strings]))
+            full = {**floss, "detail": f"{floss.get('detail') or ''} (fast + complete analysis)"}
+            pe_mod.keep_floss_full(full, union, Path(str(item.get("stored_path") or loc)).name, paths.root)
+            if full.get("output_full"):
+                item.setdefault("floss", {}).update(output_full=full["output_full"], strings_total=len(union))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("complete analysis: FLOSS complete output not kept for %s: %s", sha256[:12], exc)
     if floss.get("status") == "ok":
         fl = item.get("floss") or {}
         if fl.get("status") != "ok":            # the fast run failed: the complete one stands in for it

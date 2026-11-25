@@ -381,8 +381,8 @@ def _rtfscan(path: Path, workdir: Path | None) -> dict[str, Any] | None:
         proc = subprocess.run([str(exe), str(path), "scan"], capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=tmo(180),
                               cwd=str(workdir) if workdir else None)
-        return {"command": f"RTFScan.exe {path.name} scan", "returncode": proc.returncode,
-                "output": (proc.stdout or "")[:_OUTPUT_BOUND]}
+        return toolrun.bounded({"command": f"RTFScan.exe {path.name} scan", "returncode": proc.returncode},
+                               proc.stdout, f"RTFScan {path.name}", _OUTPUT_BOUND)
     except Exception as exc:  # noqa: BLE001
         return {"command": f"RTFScan.exe {path.name} scan", "error": str(exc)}
 

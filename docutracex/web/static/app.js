@@ -4804,6 +4804,7 @@ async function loadMdReport(analysisId) {
   pane.innerHTML = `<p class="hint-line">The whole analysis as Markdown, one section per tab, to paste or attach into any LLM
       (or a ticket) — the same content the AI tab's tools read. ${secs.length} sections · ${kb(total)} in all.
       <a class="btn btn-ghost btn-sm" href="${base}">Download everything (.md)</a>
+      <a class="btn btn-ghost btn-sm" href="${base.replace(/\.md$/, ".zip")}" title="The .md plus every tool's complete output (FLOSS's every string included) and every recovered script, each in its own file">Download with every output (.zip)</a>
       <button class="btn btn-ghost btn-sm" type="button" id="md-regen">Regenerate</button></p>${innerTabs("mdrep", tabs)}`;
   wireInnerTabs(pane);
   pane.querySelectorAll(".md-copy").forEach((b) => b.addEventListener("click", async () => {

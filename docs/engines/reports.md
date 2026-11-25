@@ -9,10 +9,23 @@ the nested tree and the Machine Learning results. Print it to PDF or attach it t
 ![Report of sample.eml](../assets/shots/reports/report.webp){ .shot }
 
 **Markdown (raw, for an LLM)** has one sub-tab per part of the analysis — summary, findings,
-IOCs, stages, decrypted data, code, .NET, ML, C2, network checks, every module's raw JSON —
-each with **Copy** and **Download**: paste it into any model or a ticket. Nothing in it is cut:
-every finding, IOC, stage and module result goes in whole, however large the case (the AI chat's
-tools keep their own short answers).
+IOCs, stages, decrypted data, code, .NET, ML, YARA, C2 (with every extractor's raw output), network
+checks, FLOSS, tool outputs, code files and every result file of the case — each with **Copy** and
+**Download**: paste it into any model or a ticket. Nothing in it is cut, so an agent can point at
+what a tool showed and no rule detected:
+
+- **Tool outputs**: every external tool run on the case *and on each nested child* (olevba,
+  oledump, pdf-parser, peepdf, rtfobj, emldump…), with its command, exit code, time, stderr and its
+  **whole** output — the tabs show the first 60,000 characters; the rest is kept in the case.
+- **FLOSS**: every decoded, stack and tight string with the function that builds it, and of the
+  static strings those worth reading (URLs, domains, IPs, paths, registry keys, commands, APIs of
+  injection / network / crypto, credentials, long base64).
+- **Code files**: every recovered script, original and deobfuscated, whole.
+- **Raw modules**: every result file, the nested children's own analyses and the code analysis.
+
+YARA, C2 and the other modules run after the analysis are in it too: it is built when you open it.
+**Download with every output (.zip)** adds each complete output as a file of its own — FLOSS's
+every string included — and every recovered script.
 
 ## AI and MCP
 

