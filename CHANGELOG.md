@@ -3,6 +3,14 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.253.0 — 2026-11-25 (#333)
+
+**JavaScript, VBScript and batch evaluated statically to what they drop**
+
+- JScript / page scripts, VBScript and `.bat` droppers are followed without running them: `eval` / `Execute` layers, `this['ev'+'al']`, `Chr` / `StrReverse` / `%var:~n,1%` tricks, MSXML `bin.base64`, `ADODB.Stream`, CryptoJS, pako, `certutil -decode` of the script itself, XOR loops.
+- Files they would write (an `.exe`, a `.vbs`, a `.ps1`) go to **Nested** with their recipe; the commands they chain are followed (`powershell -enc`, `echo … | powershell -`, `mshta`, `wscript x.vbs`, `certutil`, `bitsadmin`).
+- Each script card shows its Resolution; downloads and calls that depend on the victim's machine (registry, environment) are reported with why.
+
 ## 1.252.0 — 2026-11-25 (#332)
 
 **Python scripts evaluated statically to the binary they hide**

@@ -28,6 +28,8 @@ from . import transforms
 from .value import Value
 
 MAX_STAGES = 64
+_SCRIPT_EXT = {".js", ".jse", ".vbs", ".vbe", ".wsf", ".hta", ".ps1", ".psm1", ".bat", ".cmd", ".py", ".pl",
+               ".php", ".rb", ".lua", ".sh", ".html", ".htm", ".svg", ".au3", ".ahk", ".tcl"}
 MAX_TEXT = 8 * 1024 * 1024
 
 
@@ -144,16 +146,22 @@ class Sinks:
         # stage (a child in Nested) is analysed, under it
         for st in (s for s in self.stages if s.depth == 0):
             recipe = [r for r in st.recipe if r]
+            if st.kind == "write" and not st.ext:
+                # a file the script writes: the type its own name gives it (inv_sync.vbs, x.ps1…)
+                tail = st.target.replace("/", "\\").rsplit("\\", 1)[-1]
+                ext = "." + tail.rsplit(".", 1)[-1].lower() if "." in tail else ""
+                st.ext = ext if ext in _SCRIPT_EXT else ""     # .tmp, .dat…: by its content
             if isinstance(st.data, str):
                 out.append({"recipe": recipe, "text": st.data, "sink": st.sink, "resolved": True,
-                            **({"ext": ""} if st.kind == "value" else ({"ext": st.ext} if st.ext else {}))})
+                            **({"ext": st.ext} if st.kind in ("value", "write") or st.ext else {})})
                 continue
             raw = st.data
             text = None
             if transforms.magic(raw) is None and transforms.is_text(raw):
                 text = transforms.as_text(raw, "utf-16-le" if raw[1:2] == b"\x00" else "utf-8")
-            if text is not None and st.kind == "exec":
-                out.append({"recipe": recipe, "text": text, "sink": st.sink, "resolved": True})
+            if text is not None and st.kind in ("exec", "write"):
+                out.append({"recipe": recipe, "text": text, "sink": st.sink, "resolved": True,
+                            **({"ext": st.ext} if st.kind == "write" or st.ext else {})})
             else:
                 out.append({"recipe": recipe, "data_b64": base64.b64encode(raw).decode("ascii"),
                             "sink": st.sink, "resolved": True, **({"target": st.target} if st.target else {})})

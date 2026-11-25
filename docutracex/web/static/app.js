@@ -1981,7 +1981,7 @@ function panePdfTools(pt) {
 function paneJavascript(js) {
   const scripts = js.scripts || [];
   if (!scripts.length) return `<p class="hint-line">No JavaScript found.</p>`;
-  let html = `<p class="hint-line">${scripts.length} script(s). Analysed statically and run in an isolated V8 sandbox (no file system, network or processes; only recording stubs).</p>`;
+  let html = `<p class="hint-line">${scripts.length} script(s). Evaluated statically (nothing runs: what it runs, writes or downloads, with its recipe) and run in an isolated V8 sandbox (no file system, network or processes; only recording stubs).</p>`;
   html += '<div class="row" style="margin:4px 0 10px"><button class="btn btn-ghost btn-sm" type="button" onclick="this.closest(\'.subpane\').querySelectorAll(\'details.js-card\').forEach(e=>e.open=true)">Expand all</button> <button class="btn btn-ghost btn-sm" type="button" onclick="this.closest(\'.subpane\').querySelectorAll(\'details.js-card\').forEach(e=>e.open=false)">Collapse all</button></div>';
   scripts.forEach((sc) => {
     const hits = sc.hits || [];
@@ -2006,6 +2006,10 @@ function paneJavascript(js) {
       body += `<p class="hint-line"><span class="badge badge-bad">obfuscated</span> Scheme detected: ${escapeHtml((sc.deob_schemes || []).join(", "))} — unfolded by the sandbox.</p>`;
     }
     const jsLoc = sc.location || `javascript:${sc.id}`;
+    if (resolutionCount(sc.resolution)) {
+      const rr = sc.resolution;
+      body += `<details class="disclose" open><summary><strong>Resolution</strong> — ${(rr.stages || []).length} stage(s) · ${(rr.downloads || []).length} download(s) · ${(rr.unresolved || []).length} not resolved</summary>${resolutionBlock(rr)}</details>`;
+    }
     body += jsTechniquesHtml(sc.techniques || []);
     if (hits.length) {
       body += table(["Line", "Why", "Code", "Mark"], hits.map((h) => `<tr><td>${h.line_no}</td>

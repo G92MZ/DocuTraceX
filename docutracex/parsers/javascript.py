@@ -379,6 +379,21 @@ def _sandbox_findings(sb: dict[str, Any], loc: str, out: list[dict[str, Any]]) -
                             loc, "\n".join(" ".join(e["args"]) for e in exports[:5])))
 
 
+# What makes a script worth evaluating: something that runs, decodes, writes or downloads (a page's
+# own UI code and libraries are left to the rest of the analysis).
+_RESOLVE_WORTH = re.compile(
+    r"\beval\b|\bFunction\s*\(|ActiveXObject|WScript|\batob\b|fromCharCode|unescape|document\.write|"
+    r"CryptoJS|pako\.|require\s*\(|XMLHttpRequest|\bfetch\s*\(|setTimeout\s*\(\s*['\"`]|\\x[0-9a-f]{2}|"
+    r"\\u[0-9a-f]{4}|constructor|Uint8Array|Buffer\.from|location\s*[.=]|GetObject|_0x[0-9a-f]{4}", re.I)
+
+
+def _resolve(code: str, loc: str, alt: str | None) -> dict[str, Any] | None:
+    from ..resolve import js_eval, report
+    if not code or not _RESOLVE_WORTH.search(code[:2_000_000]):
+        return None
+    return report.run(js_eval.resolve, code, loc, "js", alt)
+
+
 def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
             run_sandbox: bool = True, fallback: bool = False,
             fallback_text: str | None = None) -> dict[str, Any]:
@@ -409,6 +424,9 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
         deob_methods = (["webcrack"] if wc.get("changed") else []) + deob["methods"]
         code = deob_full[:_MAX_CODE] if changed else orig_code
 
+        # static resolution: the script's values and operations followed (never run) to what it
+        # runs, writes, loads or downloads — the hidden stages go to Nested with their recipe
+        resolved = _resolve(full, loc, deob_full if changed else None)
         hits = static_hits(code)
         mets = metrics(orig_code)          # how obfuscated the ORIGINAL was
         mets_deob = metrics(code) if changed else None
@@ -437,6 +455,10 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
                   "_full_code": full}
         if changed:
             script["_full_deob"] = deob_full
+        if resolved:
+            script["decoded_stages"] = resolved["stages"]
+            script["resolution"] = resolved["summary"]
+            out_findings.extend(resolved["findings"])
         out_scripts.append(script)
         by_rule: dict[str, list[dict[str, Any]]] = {}
         for h in hits:
