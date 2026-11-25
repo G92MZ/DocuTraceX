@@ -66,3 +66,19 @@ def test_end_to_end(client) -> None:  # noqa: ANN001,F811
     c2 = json.loads((res / "c2.json").read_text())
     prot = c2.get("protected") or []
     assert prot and prot[0]["decrypted"] >= 11 and "decrypted statically" in prot[0]["note"]
+
+
+def test_getter_reached_only_through_a_delegate_and_the_3des_payload() -> None:
+    r = cilemu.confuser_strings(_ms().dotnet_confuser_proxy_dll())
+    got = [x["output"] for x in r["strings"]]
+    assert "ZwUnmapViewOfSection" in got and "factura_2026-0187_ldr" in got and len(got) == 7
+    assert "reached through proxies / delegates" in r["how"]
+    (blob, recipe), = r["payloads"]
+    assert blob[:2] == b"MZ" and recipe[0] == "base64" and recipe[1].startswith("3des-cbc(") and "iv 30313837" in recipe[1]
+
+
+def test_proxy_payload_end_to_end(client) -> None:  # noqa: ANN001,F811
+    _cid, res = _analyze(client, "sample_dotnet_confuser_proxy.dll", _ms().dotnet_confuser_proxy_dll())
+    tree = json.loads((res / "nested.json").read_text())["tree"]
+    recipes = [" → ".join(n.get("recipe") or []) for n in tree]
+    assert any(r.startswith("ConfuserEx constants (CIL emulation) → base64 → 3des-cbc") for r in recipes), recipes
