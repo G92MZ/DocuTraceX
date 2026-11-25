@@ -46,6 +46,7 @@ from .value import Value
 MAX_STEPS = 8_000_000
 MAX_SECONDS = 30.0
 MAX_LOOP = 3_000_000
+LOOP_STEPS = 1_500_000       # one loop's share: a longer one (a busy loop) is left to an emulator
 MAX_DEPTH = 12
 MAX_CALL_DEPTH = 80
 MAX_STR = 64 * 1024 * 1024
@@ -706,9 +707,13 @@ class Interp:  # noqa: PLR0904
             return
         before = self._loop_before(st.body, scope)
         cap = MAX_LOOP if (st.test is not None or self._has_break(st.body)) else 3
-        n = 0
+        n, start = 0, self.steps
         while n < cap:
             n += 1
+            if self.steps - start > LOOP_STEPS:
+                if self._loop_too_long(st, scope, n):
+                    break
+                start = float("inf")         # it builds a string / an array: the global budget applies
             if st.test is not None:
                 c = self.eval(st.test, scope)
                 if isinstance(c, Unk):
@@ -726,10 +731,14 @@ class Interp:  # noqa: PLR0904
         before = self._loop_before(st.body, scope)
         always = st.test.type == "Literal" or self.text(st.test, 20) in ("!![]", "!0", "true", "1")
         cap = 3 if (always and not self._has_break(st.body)) else MAX_LOOP
-        n = 0
+        n, start = 0, self.steps
         first = st.type == "DoWhileStatement"
         while n < cap:
             n += 1
+            if self.steps - start > LOOP_STEPS:
+                if self._loop_too_long(st, scope, n):
+                    break
+                start = float("inf")         # it builds a string / an array: the global budget applies
             if not first:
                 c = self.eval(st.test, scope)
                 if isinstance(c, Unk):
@@ -762,6 +771,40 @@ class Interp:  # noqa: PLR0904
             if not self._iter_body(st.body, scope, label):
                 break
         self._loop_after(before, scope)
+
+    def _loop_too_long(self, st: Any, scope: Scope, rounds: int) -> bool:
+        """A loop past its share of the step budget that only turns numbers (anti-emulation busy
+        loops compute a key in millions of rounds): what it assigns becomes unknown and the rest of
+        the script goes on. A loop that builds a string or an array (a long decoder) carries on."""
+        names: list[str] = []
+
+        def v(x: Any) -> None:
+            if x is None or not hasattr(x, "type"):
+                return
+            if x.type == "AssignmentExpression" and x.left.type == "Identifier":
+                names.append(x.left.name)
+            elif x.type == "UpdateExpression" and x.argument.type == "Identifier":
+                names.append(x.argument.name)
+            for k, c in vars(x).items():
+                if k in ("loc", "range"):
+                    continue
+                for y in (c if isinstance(c, list) else [c]):
+                    if hasattr(y, "type"):
+                        v(y)
+
+        v(st.body)
+        names = list(dict.fromkeys(names))
+        vals = [self.lookup(nm, scope, quiet=True) for nm in names]
+        if not names or any(not isinstance(x, (int, float, bool)) for x in vals):
+            return False
+        why = (f"a loop still running after {rounds:,} rounds that only computes numbers (a busy loop "
+               "against emulators): its result is left to the sandbox")
+        for nm in names:
+            sc = scope.find(nm)
+            if sc is not None:
+                sc.vars[nm] = Unk(why)
+        self.sinks.unresolved_(self.text(st, 160), ", ".join(names), why, self.line(st))
+        return True
 
     # the operation a loop applies: named in the recipe of what it builds
     def _loop_targets(self, body: Any) -> list[tuple[str, str, str]]:
@@ -2085,6 +2128,9 @@ class Interp:  # noqa: PLR0904
 
         # -- constructors
         def from_char_code(this: Any, a: list, n: Any) -> Any:
+            u = next((x for x in a if isinstance(x, Unk)), None)
+            if u is not None:                 # a code not known statically: so is the text
+                return Unk(u.why, u.recipe)
             out = self.from_char_code(a)
             return tag(out, ("char codes",)) if len(out) >= 16 else out
 

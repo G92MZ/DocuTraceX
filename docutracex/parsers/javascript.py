@@ -18,6 +18,7 @@ layers and records what the script would do. Nothing touches the host.
 from __future__ import annotations
 
 import base64
+import hashlib
 import math
 import re
 import sys
@@ -420,7 +421,7 @@ def _resolve(code: str, loc: str, alt: str | None) -> dict[str, Any] | None:
 def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
             run_sandbox: bool = True, fallback: bool = False,
             fallback_text: str | None = None) -> dict[str, Any]:
-    from . import js_deobf, js_techniques, js_webcrack
+    from . import boxjs, js_deobf, js_techniques, js_webcrack
 
     res: dict[str, Any] = {"module": "javascript", "status": "ok", "scripts": [], "findings": []}
     items = list(enumerate(collect(original, extracted_dir, modules, fallback=fallback, fallback_text=fallback_text), 1))
@@ -487,6 +488,38 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
             script["resolution"] = resolved["summary"]
             out_findings.extend(resolved["findings"])
         seen = _sandbox_seen(sb)
+        # box-js (optional, WSH scripts only, top level): its emulated ActiveX objects see writes,
+        # commands and URLs; what it writes / evals goes to Nested next to the static stages
+        bj = boxjs.run(full, loc) if wanted and boxjs.worth(full) and boxjs.available() else None
+        if bj is not None:
+            script["boxjs"] = {"events": len(bj["events"]), "stages": len(bj["stages"]), "error": bj["error"]}
+            # what the static result already has (same bytes) stays once, with its static recipe
+            known = {full.strip(), deob_full.strip()}
+            known |= {st["text"].strip() for st in script.get("decoded_stages") or [] if st.get("text")}
+            known.discard("")
+            have = {hashlib.sha256(base64.b64decode(st["data_b64"])).hexdigest()
+                    for st in script.get("decoded_stages") or [] if st.get("data_b64")}
+            have |= {hashlib.sha256(boxjs.raw_of(k)).hexdigest() for k in known if k}
+            extra = [st for st in bj["stages"]
+                     if (not st.get("text") or st["text"].strip() not in known)
+                     and hashlib.sha256(boxjs.raw_of(base64.b64decode(st["data_b64"]) if st.get("data_b64")
+                                                     else st["text"].strip())).hexdigest() not in have]
+            if extra:
+                script.setdefault("decoded_stages", []).extend(extra)
+            if bj["events"]:
+                for e in bj["events"]:
+                    e["by"] = boxjs.TOOL
+                if seen:
+                    for e in seen["events"]:
+                        e.setdefault("by", seen["tool"])
+                    seen = {"tool": f"{seen['tool']} + {boxjs.TOOL}", "events": seen["events"] + bj["events"]}
+                else:
+                    seen = {"tool": boxjs.TOOL, "events": bj["events"]}
+                cmds = [e["detail"] for e in bj["events"] if e["kind"] == "command"]
+                if cmds:
+                    out_findings.append(_finding("js_boxjs_command", "high",
+                                                 f"[{it['origin']}] Runs a command (seen in the box-js emulation)",
+                                                 loc, "\n".join(cmds[:5])))
         if seen:
             script.setdefault("resolution", {"stages": [], "downloads": [], "unresolved": [], "steps": []})["sandbox"] = seen
         out_scripts.append(script)

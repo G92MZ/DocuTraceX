@@ -188,8 +188,9 @@ decompression bomb ends the evaluation in seconds — the rest of the analysis s
 ## Emulation (sandbox): always, only where static stops, or off
 
 Static evaluation never runs a script. Three **emulators** do run its code, inside a hooked engine
-with no network and no real disk: the **V8 sandbox** for JavaScript, **box-ps** for PowerShell (when
-provisioned) and **ViperMonkey** for VBA / VBScript (when PyPy is provisioned). One setting, next to
+with no network and no real disk: the **V8 sandbox** for JavaScript (plus **box-js** for JScript /
+WSH), **box-ps** for PowerShell (when provisioned) and **ViperMonkey** for VBA / VBScript
+(when PyPy is provisioned). One setting, next to
 *Analyze at a time*, decides when they run:
 
 - **always** — on every script (the default);
@@ -200,6 +201,35 @@ provisioned) and **ViperMonkey** for VBA / VBScript (when PyPy is provisioned). 
 What an emulator saw is shown in the script's **Resolution**, under *Seen in the sandbox*, next to the
 static result (and in the Markdown report); the layers box-ps deobfuscates go to **Nested** as a
 stage (recipe `sandbox (box-ps) → layers`), like the V8 sandbox's decoded and dropped stages.
+
+### box-js (JScript / WSH)
+
+[box-js](https://github.com/CapacitorSet/box-js) (MIT) emulates the Windows Script Host objects a
+JScript dropper uses — `WScript.Shell`, `Scripting.FileSystemObject`, `ADODB.Stream`,
+`MSXML2.XMLHTTP`, WMI, the registry — and records the files the script writes, the commands it
+runs, the URLs it asks for (never fetched) and the code it evals. It is provisioned like the other
+emulators — by the setup and on start, with npm on the portable Node (about 60 MB, no build tools);
+*Diagnostics → box-js (Node) → Retry* or `python scripts/setup_portable_python.py --component boxjs`
+installs it again.
+
+It follows the same setting, runs on top-level scripts that use WSH objects (a
+page's own code is left to V8), and adds to the V8 result: *Seen in the sandbox* lists both, each row
+marked with the emulator that saw it; the files it writes and the code it evals go to **Nested** with
+the recipe `sandbox (box-js) → writes …` / `→ eval` (a file the static evaluation or V8 already has
+stays once, with its recipe); a command it saw run raises a finding.
+
+box-js runs the script's code inside Node's `vm2`, which is no longer maintained and has known
+escapes. Like every emulator here, it is best run on an analysis machine; *off* keeps all of them
+from running.
+
+### Busy loops
+
+Droppers compute a key in a loop of millions of rounds that only turns numbers, to outlast
+emulators. The static evaluation stops such a loop after its share of the budget, marks what it
+assigns as unknown and goes on with the rest of the script (what does not depend on it is still
+resolved); the loop is listed as a *call not resolved* — "a busy loop against emulators: its result
+is left to the sandbox" — and nothing is decoded with a made-up key. A loop that builds a string or
+an array (a long decoder) is not cut.
 
 ## A script whose extension says nothing
 

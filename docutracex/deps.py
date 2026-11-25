@@ -711,6 +711,23 @@ def run_checks() -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pass
 
+    # box-js (JScript / WSH emulator) on the portable Node.
+    try:
+        from .parsers.boxjs import status as boxjs_status
+        bj = boxjs_status()
+        checks.append(Check(
+            category="External tools",
+            name="box-js (Node)",
+            status="ok" if bj["available"] else "warn",
+            detail=bj["detail"],
+            remedy="" if bj["available"] else
+                   "restart the app (it is provisioned on start) or Retry (npm on the portable Node)",
+            purpose="WSH emulation: files written, commands, URLs and eval'd code of JScript droppers",
+            retry="boxjs",
+        ))
+    except Exception:  # noqa: BLE001
+        pass
+
     # box-ps (PowerShell sandbox) on portable PowerShell Core.
     try:
         from .parsers.boxps import boxps_status

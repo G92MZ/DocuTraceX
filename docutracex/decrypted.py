@@ -902,7 +902,8 @@ def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[s
                 same = next((o for o in out if o.get("text") is not None and _same_text(o["text"], text)), None)
                 if same is not None:
                     # the JS sandbox saw it run too: one child, with the static recipe (how it was built)
-                    same["recipe"] = recipe
+                    if not (recipe and str(recipe[0]).startswith("sandbox (")):
+                        same["recipe"] = recipe
                     if sext and not same.get("ext"):
                         same["ext"] = sext
                     continue

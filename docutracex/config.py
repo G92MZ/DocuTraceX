@@ -105,6 +105,13 @@ class Settings:
         base = Path(env) if env else self.tools_dir / "webcrack"
         return base if (base / "node_modules" / "webcrack").is_dir() else None
 
+    def boxjs_dir(self) -> Path | None:
+        """The optional box-js install under ``tools/boxjs/`` (JScript / WSH emulator).
+        ``DOCUTRACEX_BOXJS`` overrides the location."""
+        env = os.environ.get("DOCUTRACEX_BOXJS")
+        base = Path(env) if env else self.tools_dir / "boxjs"
+        return base if (base / "node_modules" / "box-js" / "run.js").is_file() else None
+
     def pwsh_executable(self) -> Path | None:
         """Portable PowerShell Core under ``tools/pwsh/`` (for the box-ps
         PowerShell sandbox). ``DOCUTRACEX_PWSH`` overrides the location."""

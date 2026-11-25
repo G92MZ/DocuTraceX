@@ -3,6 +3,14 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.257.0 — 2026-11-25 (#337)
+
+**box-js emulator for JScript droppers, and busy loops no longer stop static analysis**
+
+- New emulator box-js, installed automatically like the others: it emulates the Windows Script Host objects of JScript droppers and shows the files they write, the commands, registry writes and URLs, next to what V8 saw. Files it sees written go to Nested.
+- It follows the *Emulation (sandbox)* setting, like the other emulators.
+- A loop that spins millions of times to compute a key no longer stops the static evaluation of JavaScript. It is listed as not resolved, and the rest of the script is still followed.
+
 ## 1.256.0 — 2026-11-25 (#336)
 
 **Choose when the emulators run: always, only where static analysis stops, or never**

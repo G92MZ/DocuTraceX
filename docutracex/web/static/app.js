@@ -2111,12 +2111,12 @@ function resolutionCount(r) {
     + (((r.sandbox || {}).events || []).length ? 1 : 0) : 0;
 }
 
-// What an emulator (V8, box-ps, ViperMonkey) saw the script do, next to the static result.
+// What an emulator (V8, box-js, box-ps, ViperMonkey) saw the script do, next to the static result.
 function sandboxSeenHtml(sb) {
   const ev = (sb && sb.events) || [];
   if (!ev.length) return "";
   return `<details class="disclose"><summary><strong>Seen in the sandbox</strong> — ${escapeHtml(sb.tool || "emulator")} · ${ev.length} event(s) <span class="hint-line">(the code ran in a hooked engine: no network, no real disk)</span></summary>`
-    + table(["What", "Call", "Detail"], ev.map((e) => `<tr><td>${escapeHtml(e.kind || "")}</td><td class="mono">${escapeHtml(e.what || "")}</td>
+    + table(["What", "Call", "Detail"], ev.map((e) => `<tr><td>${escapeHtml(e.kind || "")}</td><td class="mono">${escapeHtml(e.what || "")}${e.by && (sb.tool || "").includes("+") ? ` <span class="badge badge-muted">${escapeHtml(e.by)}</span>` : ""}</td>
         <td class="mono">${escapeHtml(String(e.detail || "").slice(0, 300))}${e.size ? ` <span class="hint-line">(${e.size} chars)</span>` : ""}</td></tr>`).join(""))
     + `</details>`;
 }
