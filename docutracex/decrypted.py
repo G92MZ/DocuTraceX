@@ -698,6 +698,15 @@ def worth_text_child(text: str, ext: str | None = None) -> bool:
     return sniff_ext(t) != ".txt"
 
 
+def _same_text(a: str, b: str) -> bool:
+    """The same stage seen twice (the JS sandbox runs the deobfuscated copy: quotes, escapes and
+    line ends may differ)."""
+    if abs(len(a) - len(b)) > max(16, len(a) // 50):
+        return False
+    norm = re.compile(r"[\s'\"`\\]+")
+    return norm.sub("", a) == norm.sub("", b)
+
+
 def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[str, Any]]:
     """Resolved stages found in a set of module results.
 
@@ -752,7 +761,8 @@ def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[s
     # with its recipe, analysed again on its own (its deeper layers come out
     # there, one level down).
     carved_raw: list[bytes] = []          # binary stages carved whole (shellcode, PE)
-    for key, ext in (("powershell", ".ps1"), ("vbscript", ".vbs"), ("python", ".py"), ("batch", ".bat")):
+    for key, ext in (("powershell", ".ps1"), ("vbscript", ".vbs"), ("python", ".py"), ("batch", ".bat"),
+                     ("javascript", ".js")):
         for sc in (mods.get(key) or {}).get("scripts") or []:
             if not isinstance(sc, dict) or sc.get("from_nested"):
                 continue
@@ -769,6 +779,13 @@ def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[s
                                             recipe=recipe)
                     continue
                 sext = st.get("ext", ext)           # "": by its content (decoded text that is not code)
+                same = next((o for o in out if o.get("text") is not None and _same_text(o["text"], text)), None)
+                if same is not None:
+                    # the JS sandbox saw it run too: one child, with the static recipe (how it was built)
+                    same["recipe"] = recipe
+                    if sext and not same.get("ext"):
+                        same["ext"] = sext
+                    continue
                 if worth_text_child(text, sext if len(text.strip()) >= 8 else None):
                     out.append({"how": f"{key}-stage", "origin": f"{key} {loc}: {' → '.join(recipe)}",
                                 "text": text, "ext": sext or None, "recipe": recipe})

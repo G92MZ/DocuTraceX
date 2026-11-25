@@ -515,6 +515,13 @@ def _emulate(res: dict[str, Any], extracted_dir: Path) -> None:
         res["emulation"] = emul
 
 
+def _resolve(code: str, loc: str, alt: str | None) -> dict[str, Any] | None:
+    from ..resolve import report, vbs_eval
+    if not code.strip():
+        return None
+    return report.run(vbs_eval.resolve, code, loc, "vbs", alt)
+
+
 def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
             fallback: bool = False, fallback_text: str | None = None) -> dict[str, Any]:
     res: dict[str, Any] = {"module": "vbscript", "status": "ok", "scripts": [], "findings": []}
@@ -527,6 +534,9 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
         deob_full = deob["code"]
         code = deob_full[:_MAX_CODE] if deob["changed"] else orig_code
 
+        # static resolution: the script's values and operations followed (never run) to what it
+        # runs, writes or downloads — the hidden stages go to Nested with their recipe
+        resolved = _resolve(full, loc, deob_full if deob["changed"] else None)
         hits = static_hits(code)
         mets = javascript.metrics(code)
         script = {"id": i, "kind": "vbscript", "origin": it["origin"], "location": loc, "note": it.get("note"),
@@ -541,6 +551,11 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
                   "hits": hits, "metrics": mets, "_full_code": full}
         if deob["changed"]:
             script["_full_deob"] = deob_full
+        if resolved:
+            from ..resolve import report
+            script["decoded_stages"] = report.merge(resolved["stages"], script["decoded_stages"])
+            script["resolution"] = resolved["summary"]
+            res["findings"].extend(resolved["findings"])
         res["scripts"].append(script)
 
         if _MSI_CA.search(code):

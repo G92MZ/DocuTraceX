@@ -83,6 +83,53 @@ recipe; code it runs is evaluated too.
   whose name or data comes from the environment, a file or the network is a **dynamic call not
   resolved**, with why.
 
+## JavaScript resolved statically
+
+JavaScript and JScript are evaluated the same way, next to the V8 sandbox: the script is parsed
+(never run) and the evaluator follows variables, closures, the script's functions (`call` /
+`apply` / `bind`), arrays and objects, loops, `try` / `catch` and the string and array methods
+obfuscators use (obfuscator.io's string array and rotation loop too). What reaches `eval`,
+`Function`, `setTimeout("…")` or `document.write` is a stage in Nested with its recipe; bytes
+saved with `ADODB.Stream` / `FileSystemObject` / `fs` are a written file with its path; commands
+(`WScript.Shell.Run`, WMI `Win32_Process.Create`, `ShellExecute`, `child_process`) are followed
+(`powershell -enc` → a `.ps1` stage, `mshta`, `certutil -urlcache`, `cmd /c`).
+
+- **Decoders**: `atob`, `unescape`, `decodeURIComponent`, `String.fromCharCode(.apply)`, MSXML
+  `bin.base64` / `bin.hex`, `ADODB.Stream` charset tricks, CryptoJS (AES with a passphrase or a
+  key + IV, DES, TripleDES, RC4), pako, Node `Buffer` / `zlib` / `crypto.createDecipheriv`; XOR,
+  add and subtract loops are named in the recipe (`xor(key k)`).
+- **Computed names**: `this['ev'+'al']`, `window[a+b]`, `[]['constructor']['constructor'](code)`,
+  `new Function(…)`.
+- A script that **reads its own file** (`WScript.ScriptFullName`) gets its own source; a
+  clock / sandbox check that would quit is followed on.
+- **Downloads** (`MSXML2.XMLHTTP`, `WinHttpRequest`, `fetch`, `http(s).get`) are reported with
+  what the script does with them; a name that comes from the registry or an environment variable
+  is a **dynamic call not resolved**, with why.
+
+## VBScript resolved statically
+
+VBScript is tokenised, parsed and walked here (there is no VBScript engine in the loop): `Dim` /
+`ReDim` / `Const`, `Set`, the script's `Function` / `Sub` (`ByRef`, the function name as its return
+value, `GetRef`), `If` / `Select Case`, `For` / `For Each` / `Do` / `While`, `With`, arrays,
+`On Error Resume Next` and the built-ins obfuscators use (`Chr` / `ChrW` / `Asc`, `Mid`,
+`StrReverse`, `Replace`, `Split` / `Join`, `Xor` / `Mod` arithmetic). What reaches `Execute` /
+`ExecuteGlobal` / `Eval` is a stage, evaluated in turn; the COM objects are the same ones the
+JScript evaluator follows (`WScript.Shell`, `ADODB.Stream`, MSXML `bin.base64`, `XMLHTTP`,
+`FileSystemObject`, WMI `Win32_Process.Create`), and a `Declare`d memory API fed from an array
+(`RtlMoveMemory`) loads those bytes. Loops are named in the recipe (`literal d → reverse → sub(7)`).
+
+## Batch resolved statically
+
+A `.bat` / `.cmd` is walked the way `cmd.exe` reads it: `%var%` when a line is read, `!var!` when
+a command runs, `%var:~s,l%` / `%var:a=b%`, `set /a`, carets, `&` / `&&` / `||` / `|`, blocks,
+`if` / `for` (`/l`, lists, `/f` over text or a file) / `goto` / `call :label`, and `cmd /c "…"` as
+a line of its own. Files go to a virtual folder: `echo … > x.vbs` / `>>`, `type` / `more +N`,
+`copy /b a+b c`, `certutil -decode` / `-decodehex` (its own file too: a base64 block after the
+code). What it writes is a stage with its recipe (`the script's own file → base64 (certutil
+-decode) → writes and runs`); what it launches is followed (`powershell -enc` / `-c`,
+`echo … | powershell -`, `mshta`, `certutil -urlcache`, `bitsadmin`, `curl`), and a command read
+from the machine (`for /f` over `reg query`) is a dynamic call not resolved.
+
 ## A script whose extension says nothing
 
 A `.txt`, `.dat`, `.log` or a file with no extension that holds a script — on its own or inside

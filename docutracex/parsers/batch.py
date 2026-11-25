@@ -74,6 +74,13 @@ def collect(original: Path, extracted_dir: Path, fallback: bool = False,
     return uniq[:_MAX_ITEMS]
 
 
+def _resolve(code: str, loc: str) -> dict[str, Any] | None:
+    from ..resolve import bat_eval, report
+    if not code.strip():
+        return None
+    return report.run(bat_eval.resolve, code, loc, "bat")
+
+
 def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any] | None = None,
             fallback: bool = False, fallback_text: str | None = None) -> dict[str, Any]:
     res: dict[str, Any] = {"module": "batch", "status": "ok", "scripts": [], "findings": []}
@@ -86,6 +93,9 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any] | None 
         deob_full = deob["code"]
         code = deob_full[:_MAX_CODE] if deob["changed"] else orig_code
 
+        # static resolution: the script walked as cmd.exe reads it (never run) to what it writes and
+        # launches — the files it drops and the commands it chains go to Nested with their recipe
+        resolved = _resolve(full, loc)
         hits = static_hits(code)
         mets = javascript.metrics(code)
         script = {"id": i, "kind": "batch", "origin": it["origin"], "location": loc,
@@ -98,6 +108,10 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any] | None 
                   "hits": hits, "metrics": mets, "_full_code": full}
         if deob["changed"]:
             script["_full_deob"] = deob_full
+        if resolved:
+            script["decoded_stages"] = resolved["stages"]
+            script["resolution"] = resolved["summary"]
+            res["findings"].extend(resolved["findings"])
         res["scripts"].append(script)
 
         by_rule: dict[str, list[dict[str, Any]]] = {}

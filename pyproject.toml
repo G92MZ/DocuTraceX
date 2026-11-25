@@ -65,6 +65,8 @@ tools = [
     "unicorn>=2.0",
     # .NET analysis: CLR metadata and CIL (MIT, pure Python)
     "dnfile>=0.15",
+    # JavaScript / JScript evaluated statically: the parser the evaluator walks (BSD-2, pure Python)
+    "esprima>=4.0.1",
     "dncil>=1.0",
     # Registry tab: hives (regf, with transaction logs) read by regipy (MIT); every key and value goes
     # into a per-case DuckDB database (MIT) so it is queried without re-parsing.

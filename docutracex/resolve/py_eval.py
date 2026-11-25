@@ -1070,18 +1070,8 @@ class Interp:
             self.sinks.download(Value("str", str(url), rec(url)), method, use, line, dest)
 
     def external(self, cmd: str, line: int | None, recipe: tuple[str, ...]) -> None:
-        from .ps_eval import resolve as ps_resolve
-        m = re.search(r"(?i)\b(?:powershell|pwsh)(?:\.exe)?\b.*?\s-e(?:c|nc|ncodedcommand)?\s+([A-Za-z0-9+/=]{16,})", cmd)
-        if m:
-            try:
-                code = T.as_text(T.b64decode(m.group(1)), "utf-16-le")
-            except T.TransformError:
-                return
-            self.sinks.exec_(Value("str", code, recipe + ("base64 (-EncodedCommand)", "utf-16")), "powershell -EncodedCommand", line)
-            st = self.sinks.stages[-1] if self.sinks.stages else None
-            if st is not None and st.data == code:
-                st.ext = ".ps1"
-            del ps_resolve
+        from . import commands
+        commands.launch(self.sinks, cmd, recipe, line, "command")
 
     def _span(self, line: int | None) -> str:
         lines = self.source.splitlines()
