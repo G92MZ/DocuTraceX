@@ -23,6 +23,11 @@ _MAX_LINKS = 200
 _TEXT_LIMIT = 6000
 
 
+def _keep_text(text: str) -> dict:
+    from .. import toolrun
+    return toolrun.keep_field({}, "text", text, _TEXT_LIMIT, "page text")
+
+
 def _host(url: str) -> str:
     try:
         return (urlsplit(url).hostname or "").lower()
@@ -125,7 +130,7 @@ def parse(html: str, base_url: str) -> dict[str, Any]:
                              for i in f["inputs"])
         f["external"] = bool(_host(f["action"])) and _host(f["action"]) != host
     text = " ".join(p.text)
-    return {"title": re.sub(r"\s+", " ", p.title).strip()[:300], "text": text[:_TEXT_LIMIT], "forms": p.forms[:20],
+    return {"title": re.sub(r"\s+", " ", p.title).strip()[:300], **_keep_text(text), "forms": p.forms,
             "links": list(dict.fromkeys(p.links))[:_MAX_LINKS], "scripts_src": p.scripts_src[:60],
             "inline_scripts": p.inline_scripts[:30], "iframes": p.iframes[:20], "meta_refresh": p.meta_refresh,
             "favicon": p.favicon, "images": p.images[:30]}

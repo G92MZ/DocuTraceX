@@ -39,7 +39,8 @@ from ..config import tmo
 log = get_logger(__name__)
 
 _MAX_BYTES = 60 * 1024 * 1024
-_TEXT_BOUND = 200000
+_TEXT_BOUND = 32 * 1024 * 1024     # text read (the result keeps 200,000 characters; the rest: text_full)
+_TEXT_KEEP = 200000
 _OUTPUT_BOUND = 60000
 _MAX_OBJECTS = 50
 
@@ -301,7 +302,8 @@ def parse_structure(data: bytes) -> dict[str, Any]:
     text_out = re.sub(r"\n{3,}", "\n\n", text_out).strip()
     return {"structure": st, "info": info, "times": times, "fields": fields, "objects": objects,
             "docvars": docvars, "userprops": userprops, "rsids": rsids, "oleclsids": oleclsids,
-            "template": template, "generator": generator, "text": text_out[:_TEXT_BOUND]}
+            "template": template, "generator": generator,
+            **toolrun.keep_field({}, "text", text_out, _TEXT_KEEP, "rtf text")}
 
 
 def _emit(frame: list, s: str, text_parts: list[str], visible: str) -> None:
@@ -381,8 +383,8 @@ def _rtfscan(path: Path, workdir: Path | None) -> dict[str, Any] | None:
         proc = subprocess.run([str(exe), str(path), "scan"], capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=tmo(180),
                               cwd=str(workdir) if workdir else None)
-        return {"command": f"RTFScan.exe {path.name} scan", "returncode": proc.returncode,
-                "output": (proc.stdout or "")[:_OUTPUT_BOUND]}
+        return toolrun.bounded({"command": f"RTFScan.exe {path.name} scan", "returncode": proc.returncode},
+                               proc.stdout, f"RTFScan {path.name}", _OUTPUT_BOUND)
     except Exception as exc:  # noqa: BLE001
         return {"command": f"RTFScan.exe {path.name} scan", "error": str(exc)}
 

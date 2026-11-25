@@ -33,7 +33,7 @@ from ..config import tmo
 
 _MAX_CLASSES = 600
 _MAX_DECOMPILE = 40
-_MAX_ITEMS = 60
+_MAX_ITEMS = 5000              # scripts analysed per file (every one, in practice)
 _MAX_FILE_BYTES = 8 * 1024 * 1024
 _KEEP_CODE = 80_000
 _CLASS_MAGIC = b"\xca\xfe\xba\xbe"

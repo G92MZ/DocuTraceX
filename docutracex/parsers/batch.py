@@ -16,7 +16,7 @@ from typing import Any
 
 from . import bat_deobf, javascript, script_rules
 
-_MAX_ITEMS = 60
+_MAX_ITEMS = 5000              # scripts analysed per file (every one, in practice)
 _MAX_FILES = 300
 _MAX_FILE_BYTES = 2 * 1024 * 1024
 _MAX_CODE = 300_000

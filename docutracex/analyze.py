@@ -508,6 +508,12 @@ def _drop_stale_results(paths: CasePaths, ran: list[str], started: float) -> Non
 
 def analyze_case(case_root: Path) -> dict[str, Any]:
     """Run the applicable parsers on a case (in-process). Returns a summary."""
+    from . import toolrun
+    with toolrun.case_scope(Path(case_root)):      # tool outputs over their bound kept whole in the case
+        return _analyze_case(Path(case_root))
+
+
+def _analyze_case(case_root: Path) -> dict[str, Any]:
     case_root = Path(case_root)
     paths = CasePaths(case_root.name, cases_dir=case_root.parent)
     manifest = read_json(paths.manifest)
@@ -570,6 +576,7 @@ def analyze_case(case_root: Path) -> dict[str, Any]:
     # nested child views of a previous run (rebuilt by this run's nested scans)
     import shutil as _shutil
     _shutil.rmtree(paths.results_dir / "nested_views", ignore_errors=True)
+    _shutil.rmtree(paths.results_dir / "tool_output", ignore_errors=True)     # complete tool outputs of that run
     unlock_rec: dict[str, Any] = {}
     det = unlock_mod.detect(original)
     if det["encrypted"] and det["kind"] in ("office", "pdf"):
@@ -1924,6 +1931,12 @@ def _recount(res: dict[str, Any], key: str) -> None:
 def run_module(case_root: Path, module: str) -> dict[str, Any]:
     """Re-run ONE parser/tool module over an existing case, then recompute the
     derived IOC + findings. Isolated: other modules' results are left as-is."""
+    from . import toolrun
+    with toolrun.case_scope(Path(case_root)):
+        return _run_module(Path(case_root), module)
+
+
+def _run_module(case_root: Path, module: str) -> dict[str, Any]:
     import time as _time
     _t0 = _time.perf_counter()
     _notify_step("start", {"step": f"rerun: {module}"})

@@ -247,7 +247,7 @@ def analyze(original: Path, extracted_dir: Path | None = None,
     if deob.get("decoded"):
         fns = ", ".join(f"{k} ({v})" for k, v in sorted(deob["functions"].items(), key=lambda x: -x[1])[:6])
         uniq = list(dict.fromkeys(d["value"] for d in deob["decoded"]))
-        res["decoded_strings"] = uniq[:2000]
+        res["decoded_strings"] = uniq
         res["findings"].append({"tool": "script", "rule": "script_strings_decrypted", "severity": "medium",
                                 "detail": f"{lang} script hides its strings behind its own decoder functions: "
                                           f"{len(deob['decoded'])} call(s) decrypted statically ({len(uniq)} "

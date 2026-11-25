@@ -35,7 +35,7 @@ from typing import Any
 from . import javascript, script_rules
 from ..config import tmo
 
-_MAX_ITEMS = 60
+_MAX_ITEMS = 5000              # scripts analysed per file (every one, in practice)
 _MAX_FILES = 400
 _MAX_FILE_BYTES = 96 * 1024 * 1024   # a lure layer can carry a whole PE (10 MB+ seen)
 _MAX_CODE = 400_000

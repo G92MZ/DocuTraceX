@@ -67,8 +67,8 @@ def _cli(module: str, args: list[str], path: Path) -> dict[str, Any]:
         proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=tmo(180), env=env)
         out = (proc.stdout or "") + (("\n[stderr]\n" + proc.stderr) if proc.stderr.strip() else "")
-        return {"command": shown, "returncode": proc.returncode,
-                "output": out[:_OUTPUT_BOUND], "output_truncated": len(out) > _OUTPUT_BOUND}
+        from .. import toolrun
+        return toolrun.bounded({"command": shown, "returncode": proc.returncode}, out, shown, _OUTPUT_BOUND)
     except Exception as exc:  # noqa: BLE001
         return {"command": shown, "error": str(exc)}
 

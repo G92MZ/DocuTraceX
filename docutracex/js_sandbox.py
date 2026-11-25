@@ -28,8 +28,8 @@ import base64
 import json
 import sys
 
-MAX_LOG = 400
-MAX_TEXT = 20000
+MAX_LOG = 5000                 # events kept (every file written is kept, whatever the count)
+MAX_TEXT = 200_000             # characters per argument (a command line, a decoded layer)
 MAX_DROP = 16 * 1024 * 1024
 
 _log: list[dict] = []

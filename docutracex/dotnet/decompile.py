@@ -31,7 +31,7 @@ from typing import Any
 TIMEOUT = 120                     # seconds per tool run
 MEMORY_MB = 1024                  # per tool run
 MAX_MODULE = 15                   # prioritised methods per "Decompile module"
-MAX_CODE = 60_000                 # characters kept per method
+MAX_CODE = 8_000_000              # characters kept per method (the whole method)
 PRIORITY = {"network", "exfiltration", "crypto", "execution", "loader", "persistence", "injection"}
 # the only de4dot mode DocuTraceX uses; --preserve-tokens keeps each method's
 # MethodDef row, so a renamed method is still found by its row.

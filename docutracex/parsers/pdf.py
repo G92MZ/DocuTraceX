@@ -160,14 +160,17 @@ def _extract_objects(data: bytes, result: dict[str, Any]) -> None:
     collapsible view. Dangerous ones (carrying a flagged token) are marked and
     listed first so the suspicious ones stay prominent while all are browsable."""
     objs: list[dict[str, Any]] = []
+    whole: list[str] = []                       # every object's dictionary whole (Complete content)
     for m in _OBJ_RE.finditer(data):
-        if len(objs) >= _MAX_OBJECTS:
-            break
         body = m.group(3)
         dangerous = [k for k in _KEYWORDS if k.encode() in body]
         has_stream = b"stream" in body
         dict_part = body.split(b"stream", 1)[0]
         snippet = dict_part.decode("latin-1", "replace").strip()
+        whole.append(f"{m.group(1).decode()} {m.group(2).decode()} obj" + (" (has a stream)" if has_stream else "")
+                     + f"\n{snippet}\n")
+        if len(objs) >= _MAX_OBJECTS:
+            continue
         # A short "type" hint from the dictionary, for the summary line.
         tmatch = re.search(r"/Type\s*/([A-Za-z0-9]+)", snippet)
         objs.append({
@@ -182,14 +185,21 @@ def _extract_objects(data: bytes, result: dict[str, Any]) -> None:
     objs.sort(key=lambda o: (0 if o["dangerous"] else 1))
     result["objects"] = objs
     result["object_count"] = len(objs)
+    if len(whole) > len(objs) or any(o["snippet_truncated"] for o in objs):
+        from .. import toolrun
+        full = toolrun.keep_full("\n".join(whole), "pdf objects")
+        if full:
+            result["objects_full"] = full
+            result["objects_total"] = len(whole)
     result["suspicious_object_count"] = sum(1 for o in objs if o["dangerous"])
 
 
 def _extract_text(path: Path, result: dict[str, Any]) -> None:
     try:
         from pdfminer.high_level import extract_text
-        text = extract_text(str(path), maxpages=20) or ""
-        result["text_sample"] = text[:_TEXT_BOUND]
+        text = extract_text(str(path)) or ""                # every page
+        from .. import toolrun
+        toolrun.keep_field(result, "text_sample", text, _TEXT_BOUND, f"pdf text {path.name}")
         result["text_length"] = len(text)
     except Exception as exc:  # noqa: BLE001
         result["text_error"] = str(exc)

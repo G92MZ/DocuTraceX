@@ -35,7 +35,7 @@ from ..structure import looks_like_emlx  # noqa: F401  (kept for symmetry)
 log = get_logger(__name__)
 
 _BODY_SAMPLE = 20000
-_MAX_ATTACH = 200
+_MAX_ATTACH = 100_000         # every attachment
 _MAX_HOPS = 100
 
 # MAPI property tags (stream suffixes). Prefer the Unicode (001F) variants.
@@ -149,7 +149,7 @@ def _first_addr(value: str | None) -> tuple[str, str]:
 
 def _analyze_message(msg: Message, result: dict[str, Any]) -> None:
     headers = [{"name": k, "value": v} for k, v in msg.items()]
-    result["headers"] = headers[:500]
+    result["headers"] = headers
 
     hops = _parse_received(msg.get_all("Received", []))
     result["received_chain"] = hops
@@ -493,7 +493,7 @@ def _html_to_text(html: str) -> str:
 
 
 _RE_HREF = re.compile(r'href=["\']?((?:https?|ftp)://[^"\'>\s]+)', re.IGNORECASE)
-_MAX_LINKS = 500
+_MAX_LINKS = 100_000
 _RE_ANCHOR = re.compile(r'<a\s[^>]*href=["\']?(https?://[^"\'>\s]+)["\']?[^>]*>(.*?)</a>',
                         re.IGNORECASE | re.DOTALL)
 
@@ -576,7 +576,7 @@ def _parse_msg(path: Path, extracted_dir: Path | None, result: dict[str, Any]) -
     ole = olefile.OleFileIO(str(path))
     try:
         entries = ["/".join(e) if isinstance(e, list) else e for e in ole.listdir(streams=True, storages=True)]
-        result["ole_entries"] = sorted(entries)[:500]
+        result["ole_entries"] = sorted(entries)
 
         headers = _mapi_text(ole, "", _MAPI["transport_headers"])
         subject = _mapi_text(ole, "", _MAPI["subject"])

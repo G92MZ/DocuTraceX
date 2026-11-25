@@ -108,7 +108,7 @@ def analyze_lnk(path: Path, rel: str) -> dict[str, Any]:
     except (TypeError, ValueError):
         size = 0
 
-    item.update(target=target, arguments=args, command=command[:4000],
+    item.update(target=target, arguments=args, command=command,
                 working_directory=str(data.get("working_directory") or ""),
                 icon_location=icon, show_command=show, file_size=size,
                 description=str(data.get("description") or ""),

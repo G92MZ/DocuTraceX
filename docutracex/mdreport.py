@@ -11,14 +11,17 @@ bounded so a huge case still opens in the browser.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, Callable
 
 from . import ai_tools
 from .storage import read_json
 
-# No size limits: this export is read by an LLM (or attached to a ticket) as the whole analysis.
-# A case big enough to matter (tens of thousands of IOCs) is rare and better complete than cut.
-PSEUDOCODE_FUNCS = 25          # decompiled functions written out per binary
+# No size limits: this export is read by an LLM (or attached to a ticket) as the whole analysis —
+# to find what a tool showed and no rule detected. A case big enough to matter is better complete
+# than cut. Only FLOSS's every-string list goes to a file of its own (the ZIP export); the report
+# keeps the strings worth reading.
+PSEUDOCODE_FUNCS = 10 ** 9     # every decompiled function
 
 
 def _md(s: Any) -> str:
@@ -159,6 +162,269 @@ def _code(cid: str) -> str:
     return "\n".join(out)
 
 
+# --- every module result of the case, the nested children's included ----------------
+def _module_results(paths) -> list[tuple[str, dict[str, Any]]]:  # noqa: ANN001
+    """(label, result) of every module of the case and of every nested child's own analysis."""
+    out: list[tuple[str, dict[str, Any]]] = []
+    for p in sorted(paths.results_dir.glob("*.json")):
+        if p.stem in ("summary", "findings", "iocs", "tasks"):
+            continue
+        r = read_json(p)
+        if isinstance(r, dict):
+            out.append((p.stem, r))
+    views = sorted((paths.results_dir / "nested_views").glob("*.json")) if (paths.results_dir / "nested_views").is_dir() else []
+    for p in views:
+        v = read_json(p) or {}
+        for name, r in sorted((v.get("modules") or {}).items()):
+            if isinstance(r, dict):
+                out.append((f"Nested › {v.get('chain') or v.get('filename')} › {name}", r))
+    return out
+
+
+def _read_rel(paths, rel: str | None) -> str | None:  # noqa: ANN001
+    if not rel:
+        return None
+    try:
+        p = (paths.root / rel).resolve()
+        if paths.root.resolve() not in p.parents:
+            return None
+        return p.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
+def _tool_records(obj: Any, path: str) -> list[tuple[str, dict[str, Any]]]:
+    """Every external tool's record (its command, exit code, output, stderr) inside a result."""
+    out: list[tuple[str, dict[str, Any]]] = []
+    if isinstance(obj, dict):
+        if isinstance(obj.get("output"), str) or ("returncode" in obj and ("command" in obj or "available" in obj)):
+            out.append((path, obj))
+            return out
+        for k, v in obj.items():
+            if not str(k).startswith("_"):
+                out += _tool_records(v, f"{path} › {k}")
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            out += _tool_records(v, f"{path}[{i}]")
+    return out
+
+
+def _tools(cid: str) -> str:
+    """Every tool's complete output — what an agent reads to find what a tool showed and no
+    rule caught (the module results keep 60,000 characters; the rest is in results/tool_output)."""
+    paths = ai_tools._paths(cid)
+    out = ["# Tool outputs (complete)", "",
+           "_Every external tool run on the case and on each nested child: command, exit code, time, "
+           "error, stderr and the whole output, as the tool printed it._", ""]
+    n = 0
+    for label, res in _module_results(paths):
+        for where, rec in _tool_records(res, label):
+            n += 1
+            full = _read_rel(paths, rec.get("output_full"))
+            text = full if full is not None else str(rec.get("output") or "")
+            err = _read_rel(paths, rec.get("stderr_full")) or rec.get("stderr")
+            meta = [f"`{rec['command']}`" if rec.get("command") else "",
+                    f"exit {rec['returncode']}" if rec.get("returncode") is not None else "",
+                    f"{rec['duration_s']} s" if rec.get("duration_s") is not None else "",
+                    "**timed out**" if rec.get("timed_out") else "",
+                    f"output {len(text)} chars" + (" (complete; the tab shows the first 60,000)" if full else "")]
+            out += [f"## {where}", "", " · ".join(m for m in meta if m), ""]
+            if rec.get("error"):
+                out += [f"**Error:** {_md(rec['error'])}", ""]
+            out += [_fence(text) if text.strip() else "_(no output)_\n"]
+            if err and str(err).strip():
+                out += ["stderr:", "", _fence(str(err))]
+    if not n:
+        out.append("_(no external tool ran on this case)_")
+    return "\n".join(out)
+
+
+_RELEVANT = __import__("re").compile(
+    r"(?i)(https?://|ftp://|\b(?:[a-z0-9-]+\.)+(?:com|net|org|info|biz|io|ru|cn|top|xyz|example|onion|php|exe|dll|ps1|bat|vbs|js)\b"
+    r"|\b\d{1,3}(?:\.\d{1,3}){3}\b|[a-z]:\\|\\\\|%[a-z]+%|\bhk(?:lm|cu|ey_)|software\\|currentversion"
+    r"|\b(?:cmd|powershell|pwsh|rundll32|regsvr32|mshta|wscript|cscript|schtasks|certutil|bitsadmin|wmic|vssadmin|bcdedit|net1?|reg)(?:\.exe)?\b"
+    r"|\b(?:Virtual(?:Alloc|Protect)|WriteProcessMemory|CreateRemoteThread|NtUnmapViewOfSection|SetWindowsHookEx|GetAsyncKeyState"
+    r"|InternetOpen|URLDownloadToFile|WinHttp|HttpSendRequest|CryptDecrypt|CryptEncrypt|BCrypt|IsDebuggerPresent|ShellExecute|CreateProcess"
+    r"|LoadLibrary|GetProcAddress|RegSetValue|RegCreateKey|AdjustTokenPrivileges|OpenProcess|MiniDumpWriteDump)"
+    r"|mozilla/|user-agent|password|passwd|token|wallet|bitcoin|telegram|discord|webhook|mutex|\.onion|base64|-enc|iex\b"
+    r"|[A-Za-z0-9+/]{40,}={0,2}$)")
+
+
+def _floss(cid: str) -> str:
+    """FLOSS per binary: every decoded / stack / tight string (with its function), and of the
+    static ones those worth reading (URLs, domains, IPs, paths, registry, commands, APIs of
+    injection / network / crypto, credentials, long base64). Every string: the ZIP export."""
+    paths = ai_tools._paths(cid)
+    out = ["# FLOSS strings (relevant)", "",
+           "_Decoded, stack and tight strings whole; of the static ones, those that look like an IOC, a path, "
+           "a registry key, a command, an API of interest, a credential or encoded data. Every string FLOSS "
+           "found is in the ZIP export (`tool_output/floss.*.txt`)._", ""]
+    n = 0
+    for label, res in _module_results(paths):
+        for it in res.get("items") or [] if isinstance(res.get("items"), list) else []:
+            fl = it.get("floss") if isinstance(it, dict) else None
+            if not isinstance(fl, dict) or not (fl.get("status") or it.get("floss_strings")):
+                continue
+            n += 1
+            name = it.get("label") or it.get("filename") or it.get("stored_path") or label
+            out += [f"## {label} › {name}", "", f"{fl.get('status')} · {_md(fl.get('detail'))}"
+                    + (f" · complete output: `{fl['output_full'].rsplit('/', 1)[-1]}`" if fl.get("output_full") else ""), ""]
+            full = _read_rel(paths, fl.get("output_full"))
+            if full and "\n## all strings" in full:
+                head, rest = full.split("\n## all strings", 1)
+                allstr = rest.split("\n", 2)[-1].splitlines()
+                out += [head.split("\n", 2)[-1].strip(), ""]
+            else:
+                allstr = [str(x) for x in it.get("floss_strings") or []]
+                loc = fl.get("located") or []
+                for kind in ("decoded", "stack", "tight"):
+                    xs = [x.get("string") for x in loc if str(x.get("kind", "")).startswith(kind)]
+                    out += [f"## {kind} strings ({len(xs)})", "", _fence("\n".join(map(str, xs))) if xs else "_(none)_\n"]
+            rel = [x for x in allstr if _RELEVANT.search(x)]
+            out += [f"### Relevant strings ({len(rel)} of {len(allstr)})", "", _fence("\n".join(rel)) if rel else "_(none)_\n"]
+    if not n:
+        out.append("_(FLOSS did not run on this case)_")
+    return "\n".join(out)
+
+
+def _full_fields(obj: Any, path: str) -> list[tuple[str, str]]:
+    """(where, case-relative file) of every ``*_full`` text kept whole (document text, PDF objects,
+    page text…) — the tool outputs and FLOSS have their own sections."""
+    out: list[tuple[str, str]] = []
+    if isinstance(obj, dict):
+        tool = isinstance(obj.get("output"), str) or "returncode" in obj
+        for k, v in obj.items():
+            ks = str(k)
+            if ks.endswith("_full") and isinstance(v, str) and v.startswith("results/"):
+                if not (tool and ks in ("output_full", "stderr_full")) and not v.rsplit("/", 1)[-1].startswith("floss"):
+                    out.append((f"{path} › {ks[:-5]}", v))
+            elif not ks.startswith("_"):
+                out += _full_fields(v, f"{path} › {ks}")
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            out += _full_fields(v, f"{path}[{i}]")
+    return out
+
+
+def _content(cid: str) -> str:
+    """What a module read from a file and keeps only in part in its result (the text of a document
+    or a PDF, the dictionary of every PDF object, a page's visible text…), whole."""
+    paths = ai_tools._paths(cid)
+    out = ["# Complete content", "",
+           "_Text the tabs show in part — a document's or PDF's text, every PDF object's dictionary, "
+           "a page's visible text — whole._", ""]
+    seen: set[str] = set()
+    for label, res in _module_results(paths):
+        for where, rel in _full_fields(res, label):
+            if rel in seen:
+                continue
+            seen.add(rel)
+            text = _read_rel(paths, rel)
+            if text is not None:
+                out += [f"## {where}", "", f"{len(text)} characters", "", _fence(text)]
+    if not seen:
+        out.append("_(nothing longer than what the tabs show)_")
+    return "\n".join(out)
+
+
+def _email_source(data: bytes) -> list[str]:
+    """One message read straight from its bytes: the header block verbatim, every text / HTML
+    body whole, every link, every attachment (name, type, size, SHA-256)."""
+    import email
+    import email.policy
+    import hashlib
+    import re
+    m = re.search(rb"\r?\n\r?\n", data)
+    head = data[:m.start()] if m else data
+    out = ["### Headers (verbatim, in order)", "", _fence(head.decode("utf-8", "replace"))]
+    msg = email.message_from_bytes(data, policy=email.policy.default)
+    links: list[str] = []
+    atts = []
+    for i, part in enumerate(msg.walk()):
+        if part.is_multipart():
+            continue
+        ctype = part.get_content_type()
+        fname = part.get_filename()
+        disp = part.get_content_disposition()
+        if fname or disp == "attachment" or not ctype.startswith("text/"):
+            raw = part.get_payload(decode=True) or b""
+            atts.append([fname or "(no name)", ctype, disp or "", len(raw), hashlib.sha256(raw).hexdigest()])
+            continue
+        try:
+            body = part.get_content()
+        except Exception:  # noqa: BLE001  (a broken charset: the bytes as UTF-8)
+            body = (part.get_payload(decode=True) or b"").decode("utf-8", "replace")
+        part_head = "\n".join(f"{k}: {v}" for k, v in part.items())
+        out += [f"### Part {i}: {ctype} ({len(body)} characters)", "", _fence(part_head) if part_head else "",
+                _fence(str(body), "html" if ctype == "text/html" else "")]
+        if ctype == "text/html":
+            links += re.findall(r"""(?i)(?:href|src|action)\s*=\s*["']?([^"'\s>]+)""", str(body))
+    links = list(dict.fromkeys(links))
+    out += [f"### Links in the HTML ({len(links)})", "", _fence("\n".join(links)) if links else "_(none)_\n",
+            f"### Attachments ({len(atts)})", "", _table(["Name", "Type", "Disposition", "Size", "SHA-256"], atts)]
+    return out
+
+
+def _email(cid: str) -> str:
+    """Every message of the case (the original and each attached / nested one), read from its
+    own bytes: headers verbatim, bodies whole, links and attachments — what the email tabs show
+    in part (the module result keeps 20,000 characters of each body)."""
+    paths = ai_tools._paths(cid)
+    manifest = read_json(paths.manifest) or {}
+    targets: list[tuple[str, str]] = []
+    if (paths.subresult("email")).is_file():
+        targets.append(("the case file", (manifest.get("original") or {}).get("stored_path") or ""))
+    vdir = paths.results_dir / "nested_views"
+    for p in sorted(vdir.glob("*.json")) if vdir.is_dir() else []:
+        v = read_json(p) or {}
+        if "email" in (v.get("modules") or {}) and v.get("stored_path"):
+            targets.append((f"Nested › {v.get('chain') or v.get('filename')}", v["stored_path"]))
+    out = [f"# Email messages ({len(targets)})", ""]
+    for label, rel in targets:
+        f = (paths.root / rel) if rel else None
+        out += [f"## {label}: `{Path(rel).name if rel else ''}`", ""]
+        try:
+            data = f.read_bytes() if f else b""
+        except OSError:
+            data = b""
+        if data[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":       # Outlook .msg: its transport headers, as parsed
+            em = read_json(paths.subresult("email")) or {}
+            out += ["_(Outlook .msg: headers as read from its transport headers; bodies in Raw modules › email)_", "",
+                    _fence("\n".join(f"{h.get('name')}: {h.get('value')}" for h in em.get("headers") or []))]
+        elif data:
+            out += _email_source(data)
+        else:
+            out.append("_(file not available)_")
+    if not targets:
+        out.append("_(no email in this case)_")
+    return "\n".join(out)
+
+
+def _code_files(cid: str) -> str:
+    """The complete source of every script (original and deobfuscated) as dumped under
+    extracted/code/ — the module results keep 60–80k characters of each."""
+    paths = ai_tools._paths(cid)
+    d = paths.extracted_dir / "code"
+    files = sorted(p for p in d.rglob("*") if p.is_file()) if d.is_dir() else []
+    out = [f"# Code files (complete, {len(files)})", "",
+           "_Every script recovered, original and deobfuscated, whole (extracted/code/)._", ""]
+    for p in files:
+        try:
+            raw = p.read_bytes()
+        except OSError:
+            continue
+        if b"\x00" in raw[:4096]:
+            out += [f"## {p.relative_to(paths.root).as_posix()}", "", f"_(binary, {len(raw)} bytes)_", ""]
+            continue
+        lang = p.suffix.lstrip(".").lower()
+        out += [f"## {p.relative_to(paths.root).as_posix()}", "", _fence(raw.decode("utf-8", "replace"),
+                                                                         {"ps1": "powershell", "vbs": "vbnet", "bat": "bat",
+                                                                          "py": "python", "js": "javascript"}.get(lang, ""))]
+    if not files:
+        out.append("_(no script recovered)_")
+    return "\n".join(out)
+
+
 def _dotnet(cid: str) -> str:
     paths = ai_tools._paths(cid)
     objs = [o for o in (read_json(paths.subresult("dotnet")) or {}).get("objects") or []
@@ -249,6 +515,13 @@ def _c2(cid: str) -> str:
                 + f". {pr.get('note', '')}"]
     if not cfgs:
         out.append("_(no configuration found, or C2 not run)_")
+    # every extractor's raw output, per object, of every C2 run
+    base = paths.results_dir / "c2_runs"
+    for run in sorted(d for d in base.iterdir() if d.is_dir()) if base.is_dir() else []:
+        out += ["", f"## Extractors' raw output — run {run.name}", ""]
+        for f in sorted(run.glob("*.json")):
+            r = read_json(f) or {}
+            out += [f"### {r.get('object') or f.stem}", "", _fence(json.dumps(r, ensure_ascii=False, indent=1, default=str), "json")]
     return "\n".join(out)
 
 
@@ -261,14 +534,18 @@ def _modules(cid: str) -> str:
     paths = ai_tools._paths(cid)
     out = ["# Raw module results", "",
            "_Every module's JSON result, as stored, complete. The sections above are the readable view._", ""]
-    for p in sorted(paths.results_dir.glob("*.json")):
-        if p.stem in ("summary", "findings"):
-            continue
+    files = [p for p in sorted(paths.results_dir.rglob("*.json"))
+             if not (p.parent == paths.results_dir and p.stem in ("summary", "findings"))
+             and "c2_runs" not in p.parts]                            # (C2 raw: in the C2 section)
+    root = getattr(paths, "root", paths.results_dir.parent)
+    files += sorted((root / "code").glob("*.json")) if (root / "code").is_dir() else []
+    for p in files:
         try:
             text = json.dumps(json.loads(p.read_text(encoding="utf-8")), ensure_ascii=False, indent=1, default=str)
         except (OSError, ValueError):
             continue
-        out += [f"## {p.stem}", "", _fence(text, "json")]
+        name = p.stem if p.parent == paths.results_dir else p.relative_to(root).as_posix()
+        out += [f"## {name}", "", _fence(text, "json")]
     return "\n".join(out)
 
 
@@ -325,10 +602,14 @@ def _rmm(cid: str) -> str:
 
 SECTIONS: list[tuple[str, str, Callable[[str], str]]] = [
     ("summary", "Summary", _summary), ("findings", "Findings", _findings), ("iocs", "IOCs", _iocs),
+    ("email", "Email", _email),
     ("nested", "Nested / stages", _nested), ("decrypted", "Decrypted", _decrypted), ("code", "Code", _code),
     ("dotnet", ".NET", _dotnet), ("ml", "Machine Learning", _ml), ("yara", "YARA", _yara), ("c2", "C2", _c2),
     ("rmm", "RMM / remote access", _rmm),
-    ("network", "Network checks", _network), ("modules", "Raw modules", _modules),
+    ("network", "Network checks", _network), ("floss", "FLOSS strings", _floss),
+    ("tools", "Tool outputs", _tools), ("content", "Complete content", _content),
+    ("codefiles", "Code files", _code_files),
+    ("modules", "Raw modules", _modules),
 ]
 
 

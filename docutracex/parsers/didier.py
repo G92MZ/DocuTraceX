@@ -69,9 +69,9 @@ def _run_one(name: str, script: Path, target: Path, args: list[str] | None) -> d
             cmd, capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=tmo(120),
         )
-        out = (proc.stdout or "")[:_OUTPUT_BOUND]
-        return {"available": True, "returncode": proc.returncode, "output": out,
-                "stderr": (proc.stderr or "")[:2000] or None}
+        from .. import toolrun
+        return toolrun.bounded({"available": True, "returncode": proc.returncode}, proc.stdout,
+                               f"{name} {target.name}", _OUTPUT_BOUND, proc.stderr, 2000, err_tail=False)
     except Exception as exc:  # noqa: BLE001
         return {"available": True, "error": str(exc)}
 

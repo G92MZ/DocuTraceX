@@ -21,6 +21,7 @@ an email): what the victim would see and where what they type goes. Nothing runs
 
 from __future__ import annotations
 
+from . import toolrun
 import base64
 import binascii
 import hashlib
@@ -240,8 +241,8 @@ def structure(markup: str) -> dict[str, Any]:
     from .ioc import strip_header_blocks
     text = " ".join(strip_header_blocks("\n".join(p.text)).split())
     return {"title": _html.unescape(p.title), "headings": p.headings, "favicon": p.favicon, "forms": p.forms,
-            "inputs": p.inputs, "resources": res[:300], "redirects": p.redirects[:50],
-            "visible_text": text[:3000], "visible_chars": len(text),
+            "inputs": p.inputs, "resources": res, "redirects": p.redirects,
+            **toolrun.keep_field({}, "visible_text", text, 3000, "html visible text"), "visible_chars": len(text),
             "login_words": sorted({w.lower() for w in _LOGIN_WORDS.findall(text + " " + p.title)})[:15]}
 
 

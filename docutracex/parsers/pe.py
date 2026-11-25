@@ -63,8 +63,9 @@ FLOSS_NO_LANGUAGE_ARGS = ["--language", "none"]
 _FLOSS_LANGUAGE_CRASH = ("get_struct_string_candidates", "bytes length not a multiple of item size",
                          "language_strings", "floss/language/")
 CAPA_TIMEOUT = int(_os.environ.get("DOCUTRACEX_CAPA_TIMEOUT", str(tmo(1800))))   # 30 min x factor
-_FLOSS_MAX_STRINGS = 7000
-_CAPA_MAX_RULES = 300
+_FLOSS_MAX_STRINGS = 7000      # strings kept in the module result (the Binary tab); all of them go to
+                               # FLOSS's complete output (results/tool_output/floss.*.txt), see keep_floss_full
+_CAPA_MAX_RULES = 100000       # every capability
 # PyInstaller CArchive cookie (same as parsers.pyinstaller.MAGIC), searched in
 # the file tail like analyze.py does.
 _PYI_MAGIC = b"MEI\014\013\012\013\016"
@@ -303,7 +304,7 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
                 f"packer section name '{name}'", loc, name, "T1027.002"))
         if s.contains_rva(ep):
             ep_section = name
-    item["sections"] = sections[:40]
+    item["sections"] = sections
     if high_entropy and high_entropy >= max(1, len(sections) // 2):
         f.append(_finding("pe_packed", "high",
             f"{high_entropy}/{len(sections)} sections have high entropy (≥7.2) — likely packed/encrypted",
@@ -321,7 +322,7 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
         for imp in entry.imports:
             if imp.name:
                 imported.add(imp.name.decode("latin-1", "replace").lower())
-    item["imports_dll"] = dlls[:60]
+    item["imports_dll"] = dlls
     item["imports_count"] = len(imported)
     for rule, sev, attack, label, apis in _IMPORT_GROUPS:
         hit = sorted({a for a in apis if a in imported})
@@ -336,7 +337,7 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
     # --- exports (DLL) ---
     exp = getattr(pe, "DIRECTORY_ENTRY_EXPORT", None)
     if exp is not None:
-        names = [e.name.decode("latin-1", "replace") for e in exp.symbols if e.name][:60]
+        names = [e.name.decode("latin-1", "replace") for e in exp.symbols if e.name]
         item["exports"] = names
         if any(n.lower() in ("dllregisterserver", "install", "start", "run", "main") for n in names):
             f.append(_finding("pe_dll_export", "info",
@@ -533,6 +534,7 @@ def analyze(path: Path, rel: str, run_tools: bool = True, unpack_dir: Path | Non
                 floss, capa = clock.tools(lambda: tools_for(path))
             floss_strings = floss.pop("strings", [])
             item["floss"] = floss
+            keep_floss_full(floss, floss_strings, Path(rel).name)
             if floss_strings:
                 item["floss_strings"] = floss_strings[:_FLOSS_MAX_STRINGS]
                 strings_for_ioc.extend(floss_strings)
@@ -967,6 +969,40 @@ def _floss_plan(path: Path) -> tuple[str, list[str]]:
     return ("floss", FLOSS_LARGE_ARGS) if large else ("floss", [])
 
 
+def floss_full_text(floss: dict[str, Any], strings: list[str], name: str) -> str:
+    """FLOSS's complete output of one binary, as text: the decoded / stack / tight strings
+    with the function that builds or decodes them, then every string it found."""
+    out = [f"# FLOSS {floss.get('version') or ''} — {name}", str(floss.get("detail") or ""), ""]
+    loc = [x for x in floss.get("located") or [] if isinstance(x, dict)]
+    for kind in ("decoded", "stack", "tight"):
+        items = [x for x in loc if str(x.get("kind", "")).startswith(kind)]
+        out += [f"## {kind} strings ({len(items)})", ""]
+        for x in items:
+            fn, rt = x.get("function"), x.get("routine")
+            where = " ".join(p for p in ((f"function 0x{fn:x}" if isinstance(fn, int) else ""),
+                                          (f"routine 0x{rt:x}" if isinstance(rt, int) else "")) if p)
+            out.append(f"{x.get('string')}\t[{where}]" if where else str(x.get("string")))
+        out.append("")
+    out += [f"## all strings ({len(strings)}: static, language, decoded, stack, tight)", ""]
+    out += [str(s) for s in strings]
+    return "\n".join(out) + "\n"
+
+
+def keep_floss_full(floss: dict[str, Any], strings: list[str], name: str, case_root: Path | None = None) -> None:
+    """Keep FLOSS's complete output in the case (``floss["output_full"]``): the module result
+    keeps the first strings for the UI, the export and the Markdown report read them all."""
+    if floss.get("status") != "ok" and not strings:
+        return
+    from .. import toolrun
+    try:
+        full = toolrun.keep_full(floss_full_text(floss, strings, name), f"floss {name}", case_root)
+    except Exception:  # noqa: BLE001  (an export only)
+        full = None
+    if full:
+        floss["output_full"] = full
+        floss["strings_total"] = len(strings)
+
+
 def floss_record(path: Path, cancel: Any = None, fast: bool = False) -> dict[str, Any]:
     """The automatic FLOSS run of one file on its own (the background job), cached like
     the one ``_both`` runs. ``fast``: on the fast vivisect analysis (a complete result
@@ -1320,11 +1356,11 @@ def _run_floss(path: Path, extra: list[str] | None = None, timeout: int | None =
         for s in block.get(key) or []:
             if isinstance(s, dict) and isinstance(s.get("string"), str) and s["string"].strip():
                 fn = s.get("function") if isinstance(s.get("function"), int) else s.get("decoding_routine")
-                located.append({"kind": key.split("_")[0], "string": s["string"][:500],
+                located.append({"kind": key.split("_")[0], "string": s["string"],
                                 "function": fn if isinstance(fn, int) else None,
                                 "routine": s.get("decoding_routine") if isinstance(s.get("decoding_routine"), int) else None})
     if located:
-        rec["located"] = located[:5000]
+        rec["located"] = located
     rec["version"] = str((data.get("metadata") or {}).get("version") or "")
     # FIX: detail now reflects all four categories including static
     rec["detail"] = (f"{len(strings)} string(s): {counts.get('static', 0)} static, "

@@ -61,12 +61,10 @@ def _run(exe: Path, target: Path, args: list[str], cwd: Path | None) -> dict[str
             cmd, capture_output=True, text=True, encoding="utf-8",
             errors="replace", timeout=_TIMEOUT, cwd=str(cwd) if cwd else None,
         )
-        return {
-            "command": " ".join([EXE_NAME, target.name, *args]),
-            "returncode": proc.returncode,
-            "output": (proc.stdout or "")[:_OUTPUT_BOUND],
-            "stderr": (proc.stderr or "")[:2000] or None,
-        }
+        from .. import toolrun
+        shown = " ".join([EXE_NAME, target.name, *args])
+        return toolrun.bounded({"command": shown, "returncode": proc.returncode}, proc.stdout, shown,
+                               _OUTPUT_BOUND, proc.stderr, 2000, err_tail=False)
     except Exception as exc:  # noqa: BLE001
         return {"command": " ".join([EXE_NAME, target.name, *args]), "error": str(exc)}
 
