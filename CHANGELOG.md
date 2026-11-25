@@ -3,6 +3,13 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.246.1 — 2026-11-25 (#326)
+
+**Nested: every file opens, in the tree too**
+
+- Every file in **Nested** now has **Open analysis ↗**, even one with nothing to show but the file itself (listed only, plain text, an opaque blob): its **File** tab gives type, size, hash, folder and Hex.
+- The tree's details panel (and the Findings "By file" view) now have **📁 Folder**, **↓** and **Hex**, as the list does; folded groups (*listed only*, *clean files*) open each member too.
+
 ## 1.246.0 — 2026-11-21 (#325)
 
 **ELF: capa and their strings**

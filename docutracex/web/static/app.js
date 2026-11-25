@@ -918,7 +918,8 @@ function paneFindings(findings, ids, ctx) {
     if (!subtreeCount(n, chain)) return "";       // files with nothing found below them stay in Nested
     const kids = (n.children || []).map((c) => node(c, `${chain} › ${c.filename}`)).join("");
     const extra = (n.decrypted_from ? originBadge(n) : "")
-      + (n.view_id ? `<button class="btn btn-sm nested-open" type="button" data-open-view="${escapeHtml(n.view_id)}" title="Open this file's own analysis (its tabs)">Open analysis ↗</button>` : "");
+      + (n.view_id ? `<button class="btn btn-sm nested-open" type="button" data-open-view="${escapeHtml(n.view_id)}" title="Open this file's own analysis (its tabs)">Open analysis ↗</button>` : "")
+      + fileActions(n.stored_path);
     return card(n.filename, n.kind, byChain[chain] || [], kids, false, extra);
   };
   const kids = (ctx.tree || []).map((n) => node(n, n.filename)).join("");
@@ -3673,7 +3674,11 @@ function ntDetail(id, key) {
   }
   if (n._group) {
     el.innerHTML = `<h4 class="ntree-dh">⋯ ${escapeHtml(n.filename)}</h4><p class="hint-line">Folded: ${{ tables: "the installer database's own tables (read by the MSI engine)", listed: "files only listed, not analysed one by one", quiet: "analysed, nothing found and nothing inside (resources, icons, images…)" }[n._key] || ""}. ▸ opens the group.</p>`
-      + `<div class="ntree-members">${n._members.slice(0, 400).map((m) => `<div class="mono">${escapeHtml(m.filename)}</div>`).join("")}${n._members.length > 400 ? `<div class="hint-line">… ${n._members.length - 400} more</div>` : ""}</div>`;
+      + `<div class="ntree-members">${n._members.slice(0, 400).map((m) => `<div class="ntree-member"><span class="mono">${escapeHtml(m.filename)}</span>`
+        + (m.view_id ? ` <button class="btn btn-ghost btn-sm" type="button" data-nt-open="${escapeHtml(m.view_id)}" title="Open this file's own analysis">↗</button>` : "")
+        + (m.stored_path ? ` <button class="btn btn-ghost btn-sm" type="button" data-reveal="${escapeHtml(m.stored_path)}" title="Open containing folder">📁</button>` : "")
+        + `</div>`).join("")}${n._members.length > 400 ? `<div class="hint-line">… ${n._members.length - 400} more</div>` : ""}</div>`;
+    wireFileActions(el, _openCaseId);
     return;
   }
   const fs = n.findings || [];
@@ -3685,7 +3690,9 @@ function ntDetail(id, key) {
         <span class="mono">${escapeHtml(f.tool)}/${escapeHtml(f.rule)}</span> ${escapeHtml(f.detail)}</div>`).join("") : `<p class="hint-line">No findings.</p>`)
     + `<div class="row" style="margin-top:8px;gap:6px;display:flex;flex-wrap:wrap">
         <button class="btn btn-ghost btn-sm" type="button" data-nt-list="${escapeHtml(n.filename || "")}">Show in the list (marks, files) ↓</button>
-        ${n.view_id ? `<button class="btn btn-sm" type="button" data-nt-open="${escapeHtml(n.view_id)}">Open analysis ↗</button>` : ""}</div>`;
+        ${n.view_id ? `<button class="btn btn-sm" type="button" data-nt-open="${escapeHtml(n.view_id)}">Open analysis ↗</button>` : ""}
+        ${fileActions(n.stored_path)}</div>`;
+  wireFileActions(el, _openCaseId);
 }
 function ntExtMenu(id) {
   const st = _ntreeState[id];
@@ -3869,8 +3876,8 @@ function childTabKind(n) {
 function directTabNodes(tree) {
   const out = [];
   const visit = (n, depth) => {
-    if (n.view_id && childTabKind(n)) { out.push(n); return; }
-    if (n.view_id || depth >= 3) return;
+    if (n.view_id && (n.view_modules || []).length && childTabKind(n)) { out.push(n); return; }
+    if ((n.view_modules || []).length || depth >= 3) return;   // (an empty view lends its place too)
     (n.children || []).forEach((c) => visit(c, depth + 1));
   };
   (tree || []).forEach((n) => visit(n, 0));
