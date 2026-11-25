@@ -207,7 +207,7 @@ def tokenize(code: str) -> list[Tok]:
                 # a word followed by .member is a type or a call target, keep the dot out
                 if "." in w and not re.match(r"(?i)[a-z_][\w`-]*\.(?:exe|dll|ps1|bat|cmd|vbs|js|txt)$", w):
                     w = w.split(".", 1)[0]
-                out.append(Tok("WORD", w.replace("`", ""), line, sp, i))
+                out.append(Tok("WORD", w, line, sp, i))           # backticks kept: resolve_name drops them
                 i, sp = i + len(w), False
                 continue
         for p in _PUNCT:
@@ -665,7 +665,7 @@ class Parser:
                     continue
                 break
             self.i = j
-            return ("str", c.line, "".join(parts))
+            return ("str", c.line, "".join(parts).replace("`", ""))
         if c.kind == "PUNCT" and c.value == "{":
             return ("sblock", c.line, self.block())
         return self.postfix()

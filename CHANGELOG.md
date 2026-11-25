@@ -3,6 +3,14 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.251.0 — 2026-11-25 (#331)
+
+**Resolution tab: how each hidden stage was reached**
+
+- New **Resolution** tab: every script evaluated statically, with what it runs, loads or writes, each stage's recipe step by step (`here-string $P → base64 → aes-256-cbc(key $K, iv $V) → gzip`), its downloads, the calls that could not be resolved and the full trace.
+- Each script card (PowerShell…) shows its own Resolution block; computed command names say how they were written (`Invoke-Expression (called as & ("Inv"+"oke-Ex"+"pression"))`).
+- The Markdown report has a **Resolution** section with the same.
+
 ## 1.250.0 — 2026-11-25 (#330)
 
 **PowerShell resolved statically, to the binaries it hides**

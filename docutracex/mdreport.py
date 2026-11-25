@@ -287,6 +287,46 @@ def _floss(cid: str) -> str:
     return "\n".join(out)
 
 
+_RES_KIND = {"exec": "runs it", "load": "loads it", "write": "writes it", "value": "computes it"}
+
+
+def _resolution(cid: str) -> str:
+    """Every script evaluated statically: stages with their recipe, downloads, calls not resolved
+    and the trace — how each hidden stage was reached."""
+    paths = ai_tools._paths(cid)
+    out = ["# Resolution (scripts evaluated statically)", "",
+           "_Each script's values and operations followed (nothing executed) to what it runs, loads or writes._", ""]
+    n = 0
+    for label, res in _module_results(paths):
+        for sc in res.get("scripts") or [] if isinstance(res.get("scripts"), list) else []:
+            r = sc.get("resolution") if isinstance(sc, dict) else None
+            if not r or not (r.get("stages") or r.get("downloads") or r.get("unresolved")):
+                continue
+            n += 1
+            out += [f"## {label} › {sc.get('origin') or sc.get('location') or ''}", ""]
+            if r.get("stages"):
+                out += ["### Stages", "", _table(["#", "Does", "Call", "Result", "Recipe", "SHA-256"], [
+                    [i + 1, _RES_KIND.get(st.get("kind"), st.get("kind")) + (" (later stage)" if st.get("depth") else ""),
+                     st.get("sink"), f"{st.get('type')} {st.get('size')} B", " → ".join(st.get("recipe") or []),
+                     st.get("sha256")] for i, st in enumerate(r["stages"])])]
+            if r.get("downloads"):
+                out += ["### Downloads (not fetched)", "", _table(["Line", "URL", "Method", "Use", "Saved to"], [
+                    [d.get("line"), d.get("url"), d.get("method"), d.get("use"), d.get("saved_to", "")] for d in r["downloads"]])]
+            if r.get("unresolved"):
+                out += ["### Dynamic calls not resolved", "",
+                        "_The name or data depends on something only on the victim's machine (or the C2)._", "",
+                        _table(["Line", "Expression", "Depends on", "Why"], [
+                            [u.get("line"), u.get("expression"), u.get("depends_on"), u.get("why")] for u in r["unresolved"]])]
+            if r.get("steps"):
+                out += ["### Trace", "", _table(["Line", "Step", "Value", "Recipe"], [
+                    [t.get("line"), t.get("what"), t.get("value"), " → ".join(t.get("recipe") or [])] for t in r["steps"]])]
+            if r.get("errors"):
+                out += ["### Statements not followed", "", _fence("\n".join(r["errors"]))]
+    if not n:
+        out.append("_(no script was followed to a stage, a download or a dynamic call)_")
+    return "\n".join(out)
+
+
 def _full_fields(obj: Any, path: str) -> list[tuple[str, str]]:
     """(where, case-relative file) of every ``*_full`` text kept whole (document text, PDF objects,
     page text…) — the tool outputs and FLOSS have their own sections."""
@@ -606,7 +646,7 @@ SECTIONS: list[tuple[str, str, Callable[[str], str]]] = [
     ("nested", "Nested / stages", _nested), ("decrypted", "Decrypted", _decrypted), ("code", "Code", _code),
     ("dotnet", ".NET", _dotnet), ("ml", "Machine Learning", _ml), ("yara", "YARA", _yara), ("c2", "C2", _c2),
     ("rmm", "RMM / remote access", _rmm),
-    ("network", "Network checks", _network), ("floss", "FLOSS strings", _floss),
+    ("network", "Network checks", _network), ("resolution", "Resolution", _resolution), ("floss", "FLOSS strings", _floss),
     ("tools", "Tool outputs", _tools), ("content", "Complete content", _content),
     ("codefiles", "Code files", _code_files),
     ("modules", "Raw modules", _modules),
