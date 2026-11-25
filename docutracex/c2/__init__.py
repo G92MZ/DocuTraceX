@@ -11,6 +11,8 @@ the implants it recognises, without running anything:
 * njRAT (plain settings), XWorm (AES-ECB, key from the mutex), AgentTesla-style
   stealers (exfiltration channel in clear), NanoCore (identification only)
 * RedLine / META, Snake Keylogger, Raccoon v2, Warzone / AveMaria, DarkGate
+* DarkCloud (VB6): Telegram / SMTP / FTP / panel from the string pool (builder placeholders,
+  RC4 per-string keys)
 * Go implants (Sliver, Merlin, Mythic Go agents, generic): framework and C2
   endpoints from the Go analysis, when it ran (``golang_c2``)
 * any family the CAPE / ditekSHen YARA rules name (``familyrules``: downloaded,
@@ -34,7 +36,7 @@ MAX_FILES = 500
 MAX_SIZE = 64 * 1024 * 1024
 FAMILIES = ("Cobalt Strike", "Metasploit / Meterpreter", "Remcos", "AsyncRAT", "DcRAT", "QuasarRAT",
             "njRAT", "XWorm", "AgentTesla", "NanoCore", "RedLine / META", "Snake Keylogger",
-            "Raccoon Stealer v2", "StealC", "Vidar", "Lumma Stealer", "Warzone / AveMaria", "DarkGate",
+            "Raccoon Stealer v2", "StealC", "Vidar", "Lumma Stealer", "Warzone / AveMaria", "DarkGate", "DarkCloud",
             "Brute Ratel C4", "Havoc (Demon)", "Pure family", "Sliver", "Merlin", "Mythic (Go agent)",
             "Go implant", "Discord-webhook grabbers", "RMM / remote access")
 
@@ -195,6 +197,8 @@ def _scan_detailed(path: Path, data: bytes) -> tuple[list[dict[str, Any]], list[
     out += run("metasploit", lambda: metasploit.extract(data))
     if not any(r.get("kind") == "RAT" for r in out):
         out += run("dotnet_more", lambda: dotnet_more.extract_all(data))
+    from . import darkcloud
+    out += run("darkcloud", lambda: darkcloud.extract(data))
     if not any(r.get("kind") in ("RAT", "stealer") and r.get("c2") for r in out):
         out += run("stealers", lambda: stealers.extract_all(data))
     if not any(r.get("c2") and r.get("kind") not in ("indicators", "rmm") for r in out):
@@ -456,8 +460,18 @@ def _protected(result: dict[str, Any], label: str, path: Path, die_by_name: dict
         return
     found = protection.detect(data, die_by_name.get(path.name) or die_by_name.get(label))
     if found:
-        result.setdefault("protected", []).append({"object": label, "protectors": found,
-                                                   "note": protection.note(found)})
+        entry: dict[str, Any] = {"object": label, "protectors": found, "note": protection.note(found)}
+        if [p["name"] for p in found] == ["ConfuserEx"] and b"BSJB" in data:
+            # its constants were decrypted (pattern reader or CIL emulation): not a wall any more
+            try:
+                from ..dotnet import static_strings
+                dec = static_strings(data)
+            except Exception:  # noqa: BLE001
+                dec = []
+            if dec:
+                entry.update(note=protection.note_decrypted(found, len(dec)), decrypted=len(dec),
+                             strings=dec[:40])
+        result.setdefault("protected", []).append(entry)
 
 
 def reinterpret(case_root: Path, run_id: str | None = None) -> dict[str, Any]:

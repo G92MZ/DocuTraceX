@@ -235,6 +235,26 @@ def parse(data: bytes) -> dict[str, Any]:
                          "input": x["id"], "output": x["output"][:4000], "how": cx["how"]} for x in cx["strings"])
             except Exception as exc:  # noqa: BLE001
                 c["confuser_error"] = f"ConfuserEx constants: {exc}"[:200]
+            # mutated ConfuserEx (flattened control flow, the key derivation inlined in the module
+            # initializer): the constants come out by interpreting the CIL, not by its patterns
+            if (any(o["name"] == "ConfuserEx" for o in out["obfuscators"])
+                    and (c.get("confuser_constants") or {}).get("mode") != "Normal"):
+                try:
+                    from .cilemu import confuser_strings
+                    em = confuser_strings(data)
+                    if em and (em["strings"] or em["assemblies"]):
+                        c["confuser_constants"] = {
+                            "initializer": "<Module>::.cctor", "mode": "emulated", "how": em["how"], "records_bytes": 0,
+                            "strings": len(em["strings"]), "assemblies": len(em["assemblies"]),
+                            **({"stopped": em["error"]} if em["error"] else {})}
+                        c.setdefault("decrypted", []).extend(
+                            {"decryptor": "ConfuserEx constants (CIL emulation)", "caller": x["caller"],
+                             "input": x["id"], "output": x["output"][:4000], "how": em["how"]} for x in em["strings"])
+                        out["_confuser_assemblies"] = em["assemblies"]
+                    elif em and em.get("error"):
+                        c["confuser_error"] = f"ConfuserEx constants (CIL emulation): {em['error']}"[:200]
+                except Exception as exc:  # noqa: BLE001
+                    c["confuser_error"] = f"ConfuserEx constants (CIL emulation): {exc}"[:200]
             out["cil"] = c
         except Exception as exc:  # noqa: BLE001  (CIL is best effort)
             out["cil"] = {"error": f"CIL disassembly: {exc}"[:200]}
@@ -292,10 +312,12 @@ def _findings(item: dict[str, Any]) -> list[dict[str, Any]]:
                                   f"({x['decrypted']['size']} bytes)", "evidence": x["decrypted"]["how"], "attack": "T1140"})
     cx = cil.get("confuser_constants")
     if cx:
-        ok = cx.get("mode") == "Normal"
+        ok = cx.get("mode") in ("Normal", "emulated")
+        how = "by CIL emulation" if cx.get("mode") == "emulated" else "statically"
+        extra = f", {cx['assemblies']} embedded assembly(ies) out" if cx.get("assemblies") else ""
         out.append({"rule": "dotnet:confuser_constants", "severity": "medium" if ok else "low", "tool": "dotnet",
                     "location": loc, "attack": "T1027",
-                    "detail": (f"ConfuserEx constants protection decrypted statically: {cx['strings']} literal(s) recovered"
+                    "detail": (f"ConfuserEx constants protection decrypted {how}: {cx['strings']} literal(s) recovered{extra}"
                                if ok else f"ConfuserEx constants protection ({cx['mode']})"),
                     "evidence": f"{cx['how']} — initializer {cx['initializer']}"})
     dec = cil.get("decrypted") or []
@@ -416,6 +438,12 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
             r = {"error": f"metadata parser: {exc}"[:300]}
         res_strings: list[tuple[str, str]] = []
         meths = r.pop("_cil_methods", None) or []
+        for n_asm, blob in enumerate(r.pop("_confuser_assemblies", None) or [], 1):
+            child = _resource_child(root, sha, t["label"], {"name": f"confuser_assembly_{n_asm}.dll"}, blob)
+            if child:
+                child["origin"] = f"assembly ConfuserEx loads at start (Assembly.Load) in {t['label']}"
+                child["recipe"] = ["ConfuserEx module initializer (CIL emulation)", "LZMA", "Assembly.Load"]
+                res.setdefault("_children", []).append(child)
         for x in r.get("resources") or []:
             raw = x.pop("_data", b"")
             if meths and x.get("entropy", 0) >= 7.0 and not is_resources(raw) and not x["name"].lower().startswith("costura."):

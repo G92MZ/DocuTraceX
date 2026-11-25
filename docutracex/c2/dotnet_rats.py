@@ -55,8 +55,8 @@ def user_strings(data: bytes) -> list[str]:
     analysis decrypts statically (CIL decryptors, .resources string entries):
     the extractors then see the settings an obfuscated builder hides."""
     heap = heap_user_strings(data)
-    if not heap:
-        return heap
+    if not heap and not (data[:2] == b"MZ" and b"BSJB" in data):
+        return heap                     # (an obfuscator may empty #US: its strings are decrypted below)
     try:
         from ..dotnet import static_strings
         extra = [s for s in static_strings(data) if s not in set(heap)]

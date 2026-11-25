@@ -3,6 +3,14 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.258.0 — 2026-11-25 (#338)
+
+**DarkCloud's configuration and mutated ConfuserEx strings, read statically**
+
+- DarkCloud (VB6 stealer): its Telegram bot and chat, SMTP, FTP and panel come out of the C2 tab, with the channels the buyer left off, the version, install path and persistence, and what it steals. Strings encrypted with RC4 per string are decrypted first.
+- ConfuserEx builds that flatten their control flow no longer hide their strings: the module initializer and the getters are emulated (nothing runs on the machine) and the literals appear in the .NET tab and the IOCs.
+- The assembly ConfuserEx loads at start becomes a Nested child, and the C2 tab no longer calls such an object a wall when its strings were recovered.
+
 ## 1.257.0 — 2026-11-25 (#337)
 
 **box-js emulator for JScript droppers, and busy loops no longer stop static analysis**

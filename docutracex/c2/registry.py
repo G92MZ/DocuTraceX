@@ -102,6 +102,17 @@ EXTRACTORS: dict[str, dict[str, Any]] = {
         "fields": ["SMTP / FTP / Telegram / Discord webhook exfiltration", "accounts"], "output": "exfiltration channel",
         "limits": "builds that encrypt their strings need the .NET string decryption or a memory dump",
     },
+    "darkcloud": {
+        "name": "DarkCloud", "families": ["DarkCloud"], "version": "1.0",
+        "formats": ["VB6 PE (the stealer, once a crypter / injector layer is decoded)"],
+        "engines": ["VB6 string constants (BSTR pool)", "builder placeholders", "RC4 with per-string keys"],
+        "dependencies": [],
+        "fields": ["Telegram bot token / chat id", "SMTP server, port, SSL, account, recipient", "FTP",
+                   "panel (gate) URL", "version", "build ID", "install path", "VB project path", "what it steals"],
+        "output": "exfiltration channels (configuration) or indicators",
+        "limits": "a build that encrypts its strings another way than RC4 per string, or a stealer still inside "
+                  "its crypter: decode that layer first (or a memory dump)",
+    },
     "family_yara": {
         "name": "Family YARA (CAPE / ditekSHen)", "version": "1.0", "families": ["any family the rules name"],
         "formats": ["any object (unpacked payloads match best)"],
@@ -131,6 +142,7 @@ REQUIRES: dict[str, list[tuple[str, str, bool, str]]] = {
     "dotnet_more": [("python", "cryptography", True, "AES / DES / RC4 settings")],
     "stealers": [("python", "pefile", False, "PE resources"), ("python", "cryptography", False, "3DES-encrypted strings")],
     "modern": [],
+    "darkcloud": [],
     "go": [],
     "family_yara": [("python", "yara", True, "YARA matching"),
                     ("feed", "family YARA rules", False, "CAPE / ditekSHen rule sets (C2 view: Refresh now)")],
