@@ -28,7 +28,10 @@ carry a badge.
 Everything a file carries — attachments, archive entries, embedded objects, unpacked binaries,
 decrypted stages, files hidden in images, objects carved from memory — is analysed **in turn**,
 many levels deep, each with the **recipe** that produced it (`base64 → xor(0x23) → gzip`…).
-**Open analysis ↗** opens any child like a case of its own, with all its tabs.
+**Open analysis ↗** opens any child like a case of its own, with all its tabs — every child,
+in the tree and in the list alike, even one with nothing more than the file (a file only listed,
+plain text, an opaque blob): its **File** tab then shows the type, size, hash, folder and Hex.
+**📁 Folder**, **↓** and **Hex** are on every box's details as well.
 
 Nested opens as a **tree that grows to the right**. At first only the analysed file is shown;
 **+** on any box shows its children, one level at a time, and **−** hides them again. Each line

@@ -353,8 +353,14 @@ def _scan_one(abs_path: Path, name: str, paths: CasePaths, depth: int,
     tracer = ctx.get("_tracer") or _NoTracer()
     trec = tracer.enter(f"{chain} › {name}" if chain else name, node["kind"], depth)
     try:
-        return _scan_node(abs_path, name, paths, depth, chain, ctx, sources_out, node,
-                          lambda tool: tracer.tool(trec, tool))
+        out = _scan_node(abs_path, name, paths, depth, chain, ctx, sources_out, node,
+                         lambda tool: tracer.tool(trec, tool))
+        if "view_id" not in node:             # returned early (unreadable): an empty view all the same
+            try:
+                _save_view(paths, node, f"{chain} › {name}" if chain else name, {})
+            except Exception:  # noqa: BLE001  (presentation only)
+                pass
+        return out
     finally:
         tracer.leave(trec, node)
 
@@ -702,6 +708,7 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
     # imposes. Accumulated into one flat list for the whole case; the 'email'
     # content-only carve-out still applies here (child headers are never mined).
     from . import ioc
+    own_mark = len(sources_out)
     for s in ioc.sources_from_modules(mods):
         s = dict(s)
         s["location"] = f"{this_chain} › {s.get('location') or s.get('module', '')}"
@@ -752,11 +759,12 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
     # The child's own analysis, saved whole so the UI can open it like a case
     # (its tabs: PE, PDF tools, VBA, email…) — "Open analysis" in Nested, and a
     # direct tab in the case for first-level children.
-    if mods:
-        try:
-            _save_view(paths, node, this_chain, mods, ioc)
-        except Exception as exc:  # noqa: BLE001  (presentation only)
-            node.setdefault("code_error", f"view: {exc}")
+    # Every node gets one, even with nothing but the file (its text / strings mined above).
+    try:
+        own = [s for s in sources_out[own_mark:] if s.get("module") in ("text", "qr")]
+        _save_view(paths, node, this_chain, mods, ioc, own)
+    except Exception as exc:  # noqa: BLE001  (presentation only)
+        node.setdefault("code_error", f"view: {exc}")
 
     stdlib = _is_python_stdlib(name, [c for _p, c in kids])
     if stdlib:
@@ -787,6 +795,10 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
                                          f"more than {MAX_CHILDREN} files here" if i >= MAX_CHILDREN
                                          else f"node limit ({MAX_NODES})")
                     node["listed_children"] = node.get("listed_children", 0) + 1
+                    try:                      # its own (empty) analysis: opened like any other node
+                        _save_view(paths, child, f"{this_chain} › {cname}", {})
+                    except Exception:  # noqa: BLE001  (presentation only)
+                        pass
                 if members.get(str(cpath)):
                     child["member"] = members[str(cpath)]
                 if str(cpath) in origins:
@@ -899,9 +911,16 @@ def _jsonable(obj: Any) -> Any:
     return obj
 
 
-def _save_view(paths: CasePaths, node: dict[str, Any], chain: str, mods: dict[str, Any], ioc) -> None:  # noqa: ANN001
-    view_id = f"{node['sha256'][:16]}-{hashlib.sha1(chain.encode('utf-8', 'replace')).hexdigest()[:6]}"
-    iocs = ioc.extract(ioc.sources_from_modules(mods))
+def _save_view(paths: CasePaths, node: dict[str, Any], chain: str, mods: dict[str, Any], ioc=None,  # noqa: ANN001
+               extra_sources: list[dict[str, Any]] | None = None) -> None:
+    """Save the child's own analysis as a view the UI opens like a case. Every node gets one,
+    even with no module result (a listed-only file, plain text, an unreadable one): the view
+    then shows the file itself (type, size, hashes, folder, Hex) and what was read from it."""
+    if ioc is None:
+        from . import ioc
+    key = node.get("sha256") or hashlib.sha256(str(node.get("stored_path") or chain).encode("utf-8", "replace")).hexdigest()
+    view_id = f"{key[:16]}-{hashlib.sha1(chain.encode('utf-8', 'replace')).hexdigest()[:6]}"
+    iocs = ioc.extract(ioc.sources_from_modules(mods) + list(extra_sources or []))
     from .storage import write_json
     write_json(view_path(paths, view_id), {
         "view_id": view_id, "filename": node["filename"], "kind": node["kind"], "chain": chain,
@@ -1041,6 +1060,10 @@ def scan_children(items: list[dict[str, Any]], paths: CasePaths,
                 child = _listed_node(p, it.get("filename") or p.name, paths, 1,
                                      f"more than {MAX_CHILDREN} files" if i >= MAX_CHILDREN else f"node limit ({MAX_NODES})")
                 result["listed_children"] = result.get("listed_children", 0) + 1
+                try:                          # its own (empty) analysis: opened like any other node
+                    _save_view(paths, child, child["filename"], {})
+                except Exception:  # noqa: BLE001  (presentation only)
+                    pass
             if it.get("member") and "/" in it["member"].replace("\\", "/").strip("/"):
                 child["member"] = it["member"]         # path inside the archive (lib/arm64-v8a/libapp.so)
             if it.get("origin"):

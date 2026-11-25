@@ -196,6 +196,18 @@ async def get_nested_components(analysis_id: str, view_id: str) -> dict:
     off = modules.get("office")
     if isinstance(off, dict) and off.get("format") in ("word", "excel", "powerpoint"):
         modules.setdefault(off["format"], off)
+    if "file" not in modules:
+        # the file itself, always (a child with no module result of its own is still a file:
+        # its type, size, hashes, folder and Hex)
+        size = node.get("size_bytes", node.get("size"))
+        sha = view.get("sha256") or node.get("sha256")
+        read_as = node.get("read_as")
+        note = node.get("note") or (f"Read as {read_as}: its IOCs are in the IOCs tab." if read_as else
+                                    "No analyser has more to show for this file than the file itself.")
+        modules["file"] = {"module": "file", "filename": view.get("filename") or node.get("filename"),
+                           "stored_path": view.get("stored_path") or node.get("stored_path"),
+                           "size_bytes": size, "detected_name": node.get("format") or view.get("kind") or node.get("kind"),
+                           "hashes": {"sha256": sha} if sha else {}, "note": note, "nested_minimal": True}
     if node.get("children"):
         modules["nested"] = {"module": "nested", "tree": node["children"],
                              "counts": {"nodes": len(node["children"])}}
