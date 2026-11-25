@@ -383,7 +383,30 @@ async function loadConcurrency() {
     concInput.min = d.min;
     concInput.max = d.max;
     showConcurrency(d.concurrency);
+    const sb = document.getElementById("sandbox-mode");
+    if (sb && d.sandbox) sb.value = d.sandbox;
   } catch (err) { /* leave the input as-is */ }
+}
+
+const sandboxSel = document.getElementById("sandbox-mode");
+if (sandboxSel) {
+  sandboxSel.addEventListener("change", async () => {
+    const st = document.getElementById("sandbox-status");
+    st.textContent = "Saving…";
+    try {
+      const d = await fetch("/api/settings/analysis", {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sandbox: sandboxSel.value }),
+      }).then((r) => r.json());
+      sandboxSel.value = d.sandbox;
+      st.textContent = { always: "Saved — emulators run on every script.",
+                         fallback: "Saved — emulators run only where static evaluation stops.",
+                         off: "Saved — static analysis only: no script code runs." }[d.sandbox] || "Saved.";
+      setTimeout(() => { st.textContent = ""; }, 3500);
+    } catch (err) {
+      st.textContent = "Could not save.";
+    }
+  });
 }
 
 if (concInput) {
@@ -2084,7 +2107,18 @@ function recipeHtml(r) {
 }
 
 function resolutionCount(r) {
-  return r ? (r.stages || []).length + (r.downloads || []).length + (r.unresolved || []).length : 0;
+  return r ? (r.stages || []).length + (r.downloads || []).length + (r.unresolved || []).length
+    + (((r.sandbox || {}).events || []).length ? 1 : 0) : 0;
+}
+
+// What an emulator (V8, box-ps, ViperMonkey) saw the script do, next to the static result.
+function sandboxSeenHtml(sb) {
+  const ev = (sb && sb.events) || [];
+  if (!ev.length) return "";
+  return `<details class="disclose"><summary><strong>Seen in the sandbox</strong> — ${escapeHtml(sb.tool || "emulator")} · ${ev.length} event(s) <span class="hint-line">(the code ran in a hooked engine: no network, no real disk)</span></summary>`
+    + table(["What", "Call", "Detail"], ev.map((e) => `<tr><td>${escapeHtml(e.kind || "")}</td><td class="mono">${escapeHtml(e.what || "")}</td>
+        <td class="mono">${escapeHtml(String(e.detail || "").slice(0, 300))}${e.size ? ` <span class="hint-line">(${e.size} chars)</span>` : ""}</td></tr>`).join(""))
+    + `</details>`;
 }
 
 function resolutionBlock(r, opts) {
@@ -2127,6 +2161,7 @@ function resolutionBlock(r, opts) {
   if (r.stats && (r.stats.steps || r.stats.seconds)) {
     html += `<p class="hint-line">${r.stats.steps || 0} evaluation steps · ${r.stats.seconds || 0} s · static (nothing executed)</p>`;
   }
+  html += sandboxSeenHtml(r.sandbox);
   return html || `<p class="hint-line">Nothing reached a call that runs, loads or writes.</p>`;
 }
 

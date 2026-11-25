@@ -3,6 +3,14 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.256.0 — 2026-11-25 (#336)
+
+**Choose when the emulators run: always, only where static analysis stops, or never**
+
+- New setting *Emulation (sandbox)* next to *Analyze at a time*: the V8, box-ps and ViperMonkey emulators run on every script, only where static evaluation reached nothing, or never (static analysis only: no script code runs).
+- What an emulator saw now appears in the script's Resolution (*Seen in the sandbox*) and in the Markdown report, next to the static result.
+- The layers box-ps deobfuscates go to Nested as a stage of their own.
+
 ## 1.255.0 — 2026-11-25 (#335)
 
 **Hidden payloads found with the script's own keys, and evaluators that never hang**

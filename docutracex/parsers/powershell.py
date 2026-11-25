@@ -286,13 +286,29 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
 
         # box-ps behavioural sandbox: emulate the (deobfuscated) command and
         # record what it would do. Capped per case; each run is slow.
-        if sandbox_on and sandbox_runs < _MAX_SANDBOX_RUNS and code.strip():
+        from .. import appsettings
+        if sandbox_on and sandbox_runs < _MAX_SANDBOX_RUNS and code.strip() and \
+                appsettings.sandbox_wanted(script.get("resolution"), deob["changed"] or len(deob["methods"]) > 0):
             sandbox_runs += 1
             sb = boxps.analyze(code, loc)
             script["sandbox"] = {"available": sb.get("available"), "actions": sb.get("actions", [])[:50],
                                  "iocs": sb.get("iocs", [])[:50], "error": sb.get("error")}
             if sb.get("layers") and not deob["changed"]:
                 script["sandbox_layers"] = sb["layers"][:_KEEP_CODE]
+            # what box-ps saw, next to the static result; its deobfuscated layers go to Nested too
+            layers = (sb.get("layers") or "").strip()
+            known = {(st.get("text") or "").strip() for st in script["decoded_stages"]}
+            if layers and layers not in known and layers != full.strip() and layers != deob_full.strip():
+                script["decoded_stages"].append({"recipe": ["sandbox (box-ps)", "layers"], "text": layers[:400_000],
+                                                 "ext": ".ps1", "sink": "box-ps"})
+            ev = [{"kind": "behaviour", "what": ", ".join(a.get("behaviours") or [])[:120], "detail": a.get("line", "")}
+                  for a in sb.get("actions") or [] if a.get("behaviours")]
+            ev += [{"kind": "network", "what": "indicator", "detail": i} for i in sb.get("iocs") or []]
+            if layers:
+                ev.insert(0, {"kind": "runs code", "what": "deobfuscated layers", "detail": layers[:300], "size": len(layers)})
+            if ev:
+                script.setdefault("resolution", {"stages": [], "downloads": [], "unresolved": [], "steps": []})[
+                    "sandbox"] = {"tool": "box-ps", "events": ev[:60]}
             for f in sb.get("findings", []):
                 f["detail"] = f"[{it['origin']}] {f['detail']}"
                 res["findings"].append(f)

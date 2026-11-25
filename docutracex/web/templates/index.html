@@ -84,6 +84,14 @@
           <input type="number" id="conc-input" min="1" max="8" step="1" class="conc-input"
                  title="How many files are analysed at once; the rest wait in the queue. Higher = faster but more CPU/RAM." />
           <span id="conc-status" class="status"></span>
+          <label for="sandbox-mode" style="margin-left:14px">Emulation (sandbox):</label>
+          <select id="sandbox-mode" class="conc-input" style="width:auto"
+                  title="Emulators run a script's code inside a hooked engine (V8 for JavaScript, box-ps for PowerShell, ViperMonkey for VBA / VBScript) — no network, no real disk, but the code does run in that engine. Static evaluation never runs anything.">
+            <option value="always">always</option>
+            <option value="fallback">only when static stops</option>
+            <option value="off">off (static only)</option>
+          </select>
+          <span id="sandbox-status" class="status"></span>
         </div>
 
         <h3 class="formats-title">Supported formats</h3>
