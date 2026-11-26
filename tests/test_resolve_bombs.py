@@ -102,7 +102,9 @@ def test_bomb_ends(lang: str, kind: str, code: str) -> None:
 
 def test_limits_are_shared() -> None:
     """Every evaluator stops at its own step and time budgets (no global hang)."""
-    for mod in (ps_eval, py_eval, js_eval, vbs_eval, dyn_eval):
+    for mod in (py_eval, js_eval, vbs_eval, dyn_eval):
         assert mod.MAX_STEPS <= 10_000_000 and mod.MAX_SECONDS <= 90
+    # PowerShell ciphers written byte by byte need tens of millions of steps; the time cap still bounds it
+    assert ps_eval.MAX_STEPS <= 60_000_000 and ps_eval.MAX_SECONDS <= 90
     for mod in (bat_eval, sh_eval, tcl_eval):
         assert mod.MAX_STEPS <= 1_000_000 and mod.MAX_SECONDS <= 30
