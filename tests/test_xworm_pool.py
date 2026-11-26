@@ -42,3 +42,21 @@ def test_string_builder_char_overload() -> None:
     emu.extern("System.Text.StringBuilder::Append", [sb, 187], False)
     assert emu.extern("System.Object::ToString", [sb], False) == "Fact187"
     assert cilemu._first_param(bytes([0x20, 0x01, 0x12, 0x09, 0x03])) == 0x03
+
+
+def test_self_reading_batch_and_csharp_loader() -> None:
+    """type "%~f0" | powershell $input[N..]: the batch's own tail is the PowerShell stage; its anti-VM exit
+    does not stop the evaluation; the Add-Type C# class decrypts (PBKDF2 + AES) what it is handed."""
+    from docutracex.resolve import bat_eval, ps_eval
+    s = bat_eval.resolve(_ms().bat_selfread_csloader_bat().decode())
+    tail = next(st for st in s.stages if any("its own lines from" in r for r in st.recipe))
+    ps = ps_eval.resolve(tail.data if isinstance(tail.data, str) else bytes(tail.data).decode())
+    (pe,) = [st for st in ps.stages if "Assembly.Load" in st.sink]
+    assert bytes(pe.data) == _ms().xworm_named_exe()
+    assert any("PBKDF2-SHA256 (100000 rounds)" in r for r in pe.recipe)
+
+
+def test_member_access_in_command_argument() -> None:
+    from docutracex.resolve import ps_eval
+    s = ps_eval.resolve('$d=[byte[]](1,2,3); $b=New-Object byte[] $d.Length; iex ("w"+$b.Length)')
+    assert not s.errors and str(s.stages[0].data) == "w3"

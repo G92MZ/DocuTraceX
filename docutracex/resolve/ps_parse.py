@@ -637,6 +637,11 @@ class Parser:
 
     def cmd_atom(self) -> Any:
         c = self.cur
+        t = self.t
+        if (c.kind == "VAR" and self.i + 2 < len(t) and t[self.i + 1].kind == "PUNCT" and t[self.i + 1].value == "."
+                and not t[self.i + 1].sp and t[self.i + 2].kind == "WORD" and not t[self.i + 2].sp
+                and not self._glued_tail(self.i + 3)):
+            return self.postfix()                          # $d.Length: a member, as in argument mode
         if c.kind == "VAR" and self._glued_tail(self.i + 1):
             # $env:TEMP\x.exe: a variable glued to more text is one expandable argument
             j = self.i + 1
