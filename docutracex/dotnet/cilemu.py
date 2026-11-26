@@ -325,6 +325,9 @@ class Emu:
         from .cil import _name, _owners, _reader_class, static_fields
         self.pe = pe
         self._pre: dict[int, list[tuple[int, Any]]] = {}
+        self.big_reads = 0                  # resources / streams of ≥ MIN_PACKED_ARRAY bytes read so far
+        self.watch_pe = False               # look for a PE in the arguments and results of the own code
+        self.pe_blobs: list[tuple[bytes, str]] = []
         self._targets: dict[tuple[int, int], tuple[str, Any]] = {}
         self.max_seconds = MAX_SECONDS
         self.t = pe.net.mdtables
@@ -441,6 +444,14 @@ class Emu:
         if not self.steps & 0xFFFF and time.monotonic() - self.t0 > self.max_seconds:
             raise EmuError("time budget")
 
+    def _pe_seen(self, values: list[Any], rid: int, how: str) -> None:
+        for x in values:
+            if (isinstance(x, Arr) and x.kind in ("u1", "i1") and len(x.data) > 1024 and x.data[:2] == b"MZ"
+                    and x.data.find(b"PE\x00\x00", 0, 1024) > 0):
+                blob = bytes(x.data)
+                if all(blob != b for b, _ in self.pe_blobs):
+                    self.pe_blobs.append((blob, f"{how} {self.owners.get(rid, f'#{rid}')}"))
+
     def call_def(self, rid: int, args: list[Any], depth: int) -> Any:
         if depth > MAX_DEPTH:
             raise EmuError("call depth")
@@ -458,8 +469,12 @@ class Emu:
                 a = Arr("u1", 0)
                 a.data = bytearray(out)
                 return a
+        if self.watch_pe:
+            self._pe_seen(args, rid, "handed to")
         try:
             r = self.run(insns, idx, args, void, depth)
+            if self.watch_pe:
+                self._pe_seen([r], rid, "returned by")
             # a decoder: integer arguments in, text out (a constants getter, reached directly, through a
             # proxy method or a delegate) — kept with the method that asked for it
             if self.capture is not None and isinstance(r, str) and r and args and r not in args and (
@@ -861,7 +876,14 @@ class Emu:
         return 0 if isinstance(k, int) else OPQ
 
     # -- the platform ---------------------------------------------------------------------------
-    def extern(self, name: str, a: list[Any], new: bool) -> Any:  # noqa: C901, PLR0911, PLR0912
+    def extern(self, name: str, a: list[Any], new: bool) -> Any:
+        out = self._extern(name, a, new)
+        if (isinstance(out, Arr) and out.kind in ("u1", "i1") and len(out.data) >= MIN_PACKED_ARRAY
+                and name.endswith(_BIG_READS)):
+            self.big_reads += 1
+        return out
+
+    def _extern(self, name: str, a: list[Any], new: bool) -> Any:  # noqa: C901, PLR0911, PLR0912
         short = name.split("::")[-1]
         typ = name.split("::")[0]
         if a and isinstance(a[0], Ref) and short != ".ctor" and typ in _VALUE_TYPES:
@@ -976,6 +998,28 @@ class Emu:
             if isinstance(src, Arr) and isinstance(dst, Arr):
                 dst.data[_num(do):_num(do) + _num(cnt)] = src.data[_num(so):_num(so) + _num(cnt)]
             return None
+        if name == "System.Array::Resize" and len(a) == 2 and isinstance(a[0], Ref) and isinstance(_num(a[1]), int):
+            old_arr, n = a[0].get(), _num(a[1])
+            kind = old_arr.kind if isinstance(old_arr, Arr) else "ref"
+            out = Arr(kind, n)
+            if isinstance(old_arr, Arr):
+                keep = old_arr.data[:n]
+                out.data[:len(keep)] = keep
+            a[0].set(out)
+            return None
+        if typ == "System.BitConverter" and short == "GetBytes" and len(a) == 1:
+            v = a[0]
+            if isinstance(v, bool):
+                raw = bytes([int(v)])
+            elif isinstance(v, int):
+                raw = struct.pack("<q" if not -(1 << 31) <= v < (1 << 31) else "<i", v)
+            elif isinstance(v, float):
+                raw = struct.pack("<d", v)
+            else:
+                return OPQ
+            out = Arr("u1", len(raw))
+            out.data[:] = raw
+            return out
         if name in ("System.Array::get_Length",) and isinstance(a[0], Arr):
             return len(a[0].data)
         if typ == "System.BitConverter" and short.startswith("To") and isinstance(a[0], Arr):
@@ -1176,6 +1220,29 @@ class Emu:
         if short == "Substring" and isinstance(s, str):
             i = _num(a[1])
             return s[i:i + _num(a[2])] if len(a) > 2 else s[i:]
+        if short == "Split" and isinstance(s, str) and len(a) >= 2:
+            seps_v, opts = a[1], (a[2] if len(a) > 2 and isinstance(a[2], int) else 0)
+            if len(a) > 2 and isinstance(a[2], int) and len(a) == 4:   # Split(seps, count, options)
+                opts = a[3] if isinstance(a[3], int) else 0
+            if isinstance(seps_v, int):
+                seps = [chr(seps_v & 0xFFFF)]
+            elif isinstance(seps_v, str):
+                seps = [seps_v]
+            elif isinstance(seps_v, Arr):
+                seps = [chr(x & 0xFFFF) if isinstance(x, int) else x for x in seps_v.data]
+                if any(not isinstance(x, str) for x in seps):
+                    return OPQ
+            elif seps_v is None:
+                seps = []
+            else:
+                return OPQ
+            seps = [x for x in seps if x] or [" ", "\t", "\n", "\r"]
+            parts = re.split("|".join(re.escape(x) for x in sorted(seps, key=len, reverse=True)), s)
+            if opts & 1:
+                parts = [x for x in parts if x]
+            out = Arr("ref", 0)
+            out.data = parts
+            return out
         if short == "Replace" and isinstance(s, str) and len(a) == 3:
             x, y = a[1], a[2]
             if isinstance(x, int) and isinstance(y, int):                  # Replace(char, char)
@@ -1801,6 +1868,8 @@ def _payloads(strings: list[str]) -> list[tuple[bytes, list[str]]]:
     return out
 
 
+_BIG_READS = ("ResourceManager::GetObject", "BinaryReader::ReadBytes", "MemoryStream::ToArray",
+              "Convert::FromBase64String", "WebClient::DownloadData")
 MAX_PAYLOAD_STEPS = 80_000_000
 MAX_PAYLOAD_SECONDS = 120.0
 MIN_PACKED_ARRAY = 16 * 1024
@@ -1853,7 +1922,8 @@ def _unpacker_candidates(emu: Emu) -> list[int]:
     return out
 
 
-def unpack_payloads(data: bytes, max_seconds: float = MAX_PAYLOAD_SECONDS) -> list[tuple[bytes, list[str]]]:
+def unpack_payloads(data: bytes, max_seconds: float = MAX_PAYLOAD_SECONDS,
+                    readers: list[int] | None = None) -> list[tuple[bytes, list[str]]]:
     """A packer whose payload is a static array of the assembly, decrypted in place by its own code (RC4 and
     variants, XOR…): each candidate method runs on a fresh emulator with a large budget, and a static
     byte array that comes out as a PE (it was not one before) is the payload. ``[(bytes, recipe)]``."""
@@ -1864,10 +1934,14 @@ def unpack_payloads(data: bytes, max_seconds: float = MAX_PAYLOAD_SECONDS) -> li
         return []
     out: list[tuple[bytes, list[str]]] = []
     try:
-        if not packed_array(pe):
+        if readers:
+            cands = list(readers)[:4]
+        elif packed_array(pe):
+            cands = _unpacker_candidates(Emu(pe))[:4]
+        else:
             return []
         t_all = time.monotonic()
-        for rid in _unpacker_candidates(Emu(pe))[:4]:
+        for rid in cands:
             left = max_seconds - (time.monotonic() - t_all)
             if left <= 5:
                 break
@@ -1879,11 +1953,15 @@ def unpack_payloads(data: bytes, max_seconds: float = MAX_PAYLOAD_SECONDS) -> li
                 pass
             emu.frames = [rid]
             emu.steps, emu.limit, emu.t0 = 0, MAX_PAYLOAD_STEPS, time.monotonic()
+            emu.watch_pe = True
             try:
                 emu.call_def(rid, [None] * emu.body(rid)[2], 0)
             except (EmuError, _Stop, Exception):  # noqa: BLE001
                 pass
             name = emu.owners.get(rid, f"#{rid}")
+            for blob, where in emu.pe_blobs:
+                if all(blob != b for b, _ in out):
+                    out.append((blob, [f"{name} (CIL emulation): a PE {where}"]))
             for blob in emu.assemblies:
                 if blob[:2] == b"MZ" and all(blob != b for b, _ in out):
                     out.append((blob, [f"{name} (CIL emulation)", "Assembly.Load"]))
@@ -1977,6 +2055,7 @@ def confuser_strings(data: bytes) -> dict[str, Any] | None:
         n_static = len(found)
         t0 = time.monotonic()
         emu.capture = []
+        readers: list[int] = []
         for rid in range(1, len(emu.t.MethodDef or []) + 1):
             if rid == cctor or rid in getters or time.monotonic() - t0 > MAX_DYN_SECONDS:
                 continue
@@ -1988,6 +2067,7 @@ def confuser_strings(data: bytes) -> dict[str, Any] | None:
                 continue
             emu.frames = [rid]
             emu.steps, emu.limit, emu.t0 = 0, MAX_DYN_STEPS, time.monotonic()
+            reads = emu.big_reads
             m = emu.t.MethodDef[rid - 1]
             args = [0] * b[2]
             if not m.Flags.mdStatic and args:
@@ -1996,6 +2076,8 @@ def confuser_strings(data: bytes) -> dict[str, Any] | None:
                 emu.call_def(rid, args, 0)
             except (EmuError, _Stop, Exception):  # noqa: BLE001
                 pass
+            if emu.big_reads > reads and m.Flags.mdStatic and b[2] <= 1 and len(readers) < 6:
+                readers.append(rid)                 # reads a large resource: where a payload may be opened
             for caller, g, ident, v in emu.capture:
                 if caller != g:
                     keep(caller, g, ident, v)
@@ -2008,13 +2090,13 @@ def confuser_strings(data: bytes) -> dict[str, Any] | None:
         n_dyn = max(0, len(found) - n_static)
         payloads = _payloads([x["output"] for x in found])
         if not found and not emu.assemblies:
-            return {"strings": [], "assemblies": [], "payloads": [], "how": "",
+            return {"strings": [], "assemblies": [], "payloads": [], "how": "", "readers": readers,
                     "error": err or "no getter returned a string"}
         how = ("CIL emulation of <Module>.cctor and the constants getters (control flow followed as the "
                "program runs it" + (", LZMA answered natively" if emu.lzma_calls else "")
                + (f", {n_dyn} reached through proxies / delegates" if n_dyn else "") + ")")
         return {"strings": found, "assemblies": emu.assemblies, "payloads": payloads, "how": how, "error": err,
-                "unknown_calls": sorted(emu.unknown_calls)[:40]}
+                "unknown_calls": sorted(emu.unknown_calls)[:40], "readers": readers}
     finally:
         try:
             pe.close()
