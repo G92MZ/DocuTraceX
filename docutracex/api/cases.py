@@ -58,16 +58,22 @@ def _audit_upload(request: Request, manifest: dict, what: str) -> None:
 
 
 @router.post("")
-async def create_case(request: Request, file: UploadFile = File(...), password: str = Form("")) -> JSONResponse:
+async def create_case(request: Request, file: UploadFile = File(...), password: str = Form(""),
+                      engines: str = Form("")) -> JSONResponse:
     """Upload a file, create a case, and queue its analysis (runs in the
     background worker — one analysis per instance, the rest queued).
-    ``password`` (optional) unlocks an encrypted document/archive."""
+    ``password`` (optional) unlocks an encrypted document/archive. ``engines``
+    ("yara,ml,c2", or "all") also runs those on-demand engines in this analysis."""
+    from ..analyze import ON_DEMAND, set_case_engines
     from ..tasks import manager
 
     manifest = case_service.create_case(file.file, file.filename or "upload.bin", uploaded_by=_user(request))
     _audit_upload(request, manifest, "uploaded a file for analysis")
     if password:
         _save_password(manifest["analysis_id"], password)
+    want = ON_DEMAND if engines.strip().lower() == "all" else [e for e in engines.lower().split(",") if e in ON_DEMAND]
+    if want:
+        set_case_engines(manifest["analysis_id"], want)
     task = manager.submit("analyze", manifest["analysis_id"],
                           manifest["original"]["filename"], target="full",
                           cases_dir=settings.cases_dir)

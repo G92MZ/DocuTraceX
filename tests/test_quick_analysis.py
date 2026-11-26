@@ -70,3 +70,20 @@ def test_quick_hex_case_opens_in_the_hex_view(client) -> None:
     m = client.post("/api/cases/quick", data={"tool": "hex"}, files={"file": ("blob.bin", b"MZ\x90\x00" * 64)}).json()
     files = client.get(f"/api/cases/{m['analysis_id']}/hex/files").json()
     assert any(f.get("original") or "blob.bin" in str(f) for f in (files.get("files") if isinstance(files, dict) else files))
+
+
+def test_full_analysis_with_all_engines_runs_yara_ml_c2(client, tmp_path: Path) -> None:
+    """New analysis → Full analysis: the standard analysis and the on-demand engines in one go."""
+    from docutracex.storage import CasePaths, read_json
+    r = client.post("/api/cases", data={"engines": "all"}, files={"file": ("agent", ms.go_sliver_like_elf())})
+    assert r.status_code == 201
+    aid = r.json()["analysis_id"]
+    assert read_json(CasePaths(aid, cases_dir=tmp_path).root / "engines.json") == ["c2", "ml", "yara"]
+    assert _wait(client, [r.json()["task"]["id"]])[0]["state"] == "completed"
+    assert read_json(CasePaths(aid, cases_dir=tmp_path).subresult("c2")) is not None
+
+
+def test_standard_analysis_leaves_the_engines_on_demand(client, tmp_path: Path) -> None:
+    from docutracex.storage import CasePaths
+    r = client.post("/api/cases", files={"file": ("agent", ms.go_sliver_like_elf())})
+    assert not (CasePaths(r.json()["analysis_id"], cases_dir=tmp_path).root / "engines.json").exists()

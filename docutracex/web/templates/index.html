@@ -77,8 +77,9 @@
           <input type="password" id="upload-password" class="upload-password" autocomplete="off"
                  placeholder="Password (optional)" title="Password of an encrypted document or archive, if you know it. Passwords given in an email body, Excel's default and 'infected' are tried automatically." />
           <select id="upload-kind" class="conc-input" style="width:auto"
-                  title="Full analysis: everything (it also feeds YARA, ML, C2 / Beacons and Hex). The others run only that engine on the file and open a quick case, shown in its tab.">
-            <option value="full">Full analysis</option>
+                  title="Full analysis: the standard analysis plus YARA, Machine Learning and C2 / Beacons (slower). Standard analysis: without those three (run them later from their tabs). The others run only that engine on the file and open a quick case, shown in its tab.">
+            <option value="full">Full analysis (all engines)</option>
+            <option value="standard">Standard analysis</option>
             <option value="yara">YARA only</option>
             <option value="ml">Machine Learning only</option>
             <option value="c2">C2 / Beacons only</option>

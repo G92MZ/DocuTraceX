@@ -1486,7 +1486,7 @@ def _analyze_case(case_root: Path) -> dict[str, Any]:
     # that re-runs that module alone over every object of the case. A full
     # analysis keeps their previous results; DOCUTRACEX_AUTO_MODULES=yara,ml,c2
     # turns any of them back on automatically.
-    auto = auto_modules()
+    auto = auto_modules() | case_engines(paths)
     for mod in ON_DEMAND:
         prev = read_json(paths.subresult(mod)) if mod not in auto else None
         if prev is not None and mod not in ran:
@@ -1692,6 +1692,23 @@ def _short_reason(res: dict[str, Any]) -> str:
         if tool.get("returncode") not in (None, 0):
             return f"exit {tool['returncode']}"
     return ""
+
+
+def _engines_file(paths: Any) -> Path:
+    return paths.root / "engines.json"
+
+
+def set_case_engines(analysis_id: str, engines: Any) -> None:
+    """The on-demand engines New analysis asked to run in this case's full analysis."""
+    from .storage import CasePaths, write_json
+    write_json(_engines_file(CasePaths(analysis_id)), sorted(e for e in engines if e in ON_DEMAND))
+
+
+def case_engines(paths: Any) -> set[str]:
+    try:
+        return {e for e in (read_json(_engines_file(paths)) or []) if e in ON_DEMAND}
+    except Exception:  # noqa: BLE001
+        return set()
 
 
 def auto_modules() -> set[str]:
