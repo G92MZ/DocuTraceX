@@ -98,3 +98,9 @@ def test_last_executable_without_config_is_a_probable_payload(tmp_path: Path) ->
 def test_interpreter_runtime_points_at_the_script() -> None:
     e = dynamic.assess_leaf("lua51.exe", b"MZ" + b"\x00" * 64 + b"LuaJIT 2.1.0-beta2 -- Copyright (C) 2005-2016 Mike Pall")
     assert e["runtime"] == "LuaJIT" and "the payload is the script it runs" in e["why"]
+
+
+def test_url_loses_typographic_quotes() -> None:
+    from docutracex.ioc import _clean_url
+    assert _clean_url("http://203.0.113.47/27/factura.js”") == "http://203.0.113.47/27/factura.js"
+    assert _clean_url("http://cdn-update.example.net/f»") == "http://cdn-update.example.net/f"
