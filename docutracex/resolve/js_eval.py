@@ -43,7 +43,7 @@ from . import transforms as T
 from .sinks import Sinks
 from .value import Value
 
-MAX_STEPS = 8_000_000
+MAX_STEPS = 60_000_000   # bounded by MAX_SECONDS; script-written decoders (base85 of a payload) need more
 MAX_SECONDS = 30.0
 MAX_LOOP = 3_000_000
 LOOP_STEPS = 1_500_000       # one loop's share: a longer one (a busy loop) is left to an emulator
@@ -1560,6 +1560,8 @@ class Interp:  # noqa: PLR0904
             return Unk(f"the result of {self.text(getattr(node, 'callee', None), 60) or 'a call'}", quiet=fn.quiet)
         if isinstance(fn, Host) and fn.kind == "callable":
             return fn.st["fn"](this, args, node)
+        if isinstance(fn, Host) and fn.kind == "WArgs":           # WScript.Arguments(0): the collection called
+            return self.invoke(self.host_get(fn, "Item", node), fn, args, node)
         if fn is UNDEF or fn is None:
             name = self.text(getattr(node, "callee", None), 60)
             raise _Throw(Host("Error", message=f"TypeError: {name} is not a function"))
@@ -2497,9 +2499,17 @@ class Interp:  # noqa: PLR0904
                 return Host("WArgs")
             return Unk(f"WScript.{k}", quiet=True)
         if kind == "WArgs":
+            from . import argv
+            parents = argv.PARENTS.get()
             if kl in ("length", "count"):
-                return 0
-            return mth(lambda a, n: Unk("the script's command-line arguments"))
+                return len(parents)
+
+            def arg(a: list, n: Any) -> Any:
+                i = int(to_num(a[0])) if a else 0
+                if 0 <= i < len(parents):        # analysed as a stage: the sample that started it
+                    return tag(argv.path_of(i), ("its command-line argument: the sample that started it",))
+                return Unk("the script's command-line arguments")
+            return mth(arg)
         if kind == "Shell":
             return self.shell_get(h, k, kl, mth)
         if kind == "FSO":
@@ -2524,6 +2534,10 @@ class Interp:  # noqa: PLR0904
                 if h.st.get("me"):
                     # the script reads its own file: that is the source analysed here
                     return mth(lambda a, n: tag(self.top_source, ("the script's own file",)))
+                from . import argv
+                parent = argv.text_of(str(h.st.get("path") or ""))
+                if parent is not None:                # the file its argument names: the sample above it
+                    return mth(lambda a, n: tag(parent, ("the file its argument names (the sample that started it)",)))
                 return mth(lambda a, n: Unk(f"the content of {h.st.get('path')} (a file on the victim's machine)"))
             if kl == "atendofstream":
                 return True

@@ -680,7 +680,12 @@ def _scan_node(abs_path: Path, name: str, paths: CasePaths, depth: int, chain: s
     # per-child full-code dump — the same _full_code/code_file plumbing.
     try:
         if not node.get("disguised"):            # binary content: not code, whatever its name says
-            _scan_code_languages(abs_path, paths, node, this_chain, mods, add_findings, timed)
+            from .resolve import argv
+            tok = argv.PARENTS.set(argv.from_dir(paths.original_dir))   # what its arguments may name
+            try:
+                _scan_code_languages(abs_path, paths, node, this_chain, mods, add_findings, timed)
+            finally:
+                argv.PARENTS.reset(tok)
     except Exception as exc:  # noqa: BLE001
         node.setdefault("code_error", str(exc))
 
@@ -965,7 +970,8 @@ _TEXTY_EXT = {"", ".txt", ".dat", ".log", ".tmp", ".bin", ".cfg", ".ini", ".conf
 def _content_languages(abs_path: Path, node: dict[str, Any]) -> tuple[list[str], str] | None:
     """(languages, text) of a text child named so its language is not said (``.txt``, no extension)
     whose content is a script; None otherwise."""
-    if node.get("kind") != "other" or abs_path.suffix.lower() not in _TEXTY_EXT:
+    claimed = _EXT_LANGUAGE.get(abs_path.suffix.lower())
+    if not claimed and (node.get("kind") != "other" or abs_path.suffix.lower() not in _TEXTY_EXT):
         return None
     try:
         from .analyze import _read_reasonable_text
@@ -976,7 +982,13 @@ def _content_languages(abs_path: Path, node: dict[str, Any]) -> tuple[list[str],
         return None
     from .resolve import langdetect
     langs = langdetect.languages(text)
+    if claimed:     # a script named for another language (JScript saved as .vbs, run with //e:jscript)
+        return (langs, text) if langs and claimed not in langs else None
     return (langs, text) if langs else None
+
+
+_EXT_LANGUAGE = {".vbs": "vbscript", ".vbe": "vbscript", ".js": "javascript", ".jse": "javascript",
+                 ".ps1": "powershell", ".bat": "batch", ".cmd": "batch"}
 
 
 def _scan_code_languages(abs_path: Path, paths: CasePaths, node: dict[str, Any],

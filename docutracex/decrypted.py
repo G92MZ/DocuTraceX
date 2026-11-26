@@ -977,6 +977,24 @@ def payloads_from(mods: dict[str, Any], root: Path | None = None) -> list[dict[s
     return uniq[:MAX_PAYLOADS]
 
 
+_B64_FILE = re.compile(rb"[A-Za-z0-9+/\r\n]{64,}={0,2}\s*")
+_B64_MAGIC = {b"MZ": ".exe", b"MSAP": ".bin", b"PK\x03\x04": ".zip", b"7z\xbc\xaf": ".7z", b"\x1f\x8b": ".gz"}
+
+
+def _b64_file(raw: bytes) -> tuple[bytes, str] | None:
+    """(decoded, extension) when ``raw`` is nothing but the base64 of a binary file of a known type."""
+    import base64
+    import binascii
+    s = raw.strip()
+    if len(s) < 64 or not _B64_FILE.fullmatch(s):
+        return None
+    try:
+        out = base64.b64decode(re.sub(rb"\s+", b"", s), validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    return next(((out, ext) for m, ext in _B64_MAGIC.items() if out.startswith(m)), None)
+
+
 def write(payloads: list[dict[str, Any]], dest: Path,
           skip_sha: set[str] | None = None) -> list[dict[str, Any]]:
     """Write payloads under ``dest`` as nested items ``{path, filename, origin}``."""
@@ -989,6 +1007,10 @@ def write(payloads: list[dict[str, Any]], dest: Path,
             raw, ext = p["data"], p.get("ext") or ".bin"
         else:
             raw, ext = p["text"].encode("utf-8", "replace"), (p.get("ext") or sniff_ext(p["text"]))
+        dec = _b64_file(raw)
+        if dec is not None:     # a stage written as base64 text (certutil -decode on the victim): the file
+            raw, ext = dec
+            p = {**p, "recipe": list(p.get("recipe") or []) + ["base64 (the text it writes)"]}
         slug = re.sub(r"[^A-Za-z0-9_-]+", "_", p["how"])[:40].strip("_") or "stage"
         name = f"decrypted_{slug}_{p['sha256'][:8]}{ext}"
         try:

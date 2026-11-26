@@ -160,6 +160,42 @@ def _key_candidates(loader: bytes) -> list[bytes]:
     return list(dict.fromkeys(keys))[:MAX_KEYS]
 
 
+def _huffman(body: bytes, size: int) -> bytes:
+    """XPRESS Huffman up to ``size`` bytes. ``dissect.util`` stops when its reader reaches the end of the
+    input, which on a payload of more than one 64 KB chunk is before the last symbols are decoded."""
+    import io
+
+    from dissect.util.compression.lzxpress_huffman import BitString, _build_tree, _read_16_bit
+    src = io.BytesIO(body)
+    dst = bytearray()
+    bits = BitString()
+    while len(dst) < size and src.tell() < len(body):
+        root = _build_tree(src.read(256))
+        bits.init(src)
+        chunk = 0
+        while chunk < 65536 and len(dst) < size:
+            sym = bits.decode(root)
+            if sym < 256:
+                dst.append(sym)
+                chunk += 1
+                continue
+            sym -= 256
+            length, sym = sym & 0x0F, sym >> 4
+            off = (1 << sym) + bits.lookup(sym)
+            if length == 15:
+                length = ord(bits.read(1)) + 15
+                if length == 270:
+                    length = _read_16_bit(bits.source)
+            bits.skip(sym)
+            length += 3
+            for _ in range(length):
+                dst.append(dst[-off])
+            chunk += length
+    if len(dst) < size and dst[:2] == b"MZ":
+        dst += bytes(size - len(dst))        # the input ran out: what is left of the image is its padding
+    return bytes(dst[:size])
+
+
 def _decompress(plain: bytes) -> tuple[bytes, list[str]] | None:
     i = plain.find(CAPI_MAGIC, 0, 64)
     if i < 0:
@@ -170,7 +206,8 @@ def _decompress(plain: bytes) -> tuple[bytes, list[str]] | None:
         from dissect.util.compression import lzxpress, lzxpress_huffman
     except ImportError:
         return None
-    for name, fn in (("XPRESS Huffman", lzxpress_huffman.decompress), ("XPRESS", lzxpress.decompress)):
+    for name, fn in (("XPRESS Huffman", lambda b: _huffman(b, size) if size else lzxpress_huffman.decompress(b)),
+                     ("XPRESS", lzxpress.decompress)):
         try:
             out = fn(body)
         except Exception:  # noqa: BLE001
