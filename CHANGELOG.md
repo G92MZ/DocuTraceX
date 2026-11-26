@@ -3,6 +3,13 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.269.0 — 2026-11-26 (#349)
+
+**Full analysis now runs every engine**
+- *Full analysis (all engines)* runs the standard analysis plus YARA, Machine Learning and C2 /
+  Beacons in one go.
+- *Standard analysis* is the previous behaviour: those three stay on demand, run from their tabs.
+
 ## 1.268.0 — 2026-11-26 (#348)
 
 **Every analysis starts from New analysis**
