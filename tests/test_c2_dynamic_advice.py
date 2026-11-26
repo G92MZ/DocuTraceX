@@ -104,3 +104,18 @@ def test_url_loses_typographic_quotes() -> None:
     from docutracex.ioc import _clean_url
     assert _clean_url("http://203.0.113.47/27/factura.js”") == "http://203.0.113.47/27/factura.js"
     assert _clean_url("http://cdn-update.example.net/f»") == "http://cdn-update.example.net/f"
+
+
+def test_one_card_per_object_and_no_banner_when_its_config_was_read() -> None:
+    obj = "extracted/dotnet_resources/x/packed_payload_1.exe"
+    snake = {"family": "Snake Keylogger", "object": obj, "c2": ["cp-host7.hosting-panel.example"],
+             "summary": {"Exfiltration": ["SMTP server: cp-host7.hosting-panel.example"]}}
+    res = {"configs": [{"family": "AgentTesla-like stealer", "object": obj, "c2": [], "summary": {}}, snake,
+                       {"family": "VIPKeyLogger", "object": obj, "c2": [], "method": "family YARA"}], "findings": []}
+    c2._group_same_object(res)
+    (card,) = res["configs"]
+    assert card["summary"]["Also identified as"] == ["AgentTesla-like stealer",
+                                                     "VIPKeyLogger (a Snake Keylogger variant)"]
+    c2._dynamic(res, [], [(obj, "AgentTesla-like stealer", Path("/nonexistent")),
+                          (obj, "VIPKeyLogger (family YARA)", Path("/nonexistent"))], {})
+    assert "dynamic" not in res
