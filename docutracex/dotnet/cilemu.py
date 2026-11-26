@@ -395,10 +395,13 @@ class Emu:
             return "ref", ("?", False, 0, True)
         if table == 0x0A:
             row = self.t.MemberRef[rid - 1]
-            has_this, n, void = sig_shape(bytes(row.Signature.value or b""))
+            sig = bytes(row.Signature.value or b"")
+            has_this, n, void = sig_shape(sig)
             name = self._name(0x0A, row)
             if name.startswith("?::"):
                 name = self.typespec_name(row) + name[1:]
+            if name.startswith("System.Text.StringBuilder::") and n and _first_param(sig) == 0x03:
+                name += "Char"                   # Append(char) / Insert(int, char): the value is a number here
             return "ref", (name, has_this, n, void)
         return "ref", ("?", False, 0, True)
 
@@ -1166,8 +1169,60 @@ class Emu:
             raise _Stop("FailFast")
         if name == "System.Object::.ctor":
             return None
+        if typ == "System.Text.StringBuilder" or (short == "ToString" and a and isinstance(a[0], Obj)
+                                                  and a[0].type == "StringBuilder"):
+            got = self.builder_call(short, a, new)
+            if got is not _NOPE:
+                return got
         self.unknown_calls[name] = self.unknown_calls.get(name, 0) + 1
         return Obj(typ) if new else OPQ
+
+    def builder_call(self, short: str, a: list[Any], new: bool) -> Any:  # noqa: PLR0911
+        """``StringBuilder``: the text is kept as a list of pieces."""
+        if new:
+            return Obj("StringBuilder", parts=[a[0]] if a and isinstance(a[0], str) else [])
+        sb = a[0] if a else None
+        if not isinstance(sb, Obj) or sb.type != "StringBuilder":
+            return _NOPE
+        parts = sb.st["parts"]
+
+        def text(v: Any) -> str | None:
+            if isinstance(v, str):
+                return v
+            if isinstance(v, bool):
+                return "True" if v else "False"
+            if isinstance(v, int):
+                return str(v)
+            if isinstance(v, Arr) and v.kind in ("u2", "char"):
+                return "".join(chr(_num(c) & 0xFFFF) for c in v.data)
+            return None
+        if short in ("Append", "AppendChar", "AppendLine"):
+            v = a[1] if len(a) > 1 else ""
+            t = chr(_num(v) & 0xFFFF) if short == "AppendChar" else text(v)
+            if t is None:
+                return _NOPE
+            if short == "AppendChar" and len(a) > 2:
+                t *= _num(a[2])
+            parts.append(t + ("\r\n" if short == "AppendLine" else ""))
+            return sb
+        if short == "ToString":
+            return "".join(parts)
+        if short == "get_Length":
+            return sum(len(x) for x in parts)
+        if short == "Clear":
+            parts.clear()
+            return sb
+        if short in ("Insert", "InsertChar") and len(a) > 2:
+            t = chr(_num(a[2]) & 0xFFFF) if short == "InsertChar" else text(a[2])
+            if t is None:
+                return _NOPE
+            cur = "".join(parts)
+            i = _num(a[1])
+            sb.st["parts"] = [cur[:i] + t + cur[i:]]
+            return sb
+        if short == "get_Chars":
+            return ord("".join(parts)[_num(a[1])])
+        return _NOPE
 
     def time_call(self, typ: str, short: str, a: list[Any], new: bool) -> Any:
         """DateTime / TimeSpan as days since 0001-01-01 (a kill date compares the clock with a fixed day:
@@ -1748,6 +1803,24 @@ def _const_arg(emu: Emu, ins: Any) -> tuple[bool, Any]:
     return False, None
 
 
+def _first_param(sig: bytes) -> int:
+    """Element type of a method signature's first parameter (0 when it cannot be read)."""
+    try:
+        i = 1 + (1 if sig[0] & 0x10 else 0)          # calling convention, generic count
+        _, i = _cint(sig, i)
+        while sig[i] in (0x1F, 0x20):                 # custom modifiers
+            _, i = _cint(sig, i + 1)
+        rt = sig[i]
+        i += 1
+        if rt in (0x11, 0x12):
+            _, i = _cint(sig, i)
+        elif rt in (0x0F, 0x10, 0x1D):
+            return 0
+        return sig[i]
+    except IndexError:
+        return 0
+
+
 def _sites(emu: Emu) -> dict[int, list[tuple[int, Any]]]:
     """getter rid → [(caller rid, id)]: ``ldc.i4 id`` (``br.s`` / ``nop`` between) ``call <one-arg static>``;
     or up to three constants (``ldstr "…"; ldc.i4 k``) right before a call of a static method that takes
@@ -2030,15 +2103,22 @@ def confuser_strings(data: bytes) -> dict[str, Any] | None:
                           "id": _ident(ident), "output": v})
         tried: set[tuple[int, int]] = set()
         for g, ss in getters.items():
+            warm = False
             for caller, ident in ss[:MAX_SITES]:
                 if (g, ident) in tried:
                     continue
                 tried.add((g, ident))
-                emu.steps, emu.limit = 0, MAX_GETTER_STEPS
-                try:
-                    v = emu.call_def(g, list(ident) if isinstance(ident, tuple) else [ident], 0)
-                except (EmuError, _Stop, Exception):  # noqa: BLE001
-                    continue
+                v = None
+                # the first call may build the getter's pool (a type initializer decoding a large array):
+                # when it runs out of budget, once more with the warm-up budget
+                for budget in (MAX_GETTER_STEPS,) if warm else (MAX_GETTER_STEPS, MAX_WARMUP_STEPS):
+                    emu.steps, emu.limit, emu.t0 = 0, budget, time.monotonic()
+                    try:
+                        v = emu.call_def(g, list(ident) if isinstance(ident, tuple) else [ident], 0)
+                        break
+                    except (EmuError, _Stop, Exception):  # noqa: BLE001
+                        v = None
+                warm = True
                 if isinstance(v, str) and v:
                     keep(caller, g, ident, v)
         # decoders that build their table on first use (a resource decrypted once): one warm-up call each with
@@ -2086,6 +2166,7 @@ def confuser_strings(data: bytes) -> dict[str, Any] | None:
         # a decoder's intermediate result that the next one takes as input is not a string of the program;
         # nor is text that does not read as text
         inputs = {x["id"] for x in found}
+        chained = [x["output"] for x in found if repr(x["output"][:40]) in inputs]
         found = [x for x in found if repr(x["output"][:40]) not in inputs and _texty(x["output"])]
         n_dyn = max(0, len(found) - n_static)
         payloads = _payloads([x["output"] for x in found])
@@ -2096,6 +2177,7 @@ def confuser_strings(data: bytes) -> dict[str, Any] | None:
                "program runs it" + (", LZMA answered natively" if emu.lzma_calls else "")
                + (f", {n_dyn} reached through proxies / delegates" if n_dyn else "") + ")")
         return {"strings": found, "assemblies": emu.assemblies, "payloads": payloads, "how": how, "error": err,
+                "inputs": chained[:2000],         # what the next decoder took (a family extractor may want it)
                 "unknown_calls": sorted(emu.unknown_calls)[:40], "readers": readers}
     finally:
         try:

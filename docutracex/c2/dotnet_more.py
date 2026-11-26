@@ -180,6 +180,10 @@ def xworm(data: bytes, strings: list[str]) -> dict[str, Any] | None:
         cls = _classify(values)
         summary = cls["summary"]
         hosts = cls["hosts"]
+        low = [p for p in summary.get("Ports") or [] if p.isdigit() and int(p) < 100]
+        if low and len(low) < len(summary["Ports"]):     # a small number is the Sleep setting, not a port
+            summary["Ports"] = [p for p in summary["Ports"] if p not in low]
+            summary["C2"] = [c for c in summary.get("C2") or [] if c.rsplit(":", 1)[-1] not in low]
         for v in values:
             if _TOKEN.match(v):
                 summary["Telegram-style bot token"] = v

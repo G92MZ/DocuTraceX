@@ -240,7 +240,8 @@ def parse(data: bytes) -> dict[str, Any]:
             confuser = any(o["name"] == "ConfuserEx" for o in out["obfuscators"])
             encoded = _encoded_literals(out["strings"])
             if ((confuser and (c.get("confuser_constants") or {}).get("mode") != "Normal")
-                    or encoded >= 5 or _resource_table(t, out["strings"]) or _resource_payload(t, out["resources"])):
+                    or encoded >= 5 or _resource_table(t, out["strings"]) or _resource_payload(t, out["resources"])
+                    or _string_pool(data, out["strings"])):
                 try:
                     from .cilemu import confuser_strings
                     em = confuser_strings(data)
@@ -260,6 +261,7 @@ def parse(data: bytes) -> dict[str, Any]:
                             {"decryptor": label, "caller": x["caller"],
                              "input": x["id"], "output": x["output"][:4000], "how": em["how"]} for x in em["strings"])
                         out["_confuser_assemblies"] = em["assemblies"]
+                        out["_decoder_inputs"] = em.get("inputs") or []
                         out["_confuser_payloads"] = em.get("payloads") or []
                         if em.get("payloads") and confuser:
                             c["confuser_constants"]["payloads"] = len(em["payloads"])
@@ -468,6 +470,22 @@ from .resources import is_resources, parse as parse_resources  # noqa: E402
 _STATIC: dict[str, list[str]] = {}
 
 
+def _string_pool(data: bytes, strings: list[Any]) -> bool:
+    """An assembly with (almost) no plain strings whose code calls one static method many times with
+    constant arguments: the strings live in an encrypted pool that getter decodes (XWorm builds of 2025:
+    a char array XOR-decoded into a StringBuilder)."""
+    if len(strings) >= 20:
+        return False
+    try:
+        import dnfile
+
+        from .cilemu import Emu, _sites
+        sites = _sites(Emu(dnfile.dnPE(data=data)))
+    except Exception:  # noqa: BLE001
+        return False
+    return any(len(v) >= 20 for v in sites.values())
+
+
 def static_strings(data: bytes) -> list[str]:
     """Strings of an assembly that are not plain in its #US heap: the ones
     decrypted statically from the CIL and the string entries of its
@@ -484,6 +502,7 @@ def static_strings(data: bytes) -> list[str]:
             except Exception:  # noqa: BLE001
                 r = {}
             out += [d["output"] for d in (r.get("cil") or {}).get("decrypted") or []]
+            out += r.get("_decoder_inputs") or []      # a chained decoder's input (XWorm: the AES settings)
             for x in r.get("resources") or []:
                 raw = x.get("_data") or b""
                 if is_resources(raw):
@@ -529,6 +548,7 @@ def analyze_case(root: Path, original: Path, nested_tree: list[dict[str, Any]]) 
             r = {"error": f"metadata parser: {exc}"[:300]}
         res_strings: list[tuple[str, str]] = []
         meths = r.pop("_cil_methods", None) or []
+        r.pop("_decoder_inputs", None)
         for n_asm, blob in enumerate(r.pop("_confuser_assemblies", None) or [], 1):
             child = _resource_child(root, sha, t["label"], {"name": f"confuser_assembly_{n_asm}.dll"}, blob)
             if child:

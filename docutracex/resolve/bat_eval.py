@@ -911,6 +911,12 @@ class Interp:
             self.sinks.unresolved_(cmd.replace("\x01", "<").replace("\x02", ">")[:300], u.group(1),
                                    "the command it runs is built from something not in the script", ln)
             return True
+        m = _SELF_READ.search(cmd)
+        if m and _TYPE_SELF.search(self.source):            # ``type "%~f0" | powershell … $input[N..]``: the script is the file's own tail
+            tail = "\n".join(self.source.lstrip("\ufeff").splitlines()[int(m.group(1)):])
+            if tail.strip():
+                commands._stage(self.sinks, tail, ("batch line", f"its own lines from {int(m.group(1)) + 1} on "
+                                                   "(type %~f0 | powershell $input)"), "powershell", ln, ".ps1")
         if commands.launch(self.sinks, cmd, ("batch line",), ln, "batch"):
             return True
         # a file it downloaded before, run now
@@ -951,6 +957,11 @@ class Interp:
             sink = "writes" + (f" and runs ({f['run'][:80]})" if f.get("run") else "")
             v = Value("str", d, tuple(f["recipe"])) if isinstance(d, str) else Value("bytes", d, tuple(f["recipe"]))
             self.sinks.write(v, f["path"], sink, None)
+
+
+# the batch pipes itself into PowerShell, which runs the lines from N on (a PowerShell script appended to the .bat)
+_SELF_READ = re.compile(r"\$input\b[^\n]{0,200}?\[\s*(\d{1,6})\s*\.\.", re.I)
+_TYPE_SELF = re.compile(r"\btype\s+\"?%~(?:f|dpnx)0\"?\s*\|", re.I)
 
 
 def resolve(code: str, location: str = "batch") -> Sinks:

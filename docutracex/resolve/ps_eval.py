@@ -464,7 +464,7 @@ class Interp:
                 if c is None:                          # not computable: both ways are followed
                     try:
                         self.emit_all(out, self.block(body))
-                    except _Throw:
+                    except (_Throw, _Exit):            # an exit on a check of the machine (anti-VM): go on
                         pass
                     continue
                 if c:
@@ -1339,6 +1339,19 @@ class Interp:
         k = t.key
         n = name.lower()
         line = node[1] if node else None
+        for src in self.__dict__.get("_csharp") or []:     # a class compiled by Add-Type, handed bytes
+            if not re.search(rf"\bclass\s+{re.escape(t.name.split('.')[-1])}\b", src):
+                continue
+            from .cs_loader import decrypt as cs_decrypt
+            for a in args:
+                if isinstance(a, (bytes, bytearray, RBytes)) or (isinstance(a, list) and a and all(isinstance(x, int) for x in a[:64])):
+                    raw = bytes(self.as_bytes(a))
+                    got = cs_decrypt(src, raw)
+                    if got:
+                        pt, how = got
+                        self.sinks.load(self.to_value(tag(RBytes(pt), rec(a) + (f"[{t.name}]::{name} (C#): {how}",))),
+                                        f"[{t.name}]::{name} → Assembly.Load", line=line)
+                        return None
         if any(isinstance(a, Unk) for a in args) and not (k == "assembly" and n == "load"):
             u = next(a for a in args if isinstance(a, Unk))
             if k == "scriptblock" or (k == "assembly"):
@@ -2372,6 +2385,7 @@ class Interp:
                 code = named.get("typedefinition", named.get("memberdefinition", pos[0] if pos else None))
                 if code is not None and not isinstance(code, Unk) and len(self.text(code)) > 30:
                     self.sinks.step(line, "Add-Type: compiles C# code", self.to_value(code))
+                    self.__dict__.setdefault("_csharp", []).append(self.text(code))
                     self.sinks._add(__import__("docutracex.resolve.sinks", fromlist=["Stage"]).Stage(
                         "write", "Add-Type (C# source)", self.text(code).encode("utf-8"), rec(code) + ("→ Add-Type (C#)",), "add-type.cs", line))
                 return _Silent(None)
