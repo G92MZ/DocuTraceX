@@ -110,6 +110,8 @@ def combine(own: dict[str, Any] | None, rk: dict[str, Any]) -> dict[str, Any] | 
                  "fields": own.get("fields"), "hosts": own.get("c2") or []} if own else
                 {"tool": "own decoder", "status": "nothing", "note": "No AES-encrypted settings it could decrypt."})
     tools = {"own": own_view, "ratking": rk}
+    if own is None and not rk.get("hosts") and rk.get("family") in ("", "No match", None):
+        return None                       # no family and no C2: what it "found" is not a RAT configuration
     if own is None:                                   # only rat-king-parser read it
         fam = rk.get("family") if rk.get("family") not in ("", "No match", None) else "AsyncRAT / Quasar family"
         return {"family": fam, "kind": "RAT", "method": rk["method"], "confidence": "high",
