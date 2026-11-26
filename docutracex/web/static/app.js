@@ -8315,6 +8315,29 @@ function c2Help(c2) {
   </div>`;
 }
 
+// Where static analysis stops: the payload was reached but its configuration is not readable here, or a
+// loader kept its payload encrypted. Shown first and loud: the next step is a dynamic analysis.
+function c2DynamicBanner(c2) {
+  const items = c2.dynamic || [];
+  if (!items.length) return "";
+  const li = items.map((d) => {
+    const title = d.role === "payload"
+      ? `<b>This is the final payload${d.family ? ` (${escapeHtml(d.family)})` : ""}.</b> Its configuration is not readable statically.`
+      : "<b>Loader:</b> its payload is still encrypted inside it.";
+    const blobs = (d.blobs || []).map((b) => `${escapeHtml(b.where)} · ${Math.round(b.size / 1024)} KB · entropy ${b.entropy}`).join("<br>");
+    return `<li><div>${title} <span class="mono">${escapeHtml(d.object)}</span></div>
+      <div class="muted">${escapeHtml(d.why)}</div>
+      ${(d.tips || []).map((t) => `<div class="dyn-tip">⚑ ${escapeHtml(t)}</div>`).join("")}
+      ${(d.anti_vm || []).length ? `<div class="dyn-tip">⚑ It checks for virtual machines / sandboxes (${d.anti_vm.map((x) => `<span class="mono">${escapeHtml(x)}</span>`).join(", ")}): use a hardened VM, or it may do nothing.</div>` : ""}
+      ${blobs ? `<details class="disclose"><summary>Encrypted blobs</summary><div class="mono">${blobs}</div></details>` : ""}</li>`;
+  }).join("");
+  const todo = (items[0].todo || []).map((t) => `<li>${escapeHtml(t)}</li>`).join("");
+  return `<div class="dyn-banner" role="alert">
+    <div class="dyn-title">⚠ Static analysis stops here — get the configuration with a dynamic analysis</div>
+    <ul class="dyn-items">${li}</ul>
+    <div class="dyn-todo"><b>Next step (in a sandbox, apart from DocuTraceX):</b><ol>${todo}</ol></div></div>`;
+}
+
 function paneC2(c2, findings, caseId) {
   const byId = {};
   (findings || []).forEach((f) => { byId[f.id] = f; });
@@ -8327,6 +8350,7 @@ function paneC2(c2, findings, caseId) {
     ? `<div class="chain-banner"><b>Protected:</b><ul>${c2.protected.map((p) =>
         `<li><span class="mono">${escapeHtml(p.object)}</span>: ${p.protectors.map((x) => `<span class="badge badge-warn" title="${escapeHtml(x.evidence)}">${escapeHtml(x.name)}</span>`).join(" ")}
           <span class="muted">${escapeHtml(p.note)}</span>${(p.strings || []).length ? `<details class="disclose"><summary>${p.decrypted} decrypted string(s)</summary><div class="mono">${p.strings.map((x) => escapeHtml(String(x).slice(0, 200))).join("<br>")}</div></details>` : ""}</li>`).join("")}</ul></div>` : "";
+  const dyn = c2DynamicBanner(c2);
   const cards = cfgs.map((c, i) => {
     const f = byId[c.finding_id];
     const s = c.summary || {};
@@ -8405,7 +8429,7 @@ function paneC2(c2, findings, caseId) {
       re-reads the stored RAW with the current parsers (nothing is run again; the RAW is untouched; earlier interpretations are kept).
       ${interp ? `Done: ${interp}.` : ""}</p>` : ""}</div>`;
   return innerTabs("c2", [
-    { id: "results", label: `Results (${cfgs.length})`, html: `<div class="ml-pane">${head}${prot}${cfgs.length ? cards : empty}</div>` },
+    { id: "results", label: `Results (${cfgs.length})`, html: `<div class="ml-pane">${dyn}${head}${prot}${cfgs.length ? cards : empty}</div>` },
     { id: "extractors", label: "Extractors", html: extractors },
     { id: "help", label: "Help", html: c2Help(c2) },
   ]);

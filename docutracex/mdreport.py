@@ -557,6 +557,14 @@ def _c2(cid: str) -> str:
         out += ["", _fence(json.dumps({"summary": c.get("summary"), "sections": c.get("sections"),
                                        "fields": c.get("fields")}, ensure_ascii=False,
                                       indent=1, default=str), "json")]
+    for d in c2.get("dynamic") or []:
+        head = (f"**final payload ({d.get('family')}) — configuration needs a dynamic analysis**"
+                if d.get("role") == "payload" else "**loader with an encrypted payload — needs a dynamic analysis**")
+        out += ["", f"- ⚠ {head} — {d.get('object')}: {d.get('why', '')}"]
+        out += [f"  - {t}" for t in (d.get("tips") or [])]
+        if d.get("anti_vm"):
+            out.append(f"  - checks for VMs / sandboxes: {', '.join(d['anti_vm'])} (use a hardened VM)")
+        out += [f"  - next: {t}" for t in (d.get("todo") or [])]
     for pr in c2.get("protected") or []:
         out += ["", f"- **protected** — {pr.get('object')}: "
                 + ", ".join(f"{x.get('name')} ({x.get('evidence')})" for x in pr.get("protectors") or [])

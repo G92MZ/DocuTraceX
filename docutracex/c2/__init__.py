@@ -369,10 +369,27 @@ def analyze(original: Path, extracted_dir: Path, only: set[str] | None = None) -
         log.warning("c2: family YARA rules not compiled: %s", exc)
     prog = ObjectProgress(len(todo))
     die_by_name = _die_detects(case_root)
+    loaders: list[dict[str, Any]] = []           # where static analysis stops (dynamic.py)
+    identified: list[tuple[str, str, Path]] = []
     for idx, ((label, path, stored), (found, runs)) in enumerate(zip(todo, _scan_all(todo, prog))):
         result["objects_scanned"] += 1
         if not any(c.get("kind") != "indicators" and c.get("c2") for c in found):
+            n_prot = len(result.get("protected") or [])
             _protected(result, label, path, die_by_name)
+            if len(result.get("protected") or []) == n_prot and not any(
+                    c.get("dead_drop") or (c.get("kind") != "indicators" and not c["family"].startswith("RMM: "))
+                    for c in found):
+                try:
+                    from . import dynamic
+                    ld = dynamic.assess_loader(label, path.read_bytes())
+                    if ld:
+                        ld["stored_path"] = stored
+                        loaders.append(ld)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("c2: loader check skipped for %s: %s", label, exc)
+        for c in found:
+            if not c["family"].startswith("RMM: ") and not c.get("c2") and not c.get("dead_drop"):
+                identified.append((label, c["family"], path))
         raw_ref = f"{RUNS_DIR}/{run_id}/{idx:04d}.json"
         for r in runs:
             st = result["extractor_status"].setdefault(r["extractor"], {})
@@ -419,6 +436,7 @@ def analyze(original: Path, extracted_dir: Path, only: set[str] | None = None) -
         result["configs"] = [c for c in result["configs"] if c.get("finding_id") not in drop]
         result["findings"] = [f for f in result["findings"]
                               if finding_id(f["tool"], f["rule"], f["location"], f["detail"]) not in drop]
+    _dynamic(result, loaders, identified, prov)
     if case_root is not None:
         try:
             from .correlate import relate_and_index
@@ -431,6 +449,42 @@ def analyze(original: Path, extracted_dir: Path, only: set[str] | None = None) -
     if result["findings"]:
         result["status"] = "ok_with_findings"
     return result
+
+
+def _dynamic(result: dict[str, Any], loaders: list[dict[str, Any]], identified: list[tuple[str, str, Path]],
+             prov: dict[str, dict[str, Any]]) -> None:
+    """``result["dynamic"]``: the payloads reached without a readable configuration and the loaders whose
+    payload stayed encrypted — each with what to do in a sandbox — and a finding for each."""
+    from ..findings import finding_id
+    from . import dynamic
+    done = {c["family"] for c in result["configs"] if c.get("c2") or c.get("dead_drop")}
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for label, fam, path in identified:
+        base = fam.split(" (")[0]
+        if base in done or any(base in d or d in base for d in done) or (label, base) in seen:
+            continue
+        seen.add((label, base))
+        try:
+            data = path.read_bytes()
+        except OSError:
+            data = b""
+        out.append(dynamic.assess_payload(label, base, data))
+    payload_objs = {e["object"] for e in out}
+    # a loader whose payload was opened here (an object derived from it: unpacked, decrypted…) is not a dead end
+    chains = [str((c.get("provenance") or "")) for c in result["configs"]] + [
+        str(v.get("text") or "") for v in prov.values()]
+    for ld in loaders:
+        name = Path(ld["object"]).name
+        if ld["object"] in payload_objs or any(name in ch and not ch.endswith(name) for ch in chains):
+            continue
+        out.append(ld)
+    for e in out:
+        f = dynamic.finding(e)
+        e["finding_id"] = finding_id(f["tool"], f["rule"], f["location"], f["detail"])
+        result["findings"].append(f)
+    if out:
+        result["dynamic"] = out
 
 
 def _die_detects(case_root: Path | None) -> dict[str, list[dict[str, Any]]]:
