@@ -3,6 +3,15 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.267.0 — 2026-11-26 (#347)
+
+**Script chains that hand the dropper's own file to the next stage**
+- A stage started with the dropper's path as its argument (VBS → JScript reading `WScript.Arguments(0)`)
+  now reads the sample above it, so the payload hidden in the dropper's comment lines comes out.
+- A script saved under another language's extension (JScript named `.vbs`) is read as what it is.
+- A stage written as base64 text of an EXE / archive is saved as that file; long MSAP payloads are
+  decompressed whole.
+
 ## 1.266.0 — 2026-11-26 (#346)
 
 **Snake Keylogger: the SMTP server of hosting builds, and fewer false alarms**

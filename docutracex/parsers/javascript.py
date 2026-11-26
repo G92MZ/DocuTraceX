@@ -571,7 +571,8 @@ def analyze(original: Path, extracted_dir: Path, modules: dict[str, Any],
         workers = max(1, min(_PARALLEL_SCRIPTS, len(items))) if run_sandbox else 1
         progress(f"script 0/{len(items)}")
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futs = {pool.submit(one, i, it): i for i, it in items}
+            import contextvars                     # the stage context (resolve.argv) goes with each script
+            futs = {pool.submit(contextvars.copy_context().run, one, i, it): i for i, it in items}
             for fut in as_completed(futs):
                 i = futs[fut]
                 try:
