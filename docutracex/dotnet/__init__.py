@@ -240,10 +240,12 @@ def parse(data: bytes) -> dict[str, Any]:
             confuser = any(o["name"] == "ConfuserEx" for o in out["obfuscators"])
             encoded = _encoded_literals(out["strings"])
             if ((confuser and (c.get("confuser_constants") or {}).get("mode") != "Normal")
-                    or encoded >= 5 or _resource_table(t, out["strings"])):
+                    or encoded >= 5 or _resource_table(t, out["strings"]) or _resource_payload(t, out["resources"])):
                 try:
                     from .cilemu import confuser_strings
                     em = confuser_strings(data)
+                    if em and em.get("readers"):
+                        out["_payload_readers"] = em["readers"]
                     if em and (em["strings"] or em["assemblies"]):
                         if confuser:
                             c["confuser_constants"] = {
@@ -270,14 +272,22 @@ def parse(data: bytes) -> dict[str, Any]:
                 try:
                     from .cilemu import packed_array, unpack_payloads
                     size = packed_array(pe)
-                    if size:
-                        pls = unpack_payloads(data)
-                        c["packed_array"] = {"size": size, "payloads": len(pls),
-                                             **({"how": pls[0][1][0]} if pls else {})}
+                    readers = out.pop("_payload_readers", None)
+                    pls = []
+                    if readers:          # methods that read a large resource: run again with a large budget
+                        pls = unpack_payloads(data, readers=readers)
                         if pls:
-                            out["_packed_payloads"] = pls
+                            c["packed_array"] = {"size": 0, "source": "resource", "payloads": len(pls),
+                                                 "how": pls[0][1][0]}
+                    if size and not pls:
+                        pls = unpack_payloads(data)
+                        c["packed_array"] = {"size": size, "source": "static array", "payloads": len(pls),
+                                             **({"how": pls[0][1][0]} if pls else {})}
+                    if pls:
+                        out["_packed_payloads"] = pls
                 except Exception as exc:  # noqa: BLE001
                     c["packed_error"] = f"packed array (CIL emulation): {exc}"[:200]
+            out.pop("_payload_readers", None)
             out["cil"] = c
         except Exception as exc:  # noqa: BLE001  (CIL is best effort)
             out["cil"] = {"error": f"CIL disassembly: {exc}"[:200]}
@@ -301,6 +311,19 @@ def _resource_table(t, strings: list[str]) -> bool:  # noqa: ANN001
         return False
     names = {str(m.Name) for m in t.MemberRef or []}
     return _TABLE_CALLS <= names
+
+
+_READ_CALLS = {"GetManifestResourceStream", "GetObject"}
+_RUN_CALLS = {"Load", "GetDelegateForFunctionPointer", "Invoke", "CreateDelegate"}
+
+
+def _resource_payload(t, resources: list[dict[str, Any]]) -> bool:  # noqa: ANN001
+    """A large encrypted resource that the assembly's code reads and then loads or runs (a crypter stage):
+    the CIL emulation follows the code that opens it."""
+    if not any(r.get("size", 0) >= 16 * 1024 and r.get("entropy", 0) >= 7.2 for r in resources):
+        return False
+    names = {str(m.Name) for m in t.MemberRef or []}
+    return bool(names & _READ_CALLS) and bool(names & _RUN_CALLS)
 
 
 def _encoded_literals(strings: list[str]) -> int:
@@ -376,10 +399,11 @@ def _findings(item: dict[str, Any]) -> list[dict[str, Any]]:
     if pa:
         out.append({"rule": "dotnet:packed_payload", "severity": "high" if pa["payloads"] else "medium",
                     "tool": "dotnet", "location": loc, "attack": "T1027.002",
-                    "detail": (f"packer: a {pa['size']}-byte encrypted static array, decrypted by the assembly's own "
-                               f"code (CIL emulation) into {pa['payloads']} PE payload(s) — Nested child"
-                               if pa["payloads"] else f"packer: a {pa['size']}-byte encrypted static array (its "
-                               "payload, not opened)"),
+                    "detail": (("packer: an encrypted resource" if pa.get("source") == "resource" else
+                                f"packer: a {pa['size']}-byte encrypted static array")
+                               + (", decrypted by the assembly's own code (CIL emulation) into "
+                                  f"{pa['payloads']} PE payload(s) — Nested child" if pa["payloads"]
+                                  else " (its payload, not opened)")),
                     "evidence": pa.get("how", "")})
     em = cil.get("emulated_strings")
     if em:

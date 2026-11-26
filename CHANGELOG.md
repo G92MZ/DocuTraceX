@@ -3,6 +3,13 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.262.0 — 2026-11-26 (#342)
+
+**.NET crypter stages followed to the payload they inject**
+
+- A .NET stage that keeps its payload in an encrypted resource and hands it to a hollowing routine now gives that payload in Nested (AgentTesla chains of 2025), so its C2 is read.
+- The CIL emulation understands more of the framework these stages use (`String.Split`, `Array.Resize`, `BitConverter.GetBytes`).
+
 ## 1.261.0 — 2026-11-25 (#341)
 
 **Loaders of 2025 followed to their payload (Lumma, Formbook chains)**

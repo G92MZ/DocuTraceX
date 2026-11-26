@@ -41,7 +41,10 @@ code is CIL: it is disassembled and read, never run.
       makes the emulation run the methods that pass static fields to the assembly's own code
       (`Main`, a `Decrypt(payload, key)`) with a large budget; an array that comes out as a PE
       becomes a Nested child (`packed_payload_N.exe`). String decoders that take a string and a
-      key (`Decode("…", 0x15)`) are run on each call site too.
+      key (`Decode("…", 0x15)`) are run on each call site too. The same happens when a large
+      encrypted **resource** is read by code that loads or runs what it gets: the methods that read
+      it run again with a large budget, and a PE handed to (or returned by) the assembly's own code
+      becomes the Nested child — a crypter stage's payload before it is injected.
     - **Resources**: `.resources` files opened entry by entry; encrypted entries decrypted with
       the keys the assembly holds (in the method, its class or the whole assembly), and images
       read pixel by pixel.
