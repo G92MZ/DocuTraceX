@@ -124,7 +124,7 @@ async def get_case(analysis_id: str) -> dict:
 
 
 @router.get("/{analysis_id}/components")
-async def get_components(analysis_id: str) -> dict:
+async def get_components(analysis_id: str) -> JSONResponse:
     """Return the component/relationship analysis for a case (OOXML for now)."""
     from ..storage import CasePaths, read_json
 
@@ -151,7 +151,9 @@ async def get_components(analysis_id: str) -> dict:
     triage = marks_service.apply(
         [f for f in marks_service.case_findings(paths, include_unreviewed_yara=True)
          if marks_service.is_triage_only(f)], marks_service.read_marks(paths))
-    return {
+    # plain JSON encoder: pydantic's refuses results nested deeper than its limit ("Circular reference
+    # detected (depth exceeded)") — a long chain of stages / recipes can be that deep
+    return JSONResponse(content={
         "yara_findings": [f for f in triage["findings"] if f.get("source") != "ml"],
         "ml_findings": [f for f in triage["findings"] if f.get("source") == "ml"],
         "analysis_id": analysis_id,
@@ -162,11 +164,11 @@ async def get_components(analysis_id: str) -> dict:
         "findings": marked["findings"],
         "marks_counts": marked["counts"],
         "marks_orphans": marked["orphans"],
-    }
+    })
 
 
 @router.get("/{analysis_id}/nested/{view_id}/components")
-async def get_nested_components(analysis_id: str, view_id: str) -> dict:
+async def get_nested_components(analysis_id: str, view_id: str) -> JSONResponse:
     """A nested child's own analysis, shaped like ``/components`` so the UI can
     open it like a case (its tabs), plus its place in the tree."""
     import re as _re
@@ -223,7 +225,7 @@ async def get_nested_components(analysis_id: str, view_id: str) -> dict:
     yara_view, yara_findings = _yara_for_file(analysis_id, paths, stored)
     if yara_view:
         modules["yara"] = yara_view
-    return {
+    return JSONResponse(content={         # plain encoder, as in get_components
         "analysis_id": analysis_id, "view_id": view_id, "nested_view": True,
         "filename": view.get("filename"), "chain": view.get("chain"), "kind": view.get("kind"),
         "state": "nested", "modules": modules, "iocs": view.get("iocs"),
@@ -231,7 +233,7 @@ async def get_nested_components(analysis_id: str, view_id: str) -> dict:
         "findings": [{**f, "source": f.get("source") or f.get("tool") or "nested"}
                      for f in view.get("findings") or []],
         "yara_findings": yara_findings,
-    }
+    })
 
 
 def _norm_rel(p: str) -> str:

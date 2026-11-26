@@ -3,6 +3,12 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.271.1 — 2026-11-26 (#352)
+
+**Fix: some cases failed to open ("Circular reference detected")**
+- A case whose results nest very deeply (long chains of script stages) opens again instead of
+  failing with a server error.
+
 ## 1.271.0 — 2026-11-26 (#351)
 
 **C2: one card per payload**
