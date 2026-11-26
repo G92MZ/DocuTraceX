@@ -31,7 +31,7 @@ from .ps_parse import parse
 from .sinks import Sinks
 from .value import Value
 
-MAX_STEPS = 6_000_000
+MAX_STEPS = 60_000_000   # bounded by MAX_SECONDS; multi-layer ciphers in PowerShell need tens of millions
 MAX_SECONDS = 90.0
 MAX_LOOP = 2_000_000          # iterations of one loop
 MAX_FOREVER = 3               # iterations of a loop whose condition is a constant true
@@ -52,6 +52,35 @@ class RBytes(bytearray):
 
 class PSList(list):
     recipe: tuple[str, ...] = ()
+
+
+def _rem(x: Any, y: Any) -> Any:
+    """.NET remainder: the sign of the dividend (-7 % 3 is -1), not Python's modulo."""
+    if not y:
+        return 0
+    if isinstance(x, int) and isinstance(y, int):
+        r = abs(x) % abs(y)
+        return -r if x < 0 else r
+    import math
+    return math.fmod(x, y)
+
+
+class _Wide(int):
+    """An integer cast to [long] / [uint32] / [uint64]: shifts on it are 64-bit."""
+
+
+def _shift(x: int, y: int, op: str) -> int:
+    """``-shl`` / ``-shr`` on .NET integers: an Int32 stays 32 bits (the count masked to 5 bits, the result
+    wrapped), anything wider is an Int64."""
+    bits = 32 if -(1 << 31) <= x < (1 << 31) and not isinstance(x, _Wide) else 64
+    n = y & (bits - 1)
+    if op == "shr":
+        return x >> n
+    r = (x << n) & ((1 << bits) - 1)
+    return r - (1 << bits) if r >> (bits - 1) else r
+
+
+_ZERO = {"int[]": 0, "char[]": "\x00"}             # what a new .NET array holds: zeros, not $null
 
 
 class Unk:
@@ -172,7 +201,7 @@ _ACCEL = {
     "int16": "int", "uint32": "long", "uint16": "int", "byte": "byte", "sbyte": "int", "char": "char", "bool": "bool",
     "boolean": "bool", "double": "double", "float": "double", "single": "double", "decimal": "double",
     "byte[]": "byte[]", "char[]": "char[]", "string[]": "string[]", "object[]": "object[]", "int[]": "int[]",
-    "array": "array", "scriptblock": "scriptblock", "management.automation.scriptblock": "scriptblock",
+    "array": "array", "buffer": "buffer", "scriptblock": "scriptblock", "management.automation.scriptblock": "scriptblock",
     "type": "type", "regex": "regex", "text.regularexpressions.regex": "regex", "math": "math",
     "reflection.assembly": "assembly", "appdomain": "appdomain", "environment": "environment",
     "io.file": "io.file", "io.memorystream": "io.memorystream", "io.streamreader": "io.streamreader",
@@ -450,6 +479,8 @@ class Interp:
         if k == "expr":
             v = self.eval(st[2], pipe_out=True)
             if st[2][0] in ("command", "pipe") and isinstance(v, _Silent):
+                return
+            if st[2][0] in ("preinc", "postinc"):     # $i++ on its own line writes nothing
                 return
             self.emit(out, v.value if isinstance(v, _Silent) else v)
         elif k == "assign":
@@ -898,7 +929,7 @@ class Interp:
             return 0
         if isinstance(v, Unk):
             raise _Throw(v.why)
-        if isinstance(v, list) and len(v) == 1:
+        if isinstance(v, (list, bytearray, bytes)) and len(v) == 1:
             return self.num(v[0])
         raise _Throw(f"cannot convert {type(v).__name__} to a number")
 
@@ -971,7 +1002,7 @@ class Interp:
             r = self.arith(a, b, lambda x, y: x / y if y else 0)
             return int(r) if isinstance(r, float) and r.is_integer() else r
         if op == "%":
-            return self.arith(a, b, lambda x, y: x % y if y else 0)
+            return self.arith(a, b, _rem)
         if op in ("band", "bor", "bxor", "shl", "shr"):
             try:
                 x, y = self.num(a), self.num(b)
@@ -979,7 +1010,9 @@ class Interp:
                 if op == "bor":                     # enum flags ([BindingFlags]::Static -bor …)
                     return RStr(f"{self.text(a)}, {self.text(b)}")
                 raise
-            return {"band": x & y, "bor": x | y, "bxor": x ^ y, "shl": x << (y & 63), "shr": x >> (y & 63)}[op]
+            if op in ("shl", "shr"):
+                return _shift(x, y, op)
+            return {"band": x & y, "bor": x | y, "bxor": x ^ y}[op]
         if op in ("and", "or", "xor"):
             ta, tb = self.truth(a), self.truth(b)
             if ta is None or tb is None:
@@ -1040,6 +1073,12 @@ class Interp:
             r = self.is_type(a, b)
             return r if op == "is" else not r
         if op == "as":
+            if isinstance(b, TypeRef) and b.key == "type" and isinstance(a, str):
+                nm = a.strip().strip("[]")
+                if norm_type(nm) in _ACCEL.values() or any(
+                        re.search(rf"\bclass\s+{re.escape(nm.split('.')[-1])}\b", c) for c in self.__dict__.get("_csharp") or []):
+                    return TypeRef(nm)
+                return None                         # a type no one has loaded yet
             try:
                 return self.cast(b.name if isinstance(b, TypeRef) else self.text(b), a)
             except Exception:  # noqa: BLE001
@@ -1248,7 +1287,7 @@ class Interp:
         if t in ("int", "long"):
             if isinstance(v, str) and len(v) == 1:
                 return ord(v)
-            return self.num(v)
+            return _Wide(self.num(v)) if t == "long" else self.num(v)
         if t == "byte":
             return self.num(v) & 0xFF
         if t == "char":
@@ -1347,6 +1386,11 @@ class Interp:
                 if isinstance(a, (bytes, bytearray, RBytes)) or (isinstance(a, list) and a and all(isinstance(x, int) for x in a[:64])):
                     raw = bytes(self.as_bytes(a))
                     got = cs_decrypt(src, raw)
+                    if not got and re.search(rf"\b{re.escape(name)}\s*\([^)]*\)\s*\{{\s*return\s+(?:System\.Reflection\.)?"
+                                             r"Assembly\.Load\(", src):
+                        self.sinks.load(self.to_value(tag(RBytes(raw), rec(a))), f"[{t.name}]::{name} → Assembly.Load",
+                                        line=line)
+                        return Obj("assembly", data=raw, recipe=rec(a))
                     if got:
                         pt, how = got
                         self.sinks.load(self.to_value(tag(RBytes(pt), rec(a) + (f"[{t.name}]::{name} (C#): {how}",))),
@@ -1402,7 +1446,15 @@ class Interp:
             size = self.num(args[0]) if args else 0
             if size > T.MAX_OUT:
                 raise Limit("array too large")
-            return RBytes(size) if k == "byte[]" else PSList([None] * size)
+            return RBytes(size) if k == "byte[]" else PSList([_ZERO.get(k)] * size)
+        if k == "buffer" and n == "blockcopy" and len(args) == 5:      # byte arrays here: offsets are indexes
+            src, dst = args[0], args[2]
+            si, di, cnt = self.num(args[1]), self.num(args[3]), self.num(args[4])
+            if isinstance(src, (list, bytearray)) and isinstance(dst, (list, bytearray)):
+                dst[di:di + cnt] = src[si:si + cnt]
+                if isinstance(dst, RBytes) and rec(src):
+                    dst.recipe = rec(src)
+            return None
         if k == "array":
             if n == "reverse" and args and isinstance(args[0], list | bytearray):
                 args[0].reverse()
@@ -1623,7 +1675,7 @@ class Interp:
             size = self.num(args[0]) if args else 0
             if not isinstance(size, int) or size > T.MAX_OUT:
                 raise Limit("array too large")
-            return RBytes(size) if k == "byte[]" else PSList([None] * size)
+            return RBytes(size) if k == "byte[]" else PSList([_ZERO.get(k)] * size)
         if k == "pscredential":
             pw = args[1] if len(args) > 1 else None
             return Obj("pscredential", props={"user": args[0] if args else "", "password": pw})
@@ -1935,8 +1987,12 @@ class Interp:
                     return 0
                 buf = args[0]
                 off = self.num(args[1]) if len(args) > 1 else 0
-                cnt = min(self.num(args[2]) if len(args) > 2 else len(buf), len(data))
-                buf[off:off + cnt] = data[:cnt]
+                if "_out" not in o.__dict__:        # what it decodes, read chunk by chunk
+                    o._out, o._rpos = data, 0
+                data, pos = o._out, o._rpos
+                cnt = max(0, min(self.num(args[2]) if len(args) > 2 else len(buf), len(data) - pos))
+                buf[off:off + cnt] = data[pos:pos + cnt]
+                o._rpos = pos + cnt
                 if isinstance(buf, RBytes):
                     buf.recipe = rec(data)
                 return cnt
@@ -2031,6 +2087,7 @@ class Interp:
             if n == "expandstring":
                 return self.expand(self.text(args[0]))
         if k == "stringbuilder":
+            o.__dict__.setdefault("parts", [])          # also when built as New-Object System.Text.StringBuilder
             if n in ("append", "appendline"):
                 o.parts.append(self.text(args[0]) + ("\r\n" if n == "appendline" else ""))
                 return o
@@ -2122,6 +2179,14 @@ class Interp:
             return Unk("a script block not known")
         if sb.body is None:
             code = sb.text or ""
+            if args:                                # a block built from text, run with its arguments
+                try:
+                    body = parse(code)
+                except Exception:  # noqa: BLE001
+                    body = None
+                if body is not None:
+                    self.sinks.exec_(self.to_value(tag(code, sb.recipe)), "ScriptBlock.Invoke", line)
+                    return self.run_sb(ScriptBlock(body, code, sb.recipe), args, dollar_, line)
             return self.run_code(tag(code, sb.recipe), "ScriptBlock.Invoke", line)
         params = next((st[2] for st in sb.body if st[0] == "param"), None)
         if params:

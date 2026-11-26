@@ -58,6 +58,7 @@ _WORD = re.compile(r"[A-Za-z_\u0080-\uffff](?:`(?=[\w-])|[\w\-\u0080-\uffff])*(?
 _DASHWORD = re.compile(r"-([A-Za-z][\w]*)(:)?")
 _PUNCT = ("+=", "-=", "*=", "/=", "%=", "++", "--", "..", "::", "$(", "@(", "@{", "&&", "||", "2>&1", "2>", ">>",
           "=", "+", "-", "*", "/", "%", "(", ")", "{", "}", "[", "]", ",", ";", ".", "|", "&", "!", ">", "<", "@")
+_KEYWORDS_BEFORE_VALUE = {"return", "throw", "exit", "in", "else", "elseif", "if", "while", "foreach", "switch", "until"}
 _VALUE_END = {"VAR", "STR", "XSTR", "NUM", "NUMLIST", "TYPE"}
 
 
@@ -172,7 +173,7 @@ def tokenize(code: str) -> list[Tok]:
                 continue
         if c == "[":
             prev = out[-1] if out else None
-            value_before = prev is not None and not prev.sp and (prev.kind in _VALUE_END or (prev.kind == "PUNCT" and prev.value in (")", "]", "}")) or prev.kind == "WORD")
+            value_before = prev is not None and not prev.sp and prev.kind != "TYPE" and (prev.kind in _VALUE_END or (prev.kind == "PUNCT" and prev.value in (")", "]", "}")) or (prev.kind == "WORD" and prev.value.lower() not in _KEYWORDS_BEFORE_VALUE))
             if not value_before:
                 m = _ATTRIBUTE.match(code, i)
                 if m:                                   # [Parameter(Mandatory)]: says nothing about values
