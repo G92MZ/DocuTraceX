@@ -3,6 +3,14 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.264.0 — 2026-11-26 (#344)
+
+**XWorm 7.x: the configuration of builds without plain strings**
+- XWorm clients that keep every string in an encrypted character pool (no readable strings at all) now
+  show their C2, port, splitter, mutex and the other settings in the C2 tab.
+- The .NET tab lists the strings those builds decode, and small numbers such as the start-up delay are
+  no longer shown as C2 ports.
+
 ## 1.263.0 — 2026-11-26 (#343)
 
 **C2 tab: a clear warning where static analysis stops**
