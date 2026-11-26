@@ -6,9 +6,10 @@ the entries between the version you had and the new one.
 ## 1.268.0 — 2026-11-26 (#348)
 
 **Every analysis starts from New analysis**
-- Next to *Analyze*, choose *Full analysis* or a single engine: *YARA only*, *Machine Learning
-  only*, *C2 / Beacons only* or *Hex only* (with *also its contents* if you want the full analysis
-  first). A single engine opens a quick case and takes you to its tab.
+- Next to *Analyze*, choose *Full analysis (all engines)* — the standard analysis plus YARA, Machine
+  Learning and C2 / Beacons in one go — or *Standard analysis* (those three stay on demand).
+- Or a single engine: *YARA only*, *Machine Learning only*, *C2 / Beacons only* or *Hex only* (with
+  *also its contents* for the full analysis first); it opens a quick case and takes you to its tab.
 - The YARA, Machine Learning, C2 / Beacons and Hex tabs no longer upload files: they show a case
   you pick, and can still re-run their engine on it.
 

@@ -324,12 +324,12 @@ const QUICK_DONE = {};
 const uploadKind = document.getElementById("upload-kind");
 if (uploadKind) uploadKind.addEventListener("change", () => {
   const w = document.getElementById("upload-extract-wrap");
-  if (w) w.hidden = uploadKind.value === "full";
+  if (w) w.hidden = uploadKind.value === "full" || uploadKind.value === "standard";
 });
 document.getElementById("upload-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const kind = uploadKind ? uploadKind.value : "full";
-  if (kind !== "full") {
+  if (kind !== "full" && kind !== "standard") {
     await quickAnalyse(kind, e.target, async (id) => {
       const tab = document.querySelector(`.tab[data-view="${kind}"]`);
       if (tab) tab.click();
@@ -355,6 +355,7 @@ document.getElementById("upload-form").addEventListener("submit", async (e) => {
     const data = new FormData();
     data.append("file", files[i]);
     if (pw) data.append("password", pw);
+    if (kind === "full") data.append("engines", "all");      // + YARA, ML and C2 in the same analysis
     try {
       const resp = await fetch("/api/cases", { method: "POST", body: data });
       if (!resp.ok) throw new Error("upload failed");
