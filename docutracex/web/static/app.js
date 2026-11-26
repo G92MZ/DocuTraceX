@@ -318,8 +318,25 @@ fileInput.addEventListener("change", () => {
   }
 });
 
+// New analysis is the only place that starts an analysis: "Full analysis" or one engine alone (a quick
+// case, opened in that engine's tab). The YARA / ML / C2 / Hex tabs only pick a case to show.
+const QUICK_DONE = {};
+const uploadKind = document.getElementById("upload-kind");
+if (uploadKind) uploadKind.addEventListener("change", () => {
+  const w = document.getElementById("upload-extract-wrap");
+  if (w) w.hidden = uploadKind.value === "full";
+});
 document.getElementById("upload-form").addEventListener("submit", async (e) => {
   e.preventDefault();
+  const kind = uploadKind ? uploadKind.value : "full";
+  if (kind !== "full") {
+    await quickAnalyse(kind, e.target, async (id) => {
+      const tab = document.querySelector(`.tab[data-view="${kind}"]`);
+      if (tab) tab.click();
+      if (QUICK_DONE[kind]) await QUICK_DONE[kind](id);
+    });
+    return;
+  }
   const status = document.getElementById("upload-status");
   const files = Array.from(fileInput.files || []);
   if (!files.length) return;
@@ -7120,19 +7137,6 @@ async function quickAnalyse(tool, form, onDone) {
   }
 }
 
-function wireQuick(tool, onDone) {
-  const form = document.getElementById(`${tool}-quick-form`);
-  if (!form) return;
-  const fileEl = form.querySelector("input[type=file]");
-  const name = form.querySelector(".file-name");
-  if (fileEl && name) fileEl.addEventListener("change", () => {
-    const n = fileEl.files.length;
-    name.textContent = !n ? "No file selected" : n === 1 ? fileEl.files[0].name : `${n} files`;
-    if (n > 1) name.title = Array.from(fileEl.files).map((f) => f.name).join("\n");
-  });
-  form.addEventListener("submit", (ev) => { ev.preventDefault(); quickAnalyse(tool, form, onDone); });
-}
-
 async function quickNote(tool, sel) {
   const el = document.getElementById(`${tool}-quick-note`);
   if (!el || !sel) return;
@@ -8533,10 +8537,10 @@ function setupMlHex() {
   if (cs) cs.addEventListener("change", () => quickNote("c2", cs));
   if (ys) ys.addEventListener("change", () => quickNote("yara", ys));
   // a loose file: quick case, only that engine; the tab then shows it
-  wireQuick("yara", async (id) => { await loadYaraCases(); ys.value = id; quickNote("yara", ys); await showYaraResults(id); });
-  wireQuick("ml", async (id) => { _mlCase = id; await loadMlView(id); quickNote("ml", ms); });
-  wireQuick("c2", async (id) => { _c2Case = id; await loadC2View(id); quickNote("c2", cs); });
-  wireQuick("hex", async (id) => { await fillCaseSelect(hs, id); hexResetCase(id); renderHexView(); quickNote("hex", hs); });
+  QUICK_DONE.yara = (async (id) => { await loadYaraCases(); ys.value = id; quickNote("yara", ys); await showYaraResults(id); });
+  QUICK_DONE.ml = (async (id) => { _mlCase = id; await loadMlView(id); quickNote("ml", ms); });
+  QUICK_DONE.c2 = (async (id) => { _c2Case = id; await loadC2View(id); quickNote("c2", cs); });
+  QUICK_DONE.hex = (async (id) => { await fillCaseSelect(hs, id); hexResetCase(id); renderHexView(); quickNote("hex", hs); });
 }
 
 // Settings index and "manage in Settings" links: jump to a card, nothing is hidden.

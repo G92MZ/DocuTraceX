@@ -80,7 +80,7 @@ built-in lists. Only the look-alike checks use them: every other rule still judg
 recursively, read in place — a clone of a rule repository, your own rules) and / or **upload** rules
 (`.yar`, `.zip`, `.tar.gz`). The card lists every source with a button to remove it, then press
 **Recompile**: nothing compiles on its own. It shows the compiled rules (with a filter) and any
-compile error per file. Scans run from the [YARA](engines/yara.md) tab — on a case, or on loose files.
+compile error per file. Scans run from New analysis (*YARA only*, or as part of the full analysis) and are shown — or re-run on a case — in the [YARA](engines/yara.md) tab.
 **Clear…** starts over: *Compiled rules* drops the compiled ruleset (Recompile builds it again from the
 same sources); *Everything* also removes the uploads, the registered folders / files (only from
 DocuTraceX — nothing on disk is deleted) and the enabled-rule marks. Scan results already in cases stay.

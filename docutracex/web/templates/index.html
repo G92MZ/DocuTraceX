@@ -38,7 +38,7 @@
       </div>
     </div>
     <div class="tab-group tab-group-engines" role="group" aria-label="Engines">
-      <span class="tab-group-label" title="Raw analysis engines — on a case, or on a loose file (quick analysis)">Engines</span>
+      <span class="tab-group-label" title="Raw analysis engines on a case (start one alone from New analysis)">Engines</span>
       <div class="tab-group-items">
       <button class="tab" type="button" data-view="yara"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle class="duo" cx="10.5" cy="10.5" r="6.5"/><path d="m20.5 20.5-5.2-5.2"/><path d="M8 8.2a3.3 3.3 0 0 1 4.6 0" class="thin"/></svg><span>YARA</span></button>
       <button class="tab" type="button" data-view="ml"><svg class="tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect class="duo" x="6" y="6" width="12" height="12" rx="2.5"/><path d="M9.5 2.5v3.5M14.5 2.5v3.5M9.5 18v3.5M14.5 18v3.5M2.5 9.5H6M2.5 14.5H6M18 9.5h3.5M18 14.5h3.5"/><circle cx="12" cy="12" r="2" class="dot"/></svg><span>Machine Learning</span></button>
@@ -76,6 +76,16 @@
           <span id="file-name" class="file-name">No file selected</span>
           <input type="password" id="upload-password" class="upload-password" autocomplete="off"
                  placeholder="Password (optional)" title="Password of an encrypted document or archive, if you know it. Passwords given in an email body, Excel's default and 'infected' are tried automatically." />
+          <select id="upload-kind" class="conc-input" style="width:auto"
+                  title="Full analysis: everything (it also feeds YARA, ML, C2 / Beacons and Hex). The others run only that engine on the file and open a quick case, shown in its tab.">
+            <option value="full">Full analysis</option>
+            <option value="yara">YARA only</option>
+            <option value="ml">Machine Learning only</option>
+            <option value="c2">C2 / Beacons only</option>
+            <option value="hex">Hex only</option>
+          </select>
+          <label class="hint-line quick-extract" id="upload-extract-wrap" hidden
+                 title="Runs the full analysis first, so the engine also sees what the file carries (attachments, resources, decrypted stages)"><input type="checkbox" name="extract"> also its contents</label>
           <button type="submit" class="btn btn-primary">Analyze</button>
           <span id="upload-status" class="status"></span>
         </form>
@@ -204,7 +214,7 @@
           <h2>YARA</h2>
           <span id="yara-tab-summary" class="status"></span>
         </div>
-        <p class="hint-line">Nothing runs automatically: scan a case — or loose files (quick analysis) — with the compiled rules.
+        <p class="hint-line">Nothing runs automatically: scan a case with the compiled rules (to scan new files, choose <i>YARA only</i> in New analysis).
           The rules (folders, uploads, Recompile) are managed in <a href="#" data-goto-settings="set-yara">Settings → YARA rules</a>.
           Every hit is a finding you mark (True positive, False positive, …); only True positives reach the report.</p>
         <div class="upload yara-scan">
@@ -213,15 +223,6 @@
           <button id="yara-scan" class="btn btn-primary" type="button">Scan case</button>
           <span id="yara-scan-status" class="status"></span>
         </div>
-        <form id="yara-quick-form" class="upload quick-form">
-          <span class="hint-line"><b>Or a loose file</b> (quick analysis, no full case):</span>
-          <input type="file" id="yara-quick-file" class="file-native" multiple />
-          <label for="yara-quick-file" class="btn btn-ghost btn-sm" title="One or more files: each becomes a quick case; they run as many at a time as New analysis allows">Choose file(s)</label>
-          <span class="file-name">No file selected</span>
-          <label class="hint-line quick-extract" title="Runs the full analysis first, so the engine also sees what the file carries (attachments, resources, decrypted stages)"><input type="checkbox" name="extract"> also its contents</label>
-          <button type="submit" class="btn btn-primary btn-sm">Analyse</button>
-          <span class="status"></span>
-        </form>
         <div id="yara-quick-note" class="hint-line quick-note"></div>
         <details class="disclose obj-picker" id="yara-objs"><summary>Objects to scan: all</summary><div class="obj-list"></div></details>
         <!-- trace: gmzpt -->
@@ -239,15 +240,6 @@
           <button id="ml-run" class="btn btn-primary" type="button">Run Machine Learning</button>
           <span id="ml-run-status" class="status"></span>
         </div>
-        <form id="ml-quick-form" class="upload quick-form">
-          <span class="hint-line"><b>Or a loose file</b> (quick analysis, no full case):</span>
-          <input type="file" id="ml-quick-file" class="file-native" multiple />
-          <label for="ml-quick-file" class="btn btn-ghost btn-sm" title="One or more files: each becomes a quick case; they run as many at a time as New analysis allows">Choose file(s)</label>
-          <span class="file-name">No file selected</span>
-          <label class="hint-line quick-extract" title="Runs the full analysis first, so the engine also sees what the file carries (attachments, resources, decrypted stages)"><input type="checkbox" name="extract"> also its contents</label>
-          <button type="submit" class="btn btn-primary btn-sm">Analyse</button>
-          <span class="status"></span>
-        </form>
         <div id="ml-quick-note" class="hint-line quick-note"></div>
         <details class="disclose obj-picker" id="ml-objs"><summary>Objects to scan: all</summary><div class="obj-list"></div></details>
         <div id="ml-body"></div>
@@ -264,15 +256,6 @@
           <button id="c2-run" class="btn btn-primary" type="button">Search C2 configurations</button>
           <span id="c2-run-status" class="status"></span>
         </div>
-        <form id="c2-quick-form" class="upload quick-form">
-          <span class="hint-line"><b>Or a loose file</b> (quick analysis, no full case):</span>
-          <input type="file" id="c2-quick-file" class="file-native" multiple />
-          <label for="c2-quick-file" class="btn btn-ghost btn-sm" title="One or more files: each becomes a quick case; they run as many at a time as New analysis allows">Choose file(s)</label>
-          <span class="file-name">No file selected</span>
-          <label class="hint-line quick-extract" title="Runs the full analysis first, so the engine also sees what the file carries (attachments, resources, decrypted stages)"><input type="checkbox" name="extract"> also its contents</label>
-          <button type="submit" class="btn btn-primary btn-sm">Analyse</button>
-          <span class="status"></span>
-        </form>
         <div id="c2-quick-note" class="hint-line quick-note"></div>
         <details class="disclose" id="c2-families"><summary>Families: what each is and what is read</summary><div class="c2-fam-list"></div></details>
         <details class="disclose obj-picker" id="c2-objs"><summary>Objects to scan: all</summary><div class="obj-list"></div></details>
@@ -304,15 +287,6 @@
           <span class="hint-line">Case:</span>
           <select id="hex-case" class="ai-case-select"></select>
         </div>
-        <form id="hex-quick-form" class="upload quick-form">
-          <span class="hint-line"><b>Or a loose file</b> (quick analysis, no full case):</span>
-          <input type="file" id="hex-quick-file" class="file-native" />
-          <label for="hex-quick-file" class="btn btn-ghost btn-sm">Choose file</label>
-          <span class="file-name">No file selected</span>
-          
-          <button type="submit" class="btn btn-primary btn-sm">Open in Hex</button>
-          <span class="status"></span>
-        </form>
         <div id="hex-quick-note" class="hint-line quick-note"></div>
         <div id="hex-body"></div>
       </section>
@@ -561,7 +535,7 @@
             <h4 class="settings-card-title">YARA rules</h4>
             <p class="hint-line">Folders and files on this machine (searched recursively — a clone of a rule repository, your own
               rules…) and rules uploaded here. Nothing compiles on its own: press <b>Recompile</b> after a change. Scans run from the
-              <b>YARA</b> tab (a case or loose files).</p>
+              <b>YARA</b> tab (a case), or New analysis → <i>YARA only</i>.</p>
             <div class="settings-row">
               <input type="text" id="yara-path" class="yara-path-input" spellcheck="false" placeholder="Folder or file on this machine, e.g. C:\Tools\yara-rules">
               <button id="yara-path-btn" class="btn btn-ghost btn-sm" type="button">Add folder / file</button>
