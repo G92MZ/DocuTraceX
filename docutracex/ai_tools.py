@@ -672,7 +672,7 @@ def get_c2(case_id: str, family: str | None = None, offset: int = 0) -> dict[str
         cfgs.append(rec)
     page, meta = _page(cfgs, offset, 20)
     head = {k: c2.get(k) for k in ("run_id", "runs", "objects_scanned", "status", "counts", "warnings",
-                                   "extractor_status", "protected", "family_yara", "timings")}
+                                   "extractor_status", "protected", "dynamic", "family_yara", "timings")}
     if not _FULL.get():
         head.pop("timings", None)
     return {**head, "families_found": sorted({c.get("family", "") for c in c2.get("configs") or []}),

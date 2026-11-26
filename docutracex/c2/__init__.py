@@ -369,10 +369,34 @@ def analyze(original: Path, extracted_dir: Path, only: set[str] | None = None) -
         log.warning("c2: family YARA rules not compiled: %s", exc)
     prog = ObjectProgress(len(todo))
     die_by_name = _die_detects(case_root)
+    loaders: list[dict[str, Any]] = []           # where static analysis stops (dynamic.py)
+    identified: list[tuple[str, str, Path]] = []
+    leaves: list[tuple[str, str, Path]] = []      # derived PEs without a configuration: candidate payloads
+    pe_stored: set[str] = set()
     for idx, ((label, path, stored), (found, runs)) in enumerate(zip(todo, _scan_all(todo, prog))):
         result["objects_scanned"] += 1
+        if stored and _is_pe(path):
+            pe_stored.add(stored)
         if not any(c.get("kind") != "indicators" and c.get("c2") for c in found):
+            n_prot = len(result.get("protected") or [])
             _protected(result, label, path, die_by_name)
+            if (stored and len(result.get("protected") or []) == n_prot and not found and _derived(stored, prov)
+                    and _is_pe(path)):
+                leaves.append((label, stored, path))
+            if len(result.get("protected") or []) == n_prot and not any(
+                    c.get("dead_drop") or (c.get("kind") != "indicators" and not c["family"].startswith("RMM: "))
+                    for c in found):
+                try:
+                    from . import dynamic
+                    ld = dynamic.assess_loader(label, path.read_bytes())
+                    if ld:
+                        ld["stored_path"] = stored
+                        loaders.append(ld)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("c2: loader check skipped for %s: %s", label, exc)
+        for c in found:
+            if not c["family"].startswith("RMM: ") and not c.get("c2") and not c.get("dead_drop"):
+                identified.append((label, c["family"], path))
         raw_ref = f"{RUNS_DIR}/{run_id}/{idx:04d}.json"
         for r in runs:
             st = result["extractor_status"].setdefault(r["extractor"], {})
@@ -419,6 +443,7 @@ def analyze(original: Path, extracted_dir: Path, only: set[str] | None = None) -
         result["configs"] = [c for c in result["configs"] if c.get("finding_id") not in drop]
         result["findings"] = [f for f in result["findings"]
                               if finding_id(f["tool"], f["rule"], f["location"], f["detail"]) not in drop]
+    _dynamic(result, loaders, identified, prov, leaves, pe_stored)
     if case_root is not None:
         try:
             from .correlate import relate_and_index
@@ -431,6 +456,90 @@ def analyze(original: Path, extracted_dir: Path, only: set[str] | None = None) -
     if result["findings"]:
         result["status"] = "ok_with_findings"
     return result
+
+
+def _derived(stored: str, prov: dict[str, dict[str, Any]]) -> bool:
+    """An object the analysis obtained from the sample (decrypted, unpacked, a hidden or decoded stage)."""
+    parts = Path(stored).parts
+    return (any(p in _DERIVED_DIRS for p in parts[:-1])
+            or (prov.get(stored) or {}).get("source") in _DERIVED_SOURCES)
+
+
+def _is_pe(path: Path) -> bool:
+    try:
+        with path.open("rb") as fh:
+            return fh.read(2) == b"MZ"
+    except OSError:
+        return False
+
+
+def _dynamic(result: dict[str, Any], loaders: list[dict[str, Any]], identified: list[tuple[str, str, Path]],
+             prov: dict[str, dict[str, Any]], leaves: list[tuple[str, str, Path]] | None = None,
+             pe_stored: set[str] | None = None) -> None:
+    """``result["dynamic"]``: the payloads reached without a readable configuration and the loaders whose
+    payload stayed encrypted — each with what to do in a sandbox — and a finding for each."""
+    from ..findings import finding_id
+    from . import dynamic
+    done = {c["family"] for c in result["configs"] if c.get("c2") or c.get("dead_drop")}
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for label, fam, path in identified:
+        base = fam.split(" (")[0]
+        if base in done or any(base in d or d in base for d in done) or (label, base) in seen:
+            continue
+        seen.add((label, base))
+        try:
+            data = path.read_bytes()
+        except OSError:
+            data = b""
+        out.append(dynamic.assess_payload(label, base, data))
+    payload_objs = {e["object"] for e in out}
+    # a loader whose payload was opened here (an object derived from it: unpacked, decrypted…) is not a dead end
+    # only what was opened from an object counts (a stage, an unpacked or decrypted payload), not its icons
+    chains = [list(v.get("chain") or []) for k, v in prov.items()
+              if v.get("source") in _DERIVED_SOURCES or k in (pe_stored or set())] + [
+        str(c.get("provenance") or "").split(" › ") for c in result["configs"] if c.get("provenance")]
+
+    def has_below(name: str) -> bool:
+        return any(step.split(" (")[0] == name for ch in chains for step in ch[:-1])
+    for ld in loaders:
+        if ld["object"] in payload_objs or has_below(Path(ld["object"]).name):
+            continue
+        out.append(ld)
+    # the last executable of the chain, obtained here, with no configuration and nothing below it: probably the
+    # payload of a family no extractor knows — a fallback: only when the case has no configuration and nothing
+    # above already says where static analysis stops (a loader, a family's payload)
+    if leaves and not done and not out:
+        listed = {e["object"] for e in out}
+        seen_data: set[str] = set()
+        runtimes: set[str] = set()
+        for label, stored, path in leaves:
+            if label in listed or has_below(Path(label).name):
+                continue
+            try:
+                data = path.read_bytes()
+            except OSError:
+                continue
+            from .. import msap
+            if msap.is_loader(data) and any("MSAP container" in str(v.get("text") or "") for v in prov.values()):
+                continue                    # the loader of an MSAP container opened here: its payload is listed
+            import hashlib
+            h = hashlib.sha256(data).hexdigest()
+            if h in seen_data:              # the same payload got out two ways (pixels, hidden data…)
+                continue
+            seen_data.add(h)
+            e = dynamic.assess_leaf(label, data, (prov.get(stored) or {}).get("text", ""))
+            if e.get("runtime"):
+                if e["runtime"] in runtimes:  # its exe and its dll
+                    continue
+                runtimes.add(e["runtime"])
+            out.append(e)
+    for e in out:
+        f = dynamic.finding(e)
+        e["finding_id"] = finding_id(f["tool"], f["rule"], f["location"], f["detail"])
+        result["findings"].append(f)
+    if out:
+        result["dynamic"] = out
 
 
 def _die_detects(case_root: Path | None) -> dict[str, list[dict[str, Any]]]:

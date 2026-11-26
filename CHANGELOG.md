@@ -3,6 +3,16 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.263.0 — 2026-11-26 (#343)
+
+**C2 tab: a clear warning where static analysis stops**
+
+- When the final payload of a family is reached but its configuration cannot be read statically, the C2 tab says so in a banner: this is the payload, get the C2 with a dynamic analysis.
+- The same for loaders that still carry their payload encrypted, with the steps to follow in a sandbox (traffic, memory dump) and what to watch for: decoy domains, dead drops, VM checks.
+- When the family is not recognised, the last executable the chain leads to is flagged as the probable final payload (or, for an interpreter such as LuaJIT, the script it runs).
+- Each case also gets a `c2:dynamic_analysis` finding and a line in the report.
+- URLs quoted with typographic quotes no longer show up twice in IOCs.
+
 ## 1.262.0 — 2026-11-26 (#342)
 
 **.NET crypter stages followed to the payload they inject**

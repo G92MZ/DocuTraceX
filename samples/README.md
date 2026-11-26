@@ -41,6 +41,7 @@ The test suite unpacks it on its own.
 | `javascript/`, `powershell/`, `vbscript/`, `batch/`, `hta/`, `python/` | scripts (`python/` also holds `.pyc`) |
 | `shortcuts/` | `.lnk`, `.url` |
 | `archives/`, `disk-images/`, `installers/` | ZIP / TAR / CAB, ISO, MSI |
+| `windows-pe/sample_loader_encrypted_payload.exe` | A native loader whose payload is still encrypted inside it: a 96 KB high-entropy `RT_RCDATA` resource (pseudo-random bytes, no payload behind them), the imports a loader uses to map and run it, and the VM artefacts it checks for (`vmmemctl.sys`, `VBoxGuest`). Expected: **C2** — after *Search C2 configurations*, the banner *Static analysis stops here — get the configuration with a dynamic analysis* (loader, its anti-VM checks, the steps for a sandbox) and the finding `c2:dynamic_analysis`. |
 | `windows-pe/`, `dotnet/`, `go/`, `linux-elf/`, `java/`, `android/` | binaries by platform |
 | `images/` | images (stego) |
 | `c2/<family>/` | `cobaltstrike`, `metasploit`, `agenttesla`, `asyncrat`, `darkgate`, `nanocore`, `njrat`, `quasar`, `raccoon`, `redline`, `remcos`, `snakekeylogger`, `warzone`, `xworm`, `stealc`, `vidar`, `lumma`, `bruteratel`, `havoc`, `pure` |

@@ -227,7 +227,7 @@ def _random_hex(value: str) -> bool:
 
 def _clean_url(url: str) -> str:
     url = re.sub(r"\[[A-Za-z_]*$", "", url)       # fwlink…[VSDNETURLMSG: an MSI property after it
-    return url.rstrip(".,;:)]}'\"")
+    return url.rstrip(".,;:)]}'\"\u201d\u201c\u2019\u2018\u00bb\u203a>")      # also typographic quotes
 
 
 def _domain_of(url: str) -> str | None:
