@@ -3,6 +3,15 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.268.0 — 2026-11-26 (#348)
+
+**Every analysis starts from New analysis**
+- Next to *Analyze*, choose *Full analysis* or a single engine: *YARA only*, *Machine Learning
+  only*, *C2 / Beacons only* or *Hex only* (with *also its contents* if you want the full analysis
+  first). A single engine opens a quick case and takes you to its tab.
+- The YARA, Machine Learning, C2 / Beacons and Hex tabs no longer upload files: they show a case
+  you pick, and can still re-run their engine on it.
+
 ## 1.267.0 — 2026-11-26 (#347)
 
 **Script chains that hand the dropper's own file to the next stage**
