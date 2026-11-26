@@ -3,6 +3,15 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.265.0 — 2026-11-26 (#345)
+
+**PowerShell loaders with hand-written ciphers are now followed to the payload**
+- PowerShell that decrypts its payload with its own byte-shuffling code now comes out right, so the JS →
+  PowerShell chains in front of XWorm / AsyncRAT yield the client and its C2.
+- A PowerShell block built from text and run with arguments, and C# helpers compiled with `Add-Type`
+  that load an assembly, are followed too.
+- Long PowerShell stages get more room before the analysis gives up (still capped in time).
+
 ## 1.264.0 — 2026-11-26 (#344)
 
 **XWorm: the configuration of string-less 7.x builds and of self-reading batch chains**
