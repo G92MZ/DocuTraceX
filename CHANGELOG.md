@@ -3,6 +3,13 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.270.0 — 2026-11-26 (#350)
+
+**New analysis: "also its contents" only where it applies, and on by default**
+- The *also its contents* option shows only for a single engine (*YARA only*, *C2 / Beacons only*…),
+  not for *Full* or *Standard analysis*, which always look inside the file.
+- It is ticked by default, so a single engine also sees what the file carries.
+
 ## 1.269.0 — 2026-11-26 (#349)
 
 **Full analysis now runs every engine**
