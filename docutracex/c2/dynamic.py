@@ -6,6 +6,9 @@ reach, and the C2 tab says so plainly instead of staying silent:
 * **payload** — the final payload of a known family was reached (its family rules or traces match), but
   its configuration is encrypted with a scheme no extractor here reads (Formbook / XLoader, newer
   builds of a stealer…). This *is* the payload: run it in a sandbox to get the C2.
+* **probable payload** — the last executable a chain leads to (decrypted, unpacked, hidden…), with no
+  configuration of a known family and nothing below it, in a case where no configuration was read:
+  probably the payload of a family no extractor knows. Said with less weight than the other two.
 * **loader** — a loader whose payload is still encrypted inside it (a Go loader with a large encrypted
   data section, a native loader with encrypted resources, an encrypted section) and that did not
   yield a payload here: the payload only exists once it runs.
@@ -149,12 +152,45 @@ def assess_payload(label: str, family: str, data: bytes) -> dict[str, Any]:
             "anti_vm": anti_vm(data), "todo": list(TODO), "tips": tips}
 
 
+# runtimes a chain drops to run a script: the script is the payload, not the runtime
+INTERPRETERS = {b"LuaJIT ": "LuaJIT", b"Copyright (C) 2005-2016 Mike Pall": "LuaJIT", b"AutoIt v3": "AutoIt",
+                b"AU3!EA06": "AutoIt", b"python3": "Python", b"Py_Initialize": "Python", b"node.exe": "Node.js",
+                b"AutoHotkey": "AutoHotkey", b"PHP_VERSION": "PHP", b"tcl_platform": "Tcl"}
+
+
+def interpreter(data: bytes) -> str:
+    head = data[:8 << 20]
+    return next((name for mark, name in INTERPRETERS.items() if mark in head), "")
+
+
+def assess_leaf(label: str, data: bytes, chain: str = "") -> dict[str, Any]:
+    """The last executable obtained from the sample, no configuration read and nothing below it: probably
+    the final payload, of a family no extractor here knows (or a build whose configuration is hidden)."""
+    net = b"BSJB" in data[:1 << 22]
+    runtime = interpreter(data)
+    if runtime:
+        why = (f"the chain ends in a {runtime} interpreter" + (f" ({chain})" if chain else "")
+               + f": the payload is the script it runs, not the {runtime} runtime — the script is in Nested "
+               "(it may be obfuscated). If it is malicious, its C2 comes from a dynamic analysis.")
+        return {"object": label, "role": "probable_payload", "family": "", "why": why, "blobs": [],
+                "anti_vm": [], "todo": list(TODO), "tips": [], "runtime": runtime}
+    why = ("probably the final payload: the last executable this chain leads to"
+           + (f" ({chain})" if chain else "") + ", with no configuration of a known family in it and nothing "
+           "else inside it. " + ("A .NET program: its strings and the CIL emulation are in the .NET tab. "
+                                 if net else "") + "If it is malicious, its C2 comes from a dynamic analysis.")
+    return {"object": label, "role": "probable_payload", "family": "", "why": why, "blobs": [],
+            "anti_vm": anti_vm(data), "todo": list(TODO), "tips": []}
+
+
 def finding(entry: dict[str, Any]) -> dict[str, Any]:
     if entry["role"] == "payload":
         detail = f"{entry['family']} payload reached — configuration needs a dynamic analysis"
+    elif entry["role"] == "probable_payload":
+        detail = "Probable final payload without a readable configuration — check it with a dynamic analysis"
     else:
         detail = "Loader with an encrypted payload — the payload needs a dynamic analysis"
     ev = entry["why"] + (" Anti-VM checks: " + ", ".join(entry["anti_vm"]) + "." if entry["anti_vm"] else "")
     ev += (" " + " ".join(entry["tips"])) if entry["tips"] else ""
-    return {"tool": "c2", "rule": "c2:dynamic_analysis", "severity": "medium", "detail": detail,
+    return {"tool": "c2", "rule": "c2:dynamic_analysis",
+            "severity": "low" if entry["role"] == "probable_payload" else "medium", "detail": detail,
             "location": entry["object"], "evidence": ev[:1500]}

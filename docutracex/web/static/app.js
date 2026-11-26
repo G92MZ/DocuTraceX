@@ -8323,7 +8323,9 @@ function c2DynamicBanner(c2) {
   const li = items.map((d) => {
     const title = d.role === "payload"
       ? `<b>This is the final payload${d.family ? ` (${escapeHtml(d.family)})` : ""}.</b> Its configuration is not readable statically.`
-      : "<b>Loader:</b> its payload is still encrypted inside it.";
+      : d.role === "probable_payload"
+        ? "<b>Probably the final payload</b> (family not recognised): no configuration was read from it."
+        : "<b>Loader:</b> its payload is still encrypted inside it.";
     const blobs = (d.blobs || []).map((b) => `${escapeHtml(b.where)} · ${Math.round(b.size / 1024)} KB · entropy ${b.entropy}`).join("<br>");
     return `<li><div>${title} <span class="mono">${escapeHtml(d.object)}</span></div>
       <div class="muted">${escapeHtml(d.why)}</div>
@@ -8332,8 +8334,10 @@ function c2DynamicBanner(c2) {
       ${blobs ? `<details class="disclose"><summary>Encrypted blobs</summary><div class="mono">${blobs}</div></details>` : ""}</li>`;
   }).join("");
   const todo = (items[0].todo || []).map((t) => `<li>${escapeHtml(t)}</li>`).join("");
-  return `<div class="dyn-banner" role="alert">
-    <div class="dyn-title">⚠ Static analysis stops here — get the configuration with a dynamic analysis</div>
+  const soft = items.every((d) => d.role === "probable_payload");
+  return `<div class="dyn-banner${soft ? " dyn-soft" : ""}" role="alert">
+    <div class="dyn-title">⚠ ${soft ? "Static analysis probably stops here — check the final payload with a dynamic analysis"
+      : "Static analysis stops here — get the configuration with a dynamic analysis"}</div>
     <ul class="dyn-items">${li}</ul>
     <div class="dyn-todo"><b>Next step (in a sandbox, apart from DocuTraceX):</b><ol>${todo}</ol></div></div>`;
 }

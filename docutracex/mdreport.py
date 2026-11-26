@@ -558,8 +558,9 @@ def _c2(cid: str) -> str:
                                        "fields": c.get("fields")}, ensure_ascii=False,
                                       indent=1, default=str), "json")]
     for d in c2.get("dynamic") or []:
-        head = (f"**final payload ({d.get('family')}) — configuration needs a dynamic analysis**"
-                if d.get("role") == "payload" else "**loader with an encrypted payload — needs a dynamic analysis**")
+        head = {"payload": f"**final payload ({d.get('family')}) — configuration needs a dynamic analysis**",
+                "probable_payload": "**probable final payload (family not recognised) — check it with a dynamic analysis**",
+                }.get(d.get("role"), "**loader with an encrypted payload — needs a dynamic analysis**")
         out += ["", f"- ⚠ {head} — {d.get('object')}: {d.get('why', '')}"]
         out += [f"  - {t}" for t in (d.get("tips") or [])]
         if d.get("anti_vm"):

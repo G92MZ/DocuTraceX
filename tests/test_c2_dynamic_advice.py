@@ -65,6 +65,36 @@ def test_loader_opened_here_is_not_a_dead_end() -> None:
 def test_loader_unpacked_here_is_not_a_dead_end() -> None:
     ld = dynamic.assess_loader("packed.exe", _ms().loader_encrypted_payload_exe())
     res = {"configs": [], "findings": []}
-    prov = {"extracted/unpacked/packed.unpacked.exe": {"text": "packed.exe › packed.unpacked.exe (UPX)"}}
+    prov = {"extracted/unpacked/packed.unpacked.exe": {"source": "unpacked",
+                                                       "text": "packed.exe › packed.unpacked.exe (UPX)",
+                                                       "chain": ["packed.exe", "packed.unpacked.exe (UPX)"]}}
     c2._dynamic(res, [ld], [], prov)
     assert "dynamic" not in res
+
+
+def test_last_executable_without_config_is_a_probable_payload(tmp_path: Path) -> None:
+    leaf = tmp_path / "extracted" / "stages" / "stage_payload.exe"
+    leaf.parent.mkdir(parents=True)
+    leaf.write_bytes(_bk().pe(bits=32, strings=["Factura 2026-0187"]))
+    prov = {"extracted/stages/stage_payload.exe": {"source": "decrypted", "text": "f.ps1 › stage_payload.exe (AES)",
+                                                   "chain": ["f.ps1", "stage_payload.exe (AES)"]}}
+    leaves = [("extracted/stages/stage_payload.exe", "extracted/stages/stage_payload.exe", leaf)]
+    res = {"configs": [], "findings": []}
+    c2._dynamic(res, [], [], prov, leaves)
+    (d,) = res["dynamic"]
+    assert d["role"] == "probable_payload" and "f.ps1 › stage_payload.exe" in d["why"]
+    assert res["findings"][0]["severity"] == "low"
+    # not when the case already has a configuration, nor when something was opened below it
+    res = {"configs": [{"family": "AgentTesla", "c2": ["smtp.example"]}], "findings": []}
+    c2._dynamic(res, [], [], prov, leaves)
+    assert "dynamic" not in res
+    prov2 = {**prov, "extracted/stages/inner.exe": {"source": "decrypted",
+                                                    "chain": ["f.ps1", "stage_payload.exe (AES)", "inner.exe"]}}
+    res = {"configs": [], "findings": []}
+    c2._dynamic(res, [], [], prov2, leaves)
+    assert "dynamic" not in res
+
+
+def test_interpreter_runtime_points_at_the_script() -> None:
+    e = dynamic.assess_leaf("lua51.exe", b"MZ" + b"\x00" * 64 + b"LuaJIT 2.1.0-beta2 -- Copyright (C) 2005-2016 Mike Pall")
+    assert e["runtime"] == "LuaJIT" and "the payload is the script it runs" in e["why"]

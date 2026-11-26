@@ -963,6 +963,8 @@ mark.find-hit.current { background: #e8c95a; color: #0b0e12; }
 .chain-warn .chain-side { border-color: #7a632a; }
 .dyn-banner { border: 2px solid #e8795a; border-left-width: 6px; background: rgba(232, 121, 90, .10); color: var(--text);
   border-radius: 8px; padding: 10px 14px; margin: 8px 0 12px; overflow-wrap: anywhere; }
+.dyn-banner.dyn-soft { border-color: #c9a24a; background: rgba(224, 182, 90, .08); }
+.dyn-soft .dyn-title { color: #e0b65a; }
 .dyn-title { font-weight: 700; font-size: 15px; color: #e8795a; margin-bottom: 6px; }
 .dyn-items { margin: 4px 0; padding-left: 18px; }
 .dyn-items li { margin: 6px 0; }
