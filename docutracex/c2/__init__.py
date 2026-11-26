@@ -25,6 +25,7 @@ its evidence, and its values feed the common IOC extractor.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -443,6 +444,7 @@ def analyze(original: Path, extracted_dir: Path, only: set[str] | None = None) -
         result["configs"] = [c for c in result["configs"] if c.get("finding_id") not in drop]
         result["findings"] = [f for f in result["findings"]
                               if finding_id(f["tool"], f["rule"], f["location"], f["detail"]) not in drop]
+    _group_same_object(result)
     _dynamic(result, loaders, identified, prov, leaves, pe_stored)
     if case_root is not None:
         try:
@@ -479,6 +481,34 @@ def _exfil(c: dict[str, Any]) -> bool:
     return bool(ex) and any(k in str(ex) for k in ("SMTP", "FTP", "Telegram", "Discord", "http"))
 
 
+# families that are a variant of another one (a fork, a rename): said in the card that absorbs them
+_VARIANT_OF = {"vipkeylogger": "Snake Keylogger", "404keylogger": "Snake Keylogger"}
+
+
+def _group_same_object(result: dict[str, Any]) -> None:
+    """One card per object: when an object's configuration was read (C2, dead drop, exfiltration), the
+    other cards of that object that read nothing (a family YARA name, a generic stealer) become an
+    "Also identified as" line in it. Findings and IOCs are untouched."""
+    good = {}
+    for c in result["configs"]:
+        if c.get("object") and (c.get("c2") or c.get("dead_drop") or _exfil(c)):
+            good.setdefault(c["object"], c)
+    keep = []
+    for c in result["configs"]:
+        g = good.get(c.get("object"))
+        if g is None or c is g or c.get("c2") or c.get("dead_drop") or _exfil(c):
+            keep.append(c)
+            continue
+        fam = str(c.get("family") or "")
+        parent = _VARIANT_OF.get(re.sub(r"[^a-z0-9]", "", fam.lower()))
+        how = "family YARA" if "yara" in str(c.get("method") or "").lower() else ""
+        label = fam + (f" (a {parent} variant)" if parent else f" ({how})" if how else "")
+        also = g.setdefault("summary", {}).setdefault("Also identified as", [])
+        if isinstance(also, list) and label not in also:
+            also.append(label)
+    result["configs"] = keep
+
+
 def _dynamic(result: dict[str, Any], loaders: list[dict[str, Any]], identified: list[tuple[str, str, Path]],
              prov: dict[str, dict[str, Any]], leaves: list[tuple[str, str, Path]] | None = None,
              pe_stored: set[str] | None = None) -> None:
@@ -486,12 +516,14 @@ def _dynamic(result: dict[str, Any], loaders: list[dict[str, Any]], identified: 
     payload stayed encrypted — each with what to do in a sandbox — and a finding for each."""
     from ..findings import finding_id
     from . import dynamic
-    done = {c["family"] for c in result["configs"] if c.get("c2") or c.get("dead_drop") or _exfil(c)}
+    read = [c for c in result["configs"] if c.get("c2") or c.get("dead_drop") or _exfil(c)]
+    done = {c["family"] for c in read}
+    done_objs = {c.get("object") for c in read}           # objects whose configuration was read
     out: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for label, fam, path in identified:
         base = fam.split(" (")[0]
-        if base in done or any(base in d or d in base for d in done) or (label, base) in seen:
+        if label in done_objs or base in done or any(base in d or d in base for d in done) or (label, base) in seen:
             continue
         seen.add((label, base))
         try:

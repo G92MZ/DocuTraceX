@@ -3,6 +3,15 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.271.0 — 2026-11-26 (#351)
+
+**C2: one card per payload**
+- When a payload's configuration is read, the other names it was identified by (a family YARA
+  rule, a generic stealer) become an *Also identified as* line in its card instead of extra cards;
+  VIPKeyLogger is shown as a Snake Keylogger variant.
+- The "get the configuration with a dynamic analysis" banner no longer appears for a payload whose
+  configuration was read.
+
 ## 1.270.0 — 2026-11-26 (#350)
 
 **New analysis: "also its contents" only where it applies, and on by default**
