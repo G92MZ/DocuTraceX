@@ -229,6 +229,11 @@ def _snake_roles(values: list[str]) -> dict[str, str]:
                 g.setdefault("ftp_user", rest[0])
             if len(rest) > 1:
                 g.setdefault("ftp_password", rest[1])
+    if "smtp_user" in g and "smtp_server" not in g:
+        # a hosting server's name (not smtp. / mail.): the host the builder keeps beside the sender's account
+        hosts = [v for v in values if _is_host(v) and not _EMAIL.match(v) and not _FTP.match(v)]
+        if hosts:
+            g["smtp_server"] = hosts[0]
     return g
 
 

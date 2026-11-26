@@ -3,6 +3,15 @@
 What changed in each version of DocuTraceX, newest first. After an update, the app shows
 the entries between the version you had and the new one.
 
+## 1.266.0 — 2026-11-26 (#346)
+
+**Snake Keylogger: the SMTP server of hosting builds, and fewer false alarms**
+- Snake Keylogger builds that send mail through a shared-hosting server (not `smtp.` / `mail.`) now
+  show that server as their C2.
+- A stealer whose configuration was read with only a Telegram / SMTP account no longer gets the
+  "needs a dynamic analysis" banner, and an empty RAT configuration no longer appears beside it.
+- Long VBScript stages get more room before the analysis gives up (still capped in time).
+
 ## 1.265.0 — 2026-11-26 (#345)
 
 **PowerShell loaders with hand-written ciphers are now followed to the payload**

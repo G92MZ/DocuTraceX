@@ -32,7 +32,7 @@ from . import transforms as T
 from .sinks import Sinks
 from .value import Value
 
-MAX_STEPS = 6_000_000
+MAX_STEPS = 60_000_000   # bounded by MAX_SECONDS; script-written ciphers need more than a few million
 MAX_SECONDS = 30.0
 MAX_LOOP = 3_000_000
 MAX_DEPTH = 12

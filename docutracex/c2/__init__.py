@@ -473,6 +473,12 @@ def _is_pe(path: Path) -> bool:
         return False
 
 
+def _exfil(c: dict[str, Any]) -> bool:
+    """A stealer configuration read with where it sends the data (SMTP / FTP / Telegram), even without a host."""
+    ex = (c.get("summary") or {}).get("Exfiltration")
+    return bool(ex) and any(k in str(ex) for k in ("SMTP", "FTP", "Telegram", "Discord", "http"))
+
+
 def _dynamic(result: dict[str, Any], loaders: list[dict[str, Any]], identified: list[tuple[str, str, Path]],
              prov: dict[str, dict[str, Any]], leaves: list[tuple[str, str, Path]] | None = None,
              pe_stored: set[str] | None = None) -> None:
@@ -480,7 +486,7 @@ def _dynamic(result: dict[str, Any], loaders: list[dict[str, Any]], identified: 
     payload stayed encrypted — each with what to do in a sandbox — and a finding for each."""
     from ..findings import finding_id
     from . import dynamic
-    done = {c["family"] for c in result["configs"] if c.get("c2") or c.get("dead_drop")}
+    done = {c["family"] for c in result["configs"] if c.get("c2") or c.get("dead_drop") or _exfil(c)}
     out: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for label, fam, path in identified:
